@@ -5,7 +5,7 @@
 //! `RecordCache` via one of the `load_records_for_*` bulk loaders. Historically
 //! those loaders deep-cloned the inner `Vec<DiscoverRecord>` for every module,
 //! materialising tens of GB of transient record copies on production-scale
-//! creatures (GRQ `ed71b732`, ~1662 hidden neurons).
+//! creatures (~1662 hidden neurons).
 //!
 //! This benchmark reproduces that dispatch loader pattern against a preloaded
 //! cache and reports both:
@@ -32,7 +32,7 @@ use neat_ai_discovery::ffi::discovery_memory_usage_bytes;
 use neat_ai_discovery::types::DiscoverRecord;
 use neat_ai_discovery::{CreatureJson, NeuronJson, SynapseJson};
 
-/// GRQ-scaled-down fixture: enough neurons/records that a deep clone is clearly
+/// Production-scaled-down fixture: enough neurons/records that a deep clone is clearly
 /// visible, small enough to run quickly in CI.
 const NEURON_COUNT: usize = 300;
 const RECORDS_PER_NEURON: usize = 400;

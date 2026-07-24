@@ -29,7 +29,7 @@ pub mod normalisation;
 
 /// Maximum allowed outgoing weight for IDENTITY add-neuron and add-synapse candidates.
 ///
-/// Issue #888: Tightened from 0.1 to 0.01 based on GRQ-sampler discovery cache:
+/// Issue #888: Tightened from 0.1 to 0.01 based on the production discovery cache:
 /// - Successful candidates: outgoing weights 0.001–0.005 (exponent e-3)
 /// - Failed candidates: outgoing weights 0.01–0.1 (exponent e-2 to e-1)
 /// - The previous ceiling of 0.1 was far too permissive; virtually all
@@ -168,7 +168,7 @@ mod tests {
 
         // Issue #888: With MAX_OUTGOING_WEIGHT=0.01, incoming_weight=2 now passes
         // the ratio check (2/0.01=200 >= 50). This is correct because incoming ~2
-        // is the dominant success pattern in GRQ-sampler cache evidence.
+        // is the dominant success pattern in production discovery-cache evidence.
         let result = calculate_optimal_outgoing_weight(1.0, 1.0, 2.0);
         assert!(
             result.is_some(),

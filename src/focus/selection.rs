@@ -80,7 +80,7 @@ pub struct FocusSelection {
     /// the exploration picks).
     pub selected: Vec<String>,
     /// Concentration ratio of the **raw** roulette weights over the candidate
-    /// pool (max ÷ sum). Exposes single-target collapse — ~0.985 on the GRQ-3
+    /// pool (max ÷ sum). Exposes single-target collapse — ~0.985 on the plateaued-creature
     /// fixture.
     pub raw_weight_concentration_ratio: f32,
     /// Concentration ratio of the **selected** set's weights (max ÷ sum). Lower

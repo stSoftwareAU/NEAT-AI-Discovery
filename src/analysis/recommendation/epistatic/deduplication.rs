@@ -14,7 +14,7 @@ use super::{EpistaticPairCandidate, SynergisticCandidate};
 /// are kept per group. The rest are discarded to free candidate budget for
 /// alternative sources, activation functions, or weight ranges.
 ///
-/// Production analysis (creature b2ff6e45, GRQ-sampler commit a1340f8d) showed
+/// Production discovery-cache analysis (creature b2ff6e45) showed
 /// 10 pairs sharing the same dominant neuron, all failing identically. Capping
 /// to 3 frees 7 candidate slots with no loss of coverage.
 const MAX_PAIRS_PER_DOMINANT_NEURON: usize = 3;

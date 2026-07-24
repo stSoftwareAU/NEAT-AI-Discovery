@@ -7,7 +7,7 @@
 //!    batch. This must be negligible relative to a GPU submit + sync round-trip
 //!    (tens of microseconds to milliseconds) for the pre-reject to pay off.
 //! 2. **Helpful GPU-work reduction** — a deterministic count of how many
-//!    helpful work items the screen removes on a synthetic GRQ-shaped batch.
+//!    helpful work items the screen removes on a synthetic production-shaped batch.
 //!    The helpful GPU path issues one `dispatch_workgroups` per non-empty work
 //!    item (`gpu::helpful_evaluation::evaluate_helpful_batch`, chunked by
 //!    `effective_batch_size`), so dropping a work item removes that dispatch
@@ -15,13 +15,13 @@
 //!    loses a full helpful submit (a `shaderTimings.helpful.calls` decrement).
 //!    Printed once at start-up.
 //!
-//! NOTE: This is a synthetic workload — the production GRQ `network.json` +
-//! parquet fixture named in the issue is not available in this environment. The
-//! reduction figure below is a mechanical, quality-neutral consequence of the
-//! screen (a screened-out candidate has no finite optimal outgoing weight, so
-//! the downstream result loop would reject it anyway). The dud fraction is a
+//! NOTE: This is a synthetic workload — the production `network.json` +
+//! parquet fixture named in the issue is private and not available in this
+//! environment. The reduction figure below is a mechanical, quality-neutral
+//! consequence of the screen (a screened-out candidate has no finite optimal
+//! outgoing weight, so the downstream result loop would reject it anyway). The dud fraction is a
 //! chosen synthetic mix; the wall-clock / `shaderTimings.helpful.calls` success
-//! criteria still need the GRQ fixture on a GPU host to confirm.
+//! criteria still need the production fixture on a GPU host to confirm.
 
 #![allow(clippy::cast_precision_loss)] // Intentional numeric casts for benchmark reporting (Issue #873)
 use criterion::Criterion;
@@ -69,7 +69,7 @@ fn source_samples(kind: u8, seed: u64, n: usize) -> Vec<HelpfulSample> {
         .collect()
 }
 
-/// A synthetic GRQ-shaped batch: a large source fan-in where a substantial
+/// A synthetic production-shaped batch: a large source fan-in where a substantial
 /// fraction are dead/uncorrelated duds (the "many end with
 /// `gpu_improved_count == 0`" case the issue targets).
 fn grq_shaped_batch(source_count: usize, samples_per_source: usize) -> Vec<Vec<HelpfulSample>> {

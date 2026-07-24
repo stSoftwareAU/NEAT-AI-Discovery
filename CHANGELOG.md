@@ -120,6 +120,24 @@ not enforce diversity in the final focus set.
 
 ### Changed
 
+#### Evidence citations in source, benches, and the example reworded to concept level (Issue #1724)
+
+Comments across `src/`, all four `benches/`, and `examples/generate_snapshot.rs`
+cited private downstream repositories by name — commit hashes and creature ids
+as the derivation evidence for scoring constants and bench workloads. Public
+readers cannot inspect any of it, so the citations carried no verification value
+while continuously naming private infrastructure.
+
+- Evidence is now cited at concept level ("production discovery-cache
+  analysis", "production scale", "the calling host layer"). The internal issue
+  numbers already carried in most comments preserve traceability for
+  maintainers; no constant, threshold, or behaviour changed.
+- `examples/generate_snapshot.rs` documents its inputs generically (a
+  discovery-data parquet plus the creature JSON) instead of local checkout paths
+  inside a private sibling repository, so the printed usage is reproducible.
+- New `tests/source_free_of_private_repo_names.rs` is the regression gate that
+  keeps shipped source free of private repository names.
+
 #### Deadline-breakdown log marker renamed to `DEADLINE-BREAKDOWN` (Issue #1723)
 
 The consolidated per-cycle deadline-consumption summary and its `STARVED`

@@ -88,7 +88,7 @@ pub fn calculate_effective_timeout_ms(deadline_ms: Option<u64>) -> Option<u64> {
 
     // Validate duration bounds: minimum 3 seconds, maximum 1 hour
     // If invalid, default to 10 minutes (expected typical value)
-    // NOTE: If these warnings appear, it's a bug in the calling code (NEAT-AI or GRQ)
+    // NOTE: If these warnings appear, it's a bug in the calling code (NEAT-AI or the host layer)
     // that should be fixed to pass valid timeout values.
     let validated_ms = if relative_ms < MIN_DURATION_MS {
         let duration_secs = relative_ms as f64 / 1000.0;
@@ -97,7 +97,7 @@ pub fn calculate_effective_timeout_ms(deadline_ms: Option<u64>) -> Option<u64> {
             min_secs = 3.0,
             default_secs = DEFAULT_DURATION_MS as f64 / 1000.0,
             "analysis_deadline_ms is below minimum — falling back to default 10 minute timeout. \
-             The calling code (NEAT-AI/GRQ) should pass a valid timeout."
+             The calling code (NEAT-AI or the host layer) should pass a valid timeout."
         );
         DEFAULT_DURATION_MS
     } else if relative_ms > MAX_DURATION_MS {
@@ -107,7 +107,7 @@ pub fn calculate_effective_timeout_ms(deadline_ms: Option<u64>) -> Option<u64> {
             max_secs = MAX_DURATION_MS as f64 / 1000.0,
             default_secs = DEFAULT_DURATION_MS as f64 / 1000.0,
             "analysis_deadline_ms exceeds maximum — falling back to default 10 minute timeout. \
-             The calling code (NEAT-AI/GRQ) should pass a valid timeout."
+             The calling code (NEAT-AI or the host layer) should pass a valid timeout."
         );
         DEFAULT_DURATION_MS
     } else {
@@ -820,7 +820,7 @@ pub fn apply_source_budget(eligible_sources: &mut Vec<&OrderedNeuron>) -> usize 
 /// Orders focus targets so that existing hidden neurons are evaluated before
 /// output neurons during deadline-constrained analysis.
 ///
-/// GRQ-sampler data shows existing hidden neurons as targets have a 31.4%
+/// Production discovery-cache data shows existing hidden neurons as targets have a 31.4%
 /// success rate compared to 5.3–5.4% for output neurons. Under deadline
 /// pressure, evaluating hidden targets first maximises the chance of finding
 /// successful candidates before time runs out.

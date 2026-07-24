@@ -28,7 +28,7 @@
 /// Only [`ModuleTier::Expensive`] modules are ever skipped by tiering; `Always`
 /// and `Standard` both always run. The distinction between `Always` and
 /// `Standard` is documentary — it records which modules are known to be cheap or
-/// near-no-ops at GRQ scale (e.g. correlated-error early-returns when the
+/// near-no-ops at production scale (e.g. correlated-error early-returns when the
 /// creature has a single output) versus ordinary-cost modules.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ModuleTier {
@@ -50,7 +50,7 @@ pub const DEFAULT_MODULE_TIERING_HIDDEN_THRESHOLD: usize = 1000;
 ///
 /// These perform pairwise or multi-hop scans whose cost grows super-linearly
 /// with the hidden-neuron count, so they dominate the post-processing budget on
-/// GRQ-scale creatures. Names must match the `module_name` set in
+/// production-scale creatures. Names must match the `module_name` set in
 /// `analysis::discovery_dispatch` exactly.
 pub const EXPENSIVE_MODULES: &[&str] = &[
     "multi-hop analysis",
@@ -64,7 +64,7 @@ pub const EXPENSIVE_MODULES: &[&str] = &[
 
 /// Discovery modules classified as [`ModuleTier::Always`] (Issue #1547).
 ///
-/// Cheap or near-no-op at GRQ scale (e.g. correlated-error detection
+/// Cheap or near-no-op at production scale (e.g. correlated-error detection
 /// early-returns when the creature has a single output), so they are documented
 /// as always-run even though — like `Standard` — they are never tiered out.
 pub const ALWAYS_MODULES: &[&str] = &["correlated error detection"];
@@ -150,7 +150,7 @@ mod tests {
 
     #[test]
     fn large_creature_without_escalation_skips_expensive_only() {
-        let hidden = 1662; // GRQ-scale
+        let hidden = 1662; // production-scale
         let threshold = 1000;
         assert!(should_skip_module(
             "multi-hop analysis",

@@ -270,7 +270,7 @@ fn evaluate_activation_specs(
     // target neuron is saturated. The gate is deliberately independent of
     // the candidate/intermediate squash — a saturated HARD_TANH output
     // cannot produce a usable gradient from any new intermediate neuron,
-    // including ArcTan and BENT_IDENTITY (the GRQ-sampler `744ac60d`
+    // including ArcTan and BENT_IDENTITY (the production discovery-cache
     // evidence). Count the drops so they surface in the rejection
     // breakdown under `REJECTION_TARGET_SATURATED`.
     if ctx.target_saturation.rejects_candidates() {

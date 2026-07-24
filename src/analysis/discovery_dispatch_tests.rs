@@ -496,7 +496,7 @@ fn coordinated_per_target_cap_reduces_ten_same_target_to_three() {
 }
 
 /// Regression: the 41-consecutive-failure pattern from creature `bcbca347`
-/// (GRQ-sampler commit `e85c5d2`) would have been capped at 3 instead of
+/// (production discovery-cache analysis) would have been capped at 3 instead of
 /// monopolising the whole batch budget against a single output neuron.
 #[test]
 fn coordinated_per_target_cap_regression_bcbca347_41_same_target() {

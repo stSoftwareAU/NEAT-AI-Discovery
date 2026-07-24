@@ -33,8 +33,8 @@ use super::{cache, shared, synapse};
 /// The floor is applied **per operation count** via
 /// [`coordinated_post_discount_noise_floor`] — 5e-7 for 1-op, 1e-6 for 2-op,
 /// 2e-6 for 3-op, and 5e-6 for 4+-op (Issue #1272). Higher-op candidates
-/// carry materially higher implementation risk (see GRQ-sampler `bcbca347`
-/// 4-op failures that just cleared the legacy single 5e-7 floor yet harmed
+/// carry materially higher implementation risk (production discovery-cache 4-op
+/// failures for creature `bcbca347` just cleared the legacy single 5e-7 floor yet harmed
 /// the network by 1000–6000× the predicted magnitude), so a per-tier floor
 /// is enforced in step with the empirical-discount tiers from #1058.
 ///
@@ -96,7 +96,7 @@ pub fn reject_non_finite_gains(candidates: &mut Vec<CoordinatedStructuralCandida
 /// `0.75×`/`0.5×`/`0.25×`/`0.1×` expected-gain multipliers can pull a variant
 /// below its per-op-count noise floor (see
 /// `coordinated_post_discount_noise_floor`, Issue #1272) even when its base
-/// candidate is above the floor. Production evidence (GRQ-sampler discoveryVersion
+/// candidate is above the floor. Production discovery-cache evidence (discoveryVersion
 /// 0.74.16) captured `Gentle Nudge` variants with gains of ~1.3e-7 damaging
 /// creatures when tested.
 ///
@@ -153,7 +153,7 @@ pub fn apply_final_coordinated_gain_floor(
 ///
 /// Issue #1058: Replaced the three-layer compound discount (per-op exponential ×
 /// flat pessimism) with a single empirical lookup per operation count, derived
-/// from GRQ-sampler success rates.
+/// from production discovery-cache success rates.
 ///
 /// Single-operation candidates receive no discount (returns original gain).
 pub fn apply_operation_count_discount(candidate: &CoordinatedStructuralCandidateJson) -> f32 {

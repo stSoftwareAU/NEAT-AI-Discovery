@@ -26,7 +26,7 @@ pub const DIVERSIFY_TOP_K: usize = 64;
 /// Default maximum number of `add-neurons` candidates returned per target
 /// neuron in a single discovery batch (Issue #1140).
 ///
-/// GRQ-sampler commit `744ac60d` showed 17 of 19 `add-neurons` failures in one
+/// Production discovery-cache analysis showed 17 of 19 `add-neurons` failures in one
 /// submission targeted the same neuron, differing only by source input. All 17
 /// failed. The cross-batch cooldown (Issue #1130) cannot fire within a single
 /// batch, so a per-target within-batch cap is required to avoid wasting budget
@@ -71,7 +71,7 @@ pub fn max_add_neuron_candidates_per_target() -> usize {
 /// Default maximum number of coordinated-structural candidates returned per
 /// final-operation target neuron in a single discovery batch (Issue #1271).
 ///
-/// GRQ-sampler commit `e85c5d2` (creature `bcbca347`) showed 41 consecutive
+/// Production discovery-cache analysis showed 41 consecutive
 /// coordinated-structural failures whose final operation all targeted the same
 /// output neuron `533d8616-037c-4278-b95c-3a2a1ce15ee6`. A single problematic
 /// target consumed the entire coordinated-structural budget while other targets
@@ -171,7 +171,7 @@ pub fn min_distinct_targets_per_batch() -> usize {
 
 /// Scoring boost multiplier for candidates from input-neuron sources.
 ///
-/// GRQ-sampler analysis shows input neurons as synapse sources have a 36.2%
+/// Production discovery-cache analysis shows input neurons as synapse sources have a 36.2%
 /// success rate compared to 2.8–3.3% for hidden neurons. This boost is applied
 /// as a static multiplier to `expected_creature_score_gain` when the source
 /// neuron is an input neuron and no historical data is available yet.
@@ -332,7 +332,7 @@ pub const SOFT_FAILURE_WEIGHT: f64 = 0.5;
 /// Consecutive per-(creature, module) failure count at which the module is
 /// temporarily disabled for that creature (Issue #1273).
 ///
-/// GRQ-sampler commit `e85c5d2` (creature `bcbca347`) showed the failure cache
+/// Production discovery-cache analysis showed the failure cache
 /// contained 41 consecutive `coordinated-structural` failures and zero
 /// successes — that module monopolised ~91% of the candidate budget for the
 /// creature while producing nothing. The cross-population module gate
@@ -455,7 +455,7 @@ pub const QUALITY_SKIP_MIN_CANDIDATES: usize = 15;
 
 /// Scoring boost multiplier for candidates targeting existing hidden neurons.
 ///
-/// GRQ-sampler analysis shows existing hidden neurons as targets have a 31.4%
+/// Production discovery-cache analysis shows existing hidden neurons as targets have a 31.4%
 /// success rate compared to 5.3–5.4% for output or discovery-hidden neurons.
 /// This boost is applied as a static multiplier to `expected_creature_score_gain`
 /// when the target neuron is an existing hidden neuron.
@@ -470,15 +470,15 @@ pub const EXISTING_HIDDEN_TARGET_BOOST: f64 = 1.5;
 
 // Per-activation-function boost/penalty multipliers for add-neuron candidate scoring.
 //
-// GRQ-sampler discovery cache reveals dramatic differences in success rates by
+// The production discovery cache reveals dramatic differences in success rates by
 // activation function. These multipliers are derived from Bayesian-smoothed success
 // rates (Beta posterior with prior centred on the baseline ~13.9% success rate,
 // K=20 pseudo-observations) to handle small sample sizes.
 //
 // Issue #909 recalibration: IDENTITY's 14.9% raw success rate is inflated because
 // IDENTITY candidates dominate the candidate pool (274 total — more than any other
-// activation). Per-candidate success is mediocre, and GRQ-sampler evidence (commit
-// 7f15429) shows IDENTITY neurons are frequently substituted with non-linear
+// activation). Per-candidate success is mediocre, and production discovery-cache
+// evidence shows IDENTITY neurons are frequently substituted with non-linear
 // activations like SINE for improvement. A penalty of 0.85× is applied to discourage
 // IDENTITY dominance and encourage exploration of non-linear alternatives.
 //
@@ -495,7 +495,7 @@ pub const EXISTING_HIDDEN_TARGET_BOOST: f64 = 1.5;
 // 4. Clamp to [0.5, 2.0] to avoid over-biasing
 // 5. Apply candidate-pool normalisation penalty for over-represented activations
 //
-// Cache Evidence (GRQ-sampler, with Issue #909 normalisation):
+// Cache Evidence (production discovery cache, with Issue #909 normalisation):
 //
 // | Activation     | Successes | Total | Raw Rate | Smoothed Rate | Boost |
 // |----------------|-----------|-------|----------|---------------|-------|
@@ -515,7 +515,7 @@ pub const EXISTING_HIDDEN_TARGET_BOOST: f64 = 1.5;
 // | IDENTITY       | 41        | 274   | 14.9%    | 14.9%         | 0.85† |
 // | HARD_TANH      | 4         | 55    | 7.2%     | 9.0%          | 0.80  |
 //
-// * SINE boost estimated from substitution evidence (commit 7f15429)
+// * SINE boost estimated from substitution evidence
 // † IDENTITY penalised (Issue #909): raw rate inflated by candidate-pool dominance;
 //   neurons frequently substituted with non-linear activations post-addition
 //
@@ -547,8 +547,8 @@ pub const ACTIVATION_BOOST_SOFTPLUS: f64 = 1.43;
 
 /// Boost multiplier for SINE activation (~20% estimated, 1.15×).
 ///
-/// SINE is added based on GRQ-sampler evidence showing it successfully
-/// substitutes IDENTITY neurons (commit 7f15429). The modest boost encourages
+/// SINE is added based on production discovery-cache evidence showing it successfully
+/// substitutes IDENTITY neurons. The modest boost encourages
 /// exploration of this non-linear activation.
 pub const ACTIVATION_BOOST_SINE: f64 = 1.15;
 
@@ -565,8 +565,8 @@ pub const ACTIVATION_BOOST_CLIPPED: f64 = 1.03;
 ///
 /// Although IDENTITY has a 14.9% raw success rate (near the 13.9% baseline),
 /// this rate is inflated by IDENTITY's dominance in the candidate pool (274
-/// candidates — more than any other activation). GRQ-sampler evidence (commit
-/// 7f15429) shows IDENTITY neurons are frequently substituted with non-linear
+/// candidates — more than any other activation). Production discovery-cache
+/// evidence shows IDENTITY neurons are frequently substituted with non-linear
 /// activations like SINE for improvement, indicating IDENTITY acts as a
 /// placeholder rather than an optimal choice. The penalty discourages IDENTITY
 /// dominance and encourages exploration of genuinely better non-linear activations.
@@ -585,7 +585,7 @@ pub const ACTIVATION_BOOST_HARD_TANH: f64 = 0.80;
 /// candidate scoring (Issue #887).
 ///
 /// This lookup maps activation function names to their Bayesian-smoothed boost
-/// multipliers derived from GRQ-sampler cache success rates. Unknown activations
+/// multipliers derived from production discovery-cache success rates. Unknown activations
 /// (including `ReLU`, which is evaluated separately) receive a neutral multiplier of 1.0.
 #[inline]
 pub fn activation_neuron_boost(squash_name: &str) -> f64 {
@@ -720,7 +720,7 @@ pub const SATURATION_DISCOUNT_AGGRESSIVE: f32 = 0.15;
 
 /// Minimum pessimism discount applied to all score predictions.
 ///
-/// Production analysis (creature b2ff6e45, GRQ-sampler commit a1340f8d) showed
+/// Production discovery-cache analysis (creature b2ff6e45) showed
 /// that raw improvement percentages are wildly over-estimated — the sole
 /// successful candidate predicted +0.0205 but achieved only +0.0000011
 /// (an 18,500× over-estimation). The improvement calculation measures the
@@ -773,7 +773,7 @@ pub const PESSIMISM_CURVE_EXPONENT: f32 = 0.6;
 
 /// Minimum pessimism discount floor for neuron candidates (Issue #791, #1056).
 ///
-/// GRQ-sampler analysis shows add-neurons has a ~2.7% actual success rate
+/// Production discovery-cache analysis shows add-neurons has a ~2.7% actual success rate
 /// (28/1028 in latest cache) — far lower than predicted. The previous floor
 /// of 0.10 was calibrated against a 15% success estimate (Issue #787) which
 /// proved to be overestimated when measured against production outcomes.
@@ -790,7 +790,7 @@ pub const NEURON_PESSIMISM_DISCOUNT_FLOOR: f32 = 0.08;
 ///
 /// A higher exponent (closer to linear) produces a less forgiving curve at
 /// moderate ratios compared to the generic exponent (0.6). Updated from 0.75
-/// to 0.80 based on GRQ-sampler data showing ~2.7% actual success rate
+/// to 0.80 based on production discovery-cache data showing ~2.7% actual success rate
 /// (28/1028), indicating moderate improved ratios are even less reliable
 /// predictors of creature-level success than previously assumed.
 ///
@@ -811,7 +811,7 @@ pub const NEURON_PESSIMISM_CURVE_EXPONENT: f32 = 0.80;
 
 /// Minimum pessimism discount floor for synapse candidates (Issue #789, #1056).
 ///
-/// GRQ-sampler analysis shows add-synapses has a ~0.1% actual success rate
+/// Production discovery-cache analysis shows add-synapses has a ~0.1% actual success rate
 /// (3/1001 in latest cache). The multi-weight search creates selection bias
 /// that overfits to sample data, contributing to massive overestimation.
 /// Updated from 0.05 to 0.03 to match production reality.
@@ -1031,7 +1031,7 @@ pub fn min_expected_creature_score_gain() -> f32 {
 /// is functionally equivalent to a 1-op `remove-neuron` but still carries the
 /// much higher implementation-risk profile of a 4-op coordinated change.
 ///
-/// GRQ-sampler commit `e85c5d2` (creature `bcbca347`) captured 41 consecutive
+/// Production discovery-cache analysis captured 41 consecutive
 /// such failures: a bypass weight of `0.0021` produced an actual error
 /// reduction of `-0.0033` (~6,500× worse than predicted), and a bypass weight
 /// of `-0.000028` produced `-0.00083` (~1,600× worse). The
@@ -1085,7 +1085,7 @@ pub fn min_bypass_weight_for_collapse() -> f32 {
 
 /// Minimum expected-gain floor for coordinated structural candidates (Issue #1110).
 ///
-/// Production failure data from GRQ-sampler (commit 50a2909) shows coordinated
+/// Production discovery-cache failure data shows coordinated
 /// structural candidates with `expectedCreatureScoreGain` of ~8e-8 and ~4e-8
 /// (after 0.2× weight scaling) that produced actual error changes of -0.0008
 /// and -0.0004 respectively — harming the network rather than helping.
@@ -1113,7 +1113,7 @@ pub const COORDINATED_MIN_EXPECTED_GAIN: f32 = 1e-5;
 // and hidden-neuron impact discount (0.1×).
 //
 // Issue #1272 found that a single floor under-weights the implementation
-// risk of higher-op candidates. GRQ-sampler commit `e85c5d2` (creature
+// risk of higher-op candidates. Production discovery-cache analysis (creature
 // `bcbca347`) captured two 4-op coordinated-structural failures that **just
 // barely** cleared the 5e-7 floor yet harmed the network by 1000–6000× the
 // predicted magnitude:
@@ -1167,7 +1167,7 @@ pub const COORDINATED_POST_DISCOUNT_NOISE_FLOOR_3OPS: f32 = 2e-6;
 /// Post-discount noise floor for 4+-operation coordinated candidates
 /// (Issue #1272).
 ///
-/// Production evidence from GRQ-sampler commit `e85c5d2` (creature
+/// Production discovery-cache evidence (creature
 /// `bcbca347`) captured 4-op coordinated candidates with predicted gains of
 /// 5.06e-7 and 5.21e-7 — both **just barely** clearing the previous 5e-7
 /// floor — that produced actual error changes of -3.29e-3 and -8.28e-4
@@ -1288,14 +1288,14 @@ pub fn cmp_f64_desc(a: &f64, b: &f64) -> std::cmp::Ordering {
 // that survived filtering were still poorly calibrated, while potentially viable
 // candidates were filtered out entirely.
 //
-// GRQ-sampler cache evidence (creature 0e18e62c: 6/389 successes, creature
+// Production discovery-cache evidence (creature 0e18e62c: 6/389 successes, creature
 // 066649c7: 0/519):
 // - Successful coordinated-structural candidates are predominantly 2-op
 // - 3+ op candidates have near-zero success rates in production
 // - Predictions overestimate by ~10,000× (handled by calibration factor)
 //
 // The new model uses a single empirical discount per operation count, derived
-// from GRQ-sampler success rates. The calibration factor
+// from production discovery-cache success rates. The calibration factor
 // (`COORDINATED_PREDICTION_CALIBRATION`) remains separate to bridge the
 // prediction-to-reality magnitude gap.
 //
@@ -1308,7 +1308,7 @@ pub fn cmp_f64_desc(a: &f64, b: &f64) -> std::cmp::Ordering {
 
 /// Empirical discount for 2-operation coordinated candidates (Issue #1058).
 ///
-/// GRQ-sampler data shows 2-op candidates account for the majority of successful
+/// Production discovery-cache data shows 2-op candidates account for the majority of successful
 /// coordinated-structural candidates (creature 0e18e62c). The 0.5 factor replaces
 /// the old compound of `0.65^1 × 0.15 = 0.0975`, allowing ~5× more candidates
 /// through while relying on the calibration factor for magnitude correction.
@@ -1320,7 +1320,7 @@ pub const COORDINATED_EMPIRICAL_DISCOUNT_2OPS: f32 = 0.5;
 /// Empirical discount for 3-operation coordinated candidates (Issue #1058).
 ///
 /// 3-op candidates have substantially lower success rates than 2-op in the
-/// GRQ-sampler cache. The 0.2 factor replaces the old compound of
+/// production discovery cache. The 0.2 factor replaces the old compound of
 /// `0.65^2 × 0.15 = 0.0634`, still allowing ~3× more candidates through.
 ///
 /// ## Valid Range
@@ -1329,7 +1329,7 @@ pub const COORDINATED_EMPIRICAL_DISCOUNT_3OPS: f32 = 0.2;
 
 /// Empirical discount for 4+ operation coordinated candidates (Issue #1058).
 ///
-/// 4+ op candidates have near-zero success rates in GRQ-sampler production data.
+/// 4+ op candidates have near-zero success rates in production data.
 /// The 0.1 factor replaces the old compound of `0.65^3 × 0.15 = 0.0411`, still
 /// allowing ~2.4× more candidates through but remaining heavily discounted.
 ///
@@ -1365,7 +1365,7 @@ pub const MIN_COORDINATED_MULTI_OP_GAIN: f32 = 1e-5;
 ///
 /// Replaces the old three-layer compound discount (per-op exponential × flat
 /// pessimism discount) with a single lookup by operation count, derived from
-/// GRQ-sampler success rates.
+/// production discovery-cache success rates.
 ///
 /// - 1 op: no discount (1.0)
 /// - 2 ops: moderate discount (0.5)
@@ -1410,7 +1410,7 @@ pub const COORDINATED_PESSIMISM_DISCOUNT: f32 = 0.15;
 
 /// Scoring boost multiplier for Micro-Nudge variant candidates (Issue #888).
 ///
-/// GRQ-sampler cache evidence shows the Micro-Nudge pattern (incoming=2,
+/// Production discovery-cache evidence shows the Micro-Nudge pattern (incoming=2,
 /// outgoing=0.001–0.005) dominates successes at ~90% of successful samples.
 /// This boost is applied to Micro-Nudge variant candidates to prioritise
 /// them in the ranking.
@@ -1421,7 +1421,7 @@ pub const MICRO_NUDGE_VARIANT_BOOST: f32 = 1.5;
 
 /// Scoring boost multiplier for `remove-low-impact` candidates (Issue #892).
 ///
-/// GRQ-sampler discovery cache shows `remove-low-impact` has the highest success
+/// The production discovery cache shows `remove-low-impact` has the highest success
 /// rate at 21.5% (440/2,043) — roughly double the overall 10.7% rate. This boost
 /// is applied to the `removal_savings` score to ensure removal candidates are
 /// ranked higher relative to other candidate types.
@@ -1443,7 +1443,7 @@ pub const REMOVAL_CANDIDATE_BOOST: f32 = 1.5;
 /// Minimum net improvement required for a `remove-low-impact` candidate to
 /// survive (Issue #1142).
 ///
-/// GRQ-sampler commit `744ac60d` (failure cache entry
+/// Production discovery-cache analysis (failure cache entry
 /// `v2_remove-low-impact_0ce92a87-a048-49d0-9b53-43487d123817.json`) captured a
 /// removal candidate with:
 /// - `boosted_savings = 1.20e-7`
@@ -1490,12 +1490,12 @@ pub fn remove_low_impact_noise_floor() -> f32 {
 // Prediction Calibration Scaling (Issue #891)
 // =============================================================================
 
-// GRQ-sampler discovery cache reveals that `expectedCreatureScoreGain` overestimates
+// The production discovery cache reveals that `expectedCreatureScoreGain` overestimates
 // actual outcomes by 100–10,000×. The magnitude of overestimation varies by candidate
 // type, making cross-type comparisons unreliable. These per-type calibration factors
 // are applied post-pessimism-discount to correct the systematic magnitude gap.
 //
-// Cache Evidence (GRQ-sampler):
+// Cache Evidence (production discovery cache):
 //
 // | Candidate Type | Predicted Gain    | Actual Gain       | Overestimation |
 // |----------------|-------------------|-------------------|----------------|
@@ -1509,7 +1509,7 @@ pub fn remove_low_impact_noise_floor() -> f32 {
 
 /// Prediction calibration factor for synapse candidates (Issue #891, #1056).
 ///
-/// GRQ-sampler discovery cache (30+ creatures) shows add-synapses has a ~0.1%
+/// The production discovery cache (30+ creatures) shows add-synapses has a ~0.1%
 /// actual success rate (3/1001), with massive overestimation of predicted gains.
 /// Updated from 0.001 to 0.0003 to match production reality.
 ///
@@ -1524,7 +1524,7 @@ pub const SYNAPSE_PREDICTION_CALIBRATION: f32 = 0.0003;
 
 /// Prediction calibration factor for neuron candidates (Issue #891, #1056).
 ///
-/// GRQ-sampler discovery cache shows add-neurons has a ~2.7% actual success
+/// The production discovery cache shows add-neurons has a ~2.7% actual success
 /// rate (28/1028), with the predicted improved ratio (~50%) overestimating
 /// actual success by ~18×. Updated from 0.01 to 0.003 to account for this
 /// gap after measuring against production outcomes across 30+ creatures.
@@ -1538,7 +1538,7 @@ pub const NEURON_PREDICTION_CALIBRATION: f32 = 0.003;
 
 /// Prediction calibration factor for coordinated-structural candidates (Issue #891, #1056).
 ///
-/// GRQ-sampler discovery cache shows coordinated-structural has a ~1.1% actual
+/// The production discovery cache shows coordinated-structural has a ~1.1% actual
 /// success rate (6/525), with predictions overestimating by orders of magnitude.
 /// Updated from 0.0001 to 0.00005 to match production reality.
 ///
@@ -1564,7 +1564,7 @@ pub const COORDINATED_PREDICTION_CALIBRATION: f32 = 0.00005;
 //
 //   effective = base_factor × (floor + (1 - floor) × sigmoid(steepness × (ratio - midpoint)))
 //
-// GRQ-sampler empirical evidence (30+ creatures):
+// Production discovery-cache empirical evidence (30+ creatures):
 //
 // | Improved Ratio | Approximate Actual Success | Logistic Modulator |
 // |----------------|---------------------------|--------------------|
@@ -1589,7 +1589,7 @@ pub const LOGISTIC_CALIBRATION_FLOOR: f32 = 0.1;
 ///
 /// Controls how sharply the modulator transitions from floor to 1.0 around
 /// the midpoint. Higher values produce a sharper transition. Derived from
-/// fitting against GRQ-sampler success rates: a steepness of 8.0 gives
+/// fitting against production discovery-cache success rates: a steepness of 8.0 gives
 /// the best fit to the observed ratio → success relationship.
 ///
 /// ## Valid Range
@@ -1600,7 +1600,7 @@ pub const LOGISTIC_CALIBRATION_STEEPNESS: f32 = 8.0;
 /// Midpoint of the logistic calibration curve (Issue #1056).
 ///
 /// The improved ratio at which the modulator is at 50% between floor and 1.0.
-/// Set to 0.6 because GRQ-sampler data shows improved ratios below 60% are
+/// Set to 0.6 because production discovery-cache data shows improved ratios below 60% are
 /// substantially overestimated (add-neurons has ~50% predicted vs ~2.7% actual),
 /// while ratios above 70% are relatively more reliable.
 ///

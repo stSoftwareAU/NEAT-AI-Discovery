@@ -211,7 +211,7 @@ fn apply_impact_to_helpful(
     // directly to creature-level score gains (18,500× over-estimation in production).
     // Synapse candidates use the most aggressive discounting because the multi-weight
     // search (9 variants) creates selection bias that overfits to sample data,
-    // contributing to the 0% success rate observed in GRQ-sampler cache data.
+    // contributing to the 0% success rate observed in production discovery-cache data.
     candidate.expected_creature_score_gain = apply_synapse_pessimism_discount(
         candidate.expected_creature_score_gain,
         candidate.improved_count,
@@ -236,7 +236,7 @@ fn apply_impact_to_helpful(
     // Issue #1056: Apply logistic prediction calibration to correct massive overestimation.
     // The non-linear (logistic) calibration uses the improved ratio to modulate the
     // base calibration factor, providing better correction than a flat multiplier.
-    // GRQ-sampler data shows add-synapses has ~0.1% actual success rate (3/1001).
+    // Production discovery-cache data shows add-synapses has ~0.1% actual success rate (3/1001).
     //
     // Issue #1131: Multiplied by the per-creature calibration correction derived
     // from the failure cache, so creatures drifting from the global baseline

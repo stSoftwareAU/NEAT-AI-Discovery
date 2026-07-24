@@ -10,7 +10,7 @@
 //!    time, so a previously-failed candidate may become viable after structural changes.
 //! 3. **Track per-source-type success rates** — input neurons as synapse sources
 //!    have historically higher success rates (36.2% vs ~3% for hidden neurons in
-//!    GRQ-sampler data). This enables source-type-aware boosting.
+//!    production discovery-cache data). This enables source-type-aware boosting.
 //!
 //! # Key Design Decisions
 //!

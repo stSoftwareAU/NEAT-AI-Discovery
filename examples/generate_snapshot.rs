@@ -3,11 +3,15 @@
 //! Usage:
 //!   cargo run --example `generate_snapshot` -- <`parquet_file`> <`creature_json`> <`output_json`> [`max_obs`]
 //!
+//! The inputs are a discovery-data parquet written by a discovery run (found
+//! under the creature's `.discovery/<session-id>/` directory) and the creature
+//! JSON that run analysed.
+//!
 //! Example:
 //!   cargo run --release --example `generate_snapshot` -- \
-//!     ~/src/GRQ/.discovery/ddc0ce7a-654b-5e40-9d9d-bf34e5b6b0eb/discovery_data.parquet \
-//!     ~/src/GRQ-sampler/samples/GRQ-19-1.json \
-//!     ~/Develop/NEAT-AI-Explore/snapshot.json \
+//!     `.discovery/<session-id>/discovery_data.parquet` \
+//!     creature.json \
+//!     snapshot.json \
 //!     1000
 
 use neat_ai_discovery::CreatureJson;
@@ -26,9 +30,9 @@ fn main() {
         eprintln!();
         eprintln!("Example:");
         eprintln!("  cargo run --release --example generate_snapshot -- \\");
-        eprintln!("    ~/src/GRQ/.discovery/.../discovery_data.parquet \\");
-        eprintln!("    ~/src/GRQ-sampler/samples/GRQ-19-1.json \\");
-        eprintln!("    ~/Develop/NEAT-AI-Explore/snapshot.json \\");
+        eprintln!("    .discovery/<session-id>/discovery_data.parquet \\");
+        eprintln!("    creature.json \\");
+        eprintln!("    snapshot.json \\");
         eprintln!("    1000");
         std::process::exit(1);
     }

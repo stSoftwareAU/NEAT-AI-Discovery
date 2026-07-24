@@ -414,7 +414,7 @@ pub fn estimate_parquet_in_memory_bytes(parquet_file: &str) -> u64 {
 /// bytes (lazy) rather than underflowing.
 ///
 /// This is a pure function so the eager-vs-lazy decision can be unit-tested
-/// against fixed memory figures (e.g. the GRQ-13 numbers: ~1.6 GB projection
+/// against fixed memory figures (e.g. the observed production numbers: ~1.6 GB projection
 /// with ~3 GB available → fits → pre-load) without sampling live system
 /// memory.
 #[must_use]

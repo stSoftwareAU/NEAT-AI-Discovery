@@ -8,7 +8,7 @@
 //! and recommends the one that best reduces error.
 //!
 //! This increases change-squash candidate volume for the high-success-rate
-//! change-squash candidate type (65% success rate in GRQ-sampler analysis).
+//! change-squash candidate type (65% success rate in production discovery-cache analysis).
 //!
 //! ## Detection Criteria
 //!
