@@ -103,10 +103,10 @@ flowchart TD
 |------|------|---------|----------|
 | 1 — Error-walk attribution | `src/focus/impact.rs`, `src/focus/gradient.rs` (`SquashCategory::Selection` for MIN/MAX/IF) | **Suspect.** Selection squashes are treated conservatively (impact not normalised), but attribution through the *selection* semantics is not proven correct here; flagged for characterisation alongside path 3. | Aggregate errors depend on which branch won — see NEAT-AI#3389 (aggregates recording their own value/errors), which feeds this path. |
 | 2 — Win-fraction stats | `src/focus/impact.rs::compute_selection_stats` (+ `compute_min_stats`/`compute_max_stats`/`compute_if_stats`) | **Sound.** For IF: condition synapses count as always-contributing (p=1.0); positive branch = fraction where condition sum `> 0`; negative = fraction where `≤ 0`. | NEAT-AI-Explore#513 verified engine + Discovery win-fraction attribution correct (the bug there was viewer-only). Treated as the canary — a future failure is a true regression. |
-| 3 — Candidate scoring | `src/analysis/detection/squash_weight_rescale.rs::detect_squash_weight_rescale_candidates` | **Broken through aggregates.** The estimator **skips aggregate squashes** (`if is_aggregate_squash(current_squash) { continue; }`) and simulates each candidate neuron **in isolation as `f(x)`**, comparing MAE on that neuron's own records. It never models how the neuron's output is *selected* by a downstream MAX/MIN/IF, so a change that flips a branch's activation sign/range — changing which branch the aggregate picks — is invisible to the estimate. | `candidate_cache/v2_change-squash_selu-to-absolute.json`: SELU→ABSOLUTE predicted **+4.2e-10**, measured **−8.7e-4** (sign-flipped: SELU can be negative, ABSOLUTE is always `≥ 0`). `d1ac1f41.json`: 1 success / 5 failures, every failure over-predicts the gain. |
+| 3 — Candidate scoring | `src/analysis/detection/squash_weight_rescale.rs::detect_squash_weight_rescale_candidates` | **Broken through aggregates.** The estimator **skips aggregate squashes** (`if is_aggregate_squash(current_squash) { continue; }`) and simulates each candidate neuron **in isolation as `f(x)`**, comparing MAE on that neuron's own records. It never models how the neuron's output is *selected* by a downstream MAX/MIN/IF, so a change that flips a branch's activation sign/range — changing which branch the aggregate picks — is invisible to the estimate. | `candidate_cache/v2_change-squash_selu-to-absolute.json`: SELU→ABSOLUTE predicted **+3.0e-10**, measured **−6.0e-4** (sign-flipped: SELU can be negative, ABSOLUTE is always `≥ 0`). `d1ac1f41.json`: 1 success / 5 failures, every failure over-predicts the gain. |
 
 **Finding.** Path 2 holds; the divergence lives in paths 1 and 3. The concrete
-misprediction (`+4.2e-10` predicted vs `−8.7e-4` actual) is explained by a
+misprediction (`+3.0e-10` predicted vs `−6.0e-4` actual) is explained by a
 **local-simulation** expected-gain that does not propagate the candidate's
 changed activation range through the downstream aggregate's selection. → **Gap G3**.
 
@@ -114,7 +114,7 @@ changed activation range through the downstream aggregate's selection. → **Gap
 
 | Fixture record | changeType | expectedErrorReduction | actualErrorReduction | Divergence |
 |----------------|-----------|------------------------|----------------------|-----------|
-| `v2_change-squash_selu-to-absolute` | change-squash | `+4.2e-10` | `−8.7e-4` | sign flip; predicted ≈0 gain, real loss |
+| `v2_change-squash_selu-to-absolute` | change-squash | `+3.0e-10` | `−6.0e-4` | sign flip; predicted ≈0 gain, real loss |
 | `d1ac1f41` failure-0 | change-squash | `+3.1e-10` | `−4.0e-4` | sign flip |
 | `d1ac1f41` failure-1..4 | remove-neuron | `+0.15 … +0.09` | `−2.0e-4 … −1.0e-4` | large over-prediction |
 | `d1ac1f41` success-0 | remove-neuron | `+2.0e-4` | `+3.0e-4` | agree (the lone success) |
@@ -199,7 +199,7 @@ consistent with the #1623 pattern.
 |-----|-----------|---------|
 | **G1** | #1711 (**closed**) | Analytical dominated-branch collapse detector + transform for MAX/MIN aggregates. **Delivered** in `src/analysis/dominated_branch_collapse.rs`: a sound sign-based dominance proof (`weight × squash(range)`) plus a collapse transform that removes the dominated branch and folds the single-survivor aggregate to a pass-through, behind the #1623-style evaluate-before-accept gate. |
 | **G2** | #1712 | Partially-dominated shapes: IF conditional dominance (F1), multi-branch aggregates, small-but-non-zero win fraction (F2). |
-| **G3** | #1713 (**closed**) | Contribution-propagation break: expected-error-reduction estimator ignores downstream aggregate selection (change-squash skips aggregates; SELU→ABSOLUTE `+4.2e-10` vs `−8.7e-4`). **Delivered** in `src/analysis/detection/squash_weight_rescale.rs`: `detect_squash_weight_rescale_candidates` now gates out any candidate whose branch feeds a downstream aggregate selection (`feeds_downstream_aggregate`), so no misleading local `f(x)` estimate is emitted until a proper propagation model exists. |
+| **G3** | #1713 (**closed**) | Contribution-propagation break: expected-error-reduction estimator ignores downstream aggregate selection (change-squash skips aggregates; SELU→ABSOLUTE `+3.0e-10` vs `−6.0e-4`). **Delivered** in `src/analysis/detection/squash_weight_rescale.rs`: `detect_squash_weight_rescale_candidates` now gates out any candidate whose branch feeds a downstream aggregate selection (`feeds_downstream_aggregate`), so no misleading local `f(x)` estimate is emitted until a proper propagation model exists. |
 
 ### Cross-repo dependencies noted during characterisation
 

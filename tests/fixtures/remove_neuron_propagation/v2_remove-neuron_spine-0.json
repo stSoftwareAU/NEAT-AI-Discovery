@@ -1,0 +1,17 @@
+{
+  "_comment": "Synthetic remove-neuron candidate record (Issue #1722). Hand-authored, self-contained replacement for the recorded failure previously captured from a private repository. `expectedCreatureScoreGain` is what the retired topology-blind placeholder `0.1 + (log10(errorMagnitude) - 10)/10 * 0.4` emits for `errorMagnitude = 1e12`, so the known-bad value is reproducible from the public formula alone. `analyticErrorReduction` is the closed-form propagated effect of removing `spine-0` on the committed synthetic topology: the neuron sits 13 halving hops from the output, so its influence is exactly 0.5^13 = 1.220703125e-4 and the honest gain is its negation. Nothing here is measured from, or derived from, a private repository.",
+  "wireSchemaVersion": 2,
+  "key": "v2_remove-neuron_spine-0",
+  "changeType": "remove-neuron",
+  "description": "💀 Removed harmful neuron spine-0 (error: 1.00e+12)",
+  "timestamp": "2026-07-24T00:00:00.000000000Z",
+  "rustRequest": {
+    "harmfulNeuronCandidate": {
+      "neuronUuid": "spine-0",
+      "errorMagnitude": 1e12,
+      "expectedCreatureScoreGain": 0.18
+    }
+  },
+  "expectedErrorReduction": 0.18,
+  "analyticErrorReduction": -0.0001220703125
+}
