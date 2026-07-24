@@ -4,9 +4,9 @@
 //! Foundation task for the #1704 characterisation effort. The
 //! collapse-characterisation and contribution-propagation suites (#1706–#1708)
 //! consume the fixtures committed under
-//! `tests/fixtures/dominated_branch_collapse/`. Because their ground truth is
-//! the **private** GRQ-Discovery candidate cache, the fixtures are committed to
-//! this repository and loaded from disk — never fetched at runtime.
+//! `tests/fixtures/dominated_branch_collapse/`. Every fixture is hand-authored
+//! and synthetic (Issue #1722), committed to this repository and loaded from
+//! disk — never fetched at runtime.
 //!
 //! This smoke test is the earliest detection point: it deserialises every
 //! synthetic network and every candidate-cache-shaped record without network
@@ -113,8 +113,8 @@ fn networks_load_offline() {
     );
 }
 
-/// The inspected SELU→ABSOLUTE `change-squash` record loads offline and pins the
-/// placeholder-vs-measured values the contribution suite grades against.
+/// The SELU→ABSOLUTE `change-squash` record loads offline and pins the
+/// placeholder-vs-outcome values the contribution suite grades against.
 #[test]
 fn change_squash_record_loads_offline() {
     let path = fixture_root()
@@ -140,18 +140,18 @@ fn change_squash_record_loads_offline() {
         .as_f64()
         .expect("actualErrorReduction must be numeric");
     assert!(
-        (expected - 4.2e-10).abs() < 1e-18,
-        "expectedErrorReduction {expected:e} drifted from +4.2e-10"
+        (expected - 3.0e-10).abs() < 1e-18,
+        "expectedErrorReduction {expected:e} drifted from +3.0e-10"
     );
     assert!(
-        (actual - (-8.7e-4)).abs() < 1e-12,
-        "actualErrorReduction {actual:e} drifted from -8.7e-4"
+        (actual - (-6.0e-4)).abs() < 1e-12,
+        "actualErrorReduction {actual:e} drifted from -6.0e-4"
     );
-    // The predicted gain is tiny and positive; the measured effect is a much
+    // The predicted gain is tiny and positive; the recorded outcome is a much
     // larger negative — the collapse the contribution suite must reproduce.
     assert!(
         expected > 0.0 && actual < 0.0,
-        "record must show positive prediction, negative measurement"
+        "record must show positive prediction, negative outcome"
     );
 }
 

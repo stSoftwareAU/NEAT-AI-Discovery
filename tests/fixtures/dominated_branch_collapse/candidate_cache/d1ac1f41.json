@@ -1,6 +1,6 @@
 {
   "shapeId": "d1ac1f41",
-  "_comment": "Candidate-cache 'd1ac1f41' shape for Issue #1705: 1 success (remove-neuron) versus 5 failures (1 change-squash, 4 remove-neuron). Mirrors the real GRQ-Discovery cache directory shape so the contribution-propagation suite can assert the success/failure split and the change-squash/remove-neuron mix. Values are synthetic but structurally faithful to committed cache records.",
+  "_comment": "Candidate-cache 'd1ac1f41' shape for Issue #1705: 1 success (remove-neuron) versus 5 failures (1 change-squash, 4 remove-neuron). Mirrors a discovery cache directory's shape so the contribution-propagation suite can assert the success/failure split and the change-squash/remove-neuron mix. Hand-authored and self-contained: the values are synthetic but structurally faithful to a cache record (Issue #1722).",
   "successes": [
     {
       "wireSchemaVersion": 2,

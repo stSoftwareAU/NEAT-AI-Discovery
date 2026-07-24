@@ -4,9 +4,9 @@
 //! These are **characterisation** tests, not an implementation. They pin the
 //! *current* engine behaviour for how a candidate's predicted contribution is
 //! propagated through the three selection aggregates, over the committed
-//! GRQ-Discovery fixtures under `tests/fixtures/dominated_branch_collapse/`
-//! (Issue #1705, offline — never fetched at runtime). They cover the three
-//! propagation paths the parent investigation names:
+//! hand-authored fixtures under `tests/fixtures/dominated_branch_collapse/`
+//! (Issue #1705, re-based by Issue #1722; offline — never fetched at runtime).
+//! They cover the three propagation paths the parent investigation names:
 //!
 //! 1. **Error-walk attribution** — how impact/error is attributed back through a
 //!    MAX / MIN / IF node to its branches (incl. the IF condition synapse).
@@ -23,11 +23,11 @@
 //!    *correct* behaviour and acts as a canary: any future failure there is a
 //!    true regression, not a characterised defect.
 //!
-//! 3. **Candidate scoring** — predicted `expectedErrorReduction` versus measured
+//! 3. **Candidate scoring** — predicted `expectedErrorReduction` versus recorded
 //!    `actualErrorReduction`, driven straight from the committed candidate-cache
-//!    fixtures. Characterises the concrete `change-squash` SELU→ABSOLUTE
-//!    misprediction (predicted **+4.2e-10**, measured **−8.7e-4**) and the
-//!    `d1ac1f41` 1-success / 5-failure aggregate divergence rate.
+//!    fixtures. Characterises the `change-squash` SELU→ABSOLUTE misprediction
+//!    (predicted **+3.0e-10**, outcome **−6.0e-4**) and the `d1ac1f41`
+//!    1-success / 5-failure aggregate divergence rate.
 //!
 //! Fixture drift is caught at load: the loaders panic on a missing or malformed
 //! file with an explicit fixture-path error, so renaming or deleting a committed
@@ -395,27 +395,27 @@ fn expected_vs_actual_error_reduction_divergence() {
         serde_json::from_str(&raw).expect("change-squash fixture parses as a failure-cache entry");
 
     assert_eq!(entry.change_type, "change-squash");
-    // Predicted +4.2e-10 (essentially "no change"), measured −8.7e-4 (real harm).
+    // Predicted +3.0e-10 (essentially "no change"), outcome −6.0e-4 (real harm).
     let expected = f64::from(entry.expected_error_reduction);
     let actual = f64::from(entry.actual_error_reduction);
     assert!(
-        (expected / 4.2e-10 - 1.0).abs() < 1e-3,
-        "predicted expectedErrorReduction must be ~+4.2e-10, got {expected:e}"
+        (expected / 3.0e-10 - 1.0).abs() < 1e-3,
+        "predicted expectedErrorReduction must be ~+3.0e-10, got {expected:e}"
     );
     assert!(
-        (actual / -8.7e-4 - 1.0).abs() < 1e-3,
-        "measured actualErrorReduction must be ~−8.7e-4, got {actual:e}"
+        (actual / -6.0e-4 - 1.0).abs() < 1e-3,
+        "recorded actualErrorReduction must be ~−6.0e-4, got {actual:e}"
     );
 
     // The misprediction is qualitative (sign flip) AND quantitative: the
-    // measured harm is > 1e5× the predicted-negligible magnitude.
+    // recorded harm is > 1e5× the predicted-negligible magnitude.
     assert!(
         is_sign_flip_misprediction(&entry),
-        "change-squash: predicted improvement but measured harm (sign flip)"
+        "change-squash: predicted improvement but recorded harm (sign flip)"
     );
     assert!(
         actual.abs() / expected.abs() > 1e5,
-        "change-squash: measured/predicted magnitude gap must exceed 1e5, got {:e}",
+        "change-squash: recorded/predicted magnitude gap must exceed 1e5, got {:e}",
         actual.abs() / expected.abs()
     );
 
