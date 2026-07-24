@@ -3,7 +3,7 @@ set -euo pipefail
 
 # bump-deps.sh — refresh dependencies on every PR (Issue #1156).
 #
-# Policy (per stSoftwareAU/VibeCoding#1614):
+# Supply-chain quarantine policy:
 #   * Internal deps under stSoftwareAU/* (e.g. NEAT-AI itself) advance to the
 #     current release / Develop HEAD immediately, with no quarantine window.
 #   * External deps (crates.io, GitHub Actions, etc.) bump to the latest
