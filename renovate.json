@@ -5,7 +5,7 @@
   ],
   "description": [
     "Issue #1234 (supply-chain:quarantine-misconfigured).",
-    "External crates.io dependencies are held for at least 24h after publish to dodge fast-flagged supply-chain attacks (the Vibe Coder worker policy in stSoftwareAU/VibeCoding#1614).",
+    "External crates.io dependencies are held for at least 24h after publish to dodge fast-flagged supply-chain attacks; internal first-party (stSoftwareAU/*) deps are exempt.",
     "Internal stSoftwareAU/* git deps bypass the wait — they are first-party releases. This repository currently has no internal git deps in Cargo.toml; the rule is kept so future internal deps inherit the bypass automatically.",
     "Renovate is the defence-in-depth layer; bump-deps.sh also enforces the same window when it runs locally or on the per-PR dependency-bump path (the weekly upgrade-dependencies.yml cron was removed in Issue #1282).",
     "Issue #1484: the markdownlint-cli2 npm tool is pinned inline in .github/workflows/markdown-lint.yml (no package.json manifest exists). A customManagers regex entry tracks that pin so Renovate keeps it current, and the npm packageRule below holds bumps for the same 24h quarantine window as every other external dependency."
