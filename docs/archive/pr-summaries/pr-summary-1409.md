@@ -1,7 +1,7 @@
 ## Summary
 
 Surfaces synapse/neuron **starvation** and a consolidated **per-cycle
-deadline-consumption breakdown** so the GRQ-23 logs can attribute *where* the
+deadline-consumption breakdown** so the production logs can attribute *where* the
 analysis deadline went and show *that* synapse/neuron analysis was curtailed.
 This is **observability only** — no analysis math changed. Closes #1409.
 
@@ -15,7 +15,7 @@ consolidates them.
 
 - **New `analysis::deadline_breakdown` module** — a small, pure
   `DeadlineConsumptionBreakdown` (+ `PhaseCompletion`) that:
-  - renders one greppable summary line (stable `GRQ-23` marker) attributing ms
+  - renders one greppable summary line (a stable deadline-consumption marker) attributing ms
     to parquet reload, synapse analysis, neuron analysis, and total analysis,
     plus `completed/total` focus-neuron ratios per phase;
   - emits an explicit `STARVED` `warn!` with skipped/total counts when a phase
@@ -24,16 +24,16 @@ consolidates them.
   wall-clock durations; `analyze_all` captures the parquet-reload and total
   durations and emits the breakdown once per invocation, just before returning.
 - **FFI metadata** — added a `starved` boolean to both
-  `synapseMetadata` and `neuronMetadata` so the TypeScript / GRQ layer can
+  `synapseMetadata` and `neuronMetadata` so the production TypeScript layer can
   detect starvation programmatically without recomputing
   `timedOut && completedFocusNeurons < totalFocusNeurons`. The completion
   ratios themselves were already present.
-- **README** — added a troubleshooting row pointing at the `GRQ-23` /
+- **README** — added a troubleshooting row pointing at the production deadline /
   `STARVED` log markers and the `starved` flag.
 
 The focus phase (parquet load + focus ranking) runs in the separate
 `rank_focus_neurons` FFI call; its mode + elapsed are surfaced there
-(Issue #1377) and combined by the GRQ layer. Per-phase ms for disabled phases
+(Issue #1377) and combined by the production layer. Per-phase ms for disabled phases
 render as `n/a` rather than fabricated zeroes.
 
 ### Out of scope
@@ -58,7 +58,7 @@ flowchart TD
     D --> F[build DeadlineConsumptionBreakdown]
     E --> F
     B --> F
-    F --> G["info: GRQ-23 deadline consumption (ms): ..."]
+    F --> G["info: deadline consumption (ms): ..."]
     F --> H{timed_out && completed &lt; total?}
     H -- yes --> I["warn: STARVED — skipped M/N targets"]
     H -- no --> J[no warning]

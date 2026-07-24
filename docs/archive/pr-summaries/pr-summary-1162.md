@@ -5,7 +5,7 @@ per `(change_type, target_squash)` in addition to the existing per
 `change_type` layer. When the failure-cache JSON includes
 `targetNeuronInfo.squash`, the pipeline now learns activation-specific
 corrections — e.g. `add-neurons` against `SELU` targets gets a much smaller
-multiplier than the generic `add-neurons` group, matching the GRQ-sampler
+multiplier than the generic `add-neurons` group, matching the production discovery-cache
 evidence where every recent failure clustered on a single SELU target.
 
 Closes #1162.

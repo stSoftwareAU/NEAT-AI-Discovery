@@ -2,7 +2,7 @@
 
 Add a minimum expected-gain floor (`COORDINATED_MIN_EXPECTED_GAIN = 1e-5`) for coordinated structural candidates to filter out noise-level proposals. Closes #1110.
 
-Production failure data from GRQ-sampler (commit 50a2909) shows coordinated structural candidates with `expectedCreatureScoreGain` of ~8e-8 and ~4e-8 that produced actual error changes of -0.0008 and -0.0004 respectively -- harming the network. Expected gains at 1e-8 to 1e-7 are indistinguishable from numerical noise and should never be proposed.
+Production failure data from the production discovery cache (commit 50a2909) shows coordinated structural candidates with `expectedCreatureScoreGain` of ~8e-8 and ~4e-8 that produced actual error changes of -0.0008 and -0.0004 respectively -- harming the network. Expected gains at 1e-8 to 1e-7 are indistinguishable from numerical noise and should never be proposed.
 
 ## Changes
 

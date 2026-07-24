@@ -3,7 +3,7 @@
 Apply conservative weight variants to coordinated-structural candidates, matching the
 strategy already proven successful for add-neuron and synapse candidates. Closes #510.
 
-Production evidence (creature b2ff6e45, GRQ-sampler commit a1340f8d) showed that all 10
+Production evidence (creature b2ff6e45, production discovery-cache commit a1340f8d) showed that all 10
 coordinated-structural candidates used a fixed weight of 0.1 for AddSynapse operations
 and all failed. Meanwhile, conservative add-neuron variants with ~0.008 outgoing weight
 succeeded. This change generates three additional weight variants for each coordinated-

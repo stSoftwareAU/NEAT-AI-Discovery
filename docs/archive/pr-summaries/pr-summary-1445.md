@@ -3,7 +3,7 @@
 ## Summary
 
 On a plateaued mature network the focus-selection roulette collapses to a
-**single neuron**. On the production GRQ-3 creature one neuron held **~98.5%**
+**single neuron**. On the production creature one neuron held **~98.5%**
 of the weight, so although focus selection nominally picks 6 neurons, five of
 them were lottery noise and discovery revisited the same dominant neuron almost
 every pass. Impact-weighted ranking (#1382) only *orders* neurons — it does not

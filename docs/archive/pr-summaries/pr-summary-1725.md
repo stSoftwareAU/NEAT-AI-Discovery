@@ -4,7 +4,8 @@
 
 Test doc comments, helper/test-function names, and one test **file** name across
 `tests/` (outside `tests/fixtures/`) cited private `stSoftwareAU` deployments —
-`GRQ-sampler` commits, `GRQ-3-rocket.log`, `GRQ-18-1`, `GRQ-13`, `GRQ-10` — as
+production sampler-cache commits, production corruption-log names, and several
+numbered production deployments — as
 their motivating evidence. `cargo test` prints those file and test names on every
 run, so each mention pointed public contributors at private evidence they cannot
 see or reproduce. This is check 3 of the private-repo reference audit (textual
@@ -18,27 +19,29 @@ No test behaviour changed — only comments, identifiers, and a file name.
 
 ### What changed
 
-- **Comments reworded to concept level** across 24 test files (e.g.
-  `GRQ-sampler discovery cache shows` → `Production discovery-cache analysis
-  shows`; `GRQ-18-1` → `a large production creature`; `GRQ-13 regression` →
-  `mid-sized-projection regression`). Internal issue numbers are preserved for
-  maintainer traceability.
-- **Renamed** `tests/ffi/issue_1188_grq3_strip_pattern_rejection.rs` →
-  `tests/ffi/issue_1188_strip_pattern_rejection.rs` (behaviour-describing name),
-  updated the `tests/ffi/main.rs` harness `mod` reference, and renamed the
-  `*_rejects_grq3_*` test functions to `*_rejects_*`.
+- **Comments reworded to concept level** across 24 test files (e.g. a private
+  sampler-cache mention became `Production discovery-cache analysis shows`; a
+  numbered production deployment became `a large production creature`; a
+  low-memory production regression became `mid-sized-projection regression`).
+  Internal issue numbers are preserved for maintainer traceability.
+- **Renamed** the FFI strip-pattern test file that carried a private-deployment
+  name to `tests/ffi/issue_1188_strip_pattern_rejection.rs` (behaviour-describing
+  name), updated the `tests/ffi/main.rs` harness `mod` reference, and renamed the
+  private-named strip-pattern test functions to behaviour-describing `*_rejects_*`
+  names.
 - **Renamed private-named identifiers** the case-sensitive #1724 gate missed:
-  `benches/cpu_pre_reject.rs::grq_shaped_batch` → `production_shaped_batch`, and
-  `src/analysis/utils/memory_tests.rs::test_preload_fits_grq13_numbers` →
+  the private-named CPU-pre-reject bench input in `benches/cpu_pre_reject.rs`
+  became `production_shaped_batch`, and the private-named preload memory test in
+  `src/analysis/utils/memory_tests.rs` became
   `test_preload_fits_mid_sized_projection_numbers`.
 - **Extended the regression gate** `tests/source_free_of_private_repo_names.rs`
   to also walk `tests/`, match **case-insensitively** (so lower-case Rust
   identifiers are caught too), and add a **file-name** guard so a private name
   baked into a file name — which `cargo test` prints — fails loudly.
 
-The `GRQ-23` source-side log marker mentioned in the issue lives in `src/`, is
+The production deadline-marker mentioned in the issue lives in `src/`, is
 covered by the companion source-comments finding, and was **not** present in any
-`tests/` file (verified by grep); no test in this repo asserts a literal `GRQ-23`
+`tests/` file (verified by grep); no test in this repo asserts that literal
 marker. `docs/archive/` PR summaries that still name the old file are the
 historical record and are cleaned separately under Issue #1726 (explicit scope
 note in the #1723 active-docs gate).
@@ -55,7 +58,7 @@ flowchart LR
     C --> D["cargo test output no longer<br/>prints private deployment names"]
 ```
 
-Gate run (fails before the reword — 48 comment lines + the `grq3` file name —
+Gate run (fails before the reword — 48 comment lines + the private-named file name —
 passes after):
 
 ```text
@@ -82,7 +85,7 @@ test result: ok. 18 passed; 0 failed; 0 ignored; 99 filtered out
     case-insensitively — reproduces the 48 offending comment lines against the
     unfixed tree and passes after the reword.
   - New `no_source_file_name_embeds_a_private_repository` fails against the old
-    `issue_1188_grq3_strip_pattern_rejection.rs` name and passes after the
+    private-named strip-pattern test file name and passes after the
     rename.
 - Ran `cargo test --test ffi issue_1188` — all 18 renamed strip-pattern tests
   pass, confirming the file rename and function renames did not change behaviour.

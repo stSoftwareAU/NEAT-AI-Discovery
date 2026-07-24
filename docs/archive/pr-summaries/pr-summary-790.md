@@ -2,7 +2,7 @@
 
 Reduce coordinated-structural false positives by applying three filtering improvements. Closes #790.
 
-GRQ-sampler analysis (Issue #787) shows coordinated-structural candidates have a 2.3% success rate (272 / 12,069) with near-negligible actual gains (~2.2e-14). Three changes reduce candidate volume without losing successful candidates:
+Production discovery-cache analysis (Issue #787) shows coordinated-structural candidates have a 2.3% success rate (272 / 12,069) with near-negligible actual gains (~2.2e-14). Three changes reduce candidate volume without losing successful candidates:
 
 1. **Reduced `COORDINATED_OPERATION_DISCOUNT`** from 0.8 to 0.65 — a 4-op candidate now receives 0.65^3 ≈ 0.274 discount (was 0.512), more aggressively filtering multi-operation candidates
 2. **Raised `MIN_COORDINATED_MULTI_OP_GAIN`** from 1e-5 to 1e-3 — filters out candidates with negligible predicted improvement that almost never succeed

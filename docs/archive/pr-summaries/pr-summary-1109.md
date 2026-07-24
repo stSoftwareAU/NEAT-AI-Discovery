@@ -1,8 +1,8 @@
 ## Summary
 
 Raised `NEURON_MIN_IMPROVED_RATIO` from `0.4` to `0.55` in
-`src/analysis/constants/detection_thresholds.rs`. GRQ-sampler production failure
-data (commit [50a2909](https://github.com/stSoftwareAU/GRQ-sampler/commit/50a2909eb04ab912804979d7e056e96350e1d8df))
+`src/analysis/constants/detection_thresholds.rs`. Production discovery-cache
+failure data (commit `50a2909`)
 showed neuron candidates with improved ratios of 52–54% (267–274 out of 510)
 consistently produced negative actual error reductions despite positive
 predictions. The previous `0.4` threshold let near-random candidates through,

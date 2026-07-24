@@ -1,9 +1,9 @@
 ## Summary
 
 Adds `bump-deps.sh` at the repo root, invoked by the Vibe Coder worker before
-`quality.sh` (per stSoftwareAU/VibeCoding#1613). The script refreshes
-dependencies on every PR, applies the internal/external policy from
-stSoftwareAU/VibeCoding#1614, and gates the result on `cargo deny check` plus
+`quality.sh` (per the Vibe Coder dependency-bump policy). The script refreshes
+dependencies on every PR, applies the internal/external classification policy,
+and gates the result on `cargo deny check` plus
 lockfile integrity. Closes #1156.
 
 Policy implemented:

@@ -3,7 +3,7 @@
 Replaced the single `COORDINATED_POST_DISCOUNT_NOISE_FLOOR` (5e-7) with an
 operation-count-aware lookup so higher-op coordinated-structural candidates
 are screened against a proportionally stricter floor — matching the
-per-op-count empirical-discount tiers from #1058. GRQ-sampler commit
+per-op-count empirical-discount tiers from #1058. production discovery-cache commit
 `e85c5d2` (creature `bcbca347`) captured two 4-op failures (5.06e-7,
 5.21e-7) that **just cleared** the legacy floor yet harmed the network by
 1000–6000× the predicted magnitude; the new 4+-op floor (5e-6) rejects

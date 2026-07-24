@@ -2,7 +2,7 @@
 
 Implements source-type prioritisation for synapse candidate generation (Issue #467).
 
-GRQ-sampler data shows input neurons as synapse sources have a **36.2% success rate** compared to only **2.8–3.3%** for hidden neurons. This PR adds two complementary mechanisms:
+Production discovery-cache data shows input neurons as synapse sources have a **36.2% success rate** compared to only **2.8–3.3%** for hidden neurons. This PR adds two complementary mechanisms:
 
 1. **Source evaluation ordering**: `order_eligible_sources()` now partitions input neurons before hidden neurons in all code paths (default shuffle, focus-unused-observations, and weighted-index-bias). Under deadline constraints, this ensures input-neuron sources are always evaluated first.
 

@@ -2,7 +2,7 @@
 
 Deduplicate coordinated-structural candidates that share a common dominant neuron. Closes #509.
 
-In GRQ-sampler commit `a1340f8d` (creature `b2ff6e45`), 10 out of 20 candidates (50% of the budget) were coordinated-structural pairs all sharing the same dominant neuron (`e8480883`). All 10 failed with nearly identical results. This change caps pairs per dominant neuron to 3, freeing candidate slots for alternative sources.
+In production discovery-cache commit `a1340f8d` (creature `b2ff6e45`), 10 out of 20 candidates (50% of the budget) were coordinated-structural pairs all sharing the same dominant neuron (`e8480883`). All 10 failed with nearly identical results. This change caps pairs per dominant neuron to 3, freeing candidate slots for alternative sources.
 
 ### Changes
 

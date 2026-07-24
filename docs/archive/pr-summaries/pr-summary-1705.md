@@ -5,7 +5,7 @@
 Commit the test fixtures the #1704 dominated-branch collapse and
 contribution-propagation characterisation suites (#1706–#1708) depend on.
 **Fixtures only — no engine behaviour changes.** Because the contribution ground
-truth is the **private** `stSoftwareAU/GRQ-Discovery` candidate cache, the
+truth is the **private** production discovery candidate cache, the
 fixtures are committed to this repository and loaded from disk, never fetched at
 runtime. Closes #1705.
 

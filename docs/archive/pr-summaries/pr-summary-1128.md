@@ -7,7 +7,7 @@ reach the FFI response despite PR #1115's 1e-5 pre-merge filter. Closes #1128.
 
 ## Problem
 
-The GRQ-sampler failure cache
+The production failure cache
 `discovery/failures/6d8a5b6a/coordinated-structural/v2_coordinated-structural_29584442...json`
 captured a coordinated-structural candidate with
 `expectedCreatureScoreGain: 1.17e-7` that caused a post-apply `scoreDelta` of

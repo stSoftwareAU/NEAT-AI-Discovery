@@ -1,6 +1,6 @@
 ## Summary
 
-On the plateaued GRQ-3 production creature (#1418, 1673 neurons at score
+On the plateaued production creature (#1418, 1673 neurons at score
 ~0.4224) the destructive **remove-neuron** path dominated the failure cache
 (bucket `247b83ab`: 9 of 11 files) with low-impact proposals that never pass
 scoring. The #1425 failure-cache calibration shrinks remove-neuron predictions,
@@ -39,8 +39,8 @@ coordinated-structural during a plateau (proposed fix #3), and reduces
 failure-cache growth for remove-neuron on plateaued creatures because the
 demoted over-confident candidates are dropped before reaching the FFI response
 (acceptance criterion 2). The audit/calibration-tuning paths (proposed fixes
-#1/#2) need the #1418 GRQ-3 fixture, which lives in the separate GRQ-Discovery /
-GRQ-sampler repositories and is not available here; the acceptance criterion is
+#1/#2) need the #1418 production fixture, which lives in the separate private
+production repositories and is not available here; the acceptance criterion is
 satisfied via its "or module is deprioritised during drought" clause.
 
 Closes #1448.

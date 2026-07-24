@@ -4,7 +4,7 @@ Disable the batch-successful (combo-successful) discovery module by default and
 lower its improvement threshold for when it is re-enabled. Closes #1059.
 
 The module had **zero production successes** across all 43 creatures in the
-GRQ-sampler discovery cache. The root cause was `MIN_INDIVIDUAL_IMPROVEMENT =
+production discovery cache. The root cause was `MIN_INDIVIDUAL_IMPROVEMENT =
 0.01`, which is 3–5 orders of magnitude above actual production score deltas
 (typically 1e-7 to 6e-6).
 
@@ -32,7 +32,7 @@ GRQ-sampler discovery cache. The root cause was `MIN_INDIVIDUAL_IMPROVEMENT =
 ## Evidence
 
 - Zero production successes across 43 creatures with the old threshold (0.01)
-- New threshold (1e-5) aligns with actual GRQ-sampler score deltas (1e-7 to 6e-6)
+- New threshold (1e-5) aligns with actual production score deltas (1e-7 to 6e-6)
 - All 750+ tests pass including 4 new tests and 14 existing batch-successful tests
 
 ## Test Plan

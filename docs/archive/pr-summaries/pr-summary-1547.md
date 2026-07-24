@@ -5,7 +5,7 @@
 On a large creature the post-processing phase runs ~48 discovery modules in
 parallel, and a handful of them — multi-hop correlation maps, co-adaptation and
 weight-coherence pairwise scans, topology structure/diversification — cost
-grows super-linearly with the hidden-neuron count. On GRQ-scale creatures
+grows super-linearly with the hidden-neuron count. On production-scale creatures
 (~1662 hidden) they dominate the post-processing budget and compete with the
 next discovery cycle's wall-clock.
 
@@ -50,8 +50,8 @@ plus the test suite.
 
 ### Benchmark (`cargo bench --bench module_tiering_dispatch`)
 
-The GRQ production fixtures (`network.json @ ed71b732` + `../GRQ/.trainData-binary_115`)
-are not available on the build host, so `benches/module_tiering_dispatch.rs`
+The production fixtures (`network.json @ ed71b732` + the production training-data
+binary) are not available on the build host, so `benches/module_tiering_dispatch.rs`
 models the phase honestly: expensive modules perform an `O(hidden^2)` pairwise
 scan (the super-linear cost that motivates tiering) and standard modules an
 `O(hidden)` pass, then it dispatches the full set versus the tiered set through

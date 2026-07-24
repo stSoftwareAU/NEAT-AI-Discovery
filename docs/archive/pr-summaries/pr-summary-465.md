@@ -1,13 +1,13 @@
 ## Summary
 
-Study of the GRQ-sampler candidate cache and implementation of a candidate outcome cache to improve the discovery success rate (Issue #465).
+Study of the production discovery cache and implementation of a candidate outcome cache to improve the discovery success rate (Issue #465).
 
 ### Analysis Findings
 
-Studied the [GRQ-sampler](https://github.com/stSoftwareAU/GRQ-sampler) candidate cache and identified key patterns:
+Studied the production discovery cache and identified key patterns:
 - **Input neurons as sources** have a 36.2% success rate vs 2.8–3.3% for hidden neurons
 - **Existing hidden neurons as targets** have a 31.4% success rate vs 5.3–5.4% for others
-- The GRQ-sampler tracks per-candidate outcomes to suppress repeated failures
+- The production discovery cache tracks per-candidate outcomes to suppress repeated failures
 
 ### Changes Made
 

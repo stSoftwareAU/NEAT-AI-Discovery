@@ -5,7 +5,7 @@
 Adds fixture-backed **characterisation** tests (no engine changes) for whether
 contribution logic breaks down through the selection aggregates (MAX/MIN/IF) —
 the suspected root cause of Discovery producing no successful candidates. The
-suite pins current behaviour over the committed GRQ-Discovery fixtures from the
+suite pins current behaviour over the committed production discovery-cache fixtures from the
 fixtures sub-issue (#1705) across all three propagation paths the parent
 investigation (#1704) names. Closes #1707.
 
