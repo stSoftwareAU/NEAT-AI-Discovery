@@ -1,6 +1,6 @@
 //! Tests for Issue #888: Tightened weight constraints to match successful candidate patterns.
 //!
-//! GRQ-sampler discovery cache shows that successful add-neuron candidates have
+//! Production discovery-cache analysis shows that successful add-neuron candidates have
 //! dramatically different weight magnitudes than failures. These tests verify the
 //! tightened constraints and sensible-range filtering.
 //!

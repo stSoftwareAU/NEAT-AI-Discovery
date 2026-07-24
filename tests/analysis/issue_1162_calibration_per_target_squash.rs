@@ -52,8 +52,8 @@ fn change_type_only_data_falls_back_for_any_squash() {
 
 /// Acceptance: with enough specific data, `correction_for(SELU)` returns a
 /// stronger discount than the per-`change_type` fallback for an unrelated
-/// squash. This is the headline behaviour from Issue #1162's GRQ-sampler
-/// motivating example.
+/// squash. This is the headline behaviour from Issue #1162's
+/// production-discovery-cache motivating example.
 #[test]
 fn specific_correction_is_distinct_from_change_type_fallback() {
     let mut cache = vec![

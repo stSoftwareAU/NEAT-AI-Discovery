@@ -1,7 +1,7 @@
 #![allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
 //! Tests for Issue #887: Activation-function-aware scoring for add-neuron candidates.
 //!
-//! GRQ-sampler discovery cache shows dramatic differences in success rates by
+//! Production discovery-cache analysis shows dramatic differences in success rates by
 //! activation function. This module verifies that per-activation boost/penalty
 //! multipliers are correctly defined and applied during neuron candidate scoring.
 //!

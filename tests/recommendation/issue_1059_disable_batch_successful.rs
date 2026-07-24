@@ -1,7 +1,7 @@
 //! Tests for Issue #1059: Disable batch-successful module by default.
 //!
 //! The batch-successful module had zero production successes across all 43
-//! creatures in GRQ-sampler. It is now disabled by default and gated behind
+//! creatures in the production discovery cache. It is now disabled by default and gated behind
 //! `NEAT_AI_DISCOVERY_BATCH_SUCCESSFUL=1`.
 //!
 //! ## Changes verified

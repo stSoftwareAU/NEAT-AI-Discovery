@@ -1,6 +1,6 @@
 //! Tests for Issue #892: Boost remove-low-impact candidate generation and priority.
 //!
-//! GRQ-sampler discovery cache shows `remove-low-impact` has the highest success
+//! Production discovery-cache analysis shows `remove-low-impact` has the highest success
 //! rate at 21.5% (440/2,043). These tests verify:
 //! 1. Removal candidates with low mean activation and low impact are accepted
 //! 2. Candidates with high mean activation are filtered out

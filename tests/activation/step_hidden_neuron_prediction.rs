@@ -29,7 +29,7 @@ macro_rules! skip_without_gpu {
     };
 }
 
-/// Helper to create a creature matching the problematic structure from GRQ-18-1:
+/// Helper to create a creature matching the problematic structure from a large production creature:
 /// - Source neuron (input or hidden)
 /// - Hidden STEP neuron (the focus neuron with threshold activation)
 /// - Output neuron that receives from the STEP hidden neuron
@@ -43,7 +43,7 @@ fn create_step_hidden_creature() -> CreatureJson {
                 uuid: "hidden-step".to_string(),
                 neuron_type: "hidden".to_string(),
                 squash: "STEP".to_string(),
-                bias: 0.005, // Small bias like GRQ-18-1
+                bias: 0.005, // Small bias like the production creature
             },
             // Output neuron that receives from the STEP hidden
             NeuronJson {
@@ -58,7 +58,7 @@ fn create_step_hidden_creature() -> CreatureJson {
             SynapseJson {
                 from_uuid: "input-0".to_string(),
                 to_uuid: "hidden-step".to_string(),
-                weight: 4.5, // Similar to GRQ-18-1
+                weight: 4.5, // Similar to the production creature
                 synapse_type: None,
             },
             SynapseJson {
@@ -70,7 +70,7 @@ fn create_step_hidden_creature() -> CreatureJson {
             SynapseJson {
                 from_uuid: "input-2".to_string(),
                 to_uuid: "hidden-step".to_string(),
-                weight: 344.0, // Large weight like input-211 in GRQ-18-1
+                weight: 344.0, // Large weight like a saturating input in the production creature
                 synapse_type: None,
             },
             // STEP hidden to output - small weight, so flipping STEP has small effect

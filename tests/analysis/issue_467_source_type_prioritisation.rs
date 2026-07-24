@@ -1,7 +1,7 @@
 //! Tests for Issue #467: Source-type prioritisation — bias toward input neurons
 //! as synapse sources.
 //!
-//! GRQ-sampler data shows input neurons as sources have a 36.2% success rate
+//! Production discovery-cache analysis shows input neurons as sources have a 36.2% success rate
 //! compared to only 2.8–3.3% for hidden neurons. These tests verify that:
 //!
 //! 1. Input neurons are ordered before hidden neurons during source evaluation

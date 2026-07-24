@@ -1,6 +1,6 @@
 //! Issue #1056: Recalibrate prediction scoring to match production success rates
 //!
-//! GRQ-sampler discovery cache (30+ creatures) reveals significant gaps between
+//! Production discovery-cache analysis (30+ creatures) reveals significant gaps between
 //! predicted and actual success rates:
 //!
 //! | Candidate Type         | Actual Success Rate |
@@ -286,7 +286,7 @@ fn synapse_pessimism_more_aggressive_at_typical_ratio() {
 /// Simulate the full scoring pipeline for a typical add-neuron candidate and
 /// verify the final calibrated gain is within a realistic range.
 ///
-/// GRQ-sampler data: add-neurons ~2.7% success rate, typical predicted improved
+/// Production discovery-cache analysis: add-neurons ~2.7% success rate, typical predicted improved
 /// ratio ~50%, typical raw gain ~0.01. After pessimism + logistic calibration,
 /// the final prediction should be heavily reduced.
 #[test]
@@ -328,7 +328,7 @@ fn end_to_end_neuron_pipeline_realistic_range() {
 
 /// Simulate the full scoring pipeline for a typical add-synapse candidate.
 ///
-/// GRQ-sampler data: add-synapses ~0.1% success rate. After pessimism +
+/// Production discovery-cache analysis: add-synapses ~0.1% success rate. After pessimism +
 /// logistic calibration, the final prediction should be extremely small.
 #[test]
 fn end_to_end_synapse_pipeline_realistic_range() {

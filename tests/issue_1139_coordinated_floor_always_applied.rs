@@ -3,8 +3,8 @@
 //!
 //! ## Bug evidence
 //!
-//! GRQ-sampler commit `744ac60d` (`2026-04-22T22:31:14.839Z`,
-//! discoveryVersion `0.74.16`) captured two `Gentle Nudge` variants with
+//! Production failure-cache evidence (discoveryVersion `0.74.16`) captured two
+//! `Gentle Nudge` variants with
 //! `expectedCreatureScoreGain` below `COORDINATED_POST_DISCOUNT_NOISE_FLOOR_1OP`
 //! (5e-7) reaching the FFI response and damaging the creature when tested.
 //!
@@ -72,7 +72,7 @@ fn add_synapse_candidate(weight: f32, gain: f32) -> CoordinatedStructuralCandida
 #[test]
 fn variant_generation_can_produce_subfloor_gains() {
     // Base gain 1.9e-6 × gentle-nudge multiplier (0.25) = 4.75e-7, below the
-    // 5e-7 floor. The GRQ-sampler failure cache captured ~1.3e-7 `Gentle
+    // 5e-7 floor. The production failure cache captured ~1.3e-7 `Gentle
     // Nudge` variants — same mechanism, lower base gain.
     let base_gain = 1.9e-6_f32;
     let base = add_synapse_candidate(0.1, base_gain);

@@ -57,8 +57,8 @@ fn fixture_files() -> Vec<PathBuf> {
 fn private_source_markers() -> Vec<String> {
     vec![
         format!("{}{}", "stSoftware", "AU/"),
-        format!("{}{}", "GRQ", "-cluster"),
-        format!("{}{}", "GRQ", "-Discovery"),
+        format!("{}{}", "GR", "Q-cluster"),
+        format!("{}{}", "GR", "Q-Discovery"),
     ]
 }
 

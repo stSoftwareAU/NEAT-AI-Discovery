@@ -6,6 +6,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+#### Reword private-repo references in test comments, rename the strip-pattern test file (Issue #1725)
+
+Test doc comments, helper names, and one test *file* name cited private
+`stSoftwareAU` deployments (`GRQ-sampler` commits, `GRQ-3-rocket.log`,
+`GRQ-18-1`, `GRQ-13`) as their motivating evidence. `cargo test` prints those
+file and test names on every run, pointing public contributors at evidence they
+cannot reach.
+
+- Reworded every such citation to concept level ("production failure-cache
+  evidence", "a large production creature"); internal issue numbers preserve
+  maintainer traceability. No test behaviour changed.
+- Renamed `tests/ffi/issue_1188_grq3_strip_pattern_rejection.rs` to
+  `issue_1188_strip_pattern_rejection.rs` and updated the `tests/ffi/main.rs`
+  harness reference; the `*_rejects_grq3_*` test names became `*_rejects_*`.
+- Extended `tests/source_free_of_private_repo_names.rs` to walk `tests/` as
+  well, match case-insensitively (catching lower-case identifiers), and guard
+  file names — the regression gate that keeps private names out.
+
 ### Added
 
 #### Two-stage per-target source budget (Issue #1542)

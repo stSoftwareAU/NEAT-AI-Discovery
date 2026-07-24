@@ -1,18 +1,18 @@
-//! Issue #1188 — End-to-end regression for the GRQ-3-rocket.log strip patterns.
+//! Issue #1188 — End-to-end regression for the recurrent-synapse strip
+//! patterns.
 //!
 //! The dylib's forward-only validator (Issue #1184) rejects creatures with
-//! recurrent or self-looping synapses. Production logs from
-//! `GRQ-3-rocket.log` continued to show `[loadFrom] Stripping recurrent
-//! synapse ... source=fromJSON` warnings against `libneat_ai_discovery
-//! v0.74.35`, which prompted an audit of the FFI surface. This test file
-//! confirms that the three strip-depth patterns observed in the log are
-//! rejected at every FFI entry point that accepts a `CreatureJson`:
+//! recurrent or self-looping synapses. Production host logs continued to show
+//! `[loadFrom] Stripping recurrent synapse ... source=fromJSON` warnings
+//! against `libneat_ai_discovery v0.74.35`, which prompted an audit of the FFI
+//! surface. This test file confirms that the three strip-depth patterns
+//! observed in those logs are rejected at every FFI entry point that accepts a
+//! `CreatureJson`:
 //!
-//! * **depth-0**: `output-0 -> output-0` self-loop (creature `10598e7e`).
-//! * **depth-1**: a single-step back-edge (`hidden-1 -> hidden-0`,
-//!   creature `bcc06579`).
+//! * **depth-0**: `output-0 -> output-0` self-loop.
+//! * **depth-1**: a single-step back-edge (`hidden-1 -> hidden-0`).
 //! * **depth-2**: a two-step back-edge spanning hidden layers
-//!   (`output-0 -> hidden-0`, creature `751f7217`).
+//!   (`output-0 -> hidden-0`).
 //!
 //! Each test parses the strip pattern as `CreatureJson`, drives it through
 //! the corresponding FFI internal entry point, and asserts the response
@@ -20,9 +20,9 @@
 
 use neat_ai_discovery::{CreatureJson, validate_forward_only_synapses};
 
-/// GRQ-3 depth-0 pattern: an `output-0 -> output-0` self-loop. This is
-/// the original Issue #1184 corruption signature and the most common
-/// strip warning in `GRQ-3-rocket.log`.
+/// Depth-0 pattern: an `output-0 -> output-0` self-loop. This is the
+/// original Issue #1184 corruption signature and the most common strip
+/// warning in the production host logs.
 fn depth0_creature_json() -> &'static str {
     r#"{
         "neurons": [
@@ -40,7 +40,7 @@ fn depth0_creature_json() -> &'static str {
     }"#
 }
 
-/// GRQ-3 depth-1 pattern: a single-step back-edge `hidden-1 -> hidden-0`.
+/// Depth-1 pattern: a single-step back-edge `hidden-1 -> hidden-0`.
 /// `loadFrom` strips this with a "Stripping recurrent synapse" warning
 /// (depth = 1) when the source neuron sits one position later in the
 /// activation order than the target.
@@ -63,7 +63,7 @@ fn depth1_creature_json() -> &'static str {
     }"#
 }
 
-/// GRQ-3 depth-2 pattern: an output-to-hidden back-edge that crosses two
+/// Depth-2 pattern: an output-to-hidden back-edge that crosses two
 /// activation-order positions. `loadFrom` reports depth = 2 because the
 /// source neuron is two positions later than the target.
 fn depth2_creature_json() -> &'static str {
@@ -93,8 +93,8 @@ fn depth2_creature_json() -> &'static str {
 #[test]
 fn validator_rejects_depth0_self_loop_pattern() {
     let creature: CreatureJson = serde_json::from_str(depth0_creature_json()).expect("valid JSON");
-    let err = validate_forward_only_synapses(&creature)
-        .expect_err("depth-0 GRQ-3 self-loop must be rejected");
+    let err =
+        validate_forward_only_synapses(&creature).expect_err("depth-0 self-loop must be rejected");
     let msg = err.to_string();
     assert!(
         msg.contains("self-loop"),
@@ -110,8 +110,8 @@ fn validator_rejects_depth0_self_loop_pattern() {
 #[test]
 fn validator_rejects_depth1_backedge_pattern() {
     let creature: CreatureJson = serde_json::from_str(depth1_creature_json()).expect("valid JSON");
-    let err = validate_forward_only_synapses(&creature)
-        .expect_err("depth-1 GRQ-3 back-edge must be rejected");
+    let err =
+        validate_forward_only_synapses(&creature).expect_err("depth-1 back-edge must be rejected");
     let msg = err.to_string();
     assert!(
         msg.contains("back-edge"),
@@ -126,8 +126,8 @@ fn validator_rejects_depth1_backedge_pattern() {
 #[test]
 fn validator_rejects_depth2_backedge_pattern() {
     let creature: CreatureJson = serde_json::from_str(depth2_creature_json()).expect("valid JSON");
-    let err = validate_forward_only_synapses(&creature)
-        .expect_err("depth-2 GRQ-3 back-edge must be rejected");
+    let err =
+        validate_forward_only_synapses(&creature).expect_err("depth-2 back-edge must be rejected");
     let msg = err.to_string();
     assert!(
         msg.contains("back-edge"),
@@ -218,7 +218,7 @@ fn export_input_with(creature_json: &str, out_path: &str) -> String {
 }
 
 #[test]
-fn record_discovery_rejects_grq3_depth0_self_loop() {
+fn record_discovery_rejects_depth0_self_loop() {
     let temp_dir = tempfile::tempdir().expect("create temp dir");
     let temp_path = temp_dir.path().to_str().unwrap();
     let input = record_input_with(depth0_creature_json(), temp_path);
@@ -228,7 +228,7 @@ fn record_discovery_rejects_grq3_depth0_self_loop() {
 }
 
 #[test]
-fn record_discovery_rejects_grq3_depth1_back_edge() {
+fn record_discovery_rejects_depth1_back_edge() {
     let temp_dir = tempfile::tempdir().expect("create temp dir");
     let temp_path = temp_dir.path().to_str().unwrap();
     let input = record_input_with(depth1_creature_json(), temp_path);
@@ -238,7 +238,7 @@ fn record_discovery_rejects_grq3_depth1_back_edge() {
 }
 
 #[test]
-fn record_discovery_rejects_grq3_depth2_back_edge() {
+fn record_discovery_rejects_depth2_back_edge() {
     let temp_dir = tempfile::tempdir().expect("create temp dir");
     let temp_path = temp_dir.path().to_str().unwrap();
     let input = record_input_with(depth2_creature_json(), temp_path);
@@ -248,7 +248,7 @@ fn record_discovery_rejects_grq3_depth2_back_edge() {
 }
 
 #[test]
-fn analyze_parallel_rejects_grq3_depth0_self_loop() {
+fn analyze_parallel_rejects_depth0_self_loop() {
     let input = analyze_input_with(depth0_creature_json());
     let response =
         neat_ai_discovery::analyze_parallel_internal(&input).expect("internal call must not panic");
@@ -256,7 +256,7 @@ fn analyze_parallel_rejects_grq3_depth0_self_loop() {
 }
 
 #[test]
-fn analyze_parallel_rejects_grq3_depth1_back_edge() {
+fn analyze_parallel_rejects_depth1_back_edge() {
     let input = analyze_input_with(depth1_creature_json());
     let response =
         neat_ai_discovery::analyze_parallel_internal(&input).expect("internal call must not panic");
@@ -264,7 +264,7 @@ fn analyze_parallel_rejects_grq3_depth1_back_edge() {
 }
 
 #[test]
-fn analyze_parallel_rejects_grq3_depth2_back_edge() {
+fn analyze_parallel_rejects_depth2_back_edge() {
     let input = analyze_input_with(depth2_creature_json());
     let response =
         neat_ai_discovery::analyze_parallel_internal(&input).expect("internal call must not panic");
@@ -272,7 +272,7 @@ fn analyze_parallel_rejects_grq3_depth2_back_edge() {
 }
 
 #[test]
-fn rank_focus_neurons_rejects_grq3_depth0_self_loop() {
+fn rank_focus_neurons_rejects_depth0_self_loop() {
     let input = rank_input_with(depth0_creature_json());
     let response = neat_ai_discovery::rank_focus_neurons_internal(&input)
         .expect("internal call must not panic");
@@ -280,7 +280,7 @@ fn rank_focus_neurons_rejects_grq3_depth0_self_loop() {
 }
 
 #[test]
-fn rank_focus_neurons_rejects_grq3_depth1_back_edge() {
+fn rank_focus_neurons_rejects_depth1_back_edge() {
     let input = rank_input_with(depth1_creature_json());
     let response = neat_ai_discovery::rank_focus_neurons_internal(&input)
         .expect("internal call must not panic");
@@ -288,7 +288,7 @@ fn rank_focus_neurons_rejects_grq3_depth1_back_edge() {
 }
 
 #[test]
-fn rank_focus_neurons_rejects_grq3_depth2_back_edge() {
+fn rank_focus_neurons_rejects_depth2_back_edge() {
     let input = rank_input_with(depth2_creature_json());
     let response = neat_ai_discovery::rank_focus_neurons_internal(&input)
         .expect("internal call must not panic");
@@ -296,7 +296,7 @@ fn rank_focus_neurons_rejects_grq3_depth2_back_edge() {
 }
 
 #[test]
-fn export_visualisation_snapshot_rejects_grq3_depth0_self_loop() {
+fn export_visualisation_snapshot_rejects_depth0_self_loop() {
     let temp_dir = tempfile::tempdir().expect("create temp dir");
     let out_path = temp_dir.path().join("snapshot.json");
     let input = export_input_with(depth0_creature_json(), out_path.to_str().unwrap());
@@ -306,7 +306,7 @@ fn export_visualisation_snapshot_rejects_grq3_depth0_self_loop() {
 }
 
 #[test]
-fn export_visualisation_snapshot_rejects_grq3_depth1_back_edge() {
+fn export_visualisation_snapshot_rejects_depth1_back_edge() {
     let temp_dir = tempfile::tempdir().expect("create temp dir");
     let out_path = temp_dir.path().join("snapshot.json");
     let input = export_input_with(depth1_creature_json(), out_path.to_str().unwrap());
@@ -316,7 +316,7 @@ fn export_visualisation_snapshot_rejects_grq3_depth1_back_edge() {
 }
 
 #[test]
-fn export_visualisation_snapshot_rejects_grq3_depth2_back_edge() {
+fn export_visualisation_snapshot_rejects_depth2_back_edge() {
     let temp_dir = tempfile::tempdir().expect("create temp dir");
     let out_path = temp_dir.path().join("snapshot.json");
     let input = export_input_with(depth2_creature_json(), out_path.to_str().unwrap());
@@ -362,7 +362,7 @@ fn start_session_input(creature_json: &str, temp_dir: &str) -> String {
 }
 
 #[test]
-fn start_discovery_session_rejects_grq3_depth0_self_loop() {
+fn start_discovery_session_rejects_depth0_self_loop() {
     let temp_dir = tempfile::tempdir().expect("create temp dir");
     let input = start_session_input(depth0_creature_json(), temp_dir.path().to_str().unwrap());
     let response = call_start_discovery_session(&input);
@@ -370,7 +370,7 @@ fn start_discovery_session_rejects_grq3_depth0_self_loop() {
 }
 
 #[test]
-fn start_discovery_session_rejects_grq3_depth1_back_edge() {
+fn start_discovery_session_rejects_depth1_back_edge() {
     let temp_dir = tempfile::tempdir().expect("create temp dir");
     let input = start_session_input(depth1_creature_json(), temp_dir.path().to_str().unwrap());
     let response = call_start_discovery_session(&input);
@@ -378,7 +378,7 @@ fn start_discovery_session_rejects_grq3_depth1_back_edge() {
 }
 
 #[test]
-fn start_discovery_session_rejects_grq3_depth2_back_edge() {
+fn start_discovery_session_rejects_depth2_back_edge() {
     let temp_dir = tempfile::tempdir().expect("create temp dir");
     let input = start_session_input(depth2_creature_json(), temp_dir.path().to_str().unwrap());
     let response = call_start_discovery_session(&input);

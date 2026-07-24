@@ -80,7 +80,7 @@ fn test_preload_does_not_fit_when_projection_exceeds_usable() {
 }
 
 #[test]
-fn test_preload_fits_grq13_numbers() {
+fn test_preload_fits_mid_sized_projection_numbers() {
     // Production memory regression: parquet 531.10 MB → ×3 ≈ 1593 MB projection, with
     // ~2990 MB available and the default 1 GB margin. usable = 2990 − 1024 =
     // 1966 MB ≥ 1593 MB → must pre-load (stay on the fast path), not lazy.

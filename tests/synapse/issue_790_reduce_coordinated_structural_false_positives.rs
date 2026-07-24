@@ -1,6 +1,6 @@
 //! Tests for reduced coordinated-structural false positives (Issue #790).
 //!
-//! GRQ-sampler analysis shows coordinated-structural candidates have a 2.3% success
+//! Production discovery-cache analysis shows coordinated-structural candidates have a 2.3% success
 //! rate (272 / 12,069). These tests verify tighter filtering.
 //!
 //! Issue #1058: Updated to reflect the simplified empirical discount model that
