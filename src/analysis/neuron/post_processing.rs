@@ -139,7 +139,7 @@ pub(crate) fn build_neuron_results(
     // Issue #1140: Cap add-neuron candidates per target within a single
     // discovery batch. Without this cap, a single hopeless target can consume
     // most of the budget with minor variants (e.g. 17 of 19 failed add-neuron
-    // candidates in GRQ-sampler commit 744ac60d targeted the same neuron).
+    // candidates in production discovery-cache analysis targeted the same neuron).
     // The cross-batch cooldown (Issue #1130) does not help within a batch.
     let per_target_cap_drops =
         apply_per_target_cap_with_priority(&mut helpful_results, class_priority.as_ref());
@@ -299,7 +299,8 @@ fn apply_impact_discounting(
 
         // Issue #1056: Apply logistic prediction calibration to correct ~18× overestimation.
         // The non-linear calibration uses the improved ratio to modulate the base
-        // factor, matching GRQ-sampler data showing ~2.7% actual success rate (28/1028).
+        // factor, matching production discovery-cache data showing ~2.7% actual
+        // success rate (28/1028).
         //
         // Issue #1131: Multiplied by the per-creature calibration correction derived
         // from the failure cache so creatures with poor recent prediction accuracy

@@ -11,7 +11,7 @@
 //!   cooldown (Issue #1130).
 //!
 //! None of those layers cover the per-(creature, module) starvation case
-//! described in GRQ-sampler commit `e85c5d2` (creature `bcbca347`), where one
+//! described in production discovery-cache analysis, where one
 //! module (`coordinated-structural`) recorded 41 consecutive failures and
 //! zero successes — consuming ~91% of the candidate budget for the creature
 //! while other modules (e.g. `add-neurons`, `add-synapses`) were starved out.
@@ -355,7 +355,7 @@ mod tests {
         assert_eq!(tracker.starved_module_count(5), 2);
     }
 
-    /// Regression: GRQ-sampler creature `bcbca347` showed 41 consecutive
+    /// Regression: production creature `bcbca347` showed 41 consecutive
     /// coordinated-structural failures and zero successes. With the default
     /// threshold of 15, the module must be disabled by the 15th failure.
     #[test]

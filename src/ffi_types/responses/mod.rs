@@ -79,7 +79,7 @@ pub struct FocusSelectionJson {
     pub selected: Vec<String>,
     /// Concentration ratio (max weight ÷ sum) of the **raw** roulette weights
     /// over the ranked pool. The diagnostic that exposes single-target
-    /// collapse — ~0.985 on the GRQ-3 plateau fixture.
+    /// collapse — ~0.985 on the plateaued-creature fixture.
     pub raw_weight_concentration_ratio: f32,
     /// Concentration ratio of the **selected** set's weights. Lower than the raw
     /// ratio because the exploration quota spreads budget.

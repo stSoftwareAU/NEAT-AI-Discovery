@@ -636,7 +636,7 @@ mod tests {
         );
     }
 
-    /// Regression test for the GRQ-sampler creature `bcbca347` failure-cache
+    /// Regression test for the production creature `bcbca347` failure-cache
     /// pattern: bypass weight `0.0021` must not produce a collapse candidate.
     #[test]
     fn reproduces_bcbca347_failure_cache_pattern() {

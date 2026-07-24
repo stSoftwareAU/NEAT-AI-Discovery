@@ -112,7 +112,7 @@ pub fn apply_pessimism_discount(gain: f32, improved_count: u32, total_count: u32
 
 /// Apply a neuron-specific pessimism discount to an expected score gain (Issue #791).
 ///
-/// GRQ-sampler analysis shows add-neurons has a 15% success rate (3,812 / 25,812),
+/// Production discovery-cache analysis shows add-neurons has a 15% success rate (3,812 / 25,812),
 /// indicating the generic pessimism parameters are too generous for neuron candidates.
 /// This function uses neuron-calibrated constants that apply more aggressive
 /// discounting:
@@ -162,7 +162,7 @@ pub fn apply_neuron_pessimism_discount(
 
 /// Apply a synapse-specific pessimism discount to an expected score gain (Issue #789).
 ///
-/// GRQ-sampler analysis shows add-synapses has a 0% success rate (0 / 31),
+/// Production discovery-cache analysis shows add-synapses has a 0% success rate (0 / 31),
 /// indicating both the generic and neuron-specific pessimism parameters are too
 /// generous for synapse candidates. This function uses synapse-calibrated constants
 /// that apply the most aggressive discounting of all candidate types:
@@ -212,7 +212,7 @@ pub fn apply_synapse_pessimism_discount(
 
 /// Apply a per-candidate-type prediction calibration factor (Issue #891).
 ///
-/// GRQ-sampler discovery cache reveals that `expected_creature_score_gain` overestimates
+/// The production discovery cache reveals that `expected_creature_score_gain` overestimates
 /// actual outcomes by 100–10,000×, with the magnitude varying by candidate type. This
 /// systematic overestimation means cross-type comparisons are unreliable — a synapse
 /// prediction of 0.01 is not comparable to a neuron prediction of 0.003.
@@ -241,9 +241,9 @@ pub fn apply_prediction_calibration(gain: f32, calibration_factor: f32) -> f32 {
 /// Apply non-linear (logistic) prediction calibration based on improved ratio (Issue #1056).
 ///
 /// The linear `gain × calibration_factor` approach was insufficient to bridge the
-/// neuron-level → creature-level prediction gap. GRQ-sampler data (30+ creatures)
-/// shows the relationship between `improvedCount/totalCount` and actual success
-/// probability is non-linear — moderate improved ratios (0.3–0.6) are far more
+/// neuron-level → creature-level prediction gap. Production discovery-cache data
+/// (30+ creatures) shows the relationship between `improvedCount/totalCount` and
+/// actual success probability is non-linear — moderate improved ratios (0.3–0.6) are far more
 /// overestimated than high ratios (>0.8).
 ///
 /// This function modulates the base calibration factor using a logistic (sigmoid)

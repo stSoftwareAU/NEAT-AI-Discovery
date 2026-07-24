@@ -176,9 +176,9 @@ pub const REJECTION_TARGET_SATURATED: &str = "target_saturated";
 ///
 /// The `REMOVAL_CANDIDATE_BOOST` (1.5×) is applied to raw complexity savings
 /// before the savings-vs-impact comparison. Boost-inflated net improvements in
-/// the 1e-8 range are indistinguishable from numerical noise — GRQ-sampler
-/// commit `744ac60d` showed such a candidate causing a `-2.39e-7` actual
-/// error reduction.
+/// the 1e-8 range are indistinguishable from numerical noise — production
+/// discovery-cache analysis showed such a candidate causing a `-2.39e-7`
+/// actual error reduction.
 pub const REJECTION_REMOVAL_BELOW_NOISE_FLOOR: &str = "removal_below_noise_floor";
 
 /// Single-op remove-neuron coordinated candidate had its expected gain demoted

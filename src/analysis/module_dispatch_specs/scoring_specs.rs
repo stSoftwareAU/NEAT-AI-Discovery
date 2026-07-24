@@ -194,7 +194,8 @@ pub(crate) fn append_scoring_specs(
 
     // Issue #965: Batch-successful candidate grouping — batch proven winners
     // Issue #1059: Disabled by default — zero production successes across all
-    // 43 creatures in GRQ-sampler. Set NEAT_AI_DISCOVERY_BATCH_SUCCESSFUL=1
+    // 43 creatures in the production discovery cache. Set
+    // NEAT_AI_DISCOVERY_BATCH_SUCCESSFUL=1
     // to re-enable for experimentation.
     if crate::config::batch_successful_enabled() {
         discovery_spec!(modules, "batch-successful grouping", "batch_successful_grouping",

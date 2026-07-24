@@ -13,7 +13,7 @@
 /// Issue #730: The add-synapses module had a 0% success rate because candidates
 /// where more samples worsened than improved were still being proposed.
 ///
-/// Issue #789: Raised from 0.5 to 0.6. GRQ-sampler cache data (Issue #787) showed
+/// Issue #789: Raised from 0.5 to 0.6. Production discovery-cache data (Issue #787) showed
 /// all 31 candidates that passed the 0.5 threshold still failed ablation testing.
 /// Requiring 60% of samples to improve filters out marginal candidates where the
 /// multi-weight search found a local optimum that does not generalise.
@@ -31,9 +31,9 @@ pub const MIN_IMPROVED_RATIO: f32 = 0.6;
 /// than `MIN_IMPROVED_RATIO` allows moderate-quality candidates through while
 /// still filtering out clearly bad ones.
 ///
-/// Issue #1109: Raised from 0.4 to 0.55. Production failure data from GRQ-sampler
-/// (commit 50a2909) showed neuron candidates with improved ratios of 52-54%
-/// (267-274 out of 510) consistently producing negative actual error reductions
+/// Issue #1109: Raised from 0.4 to 0.55. Production discovery-cache failure data
+/// showed neuron candidates with improved ratios of 52-54% (267-274 out of 510)
+/// consistently producing negative actual error reductions
 /// despite positive predictions. The previous 0.4 threshold was too permissive —
 /// candidates barely above 50/50 are indistinguishable from random chance and
 /// waste evaluation budget. Raising the neuron threshold to 0.55 aligns with the
@@ -52,7 +52,7 @@ pub const NEURON_MIN_IMPROVED_RATIO: f32 = 0.55;
 
 /// Maximum mean activation for a removal candidate to be considered high-quality.
 ///
-/// GRQ-sampler discovery cache shows that successful `remove-low-impact` candidates
+/// The production discovery cache shows that successful `remove-low-impact` candidates
 /// (21.5% success rate, 440/2,043) consistently have mean activation near zero
 /// (~0 to 0.04). Failed removals often have much higher mean activation (up to 57.8),
 /// indicating the neuron was actually contributing to the network.
@@ -67,7 +67,7 @@ pub const REMOVAL_MEAN_ACTIVATION_THRESHOLD: f32 = 0.04;
 
 /// Maximum structural impact for a removal candidate to be considered high-quality.
 ///
-/// GRQ-sampler discovery cache shows successful `remove-low-impact` removals have
+/// The production discovery cache shows successful `remove-low-impact` removals have
 /// impact magnitudes ≤ 6e-5. Neurons with higher structural impact are more likely
 /// to be contributing to the network output even if their activation is low.
 ///
@@ -80,7 +80,7 @@ pub const REMOVAL_IMPACT_THRESHOLD: f32 = 6e-5;
 // Add-Neuron Weight Constraints (Issue #888)
 // =============================================================================
 
-// GRQ-sampler discovery cache shows that successful add-neuron candidates have
+// The production discovery cache shows that successful add-neuron candidates have
 // dramatically different weight/bias magnitudes than failures:
 //
 // | Parameter       | Successful Range  | Failed Range      |
@@ -95,7 +95,7 @@ pub const REMOVAL_IMPACT_THRESHOLD: f32 = 6e-5;
 
 /// Maximum absolute incoming weight for add-neuron candidates (Issue #888).
 ///
-/// GRQ-sampler cache evidence shows successful candidates consistently have
+/// Production discovery-cache evidence shows successful candidates consistently have
 /// incoming weight ~2. Candidates with incoming weights of 5, 10, or 20
 /// almost always fail. A threshold of 5.0 provides margin while filtering
 /// the clearly extreme values.
@@ -107,7 +107,7 @@ pub const MAX_INCOMING_WEIGHT: f32 = 5.0;
 
 /// Maximum absolute bias for add-neuron candidates (Issue #888).
 ///
-/// GRQ-sampler cache evidence shows successful candidates have bias in
+/// Production discovery-cache evidence shows successful candidates have bias in
 /// the range 0 to 1. Failed candidates have extreme bias values (-10, -5,
 /// 5, 10). A threshold of 2.0 provides margin while filtering the clearly
 /// extreme values.
@@ -124,7 +124,7 @@ pub const MAX_BIAS_MAGNITUDE: f32 = 2.0;
 /// Maximum individual harm allowed for a source to participate in epistatic or
 /// synergistic pairing.
 ///
-/// Production analysis (creature b2ff6e45, GRQ-sampler commit a1340f8d) showed
+/// Production discovery-cache analysis (creature b2ff6e45) showed
 /// that all 10 coordinated-structural candidates failed because they all included
 /// the same harmful operation (e8480883 → output-0, weight 0.1) which degraded
 /// the score by ~−0.042. The partner neuron varied but could never overcome that
@@ -146,8 +146,8 @@ pub const MAX_INDIVIDUAL_HARM_FOR_PAIRING: f32 = 0.0;
 
 /// Number of consecutive failures on a target before it enters cooldown.
 ///
-/// Issue #1130: GRQ-sampler commit `4c4fbdc560ad6b3070c5c48613ea1393aee2f225`
-/// had 17 of 18 `add-neurons` failure cache entries targeting the same neuron
+/// Issue #1130: production discovery-cache analysis found 17 of 18
+/// `add-neurons` failure cache entries targeting the same neuron
 /// (`neuron-1063112866`). Budget was spent repeatedly probing a target that
 /// was clearly not going to yield an improvement. Tracking per-target failure
 /// streaks lets the preparation layers skip targets after N consecutive
@@ -263,7 +263,7 @@ pub fn cooldown_extended_drought_divisor() -> u64 {
 /// candidates in the same batch are short-circuited.
 ///
 /// Issue #1164: complements the cross-batch cooldown (Issue #1130) by closing
-/// the within-batch gap. In GRQ-sampler commit `8c177b7`, three add-neuron
+/// the within-batch gap. In production discovery-cache analysis, three add-neuron
 /// candidates all targeting `neuron-1063112866` were evaluated in the same
 /// batch — exactly the workload the target-failure tracker (Issue #1130) was
 /// created to avoid, but the per-target cooldown only persists across batches

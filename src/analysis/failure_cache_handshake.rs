@@ -235,7 +235,7 @@ mod tests {
 
     #[test]
     fn evaluate_engages_escalation_when_all_built_candidates_are_cached() {
-        // The GRQ-3 scenario: a plateaued creature whose every returned
+        // The plateaued-creature scenario: a creature whose every returned
         // candidate matches the failure cache.
         let cache = vec![entry(CHANGE_TYPE_COORDINATED_STRUCTURAL, None, None)];
         let cands = vec![

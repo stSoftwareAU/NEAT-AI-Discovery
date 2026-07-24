@@ -97,7 +97,7 @@ pub static CONSERVATIVE_CONFIG: NeuronVariantConfig = NeuronVariantConfig {
 /// Gentle Nudge: moderate incoming/bias range, very small outgoing.
 ///
 /// Issue #888: Tightened incoming from 20→5, bias from 10→2, outgoing from
-/// 0.02→0.01 to match GRQ-sampler cache evidence. The previous ranges
+/// 0.02→0.01 to match production discovery-cache evidence. The previous ranges
 /// allowed values in the "Extreme" pattern that almost always fails.
 pub static GENTLE_NUDGE_CONFIG: NeuronVariantConfig = NeuronVariantConfig {
     incoming_abs_max: 5.0,
@@ -114,7 +114,7 @@ pub static GENTLE_NUDGE_CONFIG: NeuronVariantConfig = NeuronVariantConfig {
 ///
 /// Issue #888: Boosted `expected_multiplier` from 0.25 to 0.5 because
 /// the Micro-Nudge pattern dominates successes (~90% of successful samples
-/// in GRQ-sampler cache). The higher multiplier ensures these candidates
+/// in the production discovery cache). The higher multiplier ensures these candidates
 /// are prioritised in the ranking over other variants.
 pub static MICRO_NUDGE_CONFIG: NeuronVariantConfig = NeuronVariantConfig {
     incoming_abs_max: 2.0,
@@ -374,13 +374,13 @@ pub const ULTRA_CONSERVATIVE_BASE_WEIGHT_THRESHOLD: f32 = 0.05;
 /// Maximum absolute incoming weight we consider "sensible" for add-neuron candidates.
 ///
 /// Issue #888: Tightened from 20.0 to match `MAX_INCOMING_WEIGHT` (5.0).
-/// GRQ-sampler cache shows incoming weights of 10+ almost always fail.
+/// The production discovery cache shows incoming weights of 10+ almost always fail.
 const SENSIBLE_INCOMING_ABS_MAX: f32 = 5.0;
 
 /// Maximum absolute bias we consider "sensible" for add-neuron candidates.
 ///
 /// Issue #888: Tightened from 10.0 to match `MAX_BIAS_MAGNITUDE` (2.0).
-/// GRQ-sampler cache shows bias values outside [-1, 1] almost always fail.
+/// The production discovery cache shows bias values outside [-1, 1] almost always fail.
 const SENSIBLE_BIAS_ABS_MAX: f32 = 2.0;
 
 /// Maximum absolute outgoing weight we consider "sensible" for add-neuron candidates.

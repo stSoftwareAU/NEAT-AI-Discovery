@@ -161,7 +161,7 @@ mod tests {
 
     #[test]
     fn output_self_loop_is_rejected() {
-        // Mirrors the GRQ-10 sweep pattern: output-0 -> output-0 self-loops
+        // Mirrors the production sweep pattern: output-0 -> output-0 self-loops
         // on a forward-only creature.
         let c = creature(
             vec![neuron("input-0", "input"), neuron("output-0", "output")],

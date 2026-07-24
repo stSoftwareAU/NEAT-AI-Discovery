@@ -1177,8 +1177,8 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
     // can fall below `COORDINATED_POST_DISCOUNT_NOISE_FLOOR` (5e-7). Running
     // this filter only in the fast-path guard leaked sub-floor variants to
     // the FFI response whenever the memory budget or deadline was exceeded
-    // (GRQ-sampler discoveryVersion 0.74.16 captured 1.3e-7 gains damaging
-    // creatures). Applying it here ensures the floor holds in both the
+    // (the production discovery cache at discoveryVersion 0.74.16 captured
+    // 1.3e-7 gains damaging creatures). Applying it here ensures the floor holds in both the
     // fast-path and the skipped-post-processing fallback, and refreshes
     // `candidates_returned` + the rejection breakdown in either path.
     if let Some(syn) = synapse_result.as_mut() {

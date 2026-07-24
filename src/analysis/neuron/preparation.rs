@@ -915,7 +915,7 @@ mod tests {
     // ArcTan / BENT_IDENTITY intermediates).
     // =========================================================================
 
-    /// Helper: saturated `HARD_TANH` target matching the GRQ-sampler evidence.
+    /// Helper: saturated `HARD_TANH` target matching the production discovery-cache evidence.
     fn saturated_hard_tanh() -> TargetSaturationInfo {
         let records: Vec<DiscoverRecord> = vec![
             make_record(-1.0),

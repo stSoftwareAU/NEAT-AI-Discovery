@@ -347,7 +347,7 @@ pub fn decide_loading_mode_for_budget(
 /// Bases the eager-vs-lazy decision on **real OS-available memory** with a
 /// safety margin reserved for the system / GPU buffers, rather than the
 /// 50%-of-total-RAM cap that previously rejected mid-sized parquet files on
-/// hosts with plenty of free memory (the GRQ-13 regression: ~1.6 GB projection
+/// hosts with plenty of free memory (the production memory regression: ~1.6 GB projection
 /// dropped to lazy despite ~3 GB free).
 ///
 /// Pre-loads when `projected_bytes <= available_bytes − margin_bytes`,

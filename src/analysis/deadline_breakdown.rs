@@ -59,7 +59,7 @@ impl PhaseCompletion {
 /// `synapse`/`neuron` are `None` when the corresponding analysis was disabled
 /// for the run. The focus phase (parquet load + focus ranking) runs in a
 /// separate FFI call (`rank_focus_neurons`); its timings are surfaced there
-/// (Issue #1377) and combined by the GRQ layer.
+/// (Issue #1377) and combined by the calling host layer.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct DeadlineConsumptionBreakdown {
     /// Milliseconds spent re-loading the Parquet record cache for the analysis

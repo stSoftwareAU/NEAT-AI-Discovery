@@ -155,7 +155,7 @@ pub(super) struct RemovalCandidateOutcome {
 /// Issue #235: Return ALL neurons where removal improves the creature's score.
 /// A removal improves score when: `removal_savings` > `activation_weighted_impact`
 ///
-/// Issue #892: Apply stricter filtering based on GRQ-sampler cache evidence.
+/// Issue #892: Apply stricter filtering based on production discovery-cache evidence.
 /// Successful removals (21.5% success rate) have low mean activation (≤ 0.04)
 /// and low structural impact (≤ 6e-5). Candidates passing these thresholds
 /// receive a scoring boost to prioritise them over other candidate types.
@@ -219,7 +219,7 @@ pub(super) fn identify_removal_candidates(
 
             // Issue #1142: Gate on a noise floor to drop boost-inflated candidates
             // whose net improvement is indistinguishable from numerical noise
-            // (e.g. 6.64e-8 in GRQ-sampler commit 744ac60d).
+            // (e.g. 6.64e-8 in production discovery-cache analysis).
             if net_improvement < noise_floor {
                 return Some(Emit::NoiseFloorReject);
             }

@@ -239,7 +239,7 @@ pub struct SynapseAnalysisMetadataJson {
     /// True when synapse analysis was curtailed by the deadline: it timed out
     /// **and** left at least one focus neuron unanalysed (Issue #1409).
     ///
-    /// Lets the GRQ layer detect synapse starvation programmatically without
+    /// Lets the calling host layer detect synapse starvation programmatically without
     /// recomputing `timedOut && completedFocusNeurons < totalFocusNeurons`.
     pub starved: bool,
     /// Minimum input index observed with non-empty records (eg 0).
@@ -437,7 +437,7 @@ pub struct NeuronAnalysisMetadataJson {
     /// True when neuron analysis was curtailed by the deadline: it timed out
     /// **and** left at least one focus neuron unanalysed (Issue #1409).
     ///
-    /// Lets the GRQ layer detect neuron starvation programmatically without
+    /// Lets the calling host layer detect neuron starvation programmatically without
     /// recomputing `timedOut && completedFocusNeurons < totalFocusNeurons`.
     pub starved: bool,
     /// GPU timing data for performance diagnostics (Issue #195).

@@ -156,7 +156,7 @@ fn rejects_small_weight_ratio() {
 
     // Issue #888: With MAX_OUTGOING_WEIGHT=0.01, incoming_weight=2 now passes
     // ratio check (2/0.01=200 >= 50). This is correct because incoming ~2
-    // is the dominant success pattern in GRQ-sampler cache evidence.
+    // is the dominant success pattern in production discovery-cache evidence.
     let result = calculate_optimal_outgoing_weight(1.0, 1.0, 2.0);
     assert!(
         result.is_some(),

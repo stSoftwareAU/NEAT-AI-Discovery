@@ -28,12 +28,11 @@
 //! ## What this test encodes
 //!
 //! A distilled, deterministic, checked-in fixture (no network access) that
-//! reconstructs the cached real-world failure observed in GRQ-Discovery commit
-//! `c4330385fc65897c6caf1168d420d0e248d490da`, candidate UUID
-//! `neuron-876870118` (the NEAT-AI-side label truncation that drops the leading
-//! digit is cosmetic only). The fixture is a candidate whose mean-only fold
-//! regresses a variance-carrying downstream target while the neuron is harmful in
-//! aggregate.
+//! reconstructs a cached real-world failure observed in production discovery,
+//! candidate UUID `neuron-876870118` (the NEAT-AI-side label truncation that
+//! drops the leading digit is cosmetic only). The fixture is a candidate whose
+//! mean-only fold regresses a variance-carrying downstream target while the
+//! neuron is harmful in aggregate.
 //!
 //! - [`mean_only_fold_regresses_variance_target`] is the **red-phase** oracle: it
 //!   asserts the current mean-only fold *does* regress the variance-carrying
@@ -57,7 +56,7 @@ use crate::analysis::remove_neuron_compensation::{
 use crate::ffi_types::{NeuronJson, SynapseJson};
 use crate::types::DiscoverRecord;
 
-/// Candidate neuron UUID as recorded in the GRQ-cluster `network.json`. The
+/// Candidate neuron UUID as recorded in the production creature `network.json`. The
 /// NEAT-AI-side label truncation that drops the leading digit is cosmetic only.
 const CANDIDATE: &str = "neuron-876870118";
 /// A surviving hidden neuron that shares the downstream target and carries a
