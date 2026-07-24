@@ -10,9 +10,13 @@ plan; this document is the shared evidence base and cross-link.
 | Source | What it provided |
 | --- | --- |
 | `stSoftwareAU/NEAT-AI-Snapshot` `docs/snapshot.json.gz` | Production creature topology, 200 recorded observations, per-neuron activations/errors/stats, per-synapse contributions, per-neuron impacts, and reconstruction checks. |
-| `stSoftwareAU/GRQ-cluster` `network.json` | The live production creature (semantic version 4.0.0). |
-| `stSoftwareAU/GRQ-Discovery` (`Develop`) | Discovery cache — the actual accepted/rejected candidate vocabulary. |
-| `stSoftwareAU/GRQ` `worker/Discovery/run.sh` | How discovery is launched. |
+| The live production creature (`network.json`, semantic version 4.0.0) | The deployed topology the snapshot was captured from. |
+| The production discovery cache | The actual accepted/rejected candidate vocabulary. |
+| The production discovery launcher script | How discovery is launched. |
+
+Only the first row is publicly reproducible; the remaining three come from the
+downstream production deployment, so the numbers derived from them are restated
+below rather than linked.
 
 ### Creature scale
 
@@ -22,7 +26,7 @@ plan; this document is the shared evidence base and cross-link.
 
 ## Why the rate has stalled
 
-The `GRQ-Discovery` cache contains only two candidate `changeType` values —
+The production discovery cache contains only two candidate `changeType` values —
 `remove-neuron` and `change-squash` — and the only recent successes are
 harmful-neuron removals with score deltas around `1e-7`:
 
