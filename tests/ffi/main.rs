@@ -6,7 +6,7 @@ mod common;
 mod issue_1027_memory_usage_ffi;
 mod issue_1028_memory_budget;
 mod issue_1184_recurrent_synapse_rejection;
-mod issue_1188_grq3_strip_pattern_rejection;
+mod issue_1188_strip_pattern_rejection;
 mod issue_1314_task_descriptor_plumbing;
 mod issue_1402_lowercase_task_descriptor_regression;
 mod issue_1407_focus_shared_deadline;

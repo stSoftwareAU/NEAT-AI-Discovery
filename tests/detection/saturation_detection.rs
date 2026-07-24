@@ -1,6 +1,6 @@
 //! Tests for saturation detection in impact calculation
 //!
-//! ## Production Issue (GRQ fittest creature)
+//! ## Production Issue (fittest production creature)
 //!
 //! The fittest creature has:
 //! - Weights up to ±100,000
@@ -39,7 +39,7 @@ use neat_ai_discovery::focus::compute_impacts_public;
 
 /// Test: Production scenario - target through saturated intermediate
 ///
-/// This recreates the GRQ production issue:
+/// This recreates the production issue:
 /// - Target neuron connects to intermediate with LOGISTIC squash
 /// - Intermediate has HUGE total input (saturated at output ≈ 1.0)
 /// - Intermediate connects to output with small weight
@@ -47,7 +47,7 @@ use neat_ai_discovery::focus::compute_impacts_public;
 /// Expected: Changes to target have ~0 effect (but structural impact ≠ 0)
 #[test]
 fn test_production_scenario_saturated_intermediate() {
-    // Simplified version of GRQ topology:
+    // Simplified version of the production topology:
     // target → intermediate (LOGISTIC, saturated) → output
     let creature = CreatureJson {
         input: 100,

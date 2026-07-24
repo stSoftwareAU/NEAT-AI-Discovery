@@ -21,7 +21,7 @@ use neat_ai_discovery::analysis::target_failure_tracker::{
 fn three_consecutive_failures_skip_target_in_cooldown_window() {
     let mut tracker = TargetFailureTracker::with_thresholds(3, 10);
 
-    // Simulate the GRQ-sampler failure pattern: 3 failures on the same target
+    // Simulate the production failure pattern: 3 failures on the same target
     // across epochs 0..=2.
     for epoch in 0..3u64 {
         tracker.record_failure("neuron-1063112866", epoch);
@@ -105,11 +105,11 @@ fn default_thresholds_match_proposal() {
     );
 }
 
-/// Issue #1130: the cooldown mirrors the GRQ-sampler failure signature — 17 of
+/// Issue #1130: the cooldown mirrors the production failure signature — 17 of
 /// 18 entries targeting the same neuron. Once the 3rd consecutive failure
 /// lands, the remaining 14+ attempts on that target are skipped.
 #[test]
-fn grq_sampler_pattern_saves_budget_after_third_failure() {
+fn production_failure_pattern_saves_budget_after_third_failure() {
     let mut tracker = TargetFailureTracker::with_thresholds(3, 10);
     let hot_target = "neuron-1063112866";
 

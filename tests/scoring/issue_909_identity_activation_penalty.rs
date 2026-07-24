@@ -2,8 +2,8 @@
 //! Tests for Issue #909: IDENTITY activation penalty and non-linear activation favouring.
 //!
 //! IDENTITY's apparent 14.9% success rate is inflated by its dominance in the
-//! candidate pool (274 candidates — more than any other activation). GRQ-sampler
-//! evidence (commit 7f15429) shows IDENTITY neurons are frequently substituted
+//! candidate pool (274 candidates — more than any other activation).
+//! Production discovery-cache evidence shows IDENTITY neurons are frequently substituted
 //! with non-linear activations like SINE for improvement.
 //!
 //! ## Key Behaviours Verified

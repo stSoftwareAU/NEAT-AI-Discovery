@@ -1,7 +1,7 @@
 //! Regression tests for Issue #1272 — operation-count-aware post-discount
 //! noise floor for coordinated-structural candidates.
 //!
-//! GRQ-sampler commit `e85c5d2` (creature `bcbca347`) captured two 4-op
+//! Production failure-cache analysis captured two 4-op
 //! coordinated-structural failures that **just barely** cleared the previous
 //! single-value `COORDINATED_POST_DISCOUNT_NOISE_FLOOR` (5e-7) but harmed the
 //! network by 1000× to 6000× the predicted magnitude:
