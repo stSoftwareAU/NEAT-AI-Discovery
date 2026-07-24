@@ -1,12 +1,12 @@
 ## Summary
 
-Addressed the "Brilliant but Brittle" issue (#432) by researching the three main repositories (NEAT-AI-Discovery, NEAT-AI, and GRQ) and creating targeted sub-issues to reduce brittleness in production creature predictions.
+Addressed the "Brilliant but Brittle" issue (#432) by researching the three main repositories (NEAT-AI-Discovery, NEAT-AI, and the production observation layer) and creating targeted sub-issues to reduce brittleness in production creature predictions.
 
 Bad or missing observations can wildly affect predictions. This PR creates a comprehensive plan across all three repositories to:
 
 1. **Improve discovery modules** (NEAT-AI-Discovery) to detect and remove high noise-to-signal neurons/synapses
 2. **Enhance evolutionary algorithms** (NEAT-AI) with stability-aware mutation and validation
-3. **Strengthen observation handling** (GRQ) with better error handling and sentinel value management
+3. **Strengthen observation handling** (production observation layer) with better error handling and sentinel value management
 
 ## Evidence
 
@@ -24,11 +24,15 @@ This is a planning/issue-creation task with no code changes or UI components. Ev
 - [#1309](https://github.com/stSoftwareAU/NEAT-AI/issues/1309) - Weight regularisation during mutation
 - [#1310](https://github.com/stSoftwareAU/NEAT-AI/issues/1310) - Ensemble diversity scoring for species
 
-### GRQ Issues Created
-- [#796](https://github.com/stSoftwareAU/GRQ/issues/796) - Standardised sentinel value handling across all observation extensions
-- [#797](https://github.com/stSoftwareAU/GRQ/issues/797) - Observation quality scoring and filtering
-- [#798](https://github.com/stSoftwareAU/GRQ/issues/798) - Robust error handling in observation extensions
-- [#799](https://github.com/stSoftwareAU/GRQ/issues/799) - Input normalisation consistency checks
+### Production Observation-Layer Issues Created
+
+Four follow-up issues were raised in the private production observation-layer
+repository (issue links omitted — that repository is not public):
+
+- Standardised sentinel value handling across all observation extensions
+- Observation quality scoring and filtering
+- Robust error handling in observation extensions
+- Input normalisation consistency checks
 
 ## Research Findings
 
@@ -59,7 +63,7 @@ The codebase already has strong foundations for brittleness detection:
 2. Cross-neuron brittleness propagation detection
 3. Temporal stability analysis across validation sets
 4. Gradient-based sensitivity analysis
-5. Standardised observation quality metrics across GRQ extensions
+5. Standardised observation quality metrics across production observation extensions
 
 ## Test Plan
 

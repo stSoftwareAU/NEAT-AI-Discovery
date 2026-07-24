@@ -1,6 +1,6 @@
 ## Summary
 
-Target-type prioritisation for synapse candidate scoring (Issue #468). GRQ-sampler data shows existing hidden neurons as targets have a 31.4% success rate compared to 5.3-5.4% for output or discovery-hidden neurons. This change:
+Target-type prioritisation for synapse candidate scoring (Issue #468). Production discovery-cache data shows existing hidden neurons as targets have a 31.4% success rate compared to 5.3-5.4% for output or discovery-hidden neurons. This change:
 
 - Adds `EXISTING_HIDDEN_TARGET_BOOST` constant (1.5x) to `constants.rs` for configurable target-type weighting
 - Adds `apply_target_type_boost()` function that boosts candidate score gains when the target is an existing hidden neuron

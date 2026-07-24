@@ -49,7 +49,7 @@ Backend / CLI change — no UI to screenshot. Verified via:
   > 1 path, skip-count accumulation, unrelated-target isolation, and the
   zero-threshold clamp.
 - New integration tests in
-  `tests/issue_1164_within_batch_failures.rs` covering the GRQ-sampler
+  `tests/issue_1164_within_batch_failures.rs` covering the production
   scenario from the issue (3 same-target add-neuron candidates → 1
   evaluated, 2 short-circuited).
 - Existing per-target cooldown coverage (`issue_1130_target_cooldown`) still

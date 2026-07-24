@@ -1,6 +1,6 @@
 ## Summary
 
-Boost `remove-low-impact` candidate generation and priority based on GRQ-sampler
+Boost `remove-low-impact` candidate generation and priority based on production
 discovery cache evidence showing a 21.5% success rate (440/2,043) — the highest
 of all candidate types and roughly double the overall 10.7% rate. Closes #892.
 

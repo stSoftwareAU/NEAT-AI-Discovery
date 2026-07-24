@@ -6,7 +6,7 @@ Previously the gate only suppressed the narrow `compounds_target_clipping`
 case (e.g. `ABSOLUTE` feeding into `HARD_TANH`) and otherwise applied a soft
 discount; a saturated `HARD_TANH` output could still attract
 `ArcTan` or `BENT_IDENTITY` intermediate proposals that produced no usable
-gradient (GRQ-sampler commit `744ac60d`, candidates
+gradient (production discovery-cache commit `744ac60d`, candidates
 `v2_add-neurons_neuron-921689429_output-0_ArcTan_*` and `…_BENT_IDENTITY_*`,
 actual Δerror ≈ `-2.0e-5`). Closes #1143.
 

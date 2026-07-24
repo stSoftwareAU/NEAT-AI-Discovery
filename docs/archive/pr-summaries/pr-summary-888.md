@@ -4,7 +4,7 @@ Closes #888
 
 ## Problem
 
-GRQ-sampler discovery cache analysis shows that successful add-neuron candidates
+Production discovery cache analysis shows that successful add-neuron candidates
 cluster in a narrow weight range that is far tighter than the previous constraints
 allowed. Specifically:
 

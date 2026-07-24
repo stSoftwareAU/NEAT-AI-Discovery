@@ -5,7 +5,7 @@
 Milestone #1516 merged the propagation-aware remove-neuron estimator
 `estimate_remove_neuron_gain` (PR #1523), but **nothing in the live pipeline
 invoked it**. The production remove-neuron path still reported the fabricated
-NEAT-AI `#2483` placeholder gain — on GRQ-Discovery commit `2596f073`
+NEAT-AI `#2483` placeholder gain — on production discovery-cache commit `2596f073`
 (Discovery `v0.74.120`) the remove-neuron `expected` reproduced the placeholder
 exactly (`+0.17879` vs a measured `actual` of `−0.00032` on creature
 `45a04ef1`). So the #1516 fix was merged but **not live end-to-end**.

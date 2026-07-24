@@ -6,7 +6,7 @@ so it stops emitting 4-op coordinated-structural candidates whose
 When the bypass weight is near-zero, the chain `a→h→b` was contributing
 essentially nothing through `h`, so the proposal is functionally equivalent
 to a 1-op `remove-neuron` but still carries the much higher implementation-
-risk profile of a 4-op coordinated change. GRQ-sampler creature `bcbca347`
+risk profile of a 4-op coordinated change. production creature `bcbca347`
 captured 41 consecutive such failures (bypass weights as low as `2.1e-3`
 producing actual error changes ~6,500× worse than predicted).
 

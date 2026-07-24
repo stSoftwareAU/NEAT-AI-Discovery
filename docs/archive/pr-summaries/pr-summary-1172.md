@@ -4,7 +4,7 @@
 
 `focus::ranking` previously sampled host memory and silently downgraded to
 lazy-loading mode under pressure. Callers had no way to predict, configure,
-or observe the downgrade — and on low-memory hosts (e.g. GRQ-13's 6 GB) the
+or observe the downgrade — and on low-memory hosts (e.g. a low-memory production host's 6 GB) the
 eager pre-load itself was a non-trivial driver of the heap pressure that led
 to the WARN.
 
@@ -51,7 +51,7 @@ flowchart LR
 - `RankFocusStats` gains `loading_mode`, `lazy_reason`, `budget_mb`,
   `projected_mb` fields; `RankFocusNeuronsOutput` mirrors them as
   `loadingMode`, `lazyReason`, `budgetMb`, `projectedMb` JSON fields so
-  GRQ can include them in run summaries.
+  the production layer can include them in run summaries.
 - `crate::focus::decide_loading_mode_for_budget(projected_bytes, budget_mb)`
   pure helper exposed for unit testing the budget logic without needing a
   parquet file large enough to exceed the 3× decompression multiplier.

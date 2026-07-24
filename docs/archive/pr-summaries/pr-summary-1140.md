@@ -2,7 +2,7 @@
 
 Cap `add-neurons` candidates per target within a single discovery batch so
 that a clearly-hopeless target cannot consume most of the budget with minor
-variants. GRQ-sampler commit `744ac60d` recorded 17 of 19 `add-neurons`
+variants. Production discovery-cache commit `744ac60d` recorded 17 of 19 `add-neurons`
 failures in one submission against the **same** neuron; the cross-batch
 cooldown added in Issue #1130 cannot fire inside a single batch, so a
 within-batch cap is required.

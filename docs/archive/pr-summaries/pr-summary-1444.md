@@ -8,7 +8,7 @@ analysis then correctly returns nothing (every target reports
 `no_target_records`, Issue #1101) — but only after spending the **entire**
 analysis budget (~15 min of combined GPU analysis on a large dataset). The
 operator pays the full wall-clock cost and gets no actionable signal that
-**recording**, not search, failed (the GRQ-3 weeks-long drought, Issue #1418).
+**recording**, not search, failed (the production weeks-long drought, Issue #1418).
 
 This PR adds a cheap, fail-fast coverage gate in `analyze_all`. Immediately
 after the parquet cache loads — and **before** any GPU work — it scans the

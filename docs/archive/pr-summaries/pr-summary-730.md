@@ -1,6 +1,6 @@
 ## Summary
 
-Fix the add-synapses module's 0% success rate in production cache (GRQ-sampler discovery data). Closes #730.
+Fix the add-synapses module's 0% success rate in production cache (production discovery-cache data). Closes #730.
 
 Three root causes were identified and addressed:
 

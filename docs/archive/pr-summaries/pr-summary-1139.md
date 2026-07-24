@@ -14,7 +14,7 @@ candidate's `expected_creature_score_gain` by `0.75×` / `0.5×` / `0.25×` /
 (`apply_coordinated_gain_floor_with_multiplier`) lived **inside** the
 `!memory_budget_exceeded && !post_processing_deadline_passed` guard in
 `analyze_all`, so whenever either condition tripped the filter was skipped.
-GRQ-sampler commit `744ac60d` (discoveryVersion `0.74.16`) captured two such
+Production discovery-cache commit `744ac60d` (discoveryVersion `0.74.16`) captured two such
 variants with gains of `1.4e-7` / `1.3e-7` damaging the creature when tested.
 
 Changes:
@@ -48,7 +48,7 @@ The new precondition test (`variant_generation_can_produce_subfloor_gains`)
 directly reproduces the leak by feeding a `1.9e-6` base candidate through
 `pair_coordinated_structural_with_weight_variants` and asserting that at
 least one of the six paired variants lands below `5e-7` — demonstrating the
-bug mechanism captured by the GRQ-sampler failure cache.
+bug mechanism captured by the production failure cache.
 
 ## Test Plan
 

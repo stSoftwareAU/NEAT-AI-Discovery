@@ -6,7 +6,7 @@ Eliminated the per-submit deep copy of `HelpfulSample` sample vectors on the GPU
 queue submit path. Previously `submit_helpful_gpu_work` (and the harmful
 counterpart) ran `helpful_work_batch.iter().map(|w| w.samples.clone())` on
 **every** batch submit, allocating and copying every source's sample `Vec` purely
-to satisfy queue ownership. At GRQ scale, locality groups hold large
+to satisfy queue ownership. At production scale, locality groups hold large
 `Vec<HelpfulSample>`, so this created multi-GB transient allocations and cache
 thrash on the already CPU-bound sample-build path.
 
@@ -79,8 +79,8 @@ because it is a per-item atomic refcount increment rather than an allocation +
 memcpy. The deep-copy cost scales linearly with sample size. This far exceeds the
 issue's **≥20% win on the `queue_submission_copies` Criterion suite** success
 bar, and — because the deep copy is removed entirely — eliminates the transient
-per-submit allocation that drove peak-RSS growth during helpful submit at GRQ
-scale.
+per-submit allocation that drove peak-RSS growth during helpful submit at
+production scale.
 
 Run with:
 
@@ -88,7 +88,7 @@ Run with:
 cargo bench --bench queue_submission_copies -- submit_batch
 ```
 
-> Note: the GRQ production fixtures (`../GRQ/.trainData-binary_115`) are not
+> Note: the production fixtures (the production training-data binary) are not
 > available in this environment, so the production-fixture RSS/ms measurement in
 > the issue's benchmark plan could not be captured here. The structural win is
 > unconditional: the hot submit path no longer allocates or copies the sample

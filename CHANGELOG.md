@@ -8,20 +8,37 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+#### Remove private-repo links and mentions from archived PR summaries (Issue #1726)
+
+The archived PR summaries under `docs/archive/pr-summaries/` named private
+`stSoftwareAU` repositories — and in several places linked directly to private
+issues, commits, and checkout paths that 404 for the public. Every such file
+ships in every public clone and is indexed by search engines.
+
+- Reworded all name-level mentions across 65 archived summaries to concept level
+  ("the production discovery cache", "a large production creature",
+  "production-cluster fixture"); dropped the direct private issue/commit links
+  and the private checkout-path references, keeping commit hashes, creature
+  ids, and metrics intact.
+- Added `tests/issue_1726_archive_no_private_repo_names.rs` — the regression gate
+  that fails loudly if an archived summary reintroduces a private repository
+  name (the archive counterpart to the #1723 active-docs gate).
+
 #### Reword private-repo references in test comments, rename the strip-pattern test file (Issue #1725)
 
 Test doc comments, helper names, and one test *file* name cited private
-`stSoftwareAU` deployments (`GRQ-sampler` commits, `GRQ-3-rocket.log`,
-`GRQ-18-1`, `GRQ-13`) as their motivating evidence. `cargo test` prints those
-file and test names on every run, pointing public contributors at evidence they
-cannot reach.
+`stSoftwareAU` deployments (production sampler-cache commits, a production
+corruption-log name, and several numbered production deployments) as their
+motivating evidence. `cargo test` prints those file and test names on every
+run, pointing public contributors at evidence they cannot reach.
 
 - Reworded every such citation to concept level ("production failure-cache
   evidence", "a large production creature"); internal issue numbers preserve
   maintainer traceability. No test behaviour changed.
-- Renamed `tests/ffi/issue_1188_grq3_strip_pattern_rejection.rs` to
-  `issue_1188_strip_pattern_rejection.rs` and updated the `tests/ffi/main.rs`
-  harness reference; the `*_rejects_grq3_*` test names became `*_rejects_*`.
+- Renamed the FFI strip-pattern test file that carried a private-deployment name
+  to `issue_1188_strip_pattern_rejection.rs` and updated the `tests/ffi/main.rs`
+  harness reference; the private-named `*_rejects_*` test names became
+  behaviour-describing.
 - Extended `tests/source_free_of_private_repo_names.rs` to walk `tests/` as
   well, match case-insensitively (catching lower-case identifiers), and guard
   file names — the regression gate that keeps private names out.

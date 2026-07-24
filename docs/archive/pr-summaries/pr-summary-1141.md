@@ -4,7 +4,7 @@ Within the candidates for any single `to_neuron_uuid`, only the highest-gain
 candidate per distinct `squash` value survives — duplicate `(target, squash)`
 pairs are dropped before the per-target cap (#1140) so the remaining cap budget
 is spent on genuinely diverse proposals rather than near-identical failing bets
-(e.g. the GRQ-sampler 744ac60d case where 17 candidates targeting the same
+(e.g. the production discovery-cache commit `744ac60d` case where 17 candidates targeting the same
 neuron all proposed the same `ReLU6` squash). Closes #1141.
 
 ## Changes

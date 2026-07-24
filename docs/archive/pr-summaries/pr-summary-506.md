@@ -1,6 +1,6 @@
 ## Summary
 
-Apply a pessimism discount to expected score gain predictions to address the 18,500x over-estimation observed in production (creature b2ff6e45, GRQ-sampler commit a1340f8d). Closes #506.
+Apply a pessimism discount to expected score gain predictions to address the 18,500x over-estimation observed in production (creature b2ff6e45, production discovery-cache commit a1340f8d). Closes #506.
 
 The root cause: the improvement calculation measures the fraction of a single target neuron's squared error explained by sampled data (`(baseline_error_sq - new_error_sq) / baseline_error_sq`), but this neuron-level relative improvement was used directly as the creature-level expected score gain. In practice, sample-level improvements do not fully generalise to the full training set, causing predictions to be orders of magnitude too optimistic.
 

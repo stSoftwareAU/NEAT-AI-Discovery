@@ -23,8 +23,8 @@ provably-regressive removals at proposal time (propose-and-evaluate is kept).
 ## What changed
 
 - Added `src/analysis/remove_neuron_regression_test.rs` — a checked-in fixture
-  (no network access) distilled from the cached GRQ-cluster failure
-  (GRQ-Discovery commit `c4330385fc65897c6caf1168d420d0e248d490da`, candidate
+  (no network access) distilled from the cached production-cluster failure
+  (production discovery-cache commit `c4330385fc65897c6caf1168d420d0e248d490da`, candidate
   UUID `neuron-876870118`; the NEAT-AI-side label truncation dropping the leading
   digit is cosmetic only). The module doc comment records the systematic root
   cause.

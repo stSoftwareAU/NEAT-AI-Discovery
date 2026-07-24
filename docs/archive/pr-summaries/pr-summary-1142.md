@@ -12,7 +12,7 @@ is indistinguishable from floating-point noise no longer reach the FFI response.
 
 - **`src/analysis/constants/candidate_scoring.rs`**
   - Add `REMOVE_LOW_IMPACT_NOISE_FLOOR: f32 = 1e-5` (matches
-    `COORDINATED_MIN_EXPECTED_GAIN`) with the GRQ-sampler failure-cache
+    `COORDINATED_MIN_EXPECTED_GAIN`) with the production failure-cache
     evidence inlined in the doc comment.
   - Add `remove_low_impact_noise_floor()` helper that reads
     `NEAT_AI_DISCOVERY_REMOVE_LOW_IMPACT_NOISE_FLOOR` at call time. `0.0` is
@@ -34,7 +34,7 @@ is indistinguishable from floating-point noise no longer reach the FFI response.
   - Return `RemovalCandidateOutcome { candidates, noise_floor_rejections }`
     instead of a bare `Vec<RemovalCandidate>`.
   - Inline unit tests:
-    - `issue_1142_evidence_candidate_is_dropped` — reproduces the GRQ-sampler
+    - `issue_1142_evidence_candidate_is_dropped` — reproduces the production
       failure-cache scenario and asserts the candidate is dropped and
       counted.
     - `well_above_noise_floor_candidate_is_kept` — net ≈ 1.5e-5 candidate
@@ -66,7 +66,7 @@ is indistinguishable from floating-point noise no longer reach the FFI response.
 
 ## Evidence
 
-From the GRQ-sampler failure-cache entry cited in the issue
+From the production failure-cache entry cited in the issue
 (`v2_remove-low-impact_0ce92a87-...json`):
 
 ```
@@ -108,7 +108,7 @@ Rationale:
    candidates can no longer cross the line by accident of noise, regardless
    of the boost multiplier.
 2. Lowering or removing the boost without fresh end-to-end success-rate
-   telemetry would be a speculative change. The GRQ-sampler failure cache
+   telemetry would be a speculative change. The production failure cache
    entry alone is not a statistically meaningful sample — it tells us about
    **this particular** candidate being bad, not about the marginal success
    rate of the population above the floor.
@@ -117,7 +117,7 @@ Rationale:
    impact and they sit above the noise floor. With the noise floor in
    place, the boost's worst-case damage is bounded.
 
-**Follow-up recommended:** once a fresh window of GRQ-sampler data is
+**Follow-up recommended:** once a fresh window of production discovery-cache data is
 available post-merge, re-evaluate `REMOVAL_CANDIDATE_BOOST` against
 candidates that clear the new 1e-5 floor. If the observed success rate for
 above-floor candidates is materially different from the 21.5% that motivated

@@ -6,7 +6,7 @@ Focus selection (`rank_focus_neurons`) and the analysis phase (`analyze_all`)
 are two separate FFI calls that each **fully read the same parquet file from
 scratch**. On large files the second full scan — the "parquet reload" — consumed
 a meaningful slice of the analysis deadline before any synapse/neuron analysis
-began, a primary driver of the GRQ-23 starvation.
+began, a primary driver of the production starvation.
 
 This PR loads the grouped discovery records **once per discovery cycle** and
 shares them across the two phases via a small process-side bridge
@@ -67,7 +67,7 @@ full-read sequence (old) against load-then-reuse (new):
 
 The second full scan is structurally eliminated; the remaining time is a single
 read. The saving scales with file size — on the large parquet files that drove
-GRQ-23 starvation, this reclaims the whole second-scan slice of the analysis
+the production starvation, this reclaims the whole second-scan slice of the analysis
 deadline.
 
 ## Test Plan

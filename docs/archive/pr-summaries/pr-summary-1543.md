@@ -5,7 +5,7 @@
 The bulk `RecordCache::load_records_for_*` loaders used to **deep-clone** each
 neuron's inner `Vec<DiscoverRecord>` for every one of the ~48 discovery modules
 dispatched per `analyze_all` post-processing pass. On production-scale creatures
-(GRQ `ed71b732`, ~1662 hidden neurons) that materialised **tens of GB** of
+(production creature `ed71b732`, ~1662 hidden neurons) that materialised **tens of GB** of
 transient record copies even when the synapse GPU work finished on time — the
 highest-impact clone that Issue #983 explicitly deferred.
 

@@ -5,7 +5,7 @@ single discovery module for a single creature after `N` consecutive failures
 without an intervening success. This closes the gap between the population-wide
 module gate (Issue #1060), creature-level Conservative mode (Issue #1132), and
 per-target cooldown (`TargetFailureTracker`, Issue #1130) — none of which can
-disable a single module for one creature. Motivated by GRQ-sampler commit
+disable a single module for one creature. Motivated by production discovery-cache commit
 `e85c5d2` (creature `bcbca347`), where `coordinated-structural` recorded 41
 consecutive failures and 0 successes, consuming ~91% of the candidate budget
 while other modules went unexplored.
@@ -70,7 +70,7 @@ New unit tests in `src/analysis/module_starvation_tracker.rs`:
 - `starved_module_count_only_counts_active_cooldowns` — diagnostic counter
   only reports modules currently in active cooldown.
 - `regression_bcbca347_coordinated_structural_disabled_after_fifteen_failures`
-  — replays the 41-failure streak from GRQ-sampler creature `bcbca347` and
+  — replays the 41-failure streak from production creature `bcbca347` and
   asserts the module is disabled by the 15th failure and re-armed once the
   10-epoch cooldown elapses.
 - `starved_module_names_returns_sorted_distinct_list` — diagnostic naming.

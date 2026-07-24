@@ -1,6 +1,6 @@
 ## Summary
 
-Add per-candidate-type prediction calibration scaling to correct systematic overestimation in `expected_creature_score_gain`. GRQ-sampler discovery cache reveals predictions overestimate actual outcomes by 100–10,000×, with the magnitude varying by candidate type — making cross-type comparisons unreliable. Closes #891.
+Add per-candidate-type prediction calibration scaling to correct systematic overestimation in `expected_creature_score_gain`. Production discovery cache reveals predictions overestimate actual outcomes by 100–10,000×, with the magnitude varying by candidate type — making cross-type comparisons unreliable. Closes #891.
 
 Three calibration constants are applied post-pessimism-discount:
 - `SYNAPSE_PREDICTION_CALIBRATION` = 0.001 (corrects ~1,000× overestimation)
@@ -9,7 +9,7 @@ Three calibration constants are applied post-pessimism-discount:
 
 ## Evidence
 
-Calibration factors are derived from GRQ-sampler cache data comparing predicted vs actual score gains:
+Calibration factors are derived from production discovery-cache data comparing predicted vs actual score gains:
 
 | Candidate Type | Predicted Gain | Actual Gain | Overestimation | Calibration Factor |
 |----------------|---------------|-------------|----------------|-------------------|

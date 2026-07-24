@@ -57,8 +57,8 @@ Out of scope, tracked separately and deliberately untouched:
 
 - `docs/archive/` PR summaries — historical record, cleaned by #1726.
 - Source, bench, and example comments — #1724.
-- Test comments and the `grq3` test filename — #1725.
-- `stSoftwareAU/VibeCoding` policy citations — #1727.
+- Test comments and a private-named test filename — #1725.
+- Private CI-workflow policy citations — #1727.
 
 ## Evidence
 

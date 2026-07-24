@@ -1,7 +1,7 @@
 ## Summary
 
 Harmful-neuron (`remove-neuron`) candidates over-predicted their score gain by
-~800× (failure bucket `247b83ab`, GRQ-Discovery): predicted `+0.166` vs actual
+~800× (failure bucket `247b83ab`, production discovery cache): predicted `+0.166` vs actual
 `≈0`. Because `expected_creature_score_gain` is the candidate ranking key
 (`src/analysis/discovery_dispatch.rs`), these inflated predictions crowded the
 top of the candidate list every pass, failed scoring, and landed in the failure

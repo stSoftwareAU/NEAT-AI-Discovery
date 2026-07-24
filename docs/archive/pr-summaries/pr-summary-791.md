@@ -2,7 +2,7 @@
 
 Improve add-neurons prediction accuracy by implementing two complementary improvements from Issue #791:
 
-1. **Neuron-specific pessimism calibration** — The generic pessimism discount (floor=0.15, exponent=0.6) treats neuron and synapse candidates identically, but GRQ-sampler data shows add-neurons has a 15% success rate (3,812/25,812) vs higher synapse rates. New neuron-specific constants (floor=0.10, exponent=0.75) apply more aggressive discounting: ~28% more aggressive at low ratios, ~13% at moderate ratios.
+1. **Neuron-specific pessimism calibration** — The generic pessimism discount (floor=0.15, exponent=0.6) treats neuron and synapse candidates identically, but production discovery-cache data shows add-neurons has a 15% success rate (3,812/25,812) vs higher synapse rates. New neuron-specific constants (floor=0.10, exponent=0.75) apply more aggressive discounting: ~28% more aggressive at low ratios, ~13% at moderate ratios.
 
 2. **Cross-validation brittleness filtering** — Integrates the existing cross-validation infrastructure (from `scoring/cross_validation.rs`) into the neuron evaluation pipeline. Candidates are now evaluated across k-fold sample subsets; those showing inconsistent improvement across folds receive a brittleness penalty that reduces their expected score gain. This filters candidates that overfit to specific data subsets.
 
