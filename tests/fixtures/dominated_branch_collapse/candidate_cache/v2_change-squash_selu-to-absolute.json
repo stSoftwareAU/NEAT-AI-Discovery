@@ -1,11 +1,12 @@
 {
+  "_comment": "Synthetic candidate-cache record (Issue #1705, re-authored for Issue #1722). Hand-authored and structurally faithful to a committed cache record; the predicted/measured values are illustrative of the placeholder-vs-outcome collapse the contribution suite grades against, not copied from any private repository. The record keeps the qualitative shape under test: a tiny positive prediction (+3.0e-10) against a much larger negative outcome (-6.0e-4), a >1e5 magnitude gap and a sign flip.",
   "wireSchemaVersion": 2,
   "key": "v2_change-squash_selu-to-absolute",
   "changeType": "change-squash",
   "description": "🎨 Changed activation function (SELU -> ABSOLUTE expected: 0.0%)",
-  "originalScore": 0.4236678629467732,
-  "candidateScore": 0.4227978629467732,
-  "scoreDelta": -0.00087,
+  "originalScore": 0.42,
+  "candidateScore": 0.4194,
+  "scoreDelta": -0.0006,
   "timestamp": "2026-07-16T00:00:00.000000000Z",
   "discoveryVersion": "0.74.131",
   "rustRequest": {
@@ -13,9 +14,9 @@
       "neuronUuid": "neuron-selu-absolute",
       "previousSquash": "SELU",
       "squash": "ABSOLUTE",
-      "expectedCreatureScoreGain": 4.2e-10
+      "expectedCreatureScoreGain": 3.0e-10
     }
   },
-  "expectedErrorReduction": 4.2e-10,
-  "actualErrorReduction": -8.7e-4
+  "expectedErrorReduction": 3.0e-10,
+  "actualErrorReduction": -6.0e-4
 }

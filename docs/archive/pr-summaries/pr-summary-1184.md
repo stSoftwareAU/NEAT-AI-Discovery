@@ -2,7 +2,7 @@
 
 Adds a defence-in-depth gate at the FFI boundary that rejects creatures
 carrying recurrent synapses (self-loops or back-edges) before they enter
-the discovery pipeline. Mirrors the GRQ-10 corruption sweep tracked in
+the discovery pipeline. Mirrors the production corruption sweep tracked in
 `stSoftwareAU/NEAT-AI#2511`, where 28 `output-0 -> output-0` self-loops
 survived the upstream NEAT-AI `loadFrom` strip (which was warn-and-continue)
 and would otherwise have entered analysis silently. Closes #1184.

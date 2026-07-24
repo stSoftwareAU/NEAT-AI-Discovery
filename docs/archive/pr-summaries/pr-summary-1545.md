@@ -5,7 +5,7 @@
 Neuron / add-neuron GPU evaluation previously built the **full** cross-product
 of every `ACTIVATION_SPECS` family × orientations × scales (256 configs) for
 **every** (source, target) pair — even for hidden targets that historically only
-accept a handful of squash families. At GRQ scale (~2.4k sources) this made the
+accept a handful of squash families. At production scale (~2.4k sources) this made the
 neuron phase rival synapse GPU time.
 
 This change makes the hidden-target activation scan **squash-aware**: a hidden

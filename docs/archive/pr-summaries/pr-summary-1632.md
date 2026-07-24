@@ -5,10 +5,10 @@ only ever reached the contribution check if its weight was already tiny
 (`|weight| ≤ 1e-4`). But a synapse can carry a large weight and still contribute
 nothing when its **source neuron is gated to ~0 across every observation**
 (contribution = `weight × source_activation ≈ 0`). Snapshot mining (Issue #1631)
-found **166** such fully-dormant, source-gated synapses in the production
-GRQ-cluster creature — ~90% of the truly-dormant synapses — all invisible to the
+found **166** such fully-dormant, source-gated synapses in the production-cluster
+creature — ~90% of the truly-dormant synapses — all invisible to the
 old weight gate, which is why no `removeSynapse` candidates were reaching the
-`GRQ-Discovery` cache.
+production discovery cache.
 
 This change makes **contribution the primary dormancy criterion**:
 

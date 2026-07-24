@@ -1,7 +1,7 @@
 //! Tests for Issue #468: Target-type prioritisation — favour existing hidden
 //! neurons as targets.
 //!
-//! GRQ-sampler data shows existing hidden neurons as targets have a 31.4%
+//! Production discovery-cache analysis shows existing hidden neurons as targets have a 31.4%
 //! success rate compared to 5.3–5.4% for output or discovery-hidden neurons.
 //! These tests verify that:
 //!

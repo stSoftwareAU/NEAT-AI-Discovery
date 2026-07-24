@@ -2,7 +2,7 @@
 //!
 //! Extends the #1518 propagation-aware approach — which fixed the
 //! **remove-neuron** estimate — to the **change-squash** estimate path, the
-//! second estimate path cited on GRQ-Discovery commit `2596f073`.
+//! second estimate path cited in the production discovery analysis.
 //!
 //! ## Why the change-squash placeholder was wrong
 //!

@@ -1,5 +1,5 @@
 //! Issue #1545 — squash-aware `ACTIVATION_SPECS` pruning for hidden add-neuron
-//! targets (GRQ scale).
+//! targets (large production scale).
 //!
 //! Acceptance criteria exercised here:
 //! - (a) A creature with **zero** historical success for a squash family gets

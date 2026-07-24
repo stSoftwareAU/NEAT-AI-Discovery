@@ -1,6 +1,6 @@
 ## Summary
 
-Recalibrate prediction scoring to match production success rates from GRQ-sampler discovery cache (30+ creatures). Closes #1056.
+Recalibrate prediction scoring to match production success rates from production discovery cache (30+ creatures). Closes #1056.
 
 The existing linear calibration factors and pessimism discount parameters were insufficient to bridge the neuron-level → creature-level prediction gap. This PR:
 
@@ -10,7 +10,7 @@ The existing linear calibration factors and pessimism discount parameters were i
 
 ## Evidence
 
-GRQ-sampler production data:
+Production discovery-cache data:
 
 | Candidate Type | Actual Success Rate | Previous Overestimation |
 |---|---|---|

@@ -1,7 +1,7 @@
 ## Summary
 
 The focus-ranking eager-vs-lazy loading decision selected **lazy** (the slow
-path) even when GBs of RAM were free. In the GRQ-13 evidence the host had
+path) even when GBs of RAM were free. In the low-memory production evidence the host had
 **~2990 MB available** yet a ~1.6 GB parquet projection was rejected, dropping
 the run onto the slow path.
 
@@ -18,7 +18,7 @@ buffers / system / allocator slack) and is overridable via
 `NEAT_AI_DISCOVERY_FOCUS_RANKING_MEMORY_BUDGET_MB` override (#1172) is
 **unchanged**.
 
-With the GRQ-13 numbers: `usable = 2990 − 1024 = 1966 MB ≥ 1593 MB → Preload`.
+With the production numbers: `usable = 2990 − 1024 = 1966 MB ≥ 1593 MB → Preload`.
 
 Closes #1376.
 
@@ -30,7 +30,7 @@ N/A — this is a Rust repository.
 
 Backend/CLI change — no UI to screenshot. Verified via unit and integration
 tests calling the real decision helpers with fixed memory figures (including the
-GRQ-13 numbers) and through the full `./quality.sh` gate (fmt, clippy, check,
+production numbers) and through the full `./quality.sh` gate (fmt, clippy, check,
 test, release build) passing cleanly.
 
 ```mermaid
@@ -49,14 +49,14 @@ flowchart TD
 Unit tests — `src/analysis/utils/memory_tests.rs` (`parquet_preload_fits_available`):
 - `test_preload_fits_when_projection_under_available_minus_margin`
 - `test_preload_does_not_fit_when_projection_exceeds_usable`
-- `test_preload_fits_grq13_numbers` — ≈1.6 GB projection, ≈3 GB free → Preload
+- `test_preload_fits_mid_sized_projection_numbers` — ≈1.6 GB projection, ≈3 GB free → Preload
 - `test_preload_boundary_equal_fits` — `<=` boundary, one byte over → lazy
 - `test_preload_margin_larger_than_available_saturates_to_lazy` — no underflow
 - `test_preload_zero_margin_uses_full_available`
 
 Integration tests — `tests/focus/issue_1376_focus_ranking_available_memory.rs`
 (`decide_loading_mode_for_available_memory` + `focus_ranking_memory_margin_mb`):
-- `grq13_numbers_choose_preload`
+- `mid_sized_projection_numbers_choose_preload`
 - `projection_over_usable_chooses_lazy_memory_pressure`
 - `boundary_equal_to_usable_preloads`
 - `margin_exceeding_available_falls_back_to_lazy_without_panic`

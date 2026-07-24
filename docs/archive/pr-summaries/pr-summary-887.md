@@ -1,7 +1,7 @@
 ## Summary
 
 Add activation-function-aware boost/penalty multipliers for add-neuron candidate
-scoring. GRQ-sampler discovery cache analysis shows dramatic differences in success
+scoring. Production discovery cache analysis shows dramatic differences in success
 rates by activation function (e.g., GELU at 60% vs HARD_TANH at 7.2%), yet previously
 all activation functions were treated equally during candidate scoring.
 

@@ -1,6 +1,6 @@
 ## Summary
 
-Add-synapse candidates have a near-zero success rate (~0.1-0.3%) across GRQ-sampler creatures, wasting compute on candidates that almost never pass ablation testing. This PR adds two gating mechanisms to skip add-synapse candidate generation when historical data or structural properties indicate near-zero likelihood of success. Closes #1057.
+Add-synapse candidates have a near-zero success rate (~0.1-0.3%) across production creatures, wasting compute on candidates that almost never pass ablation testing. This PR adds two gating mechanisms to skip add-synapse candidate generation when historical data or structural properties indicate near-zero likelihood of success. Closes #1057.
 
 ### Changes
 

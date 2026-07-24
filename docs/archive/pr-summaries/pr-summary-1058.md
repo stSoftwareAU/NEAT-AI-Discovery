@@ -1,6 +1,6 @@
 ## Summary
 
-Simplify the coordinated-structural compound discounting pipeline to improve candidate success rate. The previous three-layer compound discount (per-operation exponential, flat pessimism discount, and calibration factor) was too aggressive, filtering out potentially viable candidates while remaining poorly calibrated. Replaces the compound model with a single empirical discount per operation count derived from GRQ-sampler success rates, and lowers the minimum gain threshold since the calibration factor already accounts for overestimation. Closes #1058.
+Simplify the coordinated-structural compound discounting pipeline to improve candidate success rate. The previous three-layer compound discount (per-operation exponential, flat pessimism discount, and calibration factor) was too aggressive, filtering out potentially viable candidates while remaining poorly calibrated. Replaces the compound model with a single empirical discount per operation count derived from production success rates, and lowers the minimum gain threshold since the calibration factor already accounts for overestimation. Closes #1058.
 
 ## Changes
 
@@ -16,7 +16,7 @@ Simplify the coordinated-structural compound discounting pipeline to improve can
 - **Preserved** `COORDINATED_PREDICTION_CALIBRATION` (unchanged -- bridges prediction-to-reality magnitude gap)
 - **Added** deprecated aliases for backward compatibility of old constant names
 
-### GRQ-sampler Analysis
+### Production Discovery-Cache Analysis
 - Creature 0e18e62c: 6/389 successes (~1.5%), predominantly 2-op candidates
 - Creature 066649c7: 0/519 successes
 - Successful candidates were predominantly 2-operation, informing the empirical factors
@@ -28,7 +28,7 @@ All 171 tests pass, including new tests verifying:
 - Monotonically increasing discount with operation count
 - New factors are less aggressive than old compound
 - Lowered threshold allows viable candidates through while rejecting truly tiny gains
-- GRQ-sampler example candidates pass/fail correctly
+- Production example candidates pass/fail correctly
 
 ## Test Plan
 
@@ -38,7 +38,7 @@ All 171 tests pass, including new tests verifying:
   - 2-op, 3-op, 4-op, 5-op candidates use correct factors
   - Simplified model is less aggressive than old compound
   - Lowered threshold allows moderate gains while rejecting tiny ones
-  - GRQ-sampler known example patterns
+  - Production known example patterns
 - **Updated tests** (business logic changed, tests modified to match new behaviour):
   - `tests/analysis/issue_938_constants_submodule_organisation.rs` -- updated constant values
   - `tests/synapse/issue_732_coordinated_structural_success_rate.rs` -- updated threshold comments

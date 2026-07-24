@@ -91,11 +91,11 @@ fn compiled_default_short_circuits_after_first_failure() {
     assert!(tracker.should_skip("T"));
 }
 
-/// Issue #1164: simulate the GRQ-sampler `8c177b7` workload — three
+/// Issue #1164: simulate the production failure-cache workload — three
 /// same-target add-neuron candidates land in one batch. After the first
 /// failure, the remaining two are short-circuited.
 #[test]
-fn grq_sampler_batch_short_circuits_remaining_same_target_candidates() {
+fn production_batch_short_circuits_remaining_same_target_candidates() {
     let tracker = WithinBatchFailureTracker::with_threshold(1);
     let hot_target = "neuron-1063112866";
 

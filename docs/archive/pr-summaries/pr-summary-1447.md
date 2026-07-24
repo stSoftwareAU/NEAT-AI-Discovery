@@ -69,7 +69,7 @@ New unit tests (`cargo test --lib failure_cache_handshake`, all passing):
   - `absent_entry_target_acts_as_wildcard` — target-agnostic entry wildcard
   - `target_squash_discriminates_add_neurons`
   - `evaluate_engages_escalation_when_all_built_candidates_are_cached` —
-    reproduces the GRQ-3 "every built candidate is a cached failure" scenario
+    reproduces the production "every built candidate is a cached failure" scenario
   - `evaluate_inert_when_not_plateaued` — steady-state guard
   - `evaluate_inert_when_no_candidates`
 - `ffi_internal::analysis::failure_cache_handshake_wiring_tests`

@@ -58,7 +58,7 @@ fn dispatched(
 fn ac_a_large_creature_skips_expensive_modules_only() {
     let all = all_module_names();
     let threshold = DEFAULT_MODULE_TIERING_HIDDEN_THRESHOLD;
-    let hidden = 1662; // GRQ-scale creature
+    let hidden = 1662; // large production creature
 
     assert!(tiering_applies(hidden, threshold, false));
 

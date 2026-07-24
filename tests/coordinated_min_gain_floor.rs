@@ -3,10 +3,10 @@
 //! and module-boost discounts have been applied.
 //!
 //! PR #1115 (Issue #1110) introduced `COORDINATED_MIN_EXPECTED_GAIN = 1e-5` but
-//! applied it before the post-merge discounts. GRQ-sampler failure cache
-//! `discovery/failures/6d8a5b6a/coordinated-structural/v2_coordinated-structural_29584442...json`
-//! captured a candidate with `expectedCreatureScoreGain: 1.17e-7` that should
-//! have been filtered. The gaps identified:
+//! applied it before the post-merge discounts. Production failure-cache
+//! evidence captured a coordinated-structural candidate with
+//! `expectedCreatureScoreGain: 1.17e-7` that should have been filtered. The
+//! gaps identified:
 //!
 //! 1. `merge_coordinated_structural_replacements` allowed single-op candidates
 //!    through on `> 0.0`, ignoring the 1e-5 floor.

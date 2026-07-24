@@ -5,7 +5,7 @@
 Synapse and neuron analysis previously skipped **all** remaining work once the
 shared discovery deadline was exhausted by focus selection and parquet loading
 (`synapse/orchestration.rs`, `neuron/preparation.rs`), so analysis could
-complete 0 of N targets — the GRQ-23 symptom reported in #1405. The only
+complete 0 of N targets — the production symptom reported in #1405. The only
 safeguard was a soft warning when <60s remained.
 
 This PR introduces an **enforced floor** that guarantees synapse/neuron analysis

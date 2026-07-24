@@ -1,6 +1,6 @@
 //! Issue #1109: Raise `NEURON_MIN_IMPROVED_RATIO` from 0.4 to 0.55.
 //!
-//! Production failure data from GRQ-sampler (commit 50a2909) showed neuron
+//! Production failure-cache data showed neuron
 //! candidates with improved ratios of 52-54% (267-274 out of 510) consistently
 //! producing negative actual error reductions despite positive predictions.
 //! Raising the threshold from 0.4 to 0.55 filters out these near-random

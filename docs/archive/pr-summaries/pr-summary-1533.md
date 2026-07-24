@@ -6,7 +6,7 @@ Adds `tests/estimate_accuracy.rs` — the deliverable evidence for the #1529
 milestone: a **production-scale estimate-vs-actual accuracy harness** that proves
 the honest, propagation-aware error-reduction estimates are accurate for a
 *complex* creature, not a toy example. The harness drives the wired estimators
-end-to-end from the committed 1,666-neuron / 21,532-synapse GRQ-cluster snapshot
+end-to-end from the committed 1,666-neuron / 21,532-synapse production-cluster snapshot
 and grades every recorded change against its empirically measured actual error
 change, asserting all three #1529 pass criteria **across the full candidate set**
 (both change types), never a single neuron.
@@ -72,7 +72,7 @@ test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
 
 ```mermaid
 flowchart TD
-    A[network.json — 1,666-neuron GRQ-cluster snapshot] --> S[setup: assert 1666 / 21,532, ≥2 candidates, both change types]
+    A[network.json — 1,666-neuron production-cluster snapshot] --> S[setup: assert 1666 / 21,532, ≥2 candidates, both change types]
     B[v2_remove-neuron fixture] --> C[estimate_remove_neuron_gain]
     D[v2_change-squash fixture] --> E[estimate_change_squash_gain]
     S --> C
@@ -90,7 +90,7 @@ flowchart TD
   (`estimate_sign_matches_actual`, `estimate_within_10x_of_actual`,
   `estimate_ranking_orders_candidates`), each asserting across the full
   remove-neuron + change-squash candidate set on the committed 1,666-neuron
-  GRQ-cluster fixture.
+  production-cluster fixture.
 - Confirmed the honest estimators pass all three
   (`cargo test --test estimate_accuracy`).
 - Confirmed a throwaway placeholder-valued variant **fails** all three criteria,

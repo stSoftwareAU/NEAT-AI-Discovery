@@ -15,9 +15,9 @@ input, then closed the two paths that were previously bypassing the gate:
   validates the creature before walking the topology to compute impacts and
   reconstruction checks.
 
-Added an end-to-end regression test (`tests/ffi/issue_1188_grq3_strip_pattern_rejection.rs`)
+Added an end-to-end regression test (`tests/ffi/issue_1188_strip_pattern_rejection.rs`)
 that replays the three strip patterns observed in
-`GRQ-3-rocket.log` (depth-0 self-loop, depth-1 back-edge, depth-2
+the production corruption log (depth-0 self-loop, depth-1 back-edge, depth-2
 cross-layer back-edge) against every validated FFI surface and asserts
 `success: false` with `error_kind: "data_validation"`.
 
@@ -36,16 +36,16 @@ flowchart LR
 
 | FFI entry point | Accepts `CreatureJson` | Validates | Test |
 |-----------------|------------------------|-----------|------|
-| `record_discovery` | yes | yes (existing) | `record_discovery_rejects_grq3_*` |
-| `start_discovery_session` | yes | **yes (new)** | `start_discovery_session_rejects_grq3_*` |
-| `analyze_parallel` | yes | yes (existing) | `analyze_parallel_rejects_grq3_*` |
-| `rank_focus_neurons` | yes | yes (existing) | `rank_focus_neurons_rejects_grq3_*` |
-| `export_visualisation_snapshot` | yes | **yes (new)** | `export_visualisation_snapshot_rejects_grq3_*` |
+| `record_discovery` | yes | yes (existing) | `record_discovery_rejects_*` |
+| `start_discovery_session` | yes | **yes (new)** | `start_discovery_session_rejects_*` |
+| `analyze_parallel` | yes | yes (existing) | `analyze_parallel_rejects_*` |
+| `rank_focus_neurons` | yes | yes (existing) | `rank_focus_neurons_rejects_*` |
+| `export_visualisation_snapshot` | yes | **yes (new)** | `export_visualisation_snapshot_rejects_*` |
 | `append_/finish_/cancel_discovery_session`, `merge_discovery_parquet`, `read_discovery_records_ffi`, `get_calibration_summary`, `cleanup_discovery_dir`, `clean_orphaned_discovery_dirs`, `discovery_memory_usage_bytes`, `cleanup_discovery_lib`, `get_library_version`, `check_gpu_available`, `cancel_/reset_/is_*` | no | n/a | not applicable |
 
 `./quality.sh < /dev/null` passes locally:
 
-- 18 new tests in `issue_1188_grq3_strip_pattern_rejection` all pass.
+- 18 new tests in `issue_1188_strip_pattern_rejection` all pass.
 - All existing `cargo test --lib --tests --all-features -- --test-threads=2`
   suites pass.
 - `cargo clippy --all-targets --all-features -- -D warnings` is clean.
@@ -57,23 +57,23 @@ flowchart LR
 
 ## Test Plan
 
-New tests in `tests/ffi/issue_1188_grq3_strip_pattern_rejection.rs`:
+New tests in `tests/ffi/issue_1188_strip_pattern_rejection.rs`:
 
 - `validator_rejects_depth0_self_loop_pattern` — validator unit-level check
-  for the GRQ-3 depth-0 corruption (creature `10598e7e`).
+  for the depth-0 corruption (creature `10598e7e`).
 - `validator_rejects_depth1_backedge_pattern` — validator unit-level check
-  for the GRQ-3 depth-1 corruption (creature `bcc06579`).
+  for the depth-1 corruption (creature `bcc06579`).
 - `validator_rejects_depth2_backedge_pattern` — validator unit-level check
-  for the GRQ-3 depth-2 corruption (creature `751f7217`).
-- `record_discovery_rejects_grq3_depth{0,1,2}*` — three tests asserting the
+  for the depth-2 corruption (creature `751f7217`).
+- `record_discovery_rejects_depth{0,1,2}*` — three tests asserting the
   recording entry point returns `data_validation`.
-- `analyze_parallel_rejects_grq3_depth{0,1,2}*` — three tests asserting the
+- `analyze_parallel_rejects_depth{0,1,2}*` — three tests asserting the
   analysis entry point returns `data_validation`.
-- `rank_focus_neurons_rejects_grq3_depth{0,1,2}*` — three tests asserting
+- `rank_focus_neurons_rejects_depth{0,1,2}*` — three tests asserting
   the focus-ranking entry point returns `data_validation`.
-- `export_visualisation_snapshot_rejects_grq3_depth{0,1,2}*` — three tests
+- `export_visualisation_snapshot_rejects_depth{0,1,2}*` — three tests
   asserting the snapshot exporter returns `data_validation`.
-- `start_discovery_session_rejects_grq3_depth{0,1,2}*` — three tests
+- `start_discovery_session_rejects_depth{0,1,2}*` — three tests
   asserting the streaming session opener returns `data_validation`. These
   exercise the `#[no_mangle]` C symbol via raw `CString` to mirror how
   NEAT-AI calls the dylib.

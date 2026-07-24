@@ -44,7 +44,7 @@ const DEAD_THRESHOLD: f32 = 1e-6;
 
 /// Upper bound: activations above this are considered meaningfully active.
 ///
-/// Issue #892: Widened from 1e-3 to 0.04. GRQ-sampler discovery cache shows
+/// Issue #892: Widened from 1e-3 to 0.04. The production discovery cache shows
 /// successful `remove-low-impact` candidates have mean activation up to ~0.04.
 /// The previous ceiling of 1e-3 was too restrictive and excluded many valid
 /// low-impact neurons that could be safely removed.
@@ -65,7 +65,7 @@ const MAX_ABSOLUTE_STD_DEV: f32 = 0.02;
 
 /// Base estimated improvement for removing a low-impact neuron.
 ///
-/// Issue #892: Boosted from 0.002 to 0.003. GRQ-sampler cache shows
+/// Issue #892: Boosted from 0.002 to 0.003. The production discovery cache shows
 /// `remove-low-impact` has the highest success rate at 21.5% (440/2,043),
 /// roughly double the overall 10.7% rate. The higher base improvement
 /// ensures these candidates are prioritised over lower-success-rate types.

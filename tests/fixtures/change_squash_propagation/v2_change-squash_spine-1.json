@@ -1,0 +1,20 @@
+{
+  "_comment": "Synthetic change-squash candidate record (Issue #1722). Hand-authored, self-contained replacement for the recorded failure previously captured from a private repository. `expectedCreatureScoreGain` is a representative near-zero value from the retired topology-blind and activation-blind placeholder path. `analyticErrorReduction` is the closed-form propagated effect of the swap on the committed synthetic topology: `spine-1` sits 12 halving hops from the output (influence exactly 0.5^12 = 2.44140625e-4) and the swap reduces the neuron's local error by `currentError - improvedError = 2.0`, so the honest gain is -(2.44140625e-4 * 2.0) = -4.8828125e-4. Nothing here is measured from, or derived from, a private repository.",
+  "wireSchemaVersion": 2,
+  "key": "v2_change-squash_spine-1",
+  "changeType": "change-squash",
+  "description": "🎨 Changed activation function for spine-1 (SELU -> SQUARE expected: 0.0%)",
+  "timestamp": "2026-07-24T00:00:00.000000000Z",
+  "rustRequest": {
+    "squashCandidate": {
+      "neuronUuid": "spine-1",
+      "previousSquash": "SELU",
+      "squash": "SQUARE",
+      "expectedCreatureScoreGain": 5e-10,
+      "currentError": 3.0,
+      "improvedError": 1.0
+    }
+  },
+  "expectedErrorReduction": 5e-10,
+  "analyticErrorReduction": -0.00048828125
+}

@@ -27,7 +27,7 @@ pub const ADD_SYNAPSE_MODULE_NAME: &str = "add-synapse";
 
 /// Default success rate threshold below which add-synapse generation is skipped.
 ///
-/// GRQ-sampler data shows add-synapse candidates have ~0.1-0.3% success rates.
+/// Production discovery-cache data shows add-synapse candidates have ~0.1-0.3% success rates.
 /// A 1% threshold skips generation when the tracker confirms this pattern for
 /// a given creature, saving wasted compute.
 ///

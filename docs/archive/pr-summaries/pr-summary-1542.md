@@ -2,11 +2,11 @@
 
 Adds a **two-stage per-target source budget** to add-synapse / add-neuron search
 so unbounded upstream-source enumeration stops being the dominant wall-clock
-multiplier for sparse deep creatures at GRQ scale. Closes #1542.
+multiplier for sparse deep creatures at production scale. Closes #1542.
 
 For each focus target, analysis previously enumerated **every** eligible
 upstream source, then sample-built and GPU-evaluated all of them — on the order
-of 10k–20k source evaluations per pass on the production GRQ creature. This PR
+of 10k–20k source evaluations per pass on the production creature. This PR
 caps the expensive stage to the top-K priority-ordered sources:
 
 - **Stage 1 (unchanged, cheap CPU pre-score):** `order_eligible_sources` already
@@ -61,10 +61,10 @@ The shipped default is **unlimited**, so there is **no behaviour change and no
 quality regression** in the default path. When an operator opts in, the
 mechanism preserves quality by construction: it keeps the *highest-priority*
 sources (the ones stage-1 already ranks most promising) and only drops the tail.
-The production accepted-candidate K-sweep on the GRQ `.trainData-binary_115`
-corpus requires the discovery recording pipeline + that training corpus, which
+The production accepted-candidate K-sweep on the production `.trainData-binary_115`
+training data requires the discovery recording pipeline + that training corpus, which
 are not reproducible in this CI environment (only `network.json` is committed to
-`GRQ-cluster`); that A/B is the operator's step for selecting K, exactly as the
+`production-cluster`); that A/B is the operator's step for selecting K, exactly as the
 issue's "default off / unlimited for back-compat during A/B" plan specifies.
 
 ## Test Plan

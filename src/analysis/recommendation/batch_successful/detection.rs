@@ -19,7 +19,7 @@ use super::IndividualCandidate;
 /// considered individually successful.
 ///
 /// Issue #1059: Lowered from 0.01 to 1e-5 to align with production data.
-/// Actual score deltas from successful candidates in GRQ-sampler are typically
+/// Actual score deltas from successful candidates in the production discovery cache are typically
 /// 1e-7 to 6e-6 — three to five orders of magnitude below the original 0.01
 /// threshold, which produced zero successes across all 43 creatures.
 const MIN_INDIVIDUAL_IMPROVEMENT: f32 = 1e-5;

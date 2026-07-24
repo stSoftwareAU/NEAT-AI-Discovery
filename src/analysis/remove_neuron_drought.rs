@@ -1,7 +1,7 @@
 //! Drought-driven deprioritisation of destructive remove-neuron candidates
 //! (Issue #1448).
 //!
-//! On a mature, plateaued creature (the #1418 GRQ-3 case: 1673 neurons at score
+//! On a mature, plateaued creature (the #1418 production case: 1673 neurons at score
 //! ~0.4224), the remove-neuron path keeps proposing low-impact hidden neurons
 //! whose predicted error reduction never survives evaluation. The failure cache
 //! fills with remove-neuron entries (bucket `247b83ab`: 9 of 11 files), the

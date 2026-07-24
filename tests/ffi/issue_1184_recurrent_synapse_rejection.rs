@@ -1,6 +1,6 @@
 //! Issue #1184 — Reject creatures carrying recurrent synapses at the FFI boundary.
 //!
-//! Mirrors the GRQ-10 sweep where `output-0 -> output-0` self-loops survived
+//! Mirrors the production sweep where `output-0 -> output-0` self-loops survived
 //! upstream NEAT-AI `loadFrom` stripping (warn-and-continue) and entered the
 //! discovery pipeline. The discovery library now refuses to consume a
 //! corrupt creature: every FFI entry point that accepts a `CreatureJson`

@@ -2,12 +2,12 @@
 //!
 //! The auto-detect (no explicit budget) path previously gated on a
 //! 50%-of-total-RAM cap, which dropped mid-sized parquet files onto the slow
-//! lazy path while GBs of RAM were free (the GRQ-13 regression: ~1.6 GB
+//! lazy path while GBs of RAM were free (the mid-sized-projection regression: ~1.6 GB
 //! projection chosen lazy despite ~2990 MB available).
 //!
 //! These tests exercise the pure decision helper
 //! `decide_loading_mode_for_available_memory` directly so the available-memory
-//! branch is covered deterministically, including the GRQ-13 numbers.
+//! branch is covered deterministically, including those regression numbers.
 
 use neat_ai_discovery::config::{
     DEFAULT_FOCUS_RANKING_MEMORY_MARGIN_MB, focus_ranking_memory_margin_mb,
@@ -53,7 +53,7 @@ impl Drop for MarginEnvGuard {
 }
 
 #[test]
-fn grq13_numbers_choose_preload() {
+fn mid_sized_projection_numbers_choose_preload() {
     // Parquet 531.10 MB → ×3 ≈ 1593 MB projection, ~2990 MB available, default
     // 1 GB margin. usable = 2990 − 1024 = 1966 MB ≥ 1593 MB → Preload.
     let (mode, reason) = decide_loading_mode_for_available_memory(1593 * MB, 2990 * MB, 1024 * MB);

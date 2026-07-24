@@ -1,7 +1,7 @@
 //! Issue #1027 — Expose Rust-side memory usage to Deno via FFI.
 //!
 //! The Rust library allocates memory outside V8's heap, making it invisible to
-//! the GRQ `MemoryWatchdog`. This test verifies that the
+//! the calling host layer's memory watchdog. This test verifies that the
 //! `discovery_memory_usage_bytes()` FFI function returns a reasonable
 //! approximation of Rust-side memory usage suitable for periodic polling.
 

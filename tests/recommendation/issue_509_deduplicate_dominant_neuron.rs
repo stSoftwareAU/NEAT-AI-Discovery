@@ -7,7 +7,7 @@
 //!
 //! ## Scenario from the issue
 //!
-//! In GRQ-sampler commit a1340f8d (creature b2ff6e45), 10 out of 20 candidates were
+//! In one production discovery-cache creature, 10 out of 20 candidates were
 //! coordinated-structural pairs all sharing the same dominant neuron (e8480883 → output-0).
 //! All 10 failed with nearly identical results (−0.042 ± 0.001). 50% of the discovery
 //! budget was consumed by essentially the same experiment repeated 10 times.

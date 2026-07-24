@@ -4,7 +4,7 @@ Cap coordinated-structural candidates per final-operation target neuron
 within a single batch (Issue #1271). Mirrors the per-target add-neuron cap
 (Issue #1140) for the coordinated-structural pipeline so that a single
 problematic target neuron — e.g. output `533d8616…` in creature
-`bcbca347` (GRQ-sampler commit `e85c5d2`), which consumed 41 of 41
+`bcbca347` (production discovery-cache commit `e85c5d2`), which consumed 41 of 41
 coordinated-structural failure slots — cannot monopolise the batch budget
 while other targets go unexplored.
 

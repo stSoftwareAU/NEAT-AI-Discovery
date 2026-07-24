@@ -2,8 +2,8 @@
 
 Mined the published production snapshot
 (`NEAT-AI-Snapshot/docs/snapshot.json.gz` — 1661 hidden neurons, 21 473
-synapses, 200 observations), the live `GRQ-cluster` creature, and the
-`GRQ-Discovery` cache to explain why the successful-candidate rate has nearly
+synapses, 200 observations), the live production-cluster creature, and the
+production discovery cache to explain why the successful-candidate rate has nearly
 halted, then raised one evidence-backed child issue per improvement.
 
 Key insight: discovery has collapsed to `remove-neuron` / `change-squash` not

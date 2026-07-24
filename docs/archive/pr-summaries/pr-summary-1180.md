@@ -6,7 +6,7 @@ Adds a dedicated GitHub Actions workflow at `.github/workflows/cargo-quality.yml
 that runs `cargo fmt --check`, `cargo clippy -- -D warnings`, and uploads
 test coverage to Codecov via `cargo-llvm-cov`. Although the existing
 `ci.yml` quality job already runs fmt and clippy, this standalone
-workflow provides a focused, fast PR signal expected by the VibeCoding
+workflow provides a focused, fast PR signal expected by the Vibe Coder
 workflow sync and adds Codecov coverage upload (Issue #1636).
 
 Closes #1180.

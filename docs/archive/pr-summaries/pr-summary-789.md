@@ -4,7 +4,7 @@ Improve add-synapses success rate by adding synapse-specific pessimism discounti
 
 ### Root Cause Analysis
 
-GRQ-sampler discovery cache (Issue #787) showed add-synapses had a **0% success rate** (0/31 candidates). Investigation revealed two contributing factors:
+Production discovery cache (Issue #787) showed add-synapses had a **0% success rate** (0/31 candidates). Investigation revealed two contributing factors:
 
 1. **Generic pessimism discount too generous**: Synapse candidates used the same generic pessimism parameters (floor=0.15, exponent=0.6) as the overall pool, despite having the worst success rate. Neuron candidates already received more aggressive discounting (floor=0.10, exponent=0.75) via Issue #791, but synapses still used generic parameters.
 

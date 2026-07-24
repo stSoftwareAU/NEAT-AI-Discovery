@@ -4,7 +4,8 @@
 //! Milestone #1516 merged [`estimate_remove_neuron_gain`] (PR #1523), but
 //! nothing in `src/ffi/` or `discovery_dispatch.rs` invoked it, so the live
 //! remove-neuron path still reported the fabricated NEAT-AI `#2483` placeholder
-//! gain (`+0.17879` on creature `45a04ef1`, versus a measured `−0.00032`).
+//! gain — a large positive value derived from the neuron's squash error alone,
+//! regardless of how deep in the network it sat.
 //!
 //! [`apply_honest_remove_neuron_gain`] is the dispatch seam the orchestration
 //! calls on the assembled coordinated candidates before the drought demotion
@@ -12,10 +13,10 @@
 //! request-supplied gain and assert the returned gain comes from the honest,
 //! propagation-aware estimator — it does **not** echo the supplied value.
 //!
-//! The `production_depth` test reproduces the `45a04ef1` failure end-to-end on
-//! the committed production topology fixture: a deep neuron carrying the
-//! placeholder gain is corrected to an estimate that tracks the measured actual
-//! effect in sign and magnitude rather than the `+0.17879` placeholder.
+//! The depth test reproduces the failure end-to-end on the committed deep-chain
+//! topology fixture (hand-authored and synthetic — Issue #1722): a deep neuron
+//! carrying the placeholder gain is corrected to an estimate that tracks the
+//! analytic propagated effect in sign and magnitude rather than the placeholder.
 
 #![allow(clippy::cast_precision_loss)] // Intentional numeric casts (Issue #873)
 
@@ -27,24 +28,25 @@ use neat_ai_discovery::{
     CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson, CreatureJson,
 };
 
-/// The fabricated placeholder gain (`expectedCreatureScoreGain`) recorded for
-/// the failure example — reproduced exactly by the NEAT-AI `#2483`
-/// over-threshold sink `0.1 + (log10(err) − 10)/10 × 0.4`.
-const PLACEHOLDER_GAIN: f32 = 0.178_829_21;
+/// The fabricated placeholder gain (`expectedCreatureScoreGain`) carried by the
+/// committed candidate record — reproduced exactly by the NEAT-AI `#2483`
+/// over-threshold sink `0.1 + (log10(err) − 10)/10 × 0.4` at `err = 1e12`.
+const PLACEHOLDER_GAIN: f32 = 0.18;
 
-/// The empirically measured effect of the removal on the output
-/// (`actualErrorReduction`, ~69k samples). Negative: removal made the network
+/// The closed-form propagated effect of the removal on the output
+/// (`analyticErrorReduction`): the negation of the target neuron's exact `0.5^13`
+/// share of the output's weight budget. Negative: removal makes the network
 /// slightly worse — the opposite of the placeholder's sign.
-const MEASURED_ACTUAL: f64 = -0.000_194_478_429_877_298_35;
+const REFERENCE_EFFECT: f64 = -0.000_122_070_312_5;
 
-/// The target neuron, sitting many layers from the single output.
-const TARGET_NEURON: &str = "neuron-1802938338";
+/// The target neuron, 13 halving hops from the single output.
+const TARGET_NEURON: &str = "spine-0";
 
 fn fixture_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/remove_neuron_propagation")
 }
 
-/// Load the production creature topology from the committed fixture.
+/// Load the deep-chain creature topology from the committed fixture.
 fn load_network() -> CreatureJson {
     let path = fixture_dir().join("network.json");
     let raw = std::fs::read_to_string(&path)
@@ -127,25 +129,22 @@ fn dispatch_replaces_request_supplied_gain_with_honest_estimate() {
     );
 }
 
-/// End-to-end reproduction of the `45a04ef1` failure on the committed
-/// production topology: the deep neuron's request-supplied placeholder gain
-/// (`+0.17879`) is corrected to an estimate that tracks the measured actual
-/// effect (`−0.000194`) in sign and magnitude.
+/// End-to-end reproduction of the failure on the committed deep-chain topology:
+/// the deep neuron's request-supplied placeholder gain (`+0.18`) is corrected to
+/// an estimate that tracks the analytic propagated effect (`−1.22e-4`) in sign
+/// and magnitude.
 #[test]
-fn dispatch_tracks_measured_actual_at_production_depth() {
+fn dispatch_tracks_analytic_reference_at_depth() {
     let creature = load_network();
 
     // The request supplies the known-bad placeholder gain for the deep neuron.
     let mut candidates = vec![remove_neuron_candidate(TARGET_NEURON, PLACEHOLDER_GAIN)];
     let overridden = apply_honest_remove_neuron_gain(&creature, &mut candidates);
-    assert_eq!(
-        overridden, 1,
-        "the production-depth candidate is overridden"
-    );
+    assert_eq!(overridden, 1, "the depth candidate is overridden");
 
     let reported = f64::from(candidates[0].expected_creature_score_gain);
 
-    // No longer the placeholder fingerprint (large positive ~0.17879).
+    // No longer the placeholder fingerprint (large positive ~0.18).
     assert!(
         !(0.1..=0.5).contains(&reported.abs()),
         "reported gain {reported} still sits in the retired placeholder floor range [0.1, 0.5]"
@@ -155,16 +154,17 @@ fn dispatch_tracks_measured_actual_at_production_depth() {
         "the placeholder {PLACEHOLDER_GAIN} should dwarf the honest gain {reported} (>100×)"
     );
 
-    // The honest gain tracks the measured actual's sign and magnitude: removing
-    // a neuron that still carries downstream influence is a small net loss.
+    // The honest gain tracks the analytic reference's sign and magnitude:
+    // removing a neuron that still carries downstream influence is a small net
+    // loss.
     assert!(
-        reported < 0.0 && reported.signum() == MEASURED_ACTUAL.signum(),
-        "honest gain {reported} must share the measured actual's negative sign"
+        reported < 0.0 && reported.signum() == REFERENCE_EFFECT.signum(),
+        "honest gain {reported} must share the analytic reference's negative sign"
     );
-    let ratio = magnitude_ratio(reported, MEASURED_ACTUAL);
+    let ratio = magnitude_ratio(reported, REFERENCE_EFFECT);
     assert!(
         (0.1..=10.0).contains(&ratio),
-        "honest gain {reported} must be within one order of magnitude of the measured actual \
-         {MEASURED_ACTUAL} (ratio {ratio})"
+        "honest gain {reported} must be within one order of magnitude of the analytic \
+         reference {REFERENCE_EFFECT} (ratio {ratio})"
     );
 }

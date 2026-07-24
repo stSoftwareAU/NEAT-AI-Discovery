@@ -1,6 +1,6 @@
 //! Tests for reduced coordinated-structural compound discounting (Issue #1058).
 //!
-//! GRQ-sampler cache shows coordinated-structural candidates have a ~1.1% success
+//! Production discovery-cache analysis shows coordinated-structural candidates have a ~1.1% success
 //! rate (e.g., creature 0e18e62c: 6/389). The three-layer compound discount
 //! (per-op × pessimism × calibration) was too aggressive, filtering out viable
 //! candidates while remaining poorly calibrated.
@@ -254,11 +254,11 @@ fn single_op_with_small_positive_gain_passes() {
 }
 
 // ---------------------------------------------------------------------------
-// GRQ-sampler known examples (Issue #1058)
+// Production discovery-cache examples (Issue #1058)
 // ---------------------------------------------------------------------------
 
 #[test]
-fn grq_sampler_creature_0e18e62c_success_pattern() {
+fn production_creature_success_pattern() {
     // Creature 0e18e62c: 6 successes / 389 failures (~1.5% success rate).
     // A typical successful coordinated-structural candidate from this creature
     // was a 2-op candidate. After the simplified discount, such a candidate
@@ -267,14 +267,14 @@ fn grq_sampler_creature_0e18e62c_success_pattern() {
     let discounted = apply_operation_count_discount(&candidate);
     assert!(
         discounted > MIN_COORDINATED_MULTI_OP_GAIN,
-        "typical 2-op GRQ-sampler candidate (gain=0.008) should pass threshold: \
+        "typical 2-op production candidate (gain=0.008) should pass threshold: \
          discounted={discounted}, threshold={}",
         MIN_COORDINATED_MULTI_OP_GAIN
     );
 }
 
 #[test]
-fn grq_sampler_aggressive_filtering_of_4op_candidates() {
+fn aggressive_filtering_of_4op_candidates() {
     // 4-op candidates have near-zero success in production.
     // Even with reduced discounting, small gains on 4-op should be filtered.
     let candidate = make_multi_op_candidate(4, 0.001);

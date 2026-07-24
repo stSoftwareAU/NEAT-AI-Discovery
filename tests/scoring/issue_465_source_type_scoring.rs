@@ -1,6 +1,6 @@
 //! Tests for Issue #465: Source-type scoring boost for candidate prioritisation.
 //!
-//! GRQ-sampler analysis shows that input neurons as sources have a 36.2% success
+//! Production discovery-cache analysis shows that input neurons as sources have a 36.2% success
 //! rate compared to 2.8–3.3% for hidden neurons. This module tests the scoring
 //! boost mechanism that prioritises candidates from historically more successful
 //! source types.

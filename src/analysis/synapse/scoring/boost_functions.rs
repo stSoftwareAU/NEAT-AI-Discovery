@@ -17,7 +17,7 @@ use std::collections::HashMap;
 /// Applies source-type boost to a candidate's expected score gain.
 ///
 /// Input neurons as synapse sources have a 36.2% success rate compared to
-/// 2.8–3.3% for hidden neurons (GRQ-sampler data). This function applies
+/// 2.8–3.3% for hidden neurons (production discovery-cache data). This function applies
 /// [`INPUT_SOURCE_BOOST`] as a multiplier when the source neuron is an input
 /// neuron (UUID matches `input-N` pattern).
 ///
@@ -44,7 +44,7 @@ pub fn apply_source_type_boost(gain: f32, source_uuid: &str) -> f32 {
 /// Applies target-type boost to a candidate's expected score gain.
 ///
 /// Existing hidden neurons as targets have a 31.4% success rate compared to
-/// 5.3–5.4% for output or discovery-hidden neurons (GRQ-sampler data). This
+/// 5.3–5.4% for output or discovery-hidden neurons (production discovery-cache data). This
 /// function applies [`EXISTING_HIDDEN_TARGET_BOOST`] as a multiplier when the
 /// target neuron is an existing hidden neuron.
 ///
@@ -71,7 +71,7 @@ pub fn apply_target_type_boost(
 /// Applies activation-function-aware boost/penalty to a neuron candidate's
 /// expected score gain (Issue #887).
 ///
-/// GRQ-sampler cache analysis shows dramatic differences in success rates by
+/// Production discovery-cache analysis shows dramatic differences in success rates by
 /// activation function (e.g., GELU at 60% vs `HARD_TANH` at 7.2%). This function
 /// applies Bayesian-smoothed boost multipliers to prioritise candidates using
 /// historically more successful activation functions.

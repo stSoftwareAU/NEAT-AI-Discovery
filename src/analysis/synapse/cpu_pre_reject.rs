@@ -1,6 +1,6 @@
 //! CPU pre-reject screen for helpful synapse candidates (Issue #1544).
 //!
-//! At GRQ scale thousands of sources are GPU-evaluated where many end with
+//! At production scale thousands of sources are GPU-evaluated where many end with
 //! `gpu_improved_count == 0`. The CPU already holds the built samples, so it can
 //! reject the obvious duds more cheaply than a GPU round-trip.
 //!

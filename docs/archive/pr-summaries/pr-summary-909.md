@@ -1,6 +1,6 @@
 ## Summary
 
-Recalibrated the IDENTITY activation boost to a penalty, discouraging its dominance in the candidate pool. IDENTITY's apparent 14.9% success rate was inflated by having the most candidates (274) of any activation. GRQ-sampler evidence (commit 7f15429) confirms IDENTITY neurons are frequently substituted with non-linear activations like SINE for improvement, indicating IDENTITY acts as a placeholder rather than an optimal choice.
+Recalibrated the IDENTITY activation boost to a penalty, discouraging its dominance in the candidate pool. IDENTITY's apparent 14.9% success rate was inflated by having the most candidates (274) of any activation. Production discovery-cache evidence (commit 7f15429) confirms IDENTITY neurons are frequently substituted with non-linear activations like SINE for improvement, indicating IDENTITY acts as a placeholder rather than an optimal choice.
 
 Closes #909.
 

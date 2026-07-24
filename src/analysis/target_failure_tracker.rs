@@ -1,8 +1,8 @@
 //! Target-neuron cooldown tracker for repeated discovery failures (Issue #1130).
 //!
-//! In GRQ-sampler commit `4c4fbdc560ad6b3070c5c48613ea1393aee2f225`, 17 of 18
-//! `add-neurons` failure cache entries in a single commit all targeted the same
-//! neuron (`neuron-1063112866`). Different sources, different activations — all
+//! In production discovery-cache analysis, 17 of 18 `add-neurons` failure cache
+//! entries in a single batch all targeted the same neuron (`neuron-1063112866`).
+//! Different sources, different activations — all
 //! failing. Evaluation budget was spent repeatedly probing a target that was
 //! clearly not going to yield an improvement.
 //!

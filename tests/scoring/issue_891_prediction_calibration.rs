@@ -1,6 +1,6 @@
 //! Issue #891: Calibrate prediction scaling to reduce overestimation
 //!
-//! GRQ-sampler discovery cache reveals that predicted improvements overestimate
+//! Production discovery-cache analysis reveals that predicted improvements overestimate
 //! actual outcomes by 100–10,000×. This systematic overestimation varies by
 //! candidate type, making cross-type comparisons unreliable.
 //!

@@ -55,7 +55,7 @@ Verified via the test suite below and the full `./quality.sh` gate (fmt, Clippy
 `-D warnings`, check, doc build, lib+integration tests, release build) passing
 cleanly.
 
-Recommended setting for the documented 8GB-host scenario (GRQ-16: ~0.15GB free):
+Recommended setting for the documented 8GB-host scenario (production host: ~0.15GB free):
 `NEAT_AI_DISCOVERY_MIN_AVAILABLE_MEMORY_GB=0.1` lets discovery proceed; `0`
 disables the gate. If the host is genuinely too small it should be excluded by
 the scheduler rather than aborting silently every pass.

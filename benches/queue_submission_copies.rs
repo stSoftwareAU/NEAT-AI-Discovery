@@ -20,7 +20,7 @@ use std::sync::Arc;
 const SAMPLE_SIZES: &[usize] = &[64, 256, 1024, 4096];
 
 /// Number of work items in a simulated helpful submit batch (locality-grouped
-/// sources for one target). Mirrors the fan-out seen at GRQ scale.
+/// sources for one target). Mirrors the fan-out seen at production scale.
 const BATCH_ITEMS: usize = 32;
 
 /// Create test samples with realistic variance for benchmarking.

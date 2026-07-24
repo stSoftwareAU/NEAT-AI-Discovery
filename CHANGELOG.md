@@ -6,6 +6,43 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+#### Remove private-repo links and mentions from archived PR summaries (Issue #1726)
+
+The archived PR summaries under `docs/archive/pr-summaries/` named private
+`stSoftwareAU` repositories — and in several places linked directly to private
+issues, commits, and checkout paths that 404 for the public. Every such file
+ships in every public clone and is indexed by search engines.
+
+- Reworded all name-level mentions across 65 archived summaries to concept level
+  ("the production discovery cache", "a large production creature",
+  "production-cluster fixture"); dropped the direct private issue/commit links
+  and the private checkout-path references, keeping commit hashes, creature
+  ids, and metrics intact.
+- Added `tests/issue_1726_archive_no_private_repo_names.rs` — the regression gate
+  that fails loudly if an archived summary reintroduces a private repository
+  name (the archive counterpart to the #1723 active-docs gate).
+
+#### Reword private-repo references in test comments, rename the strip-pattern test file (Issue #1725)
+
+Test doc comments, helper names, and one test *file* name cited private
+`stSoftwareAU` deployments (production sampler-cache commits, a production
+corruption-log name, and several numbered production deployments) as their
+motivating evidence. `cargo test` prints those file and test names on every
+run, pointing public contributors at evidence they cannot reach.
+
+- Reworded every such citation to concept level ("production failure-cache
+  evidence", "a large production creature"); internal issue numbers preserve
+  maintainer traceability. No test behaviour changed.
+- Renamed the FFI strip-pattern test file that carried a private-deployment name
+  to `issue_1188_strip_pattern_rejection.rs` and updated the `tests/ffi/main.rs`
+  harness reference; the private-named `*_rejects_*` test names became
+  behaviour-describing.
+- Extended `tests/source_free_of_private_repo_names.rs` to walk `tests/` as
+  well, match case-insensitively (catching lower-case identifiers), and guard
+  file names — the regression gate that keeps private names out.
+
 ### Added
 
 #### Two-stage per-target source budget (Issue #1542)
@@ -34,7 +71,7 @@ cannot address.
 
 Extends the #1518 propagation-aware approach — which fixed the **remove-neuron**
 estimate — to the **change-squash** estimate path, the second estimate path
-cited on GRQ-Discovery commit `2596f073`. For the recorded failure
+cited in the production discovery cache at commit `2596f073`. For the recorded failure
 (`neuron-1481550544`, `SELU → SQUARE`) the pipeline emitted a near-zero
 placeholder gain of `+8.6e-10` while the measured effect was `-0.000341` —
 ~400,000× too small and the wrong sign.
@@ -48,13 +85,13 @@ placeholder gain of `+8.6e-10` while the measured effect was `-0.000341` —
   network, re-fitting a neuron's activation disrupts the downstream layers
   trained around its original behaviour.
 - New production-scale guards in `tests/change_squash_propagation.rs` against the
-  committed GRQ-cluster fixture: the estimate matches the measured actual in sign
+  committed production-scale fixture: the estimate matches the measured actual in sign
   and within one order of magnitude (the #1529 pass criterion), and the near-zero
   placeholder path is never re-emitted.
 
 #### Deprioritise remove-neuron candidates during a search-exhaustion drought (Issue #1448)
 
-On the plateaued GRQ-3 production creature (#1418, 1673 neurons at score
+On the plateaued production creature (#1418, 1673 neurons at score
 ~0.4224) the destructive remove-neuron path dominated the failure cache (bucket
 `247b83ab`: 9 of 11 files) with low-impact proposals that never pass scoring.
 The #1425 failure-cache calibration shrinks remove-neuron predictions but only
@@ -99,7 +136,7 @@ JSON sidecars or by enabling verbose logging.
 #### Diversity-aware focus selection (Issue #1445)
 
 On a plateaued mature network a single high-impact neuron could hold ~98.5% of
-the focus-selection roulette weight (production GRQ-3 creature), so the weighted
+the focus-selection roulette weight (a large production creature), so the weighted
 roulette collapsed to a single target and discovery revisited the same
 neighbourhood every pass. Impact-weighted ranking only ordered neurons; it did
 not enforce diversity in the final focus set.
@@ -117,6 +154,40 @@ not enforce diversity in the final focus set.
   WARN fires when the raw concentration exceeds `0.5`.
 - New optional FFI inputs `epochsSinceLastAcceptedCandidate` and `focusSetSize`
   (default 6); both are backwards compatible when omitted.
+
+### Changed
+
+#### Evidence citations in source, benches, and the example reworded to concept level (Issue #1724)
+
+Comments across `src/`, all four `benches/`, and `examples/generate_snapshot.rs`
+cited private downstream repositories by name — commit hashes and creature ids
+as the derivation evidence for scoring constants and bench workloads. Public
+readers cannot inspect any of it, so the citations carried no verification value
+while continuously naming private infrastructure.
+
+- Evidence is now cited at concept level ("production discovery-cache
+  analysis", "production scale", "the calling host layer"). The internal issue
+  numbers already carried in most comments preserve traceability for
+  maintainers; no constant, threshold, or behaviour changed.
+- `examples/generate_snapshot.rs` documents its inputs generically (a
+  discovery-data parquet plus the creature JSON) instead of local checkout paths
+  inside a private sibling repository, so the printed usage is reproducible.
+- New `tests/source_free_of_private_repo_names.rs` is the regression gate that
+  keeps shipped source free of private repository names.
+
+#### Deadline-breakdown log marker renamed to `DEADLINE-BREAKDOWN` (Issue #1723)
+
+The consolidated per-cycle deadline-consumption summary and its `STARVED`
+warning were tagged with a marker named after a private downstream deployment,
+which meant the public troubleshooting guide in `README.md` could not describe
+the signal without naming that deployment.
+
+- The `marker` field and the summary-line prefix are now the deployment-neutral
+  `DEADLINE-BREAKDOWN`, exported as
+  `analysis::deadline_breakdown::DEADLINE_BREAKDOWN_MARKER` so the string has a
+  single source of truth.
+- **Operator action:** log greps for the old marker must be updated. Nothing
+  else about the event changed — same fields, same values, same emission points.
 
 ### Fixed
 

@@ -118,7 +118,7 @@ The FFI surfaces a `focusSelection` block on the `rank_focus_neurons` response:
 | Field | Meaning |
 |-------|---------|
 | `selected` | The chosen focus uuids, exploitation head first then exploration picks. |
-| `rawWeightConcentrationRatio` | max weight ÷ sum over the ranked pool — the diagnostic that exposes single-target collapse (~0.985 on GRQ-3). |
+| `rawWeightConcentrationRatio` | max weight ÷ sum over the ranked pool — the diagnostic that exposes single-target collapse (~0.985 on a large production creature). |
 | `weightConcentrationRatio` | Genuine concentration over the **selected** weights. |
 | `exploitationCount` / `explorationCount` | How the focus set was allocated. |
 | `explorationCursor` | The monotonic per-creature cursor that seeded exploration. |
@@ -191,9 +191,9 @@ reconstructionMismatch  = mean |recordedActivation − reconstructedActivation|
 
 A large mismatch means a squash/bias/structural change on that neuron is
 **high-leverage** — the recorded behaviour cannot be explained by the current
-inbound weights, squash, and bias. On the production GRQ-cluster creature (1661
-hidden neurons, Issue #1631) **1117** neurons missed reconstruction by `>0.1` on
-at least one sample and **386** had a systematic mean mismatch `>0.05`, yet
+inbound weights, squash, and bias. On the production creature (1661 hidden
+neurons, Issue #1631) **1117** neurons missed reconstruction by `>0.1` on at
+least one sample and **386** had a systematic mean mismatch `>0.05`, yet
 focus/candidate effort was collapsing to near-zero-delta targets.
 
 When enabled, the mismatch is folded into the focus score as an **additive**
@@ -234,8 +234,8 @@ flowchart LR
 
 The constant-neuron filter (§ `NEAT_AI_DISCOVERY_FOCUS_EXCLUDE_CONSTANT_NEURONS`,
 Issue #1624) removes only neurons whose activation *never varies*. But snapshot
-mining on the production GRQ-cluster creature (Issue #1631) found a second, much
-larger waste class: neurons that **vary** across samples yet carry a near-zero
+mining on the production creature (Issue #1631) found a second, much larger
+waste class: neurons that **vary** across samples yet carry a near-zero
 downstream impact. From `derived.impactsByNeuronUuid`, **1303 / 4126** entries
 (**31.6%**) had `|impact| < 1e-6` — a heavy low-impact tail (p50 = 5.4e-6,
 p90 = 1.4e-4). Because these neurons are not constant, the #1624 filter leaves

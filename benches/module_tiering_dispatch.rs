@@ -2,10 +2,10 @@
 //!
 //! Measures the wall-clock of the parallel discovery-detection phase with the
 //! full module set versus the tiered set (expensive modules skipped) on a
-//! GRQ-scale creature. Expensive modules are modelled with a pairwise
+//! production-scale creature. Expensive modules are modelled with a pairwise
 //! `O(hidden^2)` scan — the super-linear cost that motivates tiering — while
 //! standard modules do a light `O(hidden)` pass. This isolates the dispatch
-//! saving from real detection work, which requires the GRQ production fixtures.
+//! saving from real detection work, which requires the production fixtures.
 //!
 //! Run with: `cargo bench --bench module_tiering_dispatch`
 

@@ -8,7 +8,7 @@ The user ask (parent #1529) was not "show the new estimator passes" but "prove
 the fix yields a *more accurate* estimate than the old placeholder". The new
 test computes both the retired placeholder and the propagation-aware estimator
 against the recorded actual error change on the committed 1,666-neuron /
-21,532-synapse GRQ-cluster fixture, then asserts:
+21,532-synapse production-cluster fixture, then asserts:
 
 - the retired placeholder **fails** the #1529 pass criterion (wrong sign, >10×
   off), reproducing the fabricated `+0.17882921` gain from the recorded failure
@@ -41,7 +41,7 @@ Before/after accuracy on the committed production fixture:
 
 ```mermaid
 flowchart LR
-    F["GRQ-cluster fixture<br/>1,666 neurons / 21,532 synapses<br/>errorMagnitude 9.35e11"] --> P["BEFORE: #2483 placeholder floor<br/>0.1 + (log10(err)−10)/10 × 0.4<br/>= +0.17882921"]
+    F["production-cluster fixture<br/>1,666 neurons / 21,532 synapses<br/>errorMagnitude 9.35e11"] --> P["BEFORE: #2483 placeholder floor<br/>0.1 + (log10(err)−10)/10 × 0.4<br/>= +0.17882921"]
     F --> E["AFTER: propagation-aware<br/>estimate_remove_neuron_gain<br/>≈ −1e-4 (signed, attenuated)"]
     A["measured actualErrorReduction<br/>−0.000194"] --> J{grade vs #1529<br/>pass criterion}
     P --> J
