@@ -16,9 +16,9 @@ After thorough analysis of the candidate selection pipeline, the finding is that
 **there is no explicit MCMC implementation**, and **MCMC is not the correct
 framework** for this system. The pipeline is a **one-shot optimisation search**
 (propose candidates, evaluate, filter, rank) rather than a Markov chain sampling
-procedure. The poor synapse candidate success rate (0% in GRQ-sampler cache) is
-best addressed through calibration improvements to the existing deterministic
-pipeline, not by introducing MCMC machinery.
+procedure. The poor synapse candidate success rate (0% in the production
+discovery cache) is best addressed through calibration improvements to the
+existing deterministic pipeline, not by introducing MCMC machinery.
 
 ## 2. Pipeline Stages Mapped to MCMC Concepts
 
@@ -87,8 +87,9 @@ diversity but only within the top-64 of an already-filtered list.
 
 ## 4. Root Cause Analysis: Why 0% Synapse Success Rate
 
-The 0% success rate (0/31 in GRQ-sampler cache) and 100–10,000× prediction
-overestimation are **not caused by the absence of MCMC**. They stem from:
+The 0% success rate (0/31 in the production discovery cache) and 100–10,000×
+prediction overestimation are **not caused by the absence of MCMC**. They stem
+from:
 
 ### 4.1 Prediction-to-Reality Gap
 
@@ -159,7 +160,8 @@ the pipeline **already implements a version of it**:
 - `module_weights.rs` adjusts per-module weights based on historical success
 - `scale_outcomes.rs` tracks per-scale success rates for weight variants
 - Source-type boosts (`INPUT_SOURCE_BOOST = 1.5`) are calibrated from cache data
-- Activation-function boosts are Bayesian-smoothed from GRQ-sampler evidence
+- Activation-function boosts are Bayesian-smoothed from production
+  discovery-cache evidence
 
 These are functionally equivalent to adaptive proposal distributions in MCMC.
 

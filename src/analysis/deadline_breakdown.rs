@@ -1,4 +1,4 @@
-//! Consolidated per-cycle deadline-consumption breakdown (Issue #1409 / GRQ-23).
+//! Consolidated per-cycle deadline-consumption breakdown (Issue #1409).
 //!
 //! The data needed to diagnose where the analysis deadline went is scattered:
 //! per-phase timings live in `ProfileData`, while synapse/neuron starvation
@@ -14,7 +14,17 @@
 //! summary line. When either phase was curtailed by the deadline it also logs a
 //! `tracing::warn!` carrying the `STARVED` marker and the skipped/total counts.
 //!
+//! Both events carry the [`DEADLINE_BREAKDOWN_MARKER`] token so operators can
+//! grep a log for the whole breakdown in one pass.
+//!
 //! This is **observability only** — it never changes analysis math.
+
+/// Stable, greppable token prefixing every deadline-breakdown log event.
+///
+/// Operators grep logs for this string, so it is a published contract: changing
+/// it breaks existing log queries. It is deliberately named after what it
+/// reports rather than after any particular deployment (Issue #1723).
+pub const DEADLINE_BREAKDOWN_MARKER: &str = "DEADLINE-BREAKDOWN";
 
 /// Completion accounting for one analysis phase (synapse or neuron).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -89,8 +99,9 @@ impl DeadlineConsumptionBreakdown {
         }
 
         format!(
-            "GRQ-23 deadline consumption (ms): parquet_reload={} synapse_analysis={} \
-             neuron_analysis={} total_analysis={}; focus completed synapse={} neuron={}",
+            "{DEADLINE_BREAKDOWN_MARKER} deadline consumption (ms): parquet_reload={} \
+             synapse_analysis={} neuron_analysis={} total_analysis={}; \
+             focus completed synapse={} neuron={}",
             self.parquet_reload_ms,
             ms(self.synapse_analysis_ms),
             ms(self.neuron_analysis_ms),
@@ -136,7 +147,7 @@ impl DeadlineConsumptionBreakdown {
     /// a `warn` carrying the `STARVED` marker when analysis was curtailed.
     pub fn emit(&self) {
         tracing::info!(
-            marker = "GRQ-23",
+            marker = DEADLINE_BREAKDOWN_MARKER,
             parquet_reload_ms = self.parquet_reload_ms,
             synapse_analysis_ms = self.synapse_analysis_ms.unwrap_or(0),
             neuron_analysis_ms = self.neuron_analysis_ms.unwrap_or(0),
@@ -150,7 +161,7 @@ impl DeadlineConsumptionBreakdown {
         );
 
         if let Some(warning) = self.starvation_warning() {
-            tracing::warn!(marker = "GRQ-23", "{warning}");
+            tracing::warn!(marker = DEADLINE_BREAKDOWN_MARKER, "{warning}");
         }
     }
 }

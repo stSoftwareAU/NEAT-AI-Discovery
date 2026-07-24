@@ -1,10 +1,10 @@
 //! Tests for the consolidated per-cycle deadline-consumption breakdown
-//! (Issue #1409 / GRQ-23).
+//! (Issue #1409).
 //!
 //! These verify the observable behaviour of the breakdown: the greppable
 //! summary line, the explicit `STARVED` warning emitted when synapse/neuron
 //! analysis is curtailed by the deadline, and the starvation predicate that the
-//! structured analysis result surfaces to the GRQ layer.
+//! structured analysis result surfaces to the calling layer.
 
 use neat_ai_discovery::analysis::deadline_breakdown::{
     DeadlineConsumptionBreakdown, PhaseCompletion,
@@ -143,7 +143,10 @@ fn completed_run_has_no_starvation_warning() {
 }
 
 /// The consolidated summary line spans every phase the analysis call owns and
-/// stays greppable via the stable `GRQ-23` marker.
+/// stays greppable via the stable `DEADLINE-BREAKDOWN` marker.
+///
+/// The literal is asserted here on purpose: the marker is a published log
+/// contract that operator greps depend on, so a silent rename must fail.
 #[test]
 fn summary_line_attributes_all_phases() {
     let breakdown = DeadlineConsumptionBreakdown {
@@ -164,7 +167,7 @@ fn summary_line_attributes_all_phases() {
     };
 
     let line = breakdown.summary_line();
-    assert!(line.contains("GRQ-23"), "line: {line}");
+    assert!(line.contains("DEADLINE-BREAKDOWN"), "line: {line}");
     assert!(line.contains("parquet_reload=4200"), "line: {line}");
     assert!(line.contains("synapse_analysis=1200"), "line: {line}");
     assert!(line.contains("neuron_analysis=900"), "line: {line}");

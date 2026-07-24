@@ -1411,7 +1411,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
         }
     }
 
-    // Issue #1409 (GRQ-23): Emit one consolidated, greppable summary attributing
+    // Issue #1409: Emit one consolidated, greppable summary attributing
     // deadline consumption across the analysis phases, plus an explicit STARVED
     // warning when synapse/neuron analysis was curtailed by the deadline. The
     // focus phase (parquet load + focus ranking) runs in the separate
