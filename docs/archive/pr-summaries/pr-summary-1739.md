@@ -90,7 +90,8 @@ profiles vs. ungated = 2 of 2).
     against `ALL_REJECTION_REASONS` (Failure-Detection contract).
   - `empty_pass_classifies_as_starved`.
 - `src/analysis/candidate_starvation.rs` module tests (8) — classification,
-  partition disjointness/coverage, custom thresholds, abundance handling, and
+  that the partition is disjoint and fully covers all reasons, custom
+  thresholds, abundance handling, and
   the `gate_escalation` truth table (including that it never manufactures
   escalation that was not engaged, and rejects the over-rejected profile).
 - Regression — unchanged and green: `tests/issue_1423_novelty_escalation.rs`,
