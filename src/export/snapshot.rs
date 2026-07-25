@@ -13,7 +13,7 @@
 use anyhow::{Context, Result};
 use std::collections::HashMap;
 use std::fs::File;
-use std::io::BufWriter;
+use std::io::{BufWriter, Write};
 
 use crate::CreatureJson;
 use crate::focus::compute_impacts_public;
@@ -369,9 +369,108 @@ pub fn export_visualisation_snapshot(
     // Write to file
     let file = File::create(out_file)
         .with_context(|| format!("Failed to create output file: {out_file}"))?;
-    let writer = BufWriter::new(file);
-    serde_json::to_writer(writer, &snapshot)
-        .with_context(|| format!("Failed to write JSON to: {out_file}"))?;
+    write_snapshot_json(file, &snapshot, out_file)?;
 
     Ok(stats)
+}
+
+/// Serialise `snapshot` to `writer` as JSON and flush explicitly.
+///
+/// `BufWriter`'s `Drop` flushes any buffered bytes but **discards** the I/O
+/// error, so relying on drop-flush can return `Ok` while the buffered tail of
+/// the JSON is silently lost (disk full, quota exceeded, I/O error). We flush
+/// explicitly and propagate the error so a truncated snapshot fails loudly
+/// instead of masquerading as success (Issue #1750).
+fn write_snapshot_json<W: Write>(
+    writer: W,
+    snapshot: &VisualisationSnapshot,
+    out_file: &str,
+) -> Result<()> {
+    let mut writer = BufWriter::new(writer);
+    serde_json::to_writer(&mut writer, snapshot)
+        .with_context(|| format!("Failed to write JSON to: {out_file}"))?;
+    writer
+        .flush()
+        .with_context(|| format!("Failed to flush JSON snapshot to: {out_file}"))?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::{self, Write};
+
+    /// A `Write` that buffers small writes fine but always fails on `flush`,
+    /// mimicking a disk-full / quota-exceeded error surfacing only when the
+    /// buffered tail is flushed to the underlying file.
+    struct FlushFailsWriter;
+
+    impl Write for FlushFailsWriter {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            // Accept the bytes so `serde_json::to_writer` succeeds; the failure
+            // must surface at flush time, not during serialisation.
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Err(io::Error::other("simulated flush failure"))
+        }
+    }
+
+    fn minimal_snapshot() -> VisualisationSnapshot {
+        VisualisationSnapshot {
+            meta: SnapshotMeta {
+                exported_at: "1970-01-01T00:00:00Z".to_string(),
+                discovery_version: "test".to_string(),
+                parquet_file: "test.parquet".to_string(),
+                notes: None,
+            },
+            creature: CreatureJson {
+                neurons: vec![],
+                synapses: vec![],
+                input: 0,
+                output: 0,
+            },
+            recording: RecordingData {
+                obs_indices: vec![],
+                neurons: HashMap::new(),
+            },
+            derived: DerivedData {
+                impacts_by_neuron_uuid: HashMap::new(),
+                synapses: HashMap::new(),
+                reconstruction_checks: None,
+            },
+        }
+    }
+
+    /// Regression test for Issue #1750: a flush error must propagate as `Err`
+    /// rather than being swallowed by `BufWriter::drop`. Against the unfixed
+    /// code (which dropped the writer without an explicit flush) this returned
+    /// `Ok` and lost the buffered tail silently.
+    #[test]
+    fn write_snapshot_json_propagates_flush_error() {
+        let snapshot = minimal_snapshot();
+        let result = write_snapshot_json(FlushFailsWriter, &snapshot, "out.json");
+        assert!(
+            result.is_err(),
+            "a flush failure must surface as Err, not be swallowed",
+        );
+        let msg = format!("{:#}", result.unwrap_err());
+        assert!(
+            msg.contains("Failed to flush JSON snapshot to: out.json"),
+            "error should name the flush failure and target file, got: {msg}",
+        );
+    }
+
+    /// A writer with no I/O errors serialises and flushes successfully.
+    #[test]
+    fn write_snapshot_json_succeeds_on_healthy_writer() {
+        let snapshot = minimal_snapshot();
+        let mut buf: Vec<u8> = Vec::new();
+        write_snapshot_json(&mut buf, &snapshot, "out.json").expect("healthy writer must succeed");
+        // Round-trips back to a snapshot, proving the full JSON was written.
+        let parsed: VisualisationSnapshot =
+            serde_json::from_slice(&buf).expect("written JSON must deserialise");
+        assert_eq!(parsed.meta.discovery_version, "test");
+    }
 }
