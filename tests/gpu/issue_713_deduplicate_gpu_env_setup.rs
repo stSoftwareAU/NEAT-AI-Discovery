@@ -12,9 +12,13 @@ use neat_ai_discovery::analysis::utils::platform;
 /// repeated calls do not panic.
 #[test]
 fn platform_suppress_mesa_warnings_does_not_panic() {
-    platform::suppress_mesa_warnings_if_requested();
-    // Idempotent — second call must also succeed
-    platform::suppress_mesa_warnings_if_requested();
+    // SAFETY: the test harness has not spawned any thread that reads the process
+    // environment, so the early-init precondition holds.
+    unsafe {
+        platform::suppress_mesa_warnings_if_requested();
+        // Idempotent — second call must also succeed
+        platform::suppress_mesa_warnings_if_requested();
+    }
 }
 
 /// Smoke test: `ensure_xdg_runtime_dir` is a one-time environment setup
@@ -22,9 +26,13 @@ fn platform_suppress_mesa_warnings_does_not_panic() {
 /// or queryable state — the only contract is that repeated calls do not panic.
 #[test]
 fn platform_ensure_xdg_runtime_dir_does_not_panic() {
-    platform::ensure_xdg_runtime_dir();
-    // Idempotent — second call must also succeed
-    platform::ensure_xdg_runtime_dir();
+    // SAFETY: the test harness has not spawned any thread that reads the process
+    // environment, so the early-init precondition holds.
+    unsafe {
+        platform::ensure_xdg_runtime_dir();
+        // Idempotent — second call must also succeed
+        platform::ensure_xdg_runtime_dir();
+    }
 }
 
 /// Smoke test: verifies that the `utils` module re-exports resolve to the
@@ -33,6 +41,10 @@ fn platform_ensure_xdg_runtime_dir_does_not_panic() {
 /// is the strongest available contract.
 #[test]
 fn utils_reexports_resolve_to_platform() {
-    neat_ai_discovery::analysis::utils::suppress_mesa_warnings_if_requested();
-    neat_ai_discovery::analysis::utils::ensure_xdg_runtime_dir();
+    // SAFETY: the test harness has not spawned any thread that reads the process
+    // environment, so the early-init precondition holds.
+    unsafe {
+        neat_ai_discovery::analysis::utils::suppress_mesa_warnings_if_requested();
+        neat_ai_discovery::analysis::utils::ensure_xdg_runtime_dir();
+    }
 }

@@ -32,14 +32,16 @@
 /// Returns `true` when the variable was written, `false` when it was already
 /// present (and left untouched).
 ///
-/// # Safety precondition
+/// # Safety
 ///
 /// The caller must guarantee that no other thread accesses the process
 /// environment concurrently — see the module-level note. This helper does not
 /// and cannot enforce that invariant; it centralises the single `unsafe`
-/// write so its justification lives in one place.
+/// write so its justification lives in one place. The obligation is propagated
+/// to the type level so no safe caller can reach the `set_var` without an
+/// `unsafe` block acknowledging the precondition.
 #[cfg(target_os = "linux")]
-fn set_env_if_unset(key: &str, value: &str) -> bool {
+unsafe fn set_env_if_unset(key: &str, value: &str) -> bool {
     use std::env;
 
     if env::var(key).is_ok() {
@@ -60,35 +62,58 @@ fn set_env_if_unset(key: &str, value: &str) -> bool {
 /// Mutates the process environment. Must be called during early GPU
 /// initialisation, before any thread that reads the environment is spawned —
 /// see the module-level safety note.
+///
+/// # Safety
+///
+/// No other thread may access the process environment concurrently — call
+/// during early GPU initialisation, before spawning any thread that touches
+/// the environment (see the module-level note). The `Once` guard ensures the
+/// write happens once, not exclusively, so it cannot uphold this invariant on
+/// the caller's behalf.
 #[cfg(target_os = "linux")]
-pub fn suppress_mesa_warnings_if_requested() {
+pub unsafe fn suppress_mesa_warnings_if_requested() {
     use std::sync::Once;
 
     static INIT: Once = Once::new();
     INIT.call_once(|| {
         if crate::config::quiet_gpu() {
-            apply_mesa_suppression();
+            // SAFETY: The caller of this `unsafe fn` guarantees no other thread
+            // accesses the process environment concurrently.
+            unsafe { apply_mesa_suppression() };
         }
     });
 }
 
 /// Apply the Mesa/libEGL suppression environment variables.
 ///
-/// Each variable is only written when currently unset. Carries the same
-/// safety precondition as [`set_env_if_unset`].
+/// Each variable is only written when currently unset.
+///
+/// # Safety
+///
+/// Carries the same precondition as [`set_env_if_unset`]: no other thread may
+/// access the process environment concurrently.
 #[cfg(target_os = "linux")]
-fn apply_mesa_suppression() {
-    // Suppress EGL debug messages (these cause "failed to open /dev/dri/..." warnings)
-    set_env_if_unset("EGL_LOG_LEVEL", "fatal");
-    // Suppress Mesa GLSL shader cache warnings
-    set_env_if_unset("MESA_GLSL_CACHE_DISABLE", "true");
-    // Suppress general Mesa debug output
-    set_env_if_unset("MESA_DEBUG", "silent");
+unsafe fn apply_mesa_suppression() {
+    // SAFETY: The caller of this `unsafe fn` upholds the no-concurrent-access
+    // precondition of `set_env_if_unset`.
+    unsafe {
+        // Suppress EGL debug messages (these cause "failed to open /dev/dri/..." warnings)
+        set_env_if_unset("EGL_LOG_LEVEL", "fatal");
+        // Suppress Mesa GLSL shader cache warnings
+        set_env_if_unset("MESA_GLSL_CACHE_DISABLE", "true");
+        // Suppress general Mesa debug output
+        set_env_if_unset("MESA_DEBUG", "silent");
+    }
 }
 
 /// No-op on non-Linux platforms.
+///
+/// # Safety
+///
+/// This stub does nothing, but is marked `unsafe` so call sites are uniform
+/// across platforms with the Linux implementation (see the module-level note).
 #[cfg(not(target_os = "linux"))]
-pub fn suppress_mesa_warnings_if_requested() {
+pub unsafe fn suppress_mesa_warnings_if_requested() {
     // No-op on non-Linux platforms
 }
 
@@ -102,20 +127,33 @@ pub fn suppress_mesa_warnings_if_requested() {
 /// initialisation, before any thread that reads the environment is spawned —
 /// the `Once` guard ensures single execution but not exclusivity against other
 /// threads (see the module-level safety note).
+///
+/// # Safety
+///
+/// No other thread may access the process environment concurrently — call
+/// during early GPU initialisation, before spawning any thread that touches
+/// the environment (see the module-level note). The `Once` guard ensures the
+/// write happens once, not exclusively, so it cannot uphold this invariant on
+/// the caller's behalf.
 #[cfg(target_os = "linux")]
-pub fn ensure_xdg_runtime_dir() {
+pub unsafe fn ensure_xdg_runtime_dir() {
     use std::sync::Once;
 
     static INIT: Once = Once::new();
-    INIT.call_once(apply_xdg_runtime_dir);
+    // SAFETY: The caller of this `unsafe fn` guarantees no other thread accesses
+    // the process environment concurrently.
+    INIT.call_once(|| unsafe { apply_xdg_runtime_dir() });
 }
 
 /// Create a fallback runtime directory and point `XDG_RUNTIME_DIR` at it when
 /// the variable is unset.
 ///
-/// Carries the same safety precondition as [`set_env_if_unset`].
+/// # Safety
+///
+/// Carries the same precondition as [`set_env_if_unset`]: no other thread may
+/// access the process environment concurrently.
 #[cfg(target_os = "linux")]
-fn apply_xdg_runtime_dir() {
+unsafe fn apply_xdg_runtime_dir() {
     use std::env;
 
     if env::var("XDG_RUNTIME_DIR").is_ok() {
@@ -127,14 +165,23 @@ fn apply_xdg_runtime_dir() {
         if let Err(e) = std::fs::create_dir_all(&runtime_dir) {
             tracing::warn!(?runtime_dir, %e, "failed to create XDG_RUNTIME_DIR");
         } else {
-            set_env_if_unset("XDG_RUNTIME_DIR", runtime_dir.to_string_lossy().as_ref());
+            // SAFETY: The caller of this `unsafe fn` upholds the
+            // no-concurrent-access precondition of `set_env_if_unset`.
+            unsafe {
+                set_env_if_unset("XDG_RUNTIME_DIR", runtime_dir.to_string_lossy().as_ref());
+            }
         }
     }
 }
 
 /// No-op on non-Linux platforms.
+///
+/// # Safety
+///
+/// This stub does nothing, but is marked `unsafe` so call sites are uniform
+/// across platforms with the Linux implementation (see the module-level note).
 #[cfg(not(target_os = "linux"))]
-pub fn ensure_xdg_runtime_dir() {
+pub unsafe fn ensure_xdg_runtime_dir() {
     // No-op on non-Linux platforms
 }
 
@@ -152,8 +199,12 @@ mod tests {
     /// contract is that repeated calls do not panic.
     #[test]
     fn test_suppress_mesa_warnings_does_not_panic() {
-        suppress_mesa_warnings_if_requested();
-        suppress_mesa_warnings_if_requested();
+        // SAFETY: the test harness has not spawned any thread that reads the
+        // process environment, so the early-init precondition holds.
+        unsafe {
+            suppress_mesa_warnings_if_requested();
+            suppress_mesa_warnings_if_requested();
+        }
     }
 
     /// Smoke test: `ensure_xdg_runtime_dir` is a one-time environment setup
@@ -162,8 +213,12 @@ mod tests {
     /// do not panic.
     #[test]
     fn test_ensure_xdg_runtime_dir_does_not_panic() {
-        ensure_xdg_runtime_dir();
-        ensure_xdg_runtime_dir();
+        // SAFETY: the test harness has not spawned any thread that reads the
+        // process environment, so the early-init precondition holds.
+        unsafe {
+            ensure_xdg_runtime_dir();
+            ensure_xdg_runtime_dir();
+        }
     }
 
     /// `set_env_if_unset` writes the variable when it is absent and reports
@@ -178,7 +233,8 @@ mod tests {
         // SAFETY: serialised via #[serial]; no other thread touches the env here.
         unsafe { env::remove_var(key) };
 
-        let wrote = set_env_if_unset(key, "applied");
+        // SAFETY: serialised via #[serial]; no other thread touches the env here.
+        let wrote = unsafe { set_env_if_unset(key, "applied") };
 
         assert!(wrote, "should report a write when the variable was unset");
         assert_eq!(env::var(key).as_deref(), Ok("applied"));
@@ -199,7 +255,8 @@ mod tests {
         // SAFETY: serialised via #[serial]; no other thread touches the env here.
         unsafe { env::set_var(key, "original") };
 
-        let wrote = set_env_if_unset(key, "replacement");
+        // SAFETY: serialised via #[serial]; no other thread touches the env here.
+        let wrote = unsafe { set_env_if_unset(key, "replacement") };
 
         assert!(
             !wrote,
@@ -227,7 +284,8 @@ mod tests {
         // SAFETY: serialised via #[serial]; no other thread touches the env here.
         unsafe { env::remove_var("XDG_RUNTIME_DIR") };
 
-        apply_xdg_runtime_dir();
+        // SAFETY: serialised via #[serial]; no other thread touches the env here.
+        unsafe { apply_xdg_runtime_dir() };
 
         let set = env::var("XDG_RUNTIME_DIR").expect("XDG_RUNTIME_DIR should be set");
         assert!(
