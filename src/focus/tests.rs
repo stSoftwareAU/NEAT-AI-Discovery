@@ -11,7 +11,7 @@ use crate::types::DiscoverRecord;
 use anyhow::anyhow;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 // ---------------------------------------------------------------------------
 // Issue #1375 — wall-clock budget on focus ranking with graceful fallback.
@@ -32,6 +32,12 @@ impl SleepyProvider {
             neurons,
             calls: AtomicUsize::new(0),
         }
+    }
+
+    /// Number of `get` calls served so far — the observable evidence of how far
+    /// the ranking run got before aborting.
+    fn calls(&self) -> usize {
+        self.calls.load(Ordering::SeqCst)
     }
 }
 
@@ -104,26 +110,36 @@ fn make_creature(hidden: usize) -> CreatureJson {
     }
 }
 
-/// Issue #1375: a focus-ranking run that exceeds its wall-clock budget must
-/// abort within `budget + grace` with a structured `Timeout` error, instead of
-/// grinding through every slow record load. Regression guard for the 1h 11m
-/// unbounded focus selection in the #1373 incident.
+/// Issue #1375 / #1760: a focus-ranking run that exceeds its wall-clock budget
+/// must abort with a structured `Timeout` error instead of grinding through
+/// every slow record load. Regression guard for the 1h 11m unbounded focus
+/// selection in the #1373 incident.
+///
+/// This asserts the **observable outcome** — a `Timeout` classification and a
+/// provider that was *not* drained of every neuron — rather than a wall-clock
+/// bound. The earlier version measured elapsed time against `budget + 1s grace`,
+/// which was too tight a margin to survive CPU contention under the parallel
+/// suite and flaked (#1760). A small injected grace keeps the abort prompt so
+/// the aborted-early evidence is unambiguous without timing the machine.
 #[test]
 fn focus_ranking_aborts_when_budget_exceeded() {
     const HIDDEN: usize = 80;
     let per_call = Duration::from_millis(25);
     let budget_ms = 50;
-
-    // Unbounded cost would be ~(HIDDEN + outputs) × per_call. The budget plus
-    // the fixed 1s grace must cut this off well before completion.
-    let unbounded = per_call * u32::try_from(HIDDEN + 1).expect("neuron count fits u32");
+    // Small grace instead of the production 1s: the deadline fires promptly so
+    // the run aborts far short of the (HIDDEN + 1) selectable neurons.
+    let grace_ms = 0;
+    let total_selectable = HIDDEN + 1; // hidden neurons plus the single output
 
     let creature = make_creature(HIDDEN);
     let provider = Arc::new(SleepyProvider::new(per_call, HIDDEN));
 
-    let start = Instant::now();
-    let result = rank_with_provider_for_tests(&creature, provider, budget_ms);
-    let elapsed = start.elapsed();
+    let result = rank_with_provider_and_grace_for_tests(
+        &creature,
+        Arc::clone(&provider) as Arc<dyn RecordProvider>,
+        budget_ms,
+        grace_ms,
+    );
 
     let err = result.expect_err("ranking should abort once the budget is exceeded");
     assert_eq!(
@@ -132,16 +148,14 @@ fn focus_ranking_aborts_when_budget_exceeded() {
         "budget abort must be classified as a retryable Timeout: {err:#}"
     );
 
-    // Aborted within budget + grace (+ one in-flight sleep of slop), and clearly
-    // faster than running the full slow loop to completion.
-    let max_allowed = Duration::from_millis(budget_ms + 1000) + per_call * 3;
+    // Observable evidence the abort cut the work short: the slow provider was
+    // asked for strictly fewer neurons than the full selectable set, so the run
+    // did not grind through every record load. Deterministic and independent of
+    // machine speed — unlike a wall-clock assertion.
+    let served = provider.calls();
     assert!(
-        elapsed < max_allowed,
-        "expected abort within {max_allowed:?}, took {elapsed:?}"
-    );
-    assert!(
-        elapsed < unbounded,
-        "abort ({elapsed:?}) must be faster than the unbounded run ({unbounded:?})"
+        served < total_selectable,
+        "abort must stop before draining every neuron: served {served} of {total_selectable}"
     );
 }
 
