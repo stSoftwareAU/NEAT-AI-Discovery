@@ -1,8 +1,12 @@
 name: ShellCheck
 
-# Lints all bash scripts using ShellCheck (upstream: koalaman/shellcheck —
-# https://github.com/koalaman/shellcheck). The ludeeus/action-shellcheck
-# action wraps the official koalaman/shellcheck binary.
+# Shell-script gates for pull requests:
+#   1. `bash -n` syntax gate via the committed `quality/bash_syntax.sh`
+#      (Issue #1755) — bash has no compile step, so without this a syntax
+#      error can land on the default branch.
+#   2. ShellCheck lint (upstream: koalaman/shellcheck —
+#      https://github.com/koalaman/shellcheck). The ludeeus/action-shellcheck
+#      action wraps the official koalaman/shellcheck binary.
 
 on:
   pull_request:
@@ -33,6 +37,11 @@ jobs:
           # scripts and never pushes back or fetches private submodules
           # (Issue #1649).
           persist-credentials: false
+      - name: Bash syntax gate (bash -n)
+        # Committed gate script — the same one ./quality.sh runs locally
+        # (Issue #1755). Fails the build on any syntax error.
+        shell: bash
+        run: ./quality/bash_syntax.sh .
       - name: Run ShellCheck (koalaman/shellcheck)
         # Pinned to a 40-char commit SHA (Issue #1215) to mitigate
         # supply-chain risk from mutable upstream branches. Update via
