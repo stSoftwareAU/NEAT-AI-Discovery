@@ -1,0 +1,1045 @@
+{
+  "description": "Production-representative discovery run batch derived from the production discovery window 2026-06-16 -> 2026-07-23 (diagnosis #1737): 40 runs, 2 accepting a harmful-neuron removal. Recorded plateau baseline after milestone #1736 audits (#1738 focus/impact sound, #1740 floors correctly scaled) concluded the network is genuinely saturated.",
+  "runs": [
+    {
+      "runId": "prod-empty-00",
+      "candidates": [
+        {
+          "changeType": "change-squash",
+          "operationCount": 2,
+          "expectedGain": 4.165739e-10,
+          "realisedDelta": -0.000865,
+          "errorRanked": false
+        },
+        {
+          "changeType": "change-squash",
+          "operationCount": 1,
+          "expectedGain": 1.3e-07,
+          "realisedDelta": -0.00011,
+          "errorRanked": false
+        },
+        {
+          "changeType": "remove-neuron",
+          "operationCount": 1,
+          "expectedGain": 0.0,
+          "realisedDelta": -0.00218,
+          "errorRanked": true
+        }
+      ]
+    },
+    {
+      "runId": "prod-empty-01",
+      "candidates": [
+        {
+          "changeType": "change-squash",
+          "operationCount": 2,
+          "expectedGain": 4.165739e-10,
+          "realisedDelta": -0.000865,
+          "errorRanked": false
+        },
+        {
+          "changeType": "change-squash",
+          "operationCount": 1,
+          "expectedGain": 1.3e-07,
+          "realisedDelta": -0.00011,
+          "errorRanked": false
+        },
+        {
+          "changeType": "remove-neuron",
+          "operationCount": 1,
+          "expectedGain": 0.0,
+          "realisedDelta": -0.00218,
+          "errorRanked": true
+        }
+      ]
+    },
+    {
+      "runId": "prod-empty-02",
+      "candidates": [
+        {
+          "changeType": "change-squash",
+          "operationCount": 2,
+          "expectedGain": 4.165739e-10,
+          "realisedDelta": -0.000865,
+          "errorRanked": false
+        },
+        {
+          "changeType": "change-squash",
+          "operationCount": 1,
+          "expectedGain": 1.3e-07,
+          "realisedDelta": -0.00011,
+          "errorRanked": false
+        },
+        {
+          "changeType": "remove-neuron",
+          "operationCount": 1,
+          "expectedGain": 0.0,
+          "realisedDelta": -0.00218,
+          "errorRanked": true
+        }
+      ]
+    },
+    {
+      "runId": "prod-empty-03",
+      "candidates": [
+        {
+          "changeType": "change-squash",
+          "operationCount": 2,
+          "expectedGain": 4.165739e-10,
+          "realisedDelta": -0.000865,
+          "errorRanked": false
+        },
+        {
+          "changeType": "change-squash",
+          "operationCount": 1,
+          "expectedGain": 1.3e-07,
+          "realisedDelta": -0.00011,
+          "errorRanked": false
+        },
+        {
+          "changeType": "remove-neuron",
+          "operationCount": 1,
+          "expectedGain": 0.0,
+          "realisedDelta": -0.00218,
+          "errorRanked": true
+        }
+      ]
+    },
+    {
+      "runId": "prod-empty-04",
+      "candidates": [
+        {
+          "changeType": "change-squash",
+          "operationCount": 2,
+          "expectedGain": 4.165739e-10,
+          "realisedDelta": -0.000865,
+          "errorRanked": false
+        },
+        {
+          "changeType": "change-squash",
+          "operationCount": 1,
+          "expectedGain": 1.3e-07,
+          "realisedDelta": -0.00011,
+          "errorRanked": false
+        },
+        {
+          "changeType": "remove-neuron",
+          "operationCount": 1,
+          "expectedGain": 0.0,
+          "realisedDelta": -0.00218,
+          "errorRanked": true
+        }
+      ]
+    },
+    {
+      "runId": "prod-empty-05",
+      "candidates": [
+        {
+          "changeType": "change-squash",
+          "operationCount": 2,
+          "expectedGain": 4.165739e-10,
+          "realisedDelta": -0.000865,
+          "errorRanked": false
+        },
+        {
+          "changeType": "change-squash",
+          "operationCount": 1,
+          "expectedGain": 1.3e-07,
+          "realisedDelta": -0.00011,
+          "errorRanked": false
+        },
+        {
+          "changeType": "remove-neuron",
+          "operationCount": 1,
+          "expectedGain": 0.0,
+          "realisedDelta": -0.00218,
+          "errorRanked": true
+        }
+      ]
+    },
+    {
+      "runId": "prod-empty-06",
+      "candidates": [
+        {
+          "changeType": "change-squash",
+          "operationCount": 2,
+          "expectedGain": 4.165739e-10,
+          "realisedDelta": -0.000865,
+          "errorRanked": false
+        },
+        {
+          "changeType": "change-squash",
+          "operationCount": 1,
+          "expectedGain": 1.3e-07,
+          "realisedDelta": -0.00011,
+          "errorRanked": false
+        },
+        {
+          "changeType": "remove-neuron",
+          "operationCount": 1,
+          "expectedGain": 0.0,
+          "realisedDelta": -0.00218,
+          "errorRanked": true
+        }
+      ]
+    },
+    {
+      "runId": "prod-empty-07",
+      "candidates": [
+        {
+          "changeType": "change-squash",
+          "operationCount": 2,
+          "expectedGain": 4.165739e-10,
+          "realisedDelta": -0.000865,
+          "errorRanked": false
+        },
+        {
+          "changeType": "change-squash",
+          "operationCount": 1,
+          "expectedGain": 1.3e-07,
+          "realisedDelta": -0.00011,
+          "errorRanked": false
+        },
+        {
+          "changeType": "remove-neuron",
+          "operationCount": 1,
+          "expectedGain": 0.0,
+          "realisedDelta": -0.00218,
+          "errorRanked": true
+        }
+      ]
+    },
+    {
+      "runId": "prod-empty-08",
+      "candidates": [
+        {
+          "changeType": "change-squash",
+          "operationCount": 2,
+          "expectedGain": 4.165739e-10,
+          "realisedDelta": -0.000865,
+          "errorRanked": false
+        },
+        {
+          "changeType": "change-squash",
+          "operationCount": 1,
+          "expectedGain": 1.3e-07,
+          "realisedDelta": -0.00011,
+          "errorRanked": false
+        },
+        {
+          "changeType": "remove-neuron",
+          "operationCount": 1,
+          "expectedGain": 0.0,
+          "realisedDelta": -0.00218,
+          "errorRanked": true
+        }
+      ]
+    },
+    {
+      "runId": "prod-empty-09",
+      "candidates": [
+        {
+          "changeType": "change-squash",
+          "operationCount": 2,
+          "expectedGain": 4.165739e-10,
+          "realisedDelta": -0.000865,
+          "errorRanked": false
+        },
+        {
+          "changeType": "change-squash",
+          "operationCount": 1,
+          "expectedGain": 1.3e-07,
+          "realisedDelta": -0.00011,
+          "errorRanked": false
+        },
+        {
+          "changeType": "remove-neuron",
+          "operationCount": 1,
+          "expectedGain": 0.0,
+          "realisedDelta": -0.00218,
+          "errorRanked": true
+        }
+      ]
+    },
+    {
+      "runId": "prod-empty-10",
+      "candidates": [
+        {
+          "changeType": "change-squash",
+          "operationCount": 2,
+          "expectedGain": 4.165739e-10,
+          "realisedDelta": -0.000865,
+          "errorRanked": false
+        },
+        {
+          "changeType": "change-squash",
+          "operationCount": 1,
+          "expectedGain": 1.3e-07,
+          "realisedDelta": -0.00011,
+          "errorRanked": false
+        },
+        {
+          "changeType": "remove-neuron",
+          "operationCount": 1,
+          "expectedGain": 0.0,
+          "realisedDelta": -0.00218,
+          "errorRanked": true
+        }
+      ]
+    },
+    {
+      "runId": "prod-empty-11",
+      "candidates": [
+        {
+          "changeType": "change-squash",
+          "operationCount": 2,
+          "expectedGain": 4.165739e-10,
+          "realisedDelta": -0.000865,
+          "errorRanked": false
+        },
+        {
+          "changeType": "change-squash",
+          "operationCount": 1,
+          "expectedGain": 1.3e-07,
+          "realisedDelta": -0.00011,
+          "errorRanked": false
+        },
+        {
+          "changeType": "remove-neuron",
+          "operationCount": 1,
+          "expectedGain": 0.0,
+          "realisedDelta": -0.00218,
+          "errorRanked": true
+        }
+      ]
+    },
+    {
+      "runId": "prod-accepted-00",
+      "candidates": [
+        {
+          "changeType": "change-squash",
+          "operationCount": 2,
+          "expectedGain": 3.9e-10,
+          "realisedDelta": -0.00074,
+          "errorRanked": false
+        },
+        {
+          "changeType": "change-squash",
+          "operationCount": 1,
+          "expectedGain": 1.2e-07,
+          "realisedDelta": -9e-05,
+          "errorRanked": false
+        },
+        {
+          "changeType": "remove-neuron",
+          "operationCount": 1,
+          "expectedGain": 0.0,
+          "realisedDelta": 1.9486472635499297e-07,
+          "errorRanked": true
+        }
+      ]
+    },
+    {
+      "runId": "prod-empty-12",
+      "candidates": [
+        {
+          "changeType": "change-squash",
+          "operationCount": 2,
+          "expectedGain": 4.165739e-10,
+          "realisedDelta": -0.000865,
+          "errorRanked": false
+        },
+        {
+          "changeType": "change-squash",
+          "operationCount": 1,
+          "expectedGain": 1.3e-07,
+          "realisedDelta": -0.00011,
+          "errorRanked": false
+        },
+        {
+          "changeType": "remove-neuron",
+          "operationCount": 1,
+          "expectedGain": 0.0,
+          "realisedDelta": -0.00218,
+          "errorRanked": true
+        }
+      ]
+    },
+    {
+      "runId": "prod-empty-13",
+      "candidates": [
+        {
+          "changeType": "change-squash",
+          "operationCount": 2,
+          "expectedGain": 4.165739e-10,
+          "realisedDelta": -0.000865,
+          "errorRanked": false
+        },
+        {
+          "changeType": "change-squash",
+          "operationCount": 1,
+          "expectedGain": 1.3e-07,
+          "realisedDelta": -0.00011,
+          "errorRanked": false
+        },
+        {
+          "changeType": "remove-neuron",
+          "operationCount": 1,
+          "expectedGain": 0.0,
+          "realisedDelta": -0.00218,
+          "errorRanked": true
+        }
+      ]
+    },
+    {
+      "runId": "prod-empty-14",
+      "candidates": [
+        {
+          "changeType": "change-squash",
+          "operationCount": 2,
+          "expectedGain": 4.165739e-10,
+          "realisedDelta": -0.000865,
+          "errorRanked": false
+        },
+        {
+          "changeType": "change-squash",
+          "operationCount": 1,
+          "expectedGain": 1.3e-07,
+          "realisedDelta": -0.00011,
+          "errorRanked": false
+        },
+        {
+          "changeType": "remove-neuron",
+          "operationCount": 1,
+          "expectedGain": 0.0,
+          "realisedDelta": -0.00218,
+          "errorRanked": true
+        }
+      ]
+    },
+    {
+      "runId": "prod-empty-15",
+      "candidates": [
+        {
+          "changeType": "change-squash",
+          "operationCount": 2,
+          "expectedGain": 4.165739e-10,
+          "realisedDelta": -0.000865,
+          "errorRanked": false
+        },
+        {
+          "changeType": "change-squash",
+          "operationCount": 1,
+          "expectedGain": 1.3e-07,
+          "realisedDelta": -0.00011,
+          "errorRanked": false
+        },
+        {
+          "changeType": "remove-neuron",
+          "operationCount": 1,
+          "expectedGain": 0.0,
+          "realisedDelta": -0.00218,
+          "errorRanked": true
+        }
+      ]
+    },
+    {
+      "runId": "prod-empty-16",
+      "candidates": [
+        {
+          "changeType": "change-squash",
+          "operationCount": 2,
+          "expectedGain": 4.165739e-10,
+          "realisedDelta": -0.000865,
+          "errorRanked": false
+        },
+        {
+          "changeType": "change-squash",
+          "operationCount": 1,
+          "expectedGain": 1.3e-07,
+          "realisedDelta": -0.00011,
+          "errorRanked": false
+        },
+        {
+          "changeType": "remove-neuron",
+          "operationCount": 1,
+          "expectedGain": 0.0,
+          "realisedDelta": -0.00218,
+          "errorRanked": true
+        }
+      ]
+    },
+    {
+      "runId": "prod-empty-17",
+      "candidates": [
+        {
+          "changeType": "change-squash",
+          "operationCount": 2,
+          "expectedGain": 4.165739e-10,
+          "realisedDelta": -0.000865,
+          "errorRanked": false
+        },
+        {
+          "changeType": "change-squash",
+          "operationCount": 1,
+          "expectedGain": 1.3e-07,
+          "realisedDelta": -0.00011,
+          "errorRanked": false
+        },
+        {
+          "changeType": "remove-neuron",
+          "operationCount": 1,
+          "expectedGain": 0.0,
+          "realisedDelta": -0.00218,
+          "errorRanked": true
+        }
+      ]
+    },
+    {
+      "runId": "prod-empty-18",
+      "candidates": [
+        {
+          "changeType": "change-squash",
+          "operationCount": 2,
+          "expectedGain": 4.165739e-10,
+          "realisedDelta": -0.000865,
+          "errorRanked": false
+        },
+        {
+          "changeType": "change-squash",
+          "operationCount": 1,
+          "expectedGain": 1.3e-07,
+          "realisedDelta": -0.00011,
+          "errorRanked": false
+        },
+        {
+          "changeType": "remove-neuron",
+          "operationCount": 1,
+          "expectedGain": 0.0,
+          "realisedDelta": -0.00218,
+          "errorRanked": true
+        }
+      ]
+    },
+    {
+      "runId": "prod-empty-19",
+      "candidates": [
+        {
+          "changeType": "change-squash",
+          "operationCount": 2,
+          "expectedGain": 4.165739e-10,
+          "realisedDelta": -0.000865,
+          "errorRanked": false
+        },
+        {
+          "changeType": "change-squash",
+          "operationCount": 1,
+          "expectedGain": 1.3e-07,
+          "realisedDelta": -0.00011,
+          "errorRanked": false
+        },
+        {
+          "changeType": "remove-neuron",
+          "operationCount": 1,
+          "expectedGain": 0.0,
+          "realisedDelta": -0.00218,
+          "errorRanked": true
+        }
+      ]
+    },
+    {
+      "runId": "prod-empty-20",
+      "candidates": [
+        {
+          "changeType": "change-squash",
+          "operationCount": 2,
+          "expectedGain": 4.165739e-10,
+          "realisedDelta": -0.000865,
+          "errorRanked": false
+        },
+        {
+          "changeType": "change-squash",
+          "operationCount": 1,
+          "expectedGain": 1.3e-07,
+          "realisedDelta": -0.00011,
+          "errorRanked": false
+        },
+        {
+          "changeType": "remove-neuron",
+          "operationCount": 1,
+          "expectedGain": 0.0,
+          "realisedDelta": -0.00218,
+          "errorRanked": true
+        }
+      ]
+    },
+    {
+      "runId": "prod-empty-21",
+      "candidates": [
+        {
+          "changeType": "change-squash",
+          "operationCount": 2,
+          "expectedGain": 4.165739e-10,
+          "realisedDelta": -0.000865,
+          "errorRanked": false
+        },
+        {
+          "changeType": "change-squash",
+          "operationCount": 1,
+          "expectedGain": 1.3e-07,
+          "realisedDelta": -0.00011,
+          "errorRanked": false
+        },
+        {
+          "changeType": "remove-neuron",
+          "operationCount": 1,
+          "expectedGain": 0.0,
+          "realisedDelta": -0.00218,
+          "errorRanked": true
+        }
+      ]
+    },
+    {
+      "runId": "prod-empty-22",
+      "candidates": [
+        {
+          "changeType": "change-squash",
+          "operationCount": 2,
+          "expectedGain": 4.165739e-10,
+          "realisedDelta": -0.000865,
+          "errorRanked": false
+        },
+        {
+          "changeType": "change-squash",
+          "operationCount": 1,
+          "expectedGain": 1.3e-07,
+          "realisedDelta": -0.00011,
+          "errorRanked": false
+        },
+        {
+          "changeType": "remove-neuron",
+          "operationCount": 1,
+          "expectedGain": 0.0,
+          "realisedDelta": -0.00218,
+          "errorRanked": true
+        }
+      ]
+    },
+    {
+      "runId": "prod-empty-23",
+      "candidates": [
+        {
+          "changeType": "change-squash",
+          "operationCount": 2,
+          "expectedGain": 4.165739e-10,
+          "realisedDelta": -0.000865,
+          "errorRanked": false
+        },
+        {
+          "changeType": "change-squash",
+          "operationCount": 1,
+          "expectedGain": 1.3e-07,
+          "realisedDelta": -0.00011,
+          "errorRanked": false
+        },
+        {
+          "changeType": "remove-neuron",
+          "operationCount": 1,
+          "expectedGain": 0.0,
+          "realisedDelta": -0.00218,
+          "errorRanked": true
+        }
+      ]
+    },
+    {
+      "runId": "prod-empty-24",
+      "candidates": [
+        {
+          "changeType": "change-squash",
+          "operationCount": 2,
+          "expectedGain": 4.165739e-10,
+          "realisedDelta": -0.000865,
+          "errorRanked": false
+        },
+        {
+          "changeType": "change-squash",
+          "operationCount": 1,
+          "expectedGain": 1.3e-07,
+          "realisedDelta": -0.00011,
+          "errorRanked": false
+        },
+        {
+          "changeType": "remove-neuron",
+          "operationCount": 1,
+          "expectedGain": 0.0,
+          "realisedDelta": -0.00218,
+          "errorRanked": true
+        }
+      ]
+    },
+    {
+      "runId": "prod-empty-25",
+      "candidates": [
+        {
+          "changeType": "change-squash",
+          "operationCount": 2,
+          "expectedGain": 4.165739e-10,
+          "realisedDelta": -0.000865,
+          "errorRanked": false
+        },
+        {
+          "changeType": "change-squash",
+          "operationCount": 1,
+          "expectedGain": 1.3e-07,
+          "realisedDelta": -0.00011,
+          "errorRanked": false
+        },
+        {
+          "changeType": "remove-neuron",
+          "operationCount": 1,
+          "expectedGain": 0.0,
+          "realisedDelta": -0.00218,
+          "errorRanked": true
+        }
+      ]
+    },
+    {
+      "runId": "prod-empty-26",
+      "candidates": [
+        {
+          "changeType": "change-squash",
+          "operationCount": 2,
+          "expectedGain": 4.165739e-10,
+          "realisedDelta": -0.000865,
+          "errorRanked": false
+        },
+        {
+          "changeType": "change-squash",
+          "operationCount": 1,
+          "expectedGain": 1.3e-07,
+          "realisedDelta": -0.00011,
+          "errorRanked": false
+        },
+        {
+          "changeType": "remove-neuron",
+          "operationCount": 1,
+          "expectedGain": 0.0,
+          "realisedDelta": -0.00218,
+          "errorRanked": true
+        }
+      ]
+    },
+    {
+      "runId": "prod-empty-27",
+      "candidates": [
+        {
+          "changeType": "change-squash",
+          "operationCount": 2,
+          "expectedGain": 4.165739e-10,
+          "realisedDelta": -0.000865,
+          "errorRanked": false
+        },
+        {
+          "changeType": "change-squash",
+          "operationCount": 1,
+          "expectedGain": 1.3e-07,
+          "realisedDelta": -0.00011,
+          "errorRanked": false
+        },
+        {
+          "changeType": "remove-neuron",
+          "operationCount": 1,
+          "expectedGain": 0.0,
+          "realisedDelta": -0.00218,
+          "errorRanked": true
+        }
+      ]
+    },
+    {
+      "runId": "prod-empty-28",
+      "candidates": [
+        {
+          "changeType": "change-squash",
+          "operationCount": 2,
+          "expectedGain": 4.165739e-10,
+          "realisedDelta": -0.000865,
+          "errorRanked": false
+        },
+        {
+          "changeType": "change-squash",
+          "operationCount": 1,
+          "expectedGain": 1.3e-07,
+          "realisedDelta": -0.00011,
+          "errorRanked": false
+        },
+        {
+          "changeType": "remove-neuron",
+          "operationCount": 1,
+          "expectedGain": 0.0,
+          "realisedDelta": -0.00218,
+          "errorRanked": true
+        }
+      ]
+    },
+    {
+      "runId": "prod-empty-29",
+      "candidates": [
+        {
+          "changeType": "change-squash",
+          "operationCount": 2,
+          "expectedGain": 4.165739e-10,
+          "realisedDelta": -0.000865,
+          "errorRanked": false
+        },
+        {
+          "changeType": "change-squash",
+          "operationCount": 1,
+          "expectedGain": 1.3e-07,
+          "realisedDelta": -0.00011,
+          "errorRanked": false
+        },
+        {
+          "changeType": "remove-neuron",
+          "operationCount": 1,
+          "expectedGain": 0.0,
+          "realisedDelta": -0.00218,
+          "errorRanked": true
+        }
+      ]
+    },
+    {
+      "runId": "prod-empty-30",
+      "candidates": [
+        {
+          "changeType": "change-squash",
+          "operationCount": 2,
+          "expectedGain": 4.165739e-10,
+          "realisedDelta": -0.000865,
+          "errorRanked": false
+        },
+        {
+          "changeType": "change-squash",
+          "operationCount": 1,
+          "expectedGain": 1.3e-07,
+          "realisedDelta": -0.00011,
+          "errorRanked": false
+        },
+        {
+          "changeType": "remove-neuron",
+          "operationCount": 1,
+          "expectedGain": 0.0,
+          "realisedDelta": -0.00218,
+          "errorRanked": true
+        }
+      ]
+    },
+    {
+      "runId": "prod-empty-31",
+      "candidates": [
+        {
+          "changeType": "change-squash",
+          "operationCount": 2,
+          "expectedGain": 4.165739e-10,
+          "realisedDelta": -0.000865,
+          "errorRanked": false
+        },
+        {
+          "changeType": "change-squash",
+          "operationCount": 1,
+          "expectedGain": 1.3e-07,
+          "realisedDelta": -0.00011,
+          "errorRanked": false
+        },
+        {
+          "changeType": "remove-neuron",
+          "operationCount": 1,
+          "expectedGain": 0.0,
+          "realisedDelta": -0.00218,
+          "errorRanked": true
+        }
+      ]
+    },
+    {
+      "runId": "prod-empty-32",
+      "candidates": [
+        {
+          "changeType": "change-squash",
+          "operationCount": 2,
+          "expectedGain": 4.165739e-10,
+          "realisedDelta": -0.000865,
+          "errorRanked": false
+        },
+        {
+          "changeType": "change-squash",
+          "operationCount": 1,
+          "expectedGain": 1.3e-07,
+          "realisedDelta": -0.00011,
+          "errorRanked": false
+        },
+        {
+          "changeType": "remove-neuron",
+          "operationCount": 1,
+          "expectedGain": 0.0,
+          "realisedDelta": -0.00218,
+          "errorRanked": true
+        }
+      ]
+    },
+    {
+      "runId": "prod-empty-33",
+      "candidates": [
+        {
+          "changeType": "change-squash",
+          "operationCount": 2,
+          "expectedGain": 4.165739e-10,
+          "realisedDelta": -0.000865,
+          "errorRanked": false
+        },
+        {
+          "changeType": "change-squash",
+          "operationCount": 1,
+          "expectedGain": 1.3e-07,
+          "realisedDelta": -0.00011,
+          "errorRanked": false
+        },
+        {
+          "changeType": "remove-neuron",
+          "operationCount": 1,
+          "expectedGain": 0.0,
+          "realisedDelta": -0.00218,
+          "errorRanked": true
+        }
+      ]
+    },
+    {
+      "runId": "prod-empty-34",
+      "candidates": [
+        {
+          "changeType": "change-squash",
+          "operationCount": 2,
+          "expectedGain": 4.165739e-10,
+          "realisedDelta": -0.000865,
+          "errorRanked": false
+        },
+        {
+          "changeType": "change-squash",
+          "operationCount": 1,
+          "expectedGain": 1.3e-07,
+          "realisedDelta": -0.00011,
+          "errorRanked": false
+        },
+        {
+          "changeType": "remove-neuron",
+          "operationCount": 1,
+          "expectedGain": 0.0,
+          "realisedDelta": -0.00218,
+          "errorRanked": true
+        }
+      ]
+    },
+    {
+      "runId": "prod-empty-35",
+      "candidates": [
+        {
+          "changeType": "change-squash",
+          "operationCount": 2,
+          "expectedGain": 4.165739e-10,
+          "realisedDelta": -0.000865,
+          "errorRanked": false
+        },
+        {
+          "changeType": "change-squash",
+          "operationCount": 1,
+          "expectedGain": 1.3e-07,
+          "realisedDelta": -0.00011,
+          "errorRanked": false
+        },
+        {
+          "changeType": "remove-neuron",
+          "operationCount": 1,
+          "expectedGain": 0.0,
+          "realisedDelta": -0.00218,
+          "errorRanked": true
+        }
+      ]
+    },
+    {
+      "runId": "prod-empty-36",
+      "candidates": [
+        {
+          "changeType": "change-squash",
+          "operationCount": 2,
+          "expectedGain": 4.165739e-10,
+          "realisedDelta": -0.000865,
+          "errorRanked": false
+        },
+        {
+          "changeType": "change-squash",
+          "operationCount": 1,
+          "expectedGain": 1.3e-07,
+          "realisedDelta": -0.00011,
+          "errorRanked": false
+        },
+        {
+          "changeType": "remove-neuron",
+          "operationCount": 1,
+          "expectedGain": 0.0,
+          "realisedDelta": -0.00218,
+          "errorRanked": true
+        }
+      ]
+    },
+    {
+      "runId": "prod-empty-37",
+      "candidates": [
+        {
+          "changeType": "change-squash",
+          "operationCount": 2,
+          "expectedGain": 4.165739e-10,
+          "realisedDelta": -0.000865,
+          "errorRanked": false
+        },
+        {
+          "changeType": "change-squash",
+          "operationCount": 1,
+          "expectedGain": 1.3e-07,
+          "realisedDelta": -0.00011,
+          "errorRanked": false
+        },
+        {
+          "changeType": "remove-neuron",
+          "operationCount": 1,
+          "expectedGain": 0.0,
+          "realisedDelta": -0.00218,
+          "errorRanked": true
+        }
+      ]
+    },
+    {
+      "runId": "prod-accepted-01",
+      "candidates": [
+        {
+          "changeType": "change-squash",
+          "operationCount": 2,
+          "expectedGain": 3.9e-10,
+          "realisedDelta": -0.00074,
+          "errorRanked": false
+        },
+        {
+          "changeType": "change-squash",
+          "operationCount": 1,
+          "expectedGain": 1.2e-07,
+          "realisedDelta": -9e-05,
+          "errorRanked": false
+        },
+        {
+          "changeType": "remove-neuron",
+          "operationCount": 1,
+          "expectedGain": 0.0,
+          "realisedDelta": 1.9486472635499297e-07,
+          "errorRanked": true
+        }
+      ]
+    }
+  ]
+}

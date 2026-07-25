@@ -1,9 +1,9 @@
-# Review and recalibrate acceptance thresholds (gain floors) for the GRQ network
+# Review and recalibrate acceptance thresholds (gain floors) for the production network
 
 ## Summary
 
 Issue #1740 (part of milestone #1736 — *Discovery finds very few successful
-candidates for the GRQ network*) asked whether the coordinated expected-gain
+candidates for the production network*) asked whether the coordinated expected-gain
 floors are over-rejecting genuine improvements on the large converged production
 network, and to recalibrate them in a principled, data-driven way if so.
 
