@@ -97,11 +97,15 @@ pub fn mark_analysis_started() {
 /// Called when `analyze_all` or `rank_focus_neurons_internal` returns
 /// (including error and cancellation paths).
 pub fn mark_analysis_finished() {
-    // Saturating decrement: avoid underflow if called without a matching start.
-    let prev = ANALYSIS_ACTIVE.load(Ordering::Acquire);
-    if prev > 0 {
-        ANALYSIS_ACTIVE.fetch_sub(1, Ordering::Release);
-    }
+    // Saturating decrement as a single atomic read-modify-write (Issue #1752):
+    // `fetch_update` makes the "only decrement if > 0" guard and the decrement
+    // one atomic step. A previous `load` + `fetch_sub` split the check from the
+    // mutation, so two concurrent callers observing `prev == 1` could both
+    // decrement and wrap the counter to `usize::MAX` — leaving
+    // `is_analysis_active()` stuck at `true` forever. Returning `None` from the
+    // closure when the value is already `0` leaves the counter untouched.
+    let _ =
+        ANALYSIS_ACTIVE.fetch_update(Ordering::Release, Ordering::Acquire, |v| v.checked_sub(1));
 }
 
 /// Returns `true` if at least one analysis invocation is currently in-flight.
@@ -267,6 +271,71 @@ mod tests {
             0,
             "counter must be decremented even after panic"
         );
+    }
+
+    /// Issue #1752: `mark_analysis_finished()` must saturate at zero — an
+    /// unbalanced call on a zero counter must leave it at zero, never wrap to
+    /// `usize::MAX`.
+    #[test]
+    #[serial]
+    fn test_mark_analysis_finished_saturates_at_zero() {
+        reset_analysis_active();
+        assert_eq!(analysis_active_count(), 0);
+
+        // Extra call with no matching start must not underflow.
+        mark_analysis_finished();
+        assert_eq!(
+            analysis_active_count(),
+            0,
+            "counter must saturate at zero, not wrap to usize::MAX"
+        );
+
+        // A second unbalanced call must also be a no-op.
+        mark_analysis_finished();
+        assert_eq!(analysis_active_count(), 0);
+    }
+
+    /// Issue #1752: concurrent unbalanced `mark_analysis_finished()` calls on a
+    /// counter of `1` must never wrap. With the previous non-atomic
+    /// load-then-fetch_sub, two threads could both observe `prev == 1`, both
+    /// decrement, and wrap the counter to `usize::MAX`. The atomic
+    /// `fetch_update` guarantees at most one decrement takes effect.
+    #[test]
+    #[serial]
+    fn test_mark_analysis_finished_concurrent_does_not_wrap() {
+        use std::sync::atomic::Ordering as O;
+        use std::sync::{Arc, Barrier};
+
+        // Repeat to make the race more likely to surface if reintroduced.
+        for _ in 0..1_000 {
+            reset_analysis_active();
+            ANALYSIS_ACTIVE.store(1, O::Release);
+
+            let barrier = Arc::new(Barrier::new(2));
+            let b1 = Arc::clone(&barrier);
+            let b2 = Arc::clone(&barrier);
+
+            let t1 = std::thread::spawn(move || {
+                b1.wait();
+                mark_analysis_finished();
+            });
+            let t2 = std::thread::spawn(move || {
+                b2.wait();
+                mark_analysis_finished();
+            });
+
+            t1.join().unwrap();
+            t2.join().unwrap();
+
+            // Exactly one decrement must have taken effect: counter is 0, never
+            // wrapped to usize::MAX.
+            assert_eq!(
+                analysis_active_count(),
+                0,
+                "concurrent finishes must saturate at zero, not wrap"
+            );
+        }
+        reset_analysis_active();
     }
 
     /// Issue #1077: Multiple guards can nest correctly.

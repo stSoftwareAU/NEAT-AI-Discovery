@@ -479,16 +479,15 @@ jobs:
         # .git/config where a later step could read it (Issue #1569).
         persist-credentials: false
 
+    - name: Install codespell
+      run: pip install --user codespell
+
     - name: Run codespell
-      # Pinned to a 40-char commit SHA (Issue #1216).
-      uses: codespell-project/actions-codespell@8f01853be192eb0f849a5c7d721450e7a467c579 # v2.2
-      with:
-        check_filenames: true
-        check_hidden: true
-        skip: "./target,./.git,./tests/data"
-        # renderD is a Linux GPU device node name (/dev/dri/renderD128), not a typo
-        # nknown appears in regex pattern [Uu]nknown used to match both "unknown" and "Unknown"
-        # MAPE is Mean Absolute Percentage Error, one of the seven built-in NEAT-AI cost functions
-        # OT is a diagram label for "Orphan Tests" in pr-summary-1384.md
-        ignore_words_list: renderD,nknown,MAPE,OT
+      shell: bash
+      run: |
+        ~/.local/bin/codespell \
+          --check-filenames \
+          --check-hidden \
+          --skip "./target,./.git,./tests/data" \
+          --ignore-words-list "renderD,nknown,MAPE,OT"
 
