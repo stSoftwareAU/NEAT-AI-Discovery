@@ -11,6 +11,7 @@ mod issue_1048_parquet_file_guard;
 mod issue_1099_memory_pressure_cancellation;
 mod issue_1542_source_budget;
 mod issue_1612_agents_readme_anchors;
+mod issue_1752_atomic_finished_decrement;
 mod issue_186_rwlock_cache;
 mod issue_196_cache_locality_benchmark;
 mod issue_228_zero_copy_buffer;
