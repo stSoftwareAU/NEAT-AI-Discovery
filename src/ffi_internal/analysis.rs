@@ -184,7 +184,45 @@ pub fn analyze_parallel_internal(input_json: &str) -> Result<String> {
                 crate::config::low_success_rate_threshold(),
                 crate::config::novelty_suppression_ratio(),
             );
-            let novelty_escalation_active = handshake.novelty_escalation_active;
+            // Issue #1739: gate the generation-widening hint by the
+            // candidate-starvation classification. The #1737 diagnosis showed
+            // the large converged production profile is proposal-rich but
+            // over-rejected (candidates reach the accept gate and are rejected
+            // there), so widening
+            // generation cannot lift the accepted rate and would only add
+            // noise. Escalation is therefore allowed to fire only when the run
+            // is genuinely candidate-starved (few proposals ever reach the
+            // gate), computed from the same RejectionBreakdown the diagnosis
+            // reads. This changes nothing on the accept path (#1623): it only
+            // suppresses a widening hint that would otherwise waste host effort.
+            let mut combined_breakdown = synapse
+                .as_ref()
+                .map_or_else(analysis::diagnostics::RejectionBreakdown::new, |s| {
+                    s.metadata.rejection_breakdown.clone()
+                });
+            if let Some(n) = neuron.as_ref() {
+                combined_breakdown.merge_from(n.metadata.rejection_breakdown.counts());
+            }
+            let surviving_candidates = synapse
+                .as_ref()
+                .map_or(0, |s| s.metadata.candidates_returned)
+                .saturating_add(
+                    neuron
+                        .as_ref()
+                        .map_or(0, |n| n.metadata.candidates_returned),
+                );
+            let starvation_signals = analysis::candidate_starvation::signals_from_breakdown(
+                &combined_breakdown,
+                u32::try_from(surviving_candidates).unwrap_or(u32::MAX),
+            );
+            let starvation_class = analysis::candidate_starvation::classify(
+                &starvation_signals,
+                &analysis::candidate_starvation::StarvationConfig::default(),
+            );
+            let novelty_escalation_active = analysis::candidate_starvation::gate_escalation(
+                handshake.novelty_escalation_active,
+                starvation_class,
+            );
 
             // Issue #1446: when a pass produces no candidates of any kind,
             // attach a consolidated `zeroCandidateSummary` so operators can see
