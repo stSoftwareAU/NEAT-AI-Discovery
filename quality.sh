@@ -11,9 +11,9 @@ export RUSTFLAGS="-D warnings"
 echo "🔍 Pre-deployment Quality Check"
 echo "================================"
 
-# Check bash script syntax
+# Committed `bash -n` gate, shared with CI (Issue #1755)
 echo "📝 Checking bash script syntax..."
-find . -name "*.sh" -type f -not -path "./target/*" -not -path "./.git/*" -exec bash -n {} \;
+./quality/bash_syntax.sh .
 
 echo "Running shellcheck on bash scripts..."
 if ! command -v shellcheck &> /dev/null; then

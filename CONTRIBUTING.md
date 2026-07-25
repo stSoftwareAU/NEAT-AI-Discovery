@@ -75,7 +75,8 @@ We follow strict TDD:
 **Always run `./quality.sh` before committing.** CI treats warnings as errors,
 so do not skip this step. `./quality.sh` performs these checks in order:
 
-1. Bash syntax check (all `.sh` files)
+1. `./quality/bash_syntax.sh` — `bash -n` syntax gate over every `.sh` file
+   (Issue #1755); the same committed script CI runs on pull requests
 2. `shellcheck` over every `.sh` file (hard-fails if `shellcheck` is not
    installed)
 3. `./scripts/check-pr-summary-location.sh` — PR summaries must stay in
@@ -109,8 +110,9 @@ the gate runs on milestone sub-issue PRs too, not just the rollup into `Develop`
 - `spell-check` — runs codespell on the codebase
 - `validation` — checks required files and `Cargo.toml`
 - `security` — runs the security audit workflow
-- `shellcheck` (separate workflow `.github/workflows/shellcheck.yml`) — lints
-  bash scripts via ShellCheck
+- `shellcheck` (separate workflow `.github/workflows/shellcheck.yml`) — runs the
+  committed `quality/bash_syntax.sh` (`bash -n`) gate, then lints bash scripts
+  via ShellCheck (Issue #1755)
 
 **Do NOT modify `.github/workflows/ci.yml` without explicit approval.**
 
