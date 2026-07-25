@@ -602,6 +602,44 @@ Equal probability for N incoming synapses.
 
 ---
 
+## 🔍 Aggregation-Squash Audit (Issue #1738)
+
+Issue #1738 (parent #1736 — *Discovery finds very few successful candidates on a
+large production aggregation-heavy network*) audited focus-selection and
+impact/contribution propagation through the three aggregation squashes on the
+**production-shaped** topologies that the earlier two-branch dominated-branch
+fixtures (#1706, #1707, #1712) did not exercise: multi-branch aggregates, IF
+condition sign-flips, and chained aggregates.
+
+**Result — no fault found.** The impact math through MAX/MIN/IF is sound on these
+shapes. Every expected value in
+`tests/issue_1738_aggregation_squash_impact_characterisation.rs` is computed
+independently by hand from a committed observation window and matches the engine
+exactly, including:
+
+- **Multi-branch attribution & conservation.** For a four-branch MINIMUM, each
+  branch's impact equals its empirical win fraction and the branch impacts sum
+  to the aggregate's impact — no high-impact branch is starved, none is inflated.
+- **IF condition sign-flip (F1 mixed regime).** When the condition changes sign
+  across the window, both branches stay live; the always-active condition synapse
+  carries full impact and the positive/negative branch impacts equal their
+  selection fractions and sum to the aggregate impact.
+- **Chained MAX → MAX.** Contribution propagates as a product of per-hop win
+  fractions with conservation at every hop. Where the inner winner is
+  deterministic, the product-of-marginals equals the true joint exactly.
+- **No-records fallback.** Without activation records the walk still splits impact
+  `1/N` across branches — the flattening the empirical selection-stats path
+  corrects.
+- **Focus ranking.** A high-impact aggregate branch embedded in a large
+  low-impact pool (the production needle-in-haystack) lands in the exploit/explore
+  **exploitation head**, not the exploration tail — even under drought.
+
+This audit is a prerequisite for concluding a plateau on the parent (#1736): the
+focus/impact calculations through aggregation squashes are **not** the cause of
+the low successful-candidate rate on the production network.
+
+---
+
 ## 🔮 Future Improvements
 
 ### ✅ Completed
