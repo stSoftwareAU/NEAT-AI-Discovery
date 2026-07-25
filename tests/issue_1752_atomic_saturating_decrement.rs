@@ -15,11 +15,13 @@ use neat_ai_discovery::cancellation::{
     analysis_active_count, is_analysis_active, mark_analysis_finished, mark_analysis_started,
     reset_analysis_active,
 };
+use serial_test::serial;
 use std::sync::Arc;
 use std::sync::Barrier;
 
 /// A single unbalanced call must not underflow the counter.
 #[test]
+#[serial]
 fn unbalanced_finish_saturates_at_zero() {
     reset_analysis_active();
 
@@ -43,6 +45,7 @@ fn unbalanced_finish_saturates_at_zero() {
 /// rest must saturate. Against the old load-then-`fetch_sub` implementation this
 /// wraps to `usize::MAX` within a few rounds.
 #[test]
+#[serial]
 fn concurrent_unbalanced_finishes_never_underflow() {
     const THREADS: usize = 8;
     const ROUNDS: usize = 2_000;
@@ -80,6 +83,7 @@ fn concurrent_unbalanced_finishes_never_underflow() {
 
 /// Balanced concurrent start/finish pairs must still return the counter to zero.
 #[test]
+#[serial]
 fn balanced_concurrent_pairs_return_to_zero() {
     const THREADS: usize = 8;
     const ITERATIONS: usize = 500;
