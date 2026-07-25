@@ -26,6 +26,14 @@
 //! - **No string length limits**: Each batch is small enough to serialise
 //! - **Unlimited sample sizes**: Can record for hours without memory issues
 //! - **Fail-safe**: Partial data is preserved if process crashes mid-recording
+//!
+//! ## Locking (Issue #1751)
+//!
+//! Sessions are stored as `Arc<Mutex<RecordingSession>>` behind the process-global
+//! `SESSIONS` map. The global lock is held only long enough to look up, insert, or
+//! remove a handle; every Parquet disk write happens under the *per-session* lock
+//! with the global lock already released. Operations on unrelated sessions
+//! therefore never queue behind another session's disk I/O.
 
 #![allow(clippy::cast_sign_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use anyhow::{Context, Result};
@@ -46,9 +54,33 @@ use crate::{CreatureJson, NeuronData};
 /// This is a large value since we don't know the final size upfront.
 const STREAMING_MAX_CAPACITY: usize = i32::MAX as usize;
 
+/// A shared handle to one recording session.
+///
+/// Each session carries its own lock so that a slow Parquet write on one session
+/// never blocks operations on another (Issue #1751).
+type SessionHandle = Arc<Mutex<RecordingSession>>;
+
 /// Global session storage
-static SESSIONS: LazyLock<Arc<Mutex<HashMap<String, RecordingSession>>>> =
+static SESSIONS: LazyLock<Arc<Mutex<HashMap<String, SessionHandle>>>> =
     LazyLock::new(|| Arc::new(Mutex::new(HashMap::new())));
+
+/// Look up a session handle, releasing the global lock before returning.
+///
+/// The caller locks the returned handle for the duration of its work, so the
+/// global map stays available to other sessions throughout.
+fn session_handle(session_id: &str) -> Option<SessionHandle> {
+    SESSIONS.lock().get(session_id).map(Arc::clone)
+}
+
+/// Remove a session handle from the global map, releasing the global lock before
+/// returning.
+///
+/// The handle is returned rather than dropped in place: `RecordingSession::drop`
+/// deletes the incomplete Parquet file, and that disk I/O must not run under the
+/// global lock.
+fn remove_session_handle(session_id: &str) -> Option<SessionHandle> {
+    SESSIONS.lock().remove(session_id)
+}
 
 /// A recording session that holds an open Parquet writer.
 ///
@@ -118,27 +150,39 @@ impl Drop for RecordingSession {
 pub fn cleanup_stale_sessions() {
     let ttl_secs = crate::config::session_ttl_secs();
     let ttl = std::time::Duration::from_secs(ttl_secs);
-    let mut sessions = SESSIONS.lock();
 
-    let stale_ids: Vec<String> = sessions
-        .iter()
-        .filter_map(|(id, session)| {
-            let age = session.created_at.elapsed();
-            if age > ttl { Some(id.clone()) } else { None }
-        })
-        .collect();
+    let stale: Vec<(String, u64, SessionHandle)> = {
+        let mut sessions = SESSIONS.lock();
 
-    for id in stale_ids {
-        if let Some(session) = sessions.remove(&id) {
-            let age_secs = session.created_at.elapsed().as_secs();
-            tracing::warn!(
-                session_id = %id,
-                age_secs = age_secs,
-                ttl_secs = ttl_secs,
-                "Removing stale streaming session (exceeded TTL)"
-            );
-            // Session `Drop` cleans up the incomplete temporary file
-        }
+        let stale_ids: Vec<(String, u64)> = sessions
+            .iter()
+            .filter_map(|(id, handle)| {
+                // A session whose per-session lock is held is mid-write, so it is
+                // active by definition — skip it rather than block the sweep behind
+                // its disk I/O (Issue #1751). It is reconsidered on the next sweep.
+                let session = handle.try_lock()?;
+                let age = session.created_at.elapsed();
+                (age > ttl).then(|| (id.clone(), age.as_secs()))
+            })
+            .collect();
+
+        stale_ids
+            .into_iter()
+            .filter_map(|(id, age_secs)| sessions.remove(&id).map(|handle| (id, age_secs, handle)))
+            .collect()
+    };
+    // Global lock released — `RecordingSession::drop` (which deletes the incomplete
+    // temporary file) now runs outside it.
+
+    for (id, age_secs, handle) in stale {
+        tracing::warn!(
+            session_id = %id,
+            age_secs = age_secs,
+            ttl_secs = ttl_secs,
+            "Removing stale streaming session (exceeded TTL)"
+        );
+        // Session `Drop` cleans up the incomplete temporary file
+        drop(handle);
     }
 }
 
@@ -183,9 +227,10 @@ pub fn start_session(creature: CreatureJson, temp_dir: String) -> Result<String>
     // Create session
     let session = RecordingSession::new(creature, temp_dir, parquet_path)?;
 
-    // Store session
-    let mut sessions = SESSIONS.lock();
-    sessions.insert(session_id.clone(), session);
+    // Store session — the global lock is held only for the map insert
+    SESSIONS
+        .lock()
+        .insert(session_id.clone(), Arc::new(Mutex::new(session)));
 
     Ok(session_id)
 }
@@ -197,10 +242,11 @@ pub fn append_records(
     session_id: &str,
     neuron_data_batches: Vec<(u32, Vec<NeuronData>, Vec<f32>)>, // (obs_index, neuron_data, inputs)
 ) -> Result<u64> {
-    let mut sessions = SESSIONS.lock();
-    let session = sessions
-        .get_mut(session_id)
+    let handle = session_handle(session_id)
         .ok_or_else(|| anyhow::anyhow!("Session not found: {session_id}"))?;
+    // Global lock already released — the Parquet writes below run under the
+    // per-session lock only (Issue #1751).
+    let mut session = handle.lock();
 
     let mut records_in_batch = 0u64;
 
@@ -264,10 +310,11 @@ pub fn append_records(
 /// Finalises the Parquet file and returns the file location.
 /// The session is removed from storage after this call.
 pub fn finish_session(session_id: &str) -> Result<(String, String, u64)> {
-    let mut sessions = SESSIONS.lock();
-    let mut session = sessions
-        .remove(session_id)
+    let handle = remove_session_handle(session_id)
         .ok_or_else(|| anyhow::anyhow!("Session not found: {session_id}"))?;
+    // Global lock already released — finalisation (writer flush + rename) runs
+    // under the per-session lock only (Issue #1751).
+    let mut session = handle.lock();
 
     if session.records_written == 0 {
         anyhow::bail!("No records were written to the session");
@@ -306,11 +353,11 @@ pub fn finish_session(session_id: &str) -> Result<(String, String, u64)> {
 ///
 /// Use this to clean up if recording fails or is cancelled.
 pub fn cancel_session(session_id: &str) -> Result<()> {
-    let mut sessions = SESSIONS.lock();
-    sessions
-        .remove(session_id)
+    let handle = remove_session_handle(session_id)
         .ok_or_else(|| anyhow::anyhow!("Session not found: {session_id}"))?;
-    // Session Drop impl cleans up the incomplete temporary file
+    // Global lock already released — the Session Drop impl cleans up the incomplete
+    // temporary file outside it (Issue #1751).
+    drop(handle);
     Ok(())
 }
 
@@ -328,6 +375,12 @@ mod tests {
 
     fn session_exists(session_id: &str) -> bool {
         SESSIONS.lock().contains_key(session_id)
+    }
+
+    /// Backdate a session's creation time so the TTL sweep treats it as stale.
+    fn backdate_session(session_id: &str, secs: u64) {
+        let handle = session_handle(session_id).expect("session should exist");
+        handle.lock().created_at = Instant::now() - Duration::from_secs(secs);
     }
 
     fn create_test_creature() -> CreatureJson {
@@ -577,11 +630,7 @@ mod tests {
         assert!(tmp_file.exists(), "expected tmp file to exist");
 
         // Manually remove the session to trigger Drop (simulates panic/drop scenario)
-        {
-            let mut sessions = SESSIONS.lock();
-            sessions.remove(&session_id);
-            // Session is dropped here
-        }
+        drop(remove_session_handle(&session_id));
 
         assert!(
             !tmp_file.exists(),
@@ -684,14 +733,8 @@ mod tests {
         let session_id = start_session(creature, temp_path).unwrap();
         assert!(session_exists(&session_id));
 
-        // Backdate the session's created_at to be well past any TTL
-        {
-            let mut sessions = SESSIONS.lock();
-            if let Some(session) = sessions.get_mut(&session_id) {
-                // Set created_at to 2 hours ago (exceeds default 1-hour TTL)
-                session.created_at = Instant::now() - Duration::from_secs(7200);
-            }
-        }
+        // Backdate created_at to 2 hours ago (exceeds default 1-hour TTL)
+        backdate_session(&session_id, 7200);
 
         // Run cleanup — should remove the stale session
         cleanup_stale_sessions();
@@ -752,12 +795,7 @@ mod tests {
         );
 
         // Backdate the session
-        {
-            let mut sessions = SESSIONS.lock();
-            if let Some(session) = sessions.get_mut(&session_id) {
-                session.created_at = Instant::now() - Duration::from_secs(7200);
-            }
-        }
+        backdate_session(&session_id, 7200);
 
         // Run cleanup — should remove the session and its temp file via Drop
         cleanup_stale_sessions();
@@ -782,12 +820,7 @@ mod tests {
         // Start first session and backdate it
         let session_id1 =
             start_session(creature1, temp_dir1.path().to_str().unwrap().to_string()).unwrap();
-        {
-            let mut sessions = SESSIONS.lock();
-            if let Some(session) = sessions.get_mut(&session_id1) {
-                session.created_at = Instant::now() - Duration::from_secs(7200);
-            }
-        }
+        backdate_session(&session_id1, 7200);
 
         // Starting a new session should trigger cleanup of the stale one
         let session_id2 =
@@ -804,5 +837,127 @@ mod tests {
 
         // Clean up
         cancel_session(&session_id2).unwrap();
+    }
+
+    fn single_record_batch(obs_index: u32) -> Vec<(u32, Vec<NeuronData>, Vec<f32>)> {
+        vec![(
+            obs_index,
+            vec![NeuronData {
+                neuron_uuid: "hidden-1".to_string(),
+                activation: 0.5,
+                value: Some(0.4),
+                errors: vec![0.1],
+            }],
+            vec![0.1, 0.2],
+        )]
+    }
+
+    /// Issue #1751: a session busy writing to disk must not block operations on
+    /// other sessions. Holding session A's per-session lock stands in for an
+    /// in-progress Parquet write; all other API calls must still complete.
+    #[test]
+    fn test_other_sessions_proceed_while_one_session_is_locked() {
+        let dir_a = TempDir::new().unwrap();
+        let dir_b = TempDir::new().unwrap();
+        let dir_c = TempDir::new().unwrap();
+
+        let id_a = start_session(
+            create_test_creature(),
+            dir_a.path().to_str().unwrap().to_string(),
+        )
+        .unwrap();
+        let id_b = start_session(
+            create_test_creature(),
+            dir_b.path().to_str().unwrap().to_string(),
+        )
+        .unwrap();
+
+        // Simulate a long disk write in progress on session A
+        let handle_a = session_handle(&id_a).expect("session A should exist");
+        let guard_a = handle_a.lock();
+
+        let (tx, rx) = std::sync::mpsc::channel();
+        let id_b_thread = id_b.clone();
+        let dir_c_path = dir_c.path().to_str().unwrap().to_string();
+        std::thread::spawn(move || {
+            let count = active_session_count();
+            let written = append_records(&id_b_thread, single_record_batch(0));
+            let id_c = start_session(create_test_creature(), dir_c_path);
+            tx.send((count, written, id_c)).expect("receiver alive");
+        });
+
+        let (count, written, id_c) = rx
+            .recv_timeout(Duration::from_secs(10))
+            .expect("operations on other sessions must not block behind session A's write lock");
+
+        drop(guard_a);
+
+        assert!(count >= 2, "expected at least both sessions to be counted");
+        assert_eq!(
+            written.expect("append to session B should succeed"),
+            3,
+            "expected one hidden record plus two input records"
+        );
+        let id_c = id_c.expect("starting a new session should succeed");
+
+        cancel_session(&id_a).unwrap();
+        cancel_session(&id_b).unwrap();
+        cancel_session(&id_c).unwrap();
+    }
+
+    /// Issue #1751: the TTL sweep must not block on a session that is mid-write;
+    /// it skips it and reclaims it on a later sweep.
+    #[test]
+    fn test_cleanup_skips_locked_session_then_reclaims_it() {
+        let temp_dir = TempDir::new().unwrap();
+        let session_id = start_session(
+            create_test_creature(),
+            temp_dir.path().to_str().unwrap().to_string(),
+        )
+        .unwrap();
+        backdate_session(&session_id, 7200);
+
+        let handle = session_handle(&session_id).expect("session should exist");
+        let guard = handle.lock();
+
+        // Must return promptly rather than deadlocking on the held session lock
+        cleanup_stale_sessions();
+        assert!(
+            session_exists(&session_id),
+            "expected a session that is mid-write to be skipped by the TTL sweep"
+        );
+
+        drop(guard);
+
+        cleanup_stale_sessions();
+        assert!(
+            !session_exists(&session_id),
+            "expected the stale session to be reclaimed once its write completed"
+        );
+    }
+
+    /// Issue #1751: concurrent appends to the *same* session stay serialised —
+    /// every record still lands in the Parquet file.
+    #[test]
+    fn test_concurrent_appends_to_same_session_are_serialised() {
+        let temp_dir = TempDir::new().unwrap();
+        let session_id = start_session(
+            create_test_creature(),
+            temp_dir.path().to_str().unwrap().to_string(),
+        )
+        .unwrap();
+
+        let threads: Vec<_> = (0..4u32)
+            .map(|i| {
+                let id = session_id.clone();
+                std::thread::spawn(move || append_records(&id, single_record_batch(i)).unwrap())
+            })
+            .collect();
+
+        let written: u64 = threads.into_iter().map(|t| t.join().unwrap()).sum();
+        assert_eq!(written, 12, "expected 3 records from each of 4 threads");
+
+        let (_, _, total) = finish_session(&session_id).unwrap();
+        assert_eq!(total, written, "every concurrent append must be counted");
     }
 }
