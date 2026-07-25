@@ -38,6 +38,7 @@ pub mod candidate_cache;
 pub mod candidate_clustering;
 pub mod candidate_compression;
 pub mod candidate_diversity;
+pub mod candidate_starvation;
 pub mod change_squash_gain;
 pub mod constants;
 pub mod cost_function_hint;
