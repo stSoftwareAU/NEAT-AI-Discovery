@@ -1,0 +1,23 @@
+{
+  "_comment": "production-shaped CHAINED MAXIMUM aggregate for Issue #1738. Two RELU leaves (neuron-l1, neuron-l2) feed an inner MAXIMUM (neuron-m1); the inner MAXIMUM and a third RELU leaf (neuron-l3) feed an outer MAXIMUM (neuron-m2) that drives the identity output. Used to characterise contribution propagation through *chained* selection squashes: impact flows as a product of per-hop win fractions. On the committed window (see tests/issue_1738_aggregation_squash_impact_characterisation.rs) neuron-l1 deterministically wins the inner MAXIMUM (so the product-of-marginals equals the true joint), and the inner MAXIMUM wins the outer MAXIMUM on half the observations. Conservation must hold at every hop. Fixtures only - no engine behaviour change. Input neurons are implicit (referenced as input-N).",
+  "input": 3,
+  "output": 1,
+  "neurons": [
+    { "type": "hidden", "uuid": "neuron-l1", "squash": "RELU", "bias": 0 },
+    { "type": "hidden", "uuid": "neuron-l2", "squash": "RELU", "bias": 0 },
+    { "type": "hidden", "uuid": "neuron-l3", "squash": "RELU", "bias": 0 },
+    { "type": "hidden", "uuid": "neuron-m1", "squash": "MAXIMUM", "bias": 0 },
+    { "type": "hidden", "uuid": "neuron-m2", "squash": "MAXIMUM", "bias": 0 },
+    { "type": "output", "uuid": "output-0", "squash": "IDENTITY", "bias": 0 }
+  ],
+  "synapses": [
+    { "fromUUID": "input-0", "toUUID": "neuron-l1", "weight": 1 },
+    { "fromUUID": "input-1", "toUUID": "neuron-l2", "weight": 1 },
+    { "fromUUID": "input-2", "toUUID": "neuron-l3", "weight": 1 },
+    { "fromUUID": "neuron-l1", "toUUID": "neuron-m1", "weight": 1 },
+    { "fromUUID": "neuron-l2", "toUUID": "neuron-m1", "weight": 1 },
+    { "fromUUID": "neuron-m1", "toUUID": "neuron-m2", "weight": 1 },
+    { "fromUUID": "neuron-l3", "toUUID": "neuron-m2", "weight": 1 },
+    { "fromUUID": "neuron-m2", "toUUID": "output-0", "weight": 1 }
+  ]
+}

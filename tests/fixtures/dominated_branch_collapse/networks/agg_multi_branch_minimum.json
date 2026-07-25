@@ -1,0 +1,24 @@
+{
+  "_comment": "production-shaped FOUR-branch MINIMUM selection aggregate for Issue #1738 (audit of focus/impact through MAX/MIN/IF squashes). Four RELU branches (neuron-b1..b4) feed a single MINIMUM (neuron-minm) that drives the identity output. Used to characterise multi-branch contribution attribution: with the committed observation window (see tests/issue_1738_aggregation_squash_impact_characterisation.rs) branch b1 wins 1/2 of observations, b2 and b3 win 1/4 each, and b4 is combination-dominated (wins 0). The per-branch impact must equal the empirical win fraction and the four branch impacts must sum to the aggregate's impact (conservation, no starvation/inflation). Fixtures only - no engine behaviour change. Input neurons are implicit (referenced as input-N).",
+  "input": 4,
+  "output": 1,
+  "neurons": [
+    { "type": "hidden", "uuid": "neuron-b1", "squash": "RELU", "bias": 0 },
+    { "type": "hidden", "uuid": "neuron-b2", "squash": "RELU", "bias": 0 },
+    { "type": "hidden", "uuid": "neuron-b3", "squash": "RELU", "bias": 0 },
+    { "type": "hidden", "uuid": "neuron-b4", "squash": "RELU", "bias": 0 },
+    { "type": "hidden", "uuid": "neuron-minm", "squash": "MINIMUM", "bias": 0 },
+    { "type": "output", "uuid": "output-0", "squash": "IDENTITY", "bias": 0 }
+  ],
+  "synapses": [
+    { "fromUUID": "input-0", "toUUID": "neuron-b1", "weight": 1 },
+    { "fromUUID": "input-1", "toUUID": "neuron-b2", "weight": 1 },
+    { "fromUUID": "input-2", "toUUID": "neuron-b3", "weight": 1 },
+    { "fromUUID": "input-3", "toUUID": "neuron-b4", "weight": 1 },
+    { "fromUUID": "neuron-b1", "toUUID": "neuron-minm", "weight": 1 },
+    { "fromUUID": "neuron-b2", "toUUID": "neuron-minm", "weight": 1 },
+    { "fromUUID": "neuron-b3", "toUUID": "neuron-minm", "weight": 1 },
+    { "fromUUID": "neuron-b4", "toUUID": "neuron-minm", "weight": 1 },
+    { "fromUUID": "neuron-minm", "toUUID": "output-0", "weight": 1 }
+  ]
+}
