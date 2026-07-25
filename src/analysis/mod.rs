@@ -63,6 +63,7 @@ pub mod neuron;
 pub mod neuron_fingerprint;
 pub mod novelty_escalation;
 pub mod one_hot_class_allocation;
+pub mod production_discovery_regression;
 pub mod quantised_error;
 pub mod recent_failure_window;
 pub mod remove_neuron_bias_fold;
