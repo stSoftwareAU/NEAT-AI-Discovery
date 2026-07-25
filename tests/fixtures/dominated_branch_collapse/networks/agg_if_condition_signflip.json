@@ -1,0 +1,21 @@
+{
+  "_comment": "production-shaped IF selection aggregate with a CONDITION SIGN FLIP for Issue #1738. The condition neuron (neuron-cond) drives the IF branch choice: on the committed window (see tests/issue_1738_aggregation_squash_impact_characterisation.rs) the summed condition contribution is > 0 on half the observations (positive branch selected) and <= 0 on the other half (negative branch selected). Neither branch is dominated (the F1 mixed-condition case). The always-active condition synapse must carry full impact (1.0); the positive and negative branch impacts must equal their branch-selection fractions and sum to the aggregate impact. Fixtures only - no engine behaviour change. Input neurons are implicit (referenced as input-N).",
+  "input": 3,
+  "output": 1,
+  "neurons": [
+    { "type": "hidden", "uuid": "neuron-cond", "squash": "IDENTITY", "bias": 0 },
+    { "type": "hidden", "uuid": "neuron-pos", "squash": "RELU", "bias": 0 },
+    { "type": "hidden", "uuid": "neuron-neg", "squash": "ABSOLUTE", "bias": 0 },
+    { "type": "hidden", "uuid": "neuron-if", "squash": "IF", "bias": 0 },
+    { "type": "output", "uuid": "output-0", "squash": "IDENTITY", "bias": 0 }
+  ],
+  "synapses": [
+    { "fromUUID": "input-0", "toUUID": "neuron-cond", "weight": 1 },
+    { "fromUUID": "input-1", "toUUID": "neuron-pos", "weight": 1 },
+    { "fromUUID": "input-2", "toUUID": "neuron-neg", "weight": 1 },
+    { "fromUUID": "neuron-cond", "toUUID": "neuron-if", "weight": 1, "type": "condition" },
+    { "fromUUID": "neuron-pos", "toUUID": "neuron-if", "weight": 1, "type": "positive" },
+    { "fromUUID": "neuron-neg", "toUUID": "neuron-if", "weight": -1, "type": "negative" },
+    { "fromUUID": "neuron-if", "toUUID": "output-0", "weight": 1 }
+  ]
+}
