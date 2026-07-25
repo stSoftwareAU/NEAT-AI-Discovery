@@ -298,18 +298,18 @@ fn ci_doc_build_step_pointers_are_current() {
         "ci-doc-build-step must not cite the stale quality.sh line 41 (Issue #1685)"
     );
     assert!(
-        doc.contains("quality.sh:75-76"),
+        doc.contains("quality.sh:74-75"),
         "ci-doc-build-step must cite the real quality.sh doc-build location (Issue #1685)"
     );
     // Verify the pointer against quality.sh itself.
     let quality = read("quality.sh");
     let doc_line = quality
         .lines()
-        .nth(75) // line 76, zero-indexed
-        .expect("quality.sh has a line 76");
+        .nth(74) // line 75, zero-indexed
+        .expect("quality.sh has a line 75");
     assert!(
         doc_line.contains("cargo doc"),
-        "quality.sh:76 should be the `cargo doc` build step; pointer would be stale otherwise"
+        "quality.sh:75 should be the `cargo doc` build step; pointer would be stale otherwise"
     );
 
     // The proposal is only marked "pending" while no workflow builds the docs.
