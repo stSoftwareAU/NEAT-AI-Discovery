@@ -196,6 +196,26 @@ impl FocusDeadline {
         }
     }
 
+    /// Build a deadline with an explicit `grace_ms` instead of the fixed
+    /// production grace (Issue #1760).
+    ///
+    /// Test-only seam: the production grace is a full second, which dominates a
+    /// unit test's wall clock and made the abort test contention-sensitive.
+    /// Injecting a small grace lets the deadline fire promptly so the test can
+    /// assert the *observable* abort outcome rather than a machine-speed timing.
+    #[cfg(test)]
+    pub(in crate::focus) fn with_grace_for_tests(
+        start: Instant,
+        budget_ms: u64,
+        grace_ms: u64,
+    ) -> Self {
+        let total = budget_ms.saturating_add(grace_ms);
+        Self {
+            expires_at: start + Duration::from_millis(total),
+            budget_ms,
+        }
+    }
+
     /// Resolve the optional focus-ranking deadline for a run starting at
     /// `start` (Issue #1407).
     ///
@@ -1410,8 +1430,28 @@ pub(in crate::focus) fn rank_with_provider_for_tests(
     provider: Arc<dyn RecordProvider>,
     budget_ms: u64,
 ) -> Result<RankFocusStats> {
+    rank_with_provider_and_grace_for_tests(
+        creature,
+        provider,
+        budget_ms,
+        FOCUS_RANKING_BUDGET_GRACE_MS,
+    )
+}
+
+/// Like [`rank_with_provider_for_tests`] but with an explicit deadline
+/// `grace_ms` (Issue #1760), so the abort test can use a small grace and assert
+/// the observable outcome instead of a contention-sensitive wall-clock bound.
+#[cfg(test)]
+pub(in crate::focus) fn rank_with_provider_and_grace_for_tests(
+    creature: &CreatureJson,
+    provider: Arc<dyn RecordProvider>,
+    budget_ms: u64,
+    grace_ms: u64,
+) -> Result<RankFocusStats> {
     let start = Instant::now();
-    let deadline = Some(FocusDeadline::new(start, budget_ms));
+    let deadline = Some(FocusDeadline::with_grace_for_tests(
+        start, budget_ms, grace_ms,
+    ));
     let selectable: Vec<&NeuronJson> = creature
         .neurons
         .iter()
