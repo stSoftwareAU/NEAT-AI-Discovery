@@ -43,7 +43,12 @@ jobs:
           set -euo pipefail
           GITLEAKS_VERSION="8.24.3"
           EXPECTED_SHA256="9991e0b2903da4c8f6122b5c3186448b927a5da4deef1fe45271c3793f4ee29c"
+          # Retry the download so a transient network fault (e.g. curl exit
+          # 35 "Recv failure: Connection reset by peer") does not fail the
+          # whole job. --retry-all-errors is needed because a connection
+          # reset is not in curl's default transient-error set (Issue #1762).
           curl -fsSLo /tmp/gitleaks.tar.gz \
+            --retry 5 --retry-delay 2 --retry-all-errors --connect-timeout 30 \
             "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
           echo "${EXPECTED_SHA256}  /tmp/gitleaks.tar.gz" | sha256sum -c -
           tar -xzf /tmp/gitleaks.tar.gz -C /tmp gitleaks
