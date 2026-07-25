@@ -264,12 +264,16 @@ impl GpuAnalyzer {
             return result;
         }
 
-        // Suppress Mesa/libEGL warnings if requested (must be called before GPU init)
-        suppress_mesa_warnings_if_requested();
-
-        // Set XDG_RUNTIME_DIR if not already set (required by wgpu on Linux/Wayland)
-        // Uses Once internally for thread-safe one-time initialisation
-        ensure_xdg_runtime_dir();
+        // Suppress Mesa/libEGL warnings if requested and set XDG_RUNTIME_DIR
+        // (required by wgpu on Linux/Wayland). Both use `Once` internally for
+        // thread-safe one-time initialisation.
+        // SAFETY: This runs before any GPU init and thus before any thread that
+        // reads the process environment is spawned, so the no-concurrent-access
+        // precondition holds (see the platform module note).
+        unsafe {
+            suppress_mesa_warnings_if_requested();
+            ensure_xdg_runtime_dir();
+        }
 
         // Use safe instance creation to avoid panics from EGL/GL backend probing on Linux
         let Some(instance) = create_wgpu_instance_safely() else {
@@ -347,12 +351,16 @@ impl GpuAnalyzer {
 
     /// Create a new `GpuAnalyzer` with all pipelines initialised (~100ms; reuse the instance).
     pub fn new() -> Result<Self> {
-        // Suppress Mesa/libEGL warnings if requested (must be called before GPU init)
-        suppress_mesa_warnings_if_requested();
-
-        // Set XDG_RUNTIME_DIR if not already set (required by wgpu on Linux/Wayland)
-        // Uses Once internally for thread-safe one-time initialisation
-        ensure_xdg_runtime_dir();
+        // Suppress Mesa/libEGL warnings if requested and set XDG_RUNTIME_DIR
+        // (required by wgpu on Linux/Wayland). Both use `Once` internally for
+        // thread-safe one-time initialisation.
+        // SAFETY: This runs before any GPU init and thus before any thread that
+        // reads the process environment is spawned, so the no-concurrent-access
+        // precondition holds (see the platform module note).
+        unsafe {
+            suppress_mesa_warnings_if_requested();
+            ensure_xdg_runtime_dir();
+        }
 
         // Use safe instance creation to avoid panics from EGL/GL backend probing on Linux
         let instance = create_wgpu_instance_safely().ok_or_else(|| {
