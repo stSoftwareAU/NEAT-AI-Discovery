@@ -142,12 +142,32 @@ impl<'a> SynapseCounts<'a> {
 /// Outcome of [`identify_removal_candidates`] — the surviving removal
 /// candidates plus rejection counts for diagnostic surfacing (Issue #1142).
 #[derive(Debug, Default)]
-pub(super) struct RemovalCandidateOutcome {
+pub(crate) struct RemovalCandidateOutcome {
     /// Removal candidates that passed every filter.
     pub candidates: Vec<RemovalCandidate>,
     /// Number of candidates dropped because `boosted_savings - impact` fell
     /// below [`remove_low_impact_noise_floor`] (Issue #1142).
     pub noise_floor_rejections: u32,
+}
+
+impl RemovalCandidateOutcome {
+    /// Build a stable-keyed rejection breakdown for this outcome (Issue #1142,
+    /// reused by the structure-only focus path in #1767).
+    ///
+    /// Reuses the Issue #1129 rejection-reason vocabulary so downstream tooling
+    /// (FFI consumers, dashboards) can merge these counts into the existing
+    /// `metadata.rejection_breakdown` map without special-casing.
+    pub(crate) fn rejection_breakdown(&self) -> HashMap<String, u32> {
+        use crate::analysis::diagnostics::rejection_reasons::REJECTION_REMOVAL_BELOW_NOISE_FLOOR;
+        let mut map = HashMap::new();
+        if self.noise_floor_rejections > 0 {
+            map.insert(
+                REJECTION_REMOVAL_BELOW_NOISE_FLOOR.to_string(),
+                self.noise_floor_rejections,
+            );
+        }
+        map
+    }
 }
 
 /// Identify removal candidates from ranked neurons.
@@ -279,6 +299,131 @@ pub(super) fn identify_removal_candidates(
 
     RemovalCandidateOutcome {
         candidates: removal_candidates,
+        noise_floor_rejections,
+    }
+}
+
+/// Identify removal candidates from creature **structure alone** — the
+/// near-opposite axis to focus selection (Issue #1767).
+///
+/// Focus prefers **high** structural impact (weighted-random draw, #1766).
+/// Removal is the near-opposite: a hidden neuron is a candidate when its
+/// structural **contribution** (path-weight impact on the outputs) is **low**
+/// relative to the complexity **savings** of pruning it and its synapses. This
+/// is "low contribution vs savings", *not* "negate the focus score" (the #414
+/// "high error ≠ remove" philosophy is untouched — error is never read here).
+///
+/// Nothing in this function opens or decodes discovery parquet: the impact map
+/// comes from [`compute_impacts_public`](crate::focus::impact::compute_impacts_public)
+/// (topology only) and synapse counts from [`SynapseCounts`]. It therefore never
+/// reintroduces the focus-time parquet dependency that caused the ~2h focus stall
+/// (#1766), and is `O(neurons + synapses)` — comfortably under the seconds bar.
+///
+/// The activation-weighted gates that genuinely need records — the
+/// mean-activation guard and constant-neuron variance folding — are deliberately
+/// **not** applied here; they run later in the analysis phase after the focus set
+/// is fixed. To mark them as not-yet-measured this triage sets `mean_activation`
+/// and `activation_weighted_impact` to `0.0`; `expected_error_reduction` carries
+/// the structural contribution as a first-pass estimate, refined in analysis.
+///
+/// Only **hidden** neurons are considered: outputs (seeded at impact `1.0`) and
+/// inputs / constants are never removal targets.
+pub(crate) fn identify_structural_removal_candidates(
+    creature: &CreatureJson,
+    cost_of_growth_threshold: f32,
+) -> RemovalCandidateOutcome {
+    let impacts = crate::focus::impact::compute_impacts_public(creature);
+    let synapse_counts = SynapseCounts::new(creature);
+    let noise_floor = remove_low_impact_noise_floor();
+
+    #[derive(Debug)]
+    enum Emit {
+        Candidate(Box<RemovalCandidate>),
+        NoiseFloorReject,
+    }
+
+    let emitted: Vec<Emit> = creature
+        .neurons
+        .par_iter()
+        .filter(|n| n.neuron_type == "hidden")
+        .filter_map(|n| {
+            let (incoming, outgoing) = synapse_counts.get(&n.uuid);
+            let savings = calculate_removal_savings(incoming, outgoing, cost_of_growth_threshold);
+
+            // Issue #892: boost applied to raw savings BEFORE the savings-vs-
+            // contribution comparison (mirrors the record-derived path), re-gated
+            // by the noise floor below (Issue #1142).
+            let boosted_savings = savings * REMOVAL_CANDIDATE_BOOST;
+
+            // Structural contribution = the neuron's path-weight impact on the
+            // outputs. Non-finite / negative impact carries no usable signal → 0.
+            let raw_impact = impacts.get(&n.uuid).copied().unwrap_or(0.0);
+            let contribution = if raw_impact.is_finite() && raw_impact > 0.0 {
+                raw_impact
+            } else {
+                0.0
+            };
+
+            // Removal only improves the score when the complexity savings exceed
+            // the structural contribution — the near-opposite of the high-impact
+            // focus draw.
+            if boosted_savings <= contribution {
+                return None;
+            }
+
+            let net_improvement = boosted_savings - contribution;
+
+            // Issue #1142: drop boost-inflated candidates whose net improvement is
+            // indistinguishable from numerical noise.
+            if net_improvement < noise_floor {
+                return Some(Emit::NoiseFloorReject);
+            }
+
+            Some(Emit::Candidate(Box::new(RemovalCandidate {
+                neuron_uuid: n.uuid.clone(),
+                // Record-derived fields are not measured on the focus path.
+                total_error: 0.0,
+                impact: contribution,
+                mean_activation: 0.0,
+                activation_weighted_impact: 0.0,
+                incoming_synapses: incoming,
+                outgoing_synapses: outgoing,
+                removal_savings: boosted_savings,
+                // Structural first-pass estimate; the activation-weighted value is
+                // refined in the analysis phase.
+                expected_error_reduction: contribution,
+                reason: format!(
+                    "Structural removal (Issue #1767): saves {savings:.2e} (boosted {REMOVAL_CANDIDATE_BOOST:.1}×) > structural impact {contribution:.2e} (net +{net_improvement:.2e}), {} synapses, costOfGrowth={cost_of_growth_threshold:.2e}; activation-weighted gate deferred to analysis",
+                    incoming + outgoing,
+                ),
+            })))
+        })
+        .collect();
+
+    let mut candidates: Vec<RemovalCandidate> = Vec::with_capacity(emitted.len());
+    let mut noise_floor_rejections: u32 = 0;
+    for emit in emitted {
+        match emit {
+            Emit::Candidate(c) => candidates.push(*c),
+            Emit::NoiseFloorReject => {
+                noise_floor_rejections = noise_floor_rejections.saturating_add(1);
+            }
+        }
+    }
+
+    // Sort by net improvement (savings − contribution) descending: the biggest
+    // structural wins first. Deterministic tie-break on the uuid.
+    candidates.sort_by(|a, b| {
+        let a_net = a.removal_savings - a.impact;
+        let b_net = b.removal_savings - b.impact;
+        b_net
+            .total_cmp(&a_net)
+            .then_with(|| a.impact.total_cmp(&b.impact))
+            .then_with(|| a.neuron_uuid.cmp(&b.neuron_uuid))
+    });
+
+    RemovalCandidateOutcome {
+        candidates,
         noise_floor_rejections,
     }
 }
@@ -440,6 +585,21 @@ pub(super) fn detect_constant_neuron_removals(
 }
 
 // =============================================================================
+// Shared test env-lock (Issue #1142, #1767)
+// =============================================================================
+
+/// Lock protecting every test that reads or writes
+/// `NEAT_AI_DISCOVERY_REMOVE_LOW_IMPACT_NOISE_FLOOR`. Both the record-derived
+/// (#1142) and structure-only (#1767) removal tests share it, so a test that
+/// mutates the env-var never races one that depends on the default floor.
+#[cfg(test)]
+fn env_lock() -> std::sync::MutexGuard<'static, ()> {
+    use std::sync::{Mutex, OnceLock};
+    static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    ENV_LOCK.get_or_init(|| Mutex::new(())).lock().unwrap()
+}
+
+// =============================================================================
 // Unit tests for Issue #1142 noise-floor gating
 // =============================================================================
 
@@ -452,17 +612,6 @@ mod noise_floor_tests {
     use super::*;
     use crate::focus::gradient::GradientFlowStats;
     use crate::{CreatureJson, NeuronJson, SynapseJson};
-    use std::sync::{Mutex, OnceLock};
-
-    /// Module-level lock protecting tests that read or write
-    /// `NEAT_AI_DISCOVERY_REMOVE_LOW_IMPACT_NOISE_FLOOR`. Acquire this before
-    /// any call to `identify_removal_candidates` in tests that depend on the
-    /// env-var being at its default, or before mutating it.
-    static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-
-    fn env_lock() -> std::sync::MutexGuard<'static, ()> {
-        ENV_LOCK.get_or_init(|| Mutex::new(())).lock().unwrap()
-    }
 
     /// Craft a [`RankedNeuron`] with the exact impact/activation values needed
     /// to produce a targeted `activation_weighted_impact` without touching
@@ -647,5 +796,170 @@ mod noise_floor_tests {
             "candidate should survive when the env-var lowers the noise floor"
         );
         assert_eq!(kept.noise_floor_rejections, 0);
+    }
+}
+
+// =============================================================================
+// Unit tests for Issue #1767 structure-only removal triage
+// =============================================================================
+
+#[cfg(test)]
+mod structural_removal_tests {
+    //! Issue #1767: removal triage on the near-opposite axis to focus, computed
+    //! from creature **structure alone** — no discovery records, no parquet.
+
+    use super::*;
+    use crate::{CreatureJson, NeuronJson, SynapseJson};
+
+    fn neuron(uuid: &str, ntype: &str) -> NeuronJson {
+        NeuronJson {
+            uuid: uuid.to_string(),
+            neuron_type: ntype.to_string(),
+            squash: "IDENTITY".to_string(),
+            bias: 0.0,
+        }
+    }
+
+    fn synapse(from: &str, to: &str, weight: f32) -> SynapseJson {
+        SynapseJson {
+            from_uuid: from.to_string(),
+            to_uuid: to.to_string(),
+            weight,
+            synapse_type: None,
+        }
+    }
+
+    /// A creature with **no output**: every hidden neuron has zero structural
+    /// impact (nothing to seed the path-weight products at 1.0), so hidden
+    /// neurons are pure low-contribution removal candidates.
+    fn outputless_chain() -> CreatureJson {
+        // i0 → h1 → h2  (h1: 1 in + 1 out, h2: 1 in + 0 out)
+        CreatureJson {
+            neurons: vec![
+                neuron("i0", "input"),
+                neuron("h1", "hidden"),
+                neuron("h2", "hidden"),
+            ],
+            synapses: vec![synapse("i0", "h1", 0.5), synapse("h1", "h2", 0.5)],
+            input: 1,
+            output: 0,
+        }
+    }
+
+    /// Low structural contribution + savings above the noise floor ⇒ removal
+    /// candidates, ordered biggest structural win first. Uses a large
+    /// `costOfGrowth` so the boosted savings clear the default 1e-5 floor.
+    #[test]
+    fn low_impact_hidden_neurons_are_removal_candidates() {
+        let _guard = env_lock();
+        let creature = outputless_chain();
+        // growth 1e-4 → h1 boosted savings 1.8e-4, h2 1.65e-4; both net > 1e-5.
+        let outcome = identify_structural_removal_candidates(&creature, 1e-4);
+
+        assert_eq!(outcome.candidates.len(), 2, "both hidden neurons qualify");
+        // h1 has more synapses (higher savings) so it sorts first.
+        assert_eq!(outcome.candidates[0].neuron_uuid, "h1");
+        assert_eq!(outcome.candidates[1].neuron_uuid, "h2");
+        for c in &outcome.candidates {
+            assert_eq!(c.impact, 0.0, "no path to output ⇒ zero structural impact");
+            // Record-derived fields are unmeasured on the structure-only path.
+            assert_eq!(c.mean_activation, 0.0);
+            assert_eq!(c.activation_weighted_impact, 0.0);
+            assert!(c.removal_savings > 0.0);
+        }
+        assert_eq!(outcome.noise_floor_rejections, 0);
+    }
+
+    /// A hidden neuron that drives the output has HIGH structural contribution —
+    /// the near-opposite of a removal candidate — and must never be flagged.
+    #[test]
+    fn high_impact_hidden_neuron_is_not_a_removal_candidate() {
+        let _guard = env_lock();
+        let creature = CreatureJson {
+            neurons: vec![
+                neuron("i0", "input"),
+                neuron("h1", "hidden"),
+                neuron("o0", "output"),
+            ],
+            synapses: vec![synapse("i0", "h1", 1.0), synapse("h1", "o0", 1.0)],
+            input: 1,
+            output: 1,
+        };
+        // Even with a large costOfGrowth, boosted savings ≪ the ~1.0 impact.
+        let outcome = identify_structural_removal_candidates(&creature, 1e-3);
+        assert!(
+            outcome.candidates.is_empty(),
+            "high-impact neuron must not be a removal candidate, got {:?}",
+            outcome.candidates
+        );
+    }
+
+    /// Output neurons are never removal candidates even when they carry
+    /// synapses — the triage is hidden-only.
+    #[test]
+    fn outputs_are_never_removal_candidates() {
+        let _guard = env_lock();
+        let creature = CreatureJson {
+            neurons: vec![
+                neuron("i0", "input"),
+                neuron("h1", "hidden"),
+                neuron("o0", "output"),
+            ],
+            synapses: vec![synapse("i0", "h1", 1.0), synapse("h1", "o0", 1.0)],
+            input: 1,
+            output: 1,
+        };
+        let outcome = identify_structural_removal_candidates(&creature, 1e-3);
+        assert!(
+            outcome.candidates.iter().all(|c| c.neuron_uuid != "o0"),
+            "output neuron must never appear as a removal candidate"
+        );
+    }
+
+    /// Tiny savings (default `costOfGrowth`) fall below the noise floor and are
+    /// counted as rejections rather than emitted (Issue #1142 gate, reused).
+    #[test]
+    fn below_noise_floor_savings_are_rejected_and_counted() {
+        let _guard = env_lock();
+        // Default floor 1e-5; growth 1e-7 → boosted savings ~1.8e-7 ≪ floor.
+        // SAFETY: env access is serialised via `env_lock()` for this test.
+        unsafe {
+            std::env::remove_var("NEAT_AI_DISCOVERY_REMOVE_LOW_IMPACT_NOISE_FLOOR");
+        }
+        let creature = outputless_chain();
+        let outcome = identify_structural_removal_candidates(&creature, 1e-7);
+        assert!(
+            outcome.candidates.is_empty(),
+            "sub-noise-floor structural savings must be dropped"
+        );
+        assert_eq!(
+            outcome.noise_floor_rejections, 2,
+            "both dropped neurons must be counted under the noise-floor gate"
+        );
+        // The rejection breakdown surfaces the drop under the stable reason key.
+        let breakdown = outcome.rejection_breakdown();
+        use crate::analysis::diagnostics::rejection_reasons::REJECTION_REMOVAL_BELOW_NOISE_FLOOR;
+        assert_eq!(breakdown.get(REJECTION_REMOVAL_BELOW_NOISE_FLOOR), Some(&2));
+    }
+
+    /// The triage is a pure function of structure — identical creature in,
+    /// identical candidates out — and needs no records/parquet to run.
+    #[test]
+    fn triage_is_deterministic_and_record_free() {
+        let _guard = env_lock();
+        let creature = outputless_chain();
+        let a = identify_structural_removal_candidates(&creature, 1e-4);
+        let b = identify_structural_removal_candidates(&creature, 1e-4);
+        let ids_a: Vec<&str> = a
+            .candidates
+            .iter()
+            .map(|c| c.neuron_uuid.as_str())
+            .collect();
+        let ids_b: Vec<&str> = b
+            .candidates
+            .iter()
+            .map(|c| c.neuron_uuid.as_str())
+            .collect();
+        assert_eq!(ids_a, ids_b);
     }
 }
