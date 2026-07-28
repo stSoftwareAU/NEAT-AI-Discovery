@@ -94,7 +94,7 @@ fires. No test drives `analyze_all` end-to-end and asserts the serialised
 `constantNeuronBiasFold` / `biasDelta` reaches the FFI JSON, so a serde rename
 would pass CI.
 
-→ follow-up: **bias fold never fires for hidden neurons**.
+→ follow-up: **#1779 — bias fold never fires for hidden neurons**.
 
 ## Q2 — Is focus neuron selection fast (no more than a few seconds)?
 
@@ -158,8 +158,8 @@ non-finite **or negative** impact to `0.0` (maximally prunable). Same input,
 opposite verdict. Only `removal_candidates.rs` is on the live path;
 `removal_triage.rs` is public API exercised only by tests.
 
-→ follow-up: **duplicate removal-triage implementations disagree on non-finite
-impact**.
+→ follow-up: **#1783 — duplicate removal-triage implementations disagree on
+non-finite impact**.
 
 ---
 
@@ -232,7 +232,8 @@ The #1740 review did consider the calibration *correction* (the EWMA), but not
 the fixed `0.003` / `0.0003` base constants that sit in front of it. That is the
 gap between "the floor is correctly scaled" and "the floor is reachable".
 
-→ follow-up: **re-derive the gain floor against the post-calibration scale**
+→ follow-up: **#1778 — re-derive the gain floor against the post-calibration
+scale**
 (and confirm whether the calibration constants belong upstream or downstream of
 the floor at all). Note that the fix is *not* simply to lower the floor —
 #1740's false-positive guard test is right that lowering it against a broken
@@ -314,9 +315,10 @@ consecutive failures, which clears `tiering_escalation_active`
 creatures over 1000 hidden neurons — **the module set narrows exactly when the
 drought is worst.**
 
-→ follow-ups: **dead suppression trackers make the drought reset a no-op**;
-**fingerprint skip silently suppresses whole passes with no escape hatch**;
-**silent candidate drops bias the starvation classifier**.
+→ follow-ups: **#1780** (dead suppression trackers make the drought reset a
+no-op), **#1781** (failure-cache entries never expire; fingerprint skip has no
+escape hatch), **#1782** (silent candidate drops bias the starvation
+classifier).
 
 ---
 

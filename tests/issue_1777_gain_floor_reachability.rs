@@ -66,7 +66,8 @@ fn synapse_post_discount_gain(
     magnitude_ratio: Option<f32>,
     correction: f32,
 ) -> f32 {
-    let gain = apply_synapse_pessimism_discount(raw_error_reduction, improved, total, magnitude_ratio);
+    let gain =
+        apply_synapse_pessimism_discount(raw_error_reduction, improved, total, magnitude_ratio);
     apply_logistic_prediction_calibration(
         gain,
         improved,
@@ -144,7 +145,7 @@ fn perfect_add_synapse_candidate_needs_over_three_percent_raw_gain() {
 }
 
 #[test]
-fn typical_add_neuron_candidate_break_even_is_two_orders_above_the_realised_band() {
+fn typical_add_neuron_candidate_break_even_is_above_the_realised_band() {
     // A plainly good candidate on a converged network: most samples improve,
     // improvements are a third of the available magnitude, target is not
     // saturated, and the failure cache is neutral.
@@ -232,8 +233,9 @@ fn no_input_combination_lifts_the_multiplier_above_the_calibration_constant() {
     ];
 
     for (impact, improved, total, magnitude, saturation, correction) in cases {
-        let multiplier =
-            neuron_post_discount_gain(1.0, impact, improved, total, magnitude, saturation, correction);
+        let multiplier = neuron_post_discount_gain(
+            1.0, impact, improved, total, magnitude, saturation, correction,
+        );
         assert!(
             multiplier <= NEURON_PREDICTION_CALIBRATION * 1.001,
             "multiplier {multiplier:e} exceeded the calibration cap for \
