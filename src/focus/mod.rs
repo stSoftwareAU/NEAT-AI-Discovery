@@ -71,3 +71,5 @@ pub use ranking::{
     rank_focus_neurons_with_history, rank_focus_neurons_with_history_and_descriptor,
     triage_removal_candidates,
 };
+// Issue #1767: structure-only removal triage (near-opposite axis to focus).
+pub(crate) use ranking::identify_structural_removal_candidates;

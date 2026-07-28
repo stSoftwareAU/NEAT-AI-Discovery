@@ -655,20 +655,60 @@ pub fn rank_focus_neurons_internal(input_json: &str) -> Result<String> {
         .collect();
     let processed_neurons = neurons.len();
 
+    // Issue #1767: removal triage runs at focus time on the **near-opposite** axis
+    // to focus — focus draws HIGH structural impact, removal flags hidden neurons
+    // whose LOW structural contribution is outweighed by the complexity savings of
+    // pruning them. It is structure-only: no discovery parquet is opened, so it
+    // never reintroduces the focus-time parquet dependency #1766 removed. The
+    // activation-weighted gates that need records stay in the analysis phase.
+    // `costOfGrowth` defaults to NEAT-AI's Score.ts 1e-7.
+    let cost_of_growth = input.cost_of_growth.unwrap_or(1e-7);
+    let removal_outcome =
+        focus::identify_structural_removal_candidates(&input.creature, cost_of_growth);
+    let rejection_breakdown = removal_outcome.rejection_breakdown();
+    let removal_candidates: Vec<RemovalCandidateJson> = removal_outcome
+        .candidates
+        .into_iter()
+        .map(|c| RemovalCandidateJson {
+            neuron_uuid: c.neuron_uuid,
+            total_error: c.total_error,
+            impact: c.impact,
+            mean_activation: c.mean_activation,
+            activation_weighted_impact: c.activation_weighted_impact,
+            incoming_synapses: c.incoming_synapses,
+            outgoing_synapses: c.outgoing_synapses,
+            removal_savings: c.removal_savings,
+            expected_error_reduction: c.expected_error_reduction,
+            reason: c.reason,
+        })
+        .collect();
+
     let (error_kind, retryable) = no_error_fields();
     let output = RankFocusNeuronsOutput {
         success: true,
         schema_version: SCHEMA_VERSION.to_string(),
         neurons: Some(neurons),
         focus_selection: Some(focus_selection_json),
-        // Issue #1766: record-derived removal detection is not on the focus path.
-        removal_candidates: None,
+        // Issue #1767: structure-only removal triage (near-opposite of focus).
+        removal_candidates: if removal_candidates.is_empty() {
+            None
+        } else {
+            Some(removal_candidates)
+        },
+        // Constant-neuron removal folds recorded activation variance into biases,
+        // so it needs records — it stays in the analysis phase, off the focus path.
         constant_neuron_removals: None,
         max_output_error: None,
         processed_neurons: Some(processed_neurons),
         total_neurons: Some(total_neurons),
         duration_ms: Some(start.elapsed().as_millis().min(u64::MAX as u128) as u64),
-        rejection_breakdown: None,
+        // Issue #1142: surface removal candidates dropped by the noise-floor gate
+        // so operators can root-cause "no removal candidates" without re-running.
+        rejection_breakdown: if rejection_breakdown.is_empty() {
+            None
+        } else {
+            Some(rejection_breakdown)
+        },
         // No parquet is loaded on the focus path (Issue #1766), so the loading-mode
         // observability fields are omitted rather than reporting a decode that
         // never happened.

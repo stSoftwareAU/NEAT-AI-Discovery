@@ -92,11 +92,58 @@ ranking as the happy path." The happy path is structure-only, full stop.
 
 Parquet is still decoded — but **after** the focus set is chosen, by the
 **analysis** phase (`analyze_parallel`) that scores concrete synapse/neuron
-candidates on the chosen neurons. The record-derived removal-candidate and
-constant-neuron detection that used to ride the focus call moves off the
-focus-time parquet (companion issue); the focus FFI therefore omits
-`removalCandidates`, `constantNeuronRemovals`, and the `loadingMode` /
-`projectedMb` observability fields (no parquet was loaded).
+candidates on the chosen neurons. The focus FFI therefore omits the
+`loadingMode` / `projectedMb` observability fields (no parquet was loaded) and
+`constantNeuronRemovals` (constant folding needs recorded activation variance —
+see §4.2). Removal *triage*, however, now runs **structure-only** at focus time
+on the near-opposite axis to focus — see §4.1.
+
+### 4.1 Removal is the near-opposite axis to focus (Issue #1767)
+
+Focus and removal are **opposite axes over the same structural impact map**:
+
+| Concern | Structural criterion | Parquet at focus time |
+|---------|----------------------|-----------------------|
+| **Focus** | **High** structural impact — weighted-random draw, outputs seed at `1.0` (§2) | **Never** |
+| **Removal** | Near-**opposite**: **low** structural contribution vs the complexity **savings** of pruning the neuron and its synapses | **Never** — activation-weighted gates deferred to analysis |
+
+[`identify_structural_removal_candidates`](../src/focus/ranking/removal_candidates.rs)
+flags a **hidden** neuron for removal when the boosted complexity savings of
+pruning it exceed its structural contribution (its path-weight impact on the
+outputs):
+
+```text
+savings          = costOfGrowth × (1 + (incoming + outgoing) / 10)      # NEAT-AI Score.ts
+boostedSavings   = savings × REMOVAL_CANDIDATE_BOOST (1.5×)
+contribution     = structural impact on outputs (compute_impacts_public, topology only)
+removalCandidate ⟺ boostedSavings > contribution  AND  (boostedSavings − contribution) ≥ noiseFloor
+```
+
+- It is `O(neurons + synapses)` and reads **no** discovery records — so it never
+  reintroduces the focus-time parquet dependency §3 removed.
+- Only **hidden** neurons are considered: outputs (impact `1.0`) and
+  input / constant neurons are never removal targets.
+- This is *low contribution*, **not** "negate the focus score". The #414
+  philosophy — *high error ≠ remove* — is untouched: error is never read here.
+- The #1142 noise-floor gate is reused, so boost-inflated near-zero wins are
+  dropped and surfaced under `rejectionBreakdown`
+  (`REJECTION_REMOVAL_BELOW_NOISE_FLOOR`).
+
+### 4.2 Activation-weighted gates stay in the analysis phase
+
+The gates that genuinely need records run **later**, after the focus set is
+fixed — never as a prerequisite of picking focus neurons:
+
+- The **mean-activation guard** and the record-derived
+  `activationWeightedImpact = structuralImpact × meanActivation` refinement.
+- **Constant-neuron folding** (`constantNeuronRemovals`, #306), which folds a
+  near-zero-variance neuron into downstream biases and therefore needs recorded
+  activation variance.
+
+On the structure-only focus path each surfaced removal candidate reports
+`meanActivation = 0` and `activationWeightedImpact = 0` to mark those fields as
+**not yet measured**; `impact` carries the structural contribution and
+`expectedErrorReduction` is a structural first-pass estimate refined in analysis.
 
 ## 5. What the FFI surfaces
 
