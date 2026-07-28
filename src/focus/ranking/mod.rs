@@ -9,17 +9,22 @@
 //! - `record_providers` — Record provider trait and implementations (eager/lazy)
 //! - `score_calculation` — Individual neuron ranking score computation
 //! - `removal_candidates` — Removal candidate identification and constant neuron removal
+//! - `removal_triage` — Structure-only removal triage, no parquet (Issue #1767)
 //! - `reconstruction` — Reconstruction-mismatch focus signal (Issue #1634)
 
 #![allow(clippy::cast_possible_truncation)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 mod reconstruction;
 pub(super) mod record_providers;
 mod removal_candidates;
+mod removal_triage;
 mod score_calculation;
 
 // Re-export public API — all items remain accessible via `crate::focus::ranking::*`
 pub use record_providers::RecordProvider;
 pub use removal_candidates::{RemovalCandidate, SynapseCounts, calculate_removal_savings};
+pub use removal_triage::{
+    StructuralRemovalCandidate, StructuralRemovalTriage, triage_removal_candidates,
+};
 pub use score_calculation::{RankedNeuron, SelectionStats};
 
 // Issue #1172 — `decide_records_loading` budget plumbing.

@@ -15,6 +15,7 @@
 //!   - `record_providers` — Record provider trait and implementations (eager/lazy)
 //!   - `score_calculation` — Individual neuron ranking score computation
 //!   - `removal_candidates` — Removal candidate identification and constant neuron removal
+//!   - `removal_triage` — Structure-only removal triage, no parquet (Issue #1767)
 
 mod allocation;
 mod gradient;
@@ -62,9 +63,10 @@ pub use selection::{
 // From ranking
 pub use ranking::{
     FocusLazyReason, FocusLoadingMode, RankFocusStats, RankedNeuron, RecordProvider,
-    RemovalCandidate, SelectionStats, SynapseCounts, calculate_removal_savings,
-    decide_loading_mode_for_available_memory, decide_loading_mode_for_budget,
-    lazy_pass_exceeds_perf_cliff, rank_focus_neurons, rank_focus_neurons_with_descriptor,
-    rank_focus_neurons_with_descriptor_and_deadline, rank_focus_neurons_with_history,
-    rank_focus_neurons_with_history_and_descriptor,
+    RemovalCandidate, SelectionStats, StructuralRemovalCandidate, StructuralRemovalTriage,
+    SynapseCounts, calculate_removal_savings, decide_loading_mode_for_available_memory,
+    decide_loading_mode_for_budget, lazy_pass_exceeds_perf_cliff, rank_focus_neurons,
+    rank_focus_neurons_with_descriptor, rank_focus_neurons_with_descriptor_and_deadline,
+    rank_focus_neurons_with_history, rank_focus_neurons_with_history_and_descriptor,
+    triage_removal_candidates,
 };

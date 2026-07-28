@@ -281,6 +281,75 @@ flowchart TD
 
 ---
 
+## 9. Removal triage — the opposite axis (Issue #1767)
+
+Focus and removal answer near-**opposite** questions, so they must be driven by
+opposite criteria over the *same* structural impact map. Removal is **not**
+"negate the focus score": high error never means remove (that assumption was
+disabled in Issue #414 after a 0% success rate). Removal is **low contribution
+versus the complexity savings from pruning**.
+
+| Concern | Criteria | When parquet is allowed |
+|---------|----------|-------------------------|
+| **Focus** | **High** structural impact, weighted-random (outputs seed at 1.0) | **Never** for choosing the set (#1766) |
+| **Removal** | Near-opposite: **low** contribution vs savings | Structure only for triage at focus time; activation-weighted gates run **later**, in analysis |
+
+### The seconds bar applies to removal too
+
+`identify_removal_candidates` already leaned toward low activation-weighted
+impact versus `costOfGrowth` — the right axis — but it consumed ranked neurons
+whose `mean_activation` comes from recorded discovery data, so removal triage
+inherited the focus-time parquet warm. On a production deployment that warm ran
+~2 h against a 12.5 GB discovery file before any useful discovery work began.
+
+`focus::triage_removal_candidates` (`src/focus/ranking/removal_triage.rs`) is
+the parquet-free triage. It takes a `CreatureJson` and nothing else — there is
+no file path to pass — and derives everything from topology:
+
+```text
+impact          = |structural impact|      # compute_impacts_public, path weights
+savings         = costOfGrowth × (1 + (incoming + outgoing) / 10)
+boostedSavings  = savings × REMOVAL_CANDIDATE_BOOST
+candidate  ⟺  boostedSavings > impact  and  boostedSavings − impact ≥ noiseFloor
+```
+
+- **Hidden neurons only.** Outputs seed the impact map at `1.0` and are the
+  add-neuron targets; inputs and constants are not selectable. This mirrors the
+  hidden-only gate in the constant-neuron removal path (#306).
+- **Sorted best-first** by `netImprovement = boostedSavings − impact`, with
+  ties broken by lower contribution then uuid, so the order is deterministic.
+- **Never silently capped.** Candidates dropped by the `REMOVE_LOW_IMPACT`
+  noise floor (#1142) are counted in `noiseFloorRejections`, and an invalid
+  `costOfGrowth` (non-finite or non-positive) is logged at WARN before the
+  default is substituted.
+
+### Which gates stay in the analysis phase
+
+Anything that needs recorded activations runs **after** the focus set is fixed,
+never as a prerequisite of picking it:
+
+| Gate | Needs records | Phase |
+|------|---------------|-------|
+| Savings vs structural impact | no | focus-time triage |
+| Noise floor on net improvement | no | focus-time triage |
+| `activation_weighted_impact = impact × mean_activation` | yes | analysis |
+| `REMOVAL_MEAN_ACTIVATION_THRESHOLD` gate (#892) | yes | analysis |
+| Constant-variance bias-fold removal (#306) | yes | analysis |
+
+```mermaid
+flowchart TD
+    C[Creature JSON] --> I[Structural impact map<br/>compute_impacts_public]
+    I --> F["Focus axis: HIGH impact<br/>weighted-random draw (#1766)"]
+    I --> T["Removal axis: LOW impact vs savings<br/>triage_removal_candidates (#1767)"]
+    F --> S[Focus set fixed]
+    T --> S
+    S --> P[Parquet decode — analysis phase only]
+    P --> G["Activation-weighted gates<br/>mean activation, constant variance"]
+    G --> R[Refined removal candidates]
+```
+
+---
+
 ## End-to-end flow
 
 ```mermaid
@@ -307,4 +376,5 @@ flowchart TD
 - Issues: #1373 (incident), #1374, #1375, #1376, #1377, #1385 (guard work);
   #1382, #1386 (this confirmation); #1445 (diversity floor and drought
   rotation, superseded); #1662 (exploit/explore allocation and eventual
-  coverage).
+  coverage); #1766 (structural-impact weighted-random focus, seconds bar);
+  #1767 (removal triage on the opposite axis, no focus-time parquet — §9).
