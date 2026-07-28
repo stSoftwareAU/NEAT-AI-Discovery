@@ -307,6 +307,10 @@ fn merge_parquet_edge_cases_do_not_panic() {
 }
 
 /// Rank focus neurons with nonexistent parquet file.
+///
+/// Issue #1766: focus selection is structure-only and never opens the parquet,
+/// so a nonexistent path is NOT an error — it must still succeed with a drawn
+/// focus set (and, of course, not panic).
 #[test]
 fn rank_focus_neurons_nonexistent_file_does_not_panic() {
     let json = serde_json::json!({
@@ -324,7 +328,15 @@ fn rank_focus_neurons_nonexistent_file_does_not_panic() {
 
     let result = neat_ai_discovery::rank_focus_neurons_internal(&json);
     assert!(result.is_ok());
-    assert_error_json(&result.unwrap());
+    let parsed: serde_json::Value = serde_json::from_str(&result.unwrap()).unwrap();
+    assert_eq!(
+        parsed["success"], true,
+        "structure-only focus must succeed despite a missing parquet: {parsed:?}"
+    );
+    assert!(
+        parsed["focusSelection"]["selected"].is_array(),
+        "a focus set must be surfaced: {parsed:?}"
+    );
 }
 
 /// Analyze parallel with nonexistent parquet file.
