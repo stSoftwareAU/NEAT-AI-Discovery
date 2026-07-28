@@ -1,187 +1,166 @@
 # Focus Selection
 
 This document captures the **focus-selection design end-to-end** — why each
-discovery run focuses on a small subset of neurons, how selection evolved from a
-random pick to an impact-weighted ranking, the performance guard that bounds the
-ranking, and the fallback the caller uses when the budget is exceeded.
+discovery run focuses on a small subset of neurons, how the focus set is now
+chosen (a **structure-weighted random draw**, with **no parquet on the focus
+path**), and why the **seconds bar** is a hard invariant.
 
 It exists so the next "please confirm my understanding of the focus logic"
-request is a single doc link rather than a code spelunk (Issue #1382, #1386).
+request is a single doc link rather than a code spelunk
+(Issues #1382, #1386, #1766).
 
 ---
 
 ## 1. Why a focus subset at all
 
 Discovery cannot evaluate *every* neuron in a network within the per-run
-evaluation budget — the cost grows with the number of candidate targets and the
-size of the recorded discovery dataset. Each run therefore **focuses** on a
-small set (about half a dozen, ~6) of *selectable* neurons and concentrates the
-analysis budget there.
+evaluation budget — the cost grows with the number of candidate targets. Each
+run therefore **focuses** on a small set (about half a dozen, ~6) of *selectable*
+neurons and concentrates the analysis budget there.
 
-A "selectable" neuron is one that can usefully be tuned: input and constant
-neurons are excluded (see `is_selectable_neuron_type` in
-[`src/focus/ranking/mod.rs`](../src/focus/ranking/mod.rs)). Keeping the focus set
-small is what makes a discovery pass complete inside its wall-clock budget.
+A "selectable" neuron is one that can usefully be tuned: **input** and
+**constant** neurons are excluded (see `is_selectable_type` in
+[`src/focus/ranking/mod.rs`](../src/focus/ranking/mod.rs)). Output neurons **are**
+selectable — and, seeded at impact `1.0`, they are the highest-impact targets by
+definition (`output-0` is the canonical example).
 
-## 2. Selection history — random → impact-weighted
+## 2. The product rule — structure-weighted random (Issue #1766)
 
-The focus list was originally a **random** pick from the selectable neurons.
-Random selection is fast, but it can land on neurons that have little effect on
-the network's output(s), wasting the run's budget on targets that cannot move
-the error.
+**Choosing the focus set is derived from creature structure alone.** It never
+opens or decodes the discovery parquet.
 
-Selection therefore moved to an **impact-weighted ranking**. The
-`rank_focus_neurons*` family in [`src/focus/`](../src/focus/) scores each neuron
-by its estimated effect on the output error (structural impact, gradient flow,
-activation frequency, and recorded error) and returns the neurons ordered by
-that score, so the caller can take the strongest ~6.
+```text
+Creature JSON → structural impact map → weighted-random by impact → focus set N
+```
 
-Relevant entry points (re-exported from `crate::focus::*`):
+1. **Structural impact from topology only.** The impact map is computed with
+   [`compute_impacts_public`](../src/focus/impact.rs) — path-weight products over
+   the creature graph, with output neurons seeded at `1.0`. No discovery records
+   are read.
+2. **Weighted-random draw.** [`select_focus_by_structural_impact`](../src/focus/selection.rs)
+   draws `min(N, pool)` selectable neurons **without replacement** by roulette
+   over those impacts. Large creatures still explore beyond pure greed while
+   mostly landing on high-impact neurons; output neurons dominate the weight mass
+   naturally, so they are almost always chosen without a hard-coded "only
+   output-0" policy.
+3. **Deterministic and reproducible.** The draw is seeded by the caller's
+   monotonic `focusSelectionCursor` (falling back to
+   `epochsSinceLastAcceptedCandidate`, then `0`). A fixed cursor reproduces the
+   same set; advancing the cursor reseeds the draw so successive passes sweep a
+   fresh tail.
+4. **Zero-weight fallback.** Neurons with zero / negative / non-finite impact
+   carry zero weight; when the remaining pool is all-zero the draw falls back to
+   a uniform pick so the focus set still fills.
 
-- `rank_focus_neurons` / `rank_focus_neurons_with_descriptor`
-- `rank_focus_neurons_with_history` /
-  `rank_focus_neurons_with_history_and_descriptor`
+```mermaid
+flowchart LR
+    C[Creature JSON] --> I["Structural impact map<br/>compute_impacts_public<br/>(topology only, no records)"]
+    I --> W[Positive weights per<br/>selectable neuron<br/>outputs seed at 1.0]
+    W --> D["Weighted-random draw<br/>without replacement<br/>seed = focusSelectionCursor"]
+    D --> F[Focus set of N neurons]
+    F --> A["Analysis phase<br/>(parquet decoded HERE, after focus is chosen)"]
+```
 
-Impact scoring details live in
-[docs/IMPACT_CALCULATION.md](IMPACT_CALCULATION.md).
+## 3. The seconds bar — a hard invariant
 
-## 3. The performance guard
+**If choosing the focus set takes more than seconds, we have shot ourselves in
+the foot.** The structural draw is `O(neurons + synapses)` and completes in
+milliseconds even on a creature with a multi-GB recording — because the parquet
+is never touched to pick the focus set.
 
-Impact-weighted ranking is more expensive than a random pick, and a pathological
-run can be *much* more expensive — incident #1373 measured a single ranking pass
-at **1 h 11 m**, which blew the entire discovery wall-clock budget.
+This invariant exists because of the **focus-stall incident** that motivated
+this issue: a trivial 16-hidden, `maxNeurons=6` creature accumulated ~12.5 GB of
+discovery data, and the
+then-current parquet-coupled ranking projected an 18.7 GB in-memory load, scaled
+its own budget to ~14 min, and ran for **~2 h** in `build_lazy_provider` /
+`read_all_records_grouped_by_neuron` before aborting — after which the instant
+structure-only fallback finished in one shot (`6 candidates, 6 selected`). That
+proved selection is cheap once parquet is out of the path; coupling focus choice
+to multi-GB I/O burned the analysis budget before any useful work started.
 
-Ranking now runs under a layered performance guard:
+The regression is locked by
+[`tests/ffi/issue_1766_structural_focus_selection.rs`](../tests/ffi/issue_1766_structural_focus_selection.rs):
+a reference-shaped creature (16 hidden feeding one output) selects successfully
+in well under the seconds bar even when the `parquetFile` path **does not
+exist**, proving no parquet is opened.
 
-| Guard | Mechanism | Issue |
-|-------|-----------|-------|
-| **Wall-clock budget** | `FocusDeadline` checks the deadline between passes and inside the per-neuron loops; on overrun it aborts with a structured retryable `Timeout`. Configured by `NEAT_AI_DISCOVERY_FOCUS_RANKING_BUDGET_MS` (default 120 s). The default is **scaled by loading mode + dataset size**: an eager run keeps 120 s, while a slower lazy fallback earns `4 × default + 20 ms/projected MB` (clamped to 1 h) so a legitimate lazy run finishes instead of aborting. An explicit env override wins verbatim and is never scaled. | #1375, #3172 |
-| **Single-pass record loading** | Records are loaded once and reused across the ranking passes instead of re-read per neuron. | #1374 |
-| **Eager vs lazy decision** | `decide_loading_mode_for_available_memory` / `decide_loading_mode_for_budget` choose an eager pre-load or a lazy per-neuron loader based on available memory and the projected dataset size (file × 3), capped by `NEAT_AI_DISCOVERY_FOCUS_RANKING_MEMORY_BUDGET_MB`. | #1376, #1172 |
-| **Perf-cliff observability** | A lazy pass at or above `NEAT_AI_DISCOVERY_FOCUS_RANKING_PERF_CLIFF_MS` (default 60 s) emits one explicit perf-cliff `WARN` naming the neuron count and projected dataset size (`lazy_pass_exceeds_perf_cliff`). | #1377 |
+**Not the fix:** scaling `FOCUS_RANKING_BUDGET_MS` / lazy budgets, a multi-GB
+warm pass, or "fail fast to a fallback while still attempting parquet-coupled
+ranking as the happy path." The happy path is structure-only, full stop.
 
-## 4. The fallback — error-guided, not literal random
+## 4. Parquet is for analysis, not for choosing focus
 
-When the wall-clock budget is exceeded, the crate aborts the ranking with a
-structured, **retryable** `DiscoveryError::Timeout { deadline_ms }`. The caller
-(NEAT-AI) then falls back to its **instant local ranking path**.
+Parquet is still decoded — but **after** the focus set is chosen, by the
+**analysis** phase (`analyze_parallel`) that scores concrete synapse/neuron
+candidates on the chosen neurons. The record-derived removal-candidate and
+constant-neuron detection that used to ride the focus call moves off the
+focus-time parquet (companion issue); the focus FFI therefore omits
+`removalCandidates`, `constantNeuronRemovals`, and the `loadingMode` /
+`projectedMb` observability fields (no parquet was loaded).
 
-> **Nuance worth stating plainly.** That fallback is **error-guided**: it ranks
-> the viable neurons from their recorded errors. It is **not** a literal
-> uniform-random pick. The original request was *"just do a random selection,"*
-> and the implemented fallback is *at least as good as* random and *equally
-> fast* (it is instant), so it satisfies the spirit of "fast, no extra budget"
-> while avoiding random's habit of landing on low-impact neurons.
+## 5. What the FFI surfaces
 
-**Confirmation status (open):** whether *error-guided-and-instant* fully
-satisfies the original intent, or whether a *literal* random fallback is
-required, is a product decision for the issue author. This is recorded as an
-open question on Issue #1386 — update this section with the author's answer once
-confirmed. Until then, the behaviour described above (error-guided, instant) is
-the implemented and documented design.
-
-## 5. The environment knobs
-
-Every focus-ranking knob — with its default, valid range, and description — is
-documented once in the single authoritative reference,
-[docs/CONFIGURATION.md § Focus selection & ranking](CONFIGURATION.md#focus-selection--ranking).
-The knobs that control the focus signals designed in this document are:
-
-- `NEAT_AI_DISCOVERY_FOCUS_RANKING_BUDGET_MS`, `…_MEMORY_BUDGET_MB`,
-  `…_MEMORY_MARGIN_MB`, `…_PERF_CLIFF_MS` — the wall-clock budget, eager-vs-lazy
-  pre-load decision, and perf-cliff warning (§4, #3172, #1172, #1375, #1377).
-- `NEAT_AI_DISCOVERY_FOCUS_RECONSTRUCTION_MISMATCH` and its `…_WEIGHT` —
-  the reconstruction-mismatch focus signal (§7, #1634).
-- `NEAT_AI_DISCOVERY_FOCUS_IMPACT_GATE` and its `…_THRESHOLD` —
-  the impact-magnitude gate (§8, #1635).
-
----
-
-## 6. Exploit/explore focus allocation (Issue #1662, supersedes #1445)
-
-Impact-weighted ranking already folds in error, impact, gradient/frequency,
-reconstruction mismatch and the optional Bayesian success-history multiplier.
-The selector should **exploit** that evidence, not flatten it. Issue #1445's
-full-list *stratification* (and top-`K × N` drought rotation) over-corrected: on
-a production creature with ~1,661 eligible hidden neurons and `N = 16` it kept
-only **one** of sixteen focus slots in the highest-ranked neighbourhood, moving
-expensive analysis budget away from the neurons most likely to yield successful
-candidates — and its `3 × N` drought pool never guaranteed full coverage.
-
-[`src/focus/selection.rs`](../src/focus/selection.rs) now allocates the focus
-set deterministically between **exploitation** and **exploration**
-(`select_focus_neurons`). Each ranked neuron carries its combined
-`weighted_score` (surfaced as `weightedScore` on each `neurons[]` entry).
-
-The FFI surfaces a `focusSelection` block on the `rank_focus_neurons` response:
+The `rank_focus_neurons` FFI response carries a `focusSelection` block plus a
+structure-only `neurons[]` ranked pool (impact-descending). Each ranked neuron's
+`impact` and `weightedScore` both carry the structural impact used as the draw
+weight; `totalError` / `meanActivation` are record-derived and are `0.0` on the
+focus path.
 
 | Field | Meaning |
 |-------|---------|
-| `selected` | The chosen focus uuids, exploitation head first then exploration picks. |
-| `rawWeightConcentrationRatio` | max weight ÷ sum over the ranked pool — the diagnostic that exposes single-target collapse (~0.985 on a large production creature). |
-| `weightConcentrationRatio` | Genuine concentration over the **selected** weights. |
-| `exploitationCount` / `explorationCount` | How the focus set was allocated. |
-| `explorationCursor` | The monotonic per-creature cursor that seeded exploration. |
-| `eligiblePoolSize` | Eligible candidate-producing neurons available. |
-| `cumulativeCoverage` | Best-effort eligible neurons reached across cursors `0..=explorationCursor`. |
-| `droughtActive` | Whether drought widened the exploration quota. |
-| `poolSize` | Candidates considered (== `eligiblePoolSize`). |
+| `selected` | The chosen focus uuids (impact-weighted draw). |
+| `rawWeightConcentrationRatio` | max weight ÷ sum over the eligible pool — exposes single-target impact collapse. |
+| `weightConcentrationRatio` | Concentration over the **selected** weights. |
+| `exploitationCount` / `explorationCount` | Every slot is an impact-weighted draw, so `exploitationCount == selected.len()` and `explorationCount == 0` (the #1662 split no longer applies). |
+| `explorationCursor` | The seed used for the draw (the monotonic per-creature cursor). |
+| `eligiblePoolSize` / `poolSize` | Selectable neurons available for the draw. |
+| `cumulativeCoverage` | Neurons drawn this pass. |
+| `droughtActive` | Always `false` on the structure-only path. |
 
 When `rawWeightConcentrationRatio` exceeds `0.5` the crate emits a single
-`focus_selection_weight_concentration_high` WARN naming the ratios and the
-allocation diagnostics.
+`focus_selection_weight_concentration_high` WARN so a pathologically
+single-target impact profile stays visible.
 
-### Exploitation majority
+## 6. History — random → parquet-coupled ranking → structure-weighted random
 
-Most slots take the highest-ranked, highest-weight neurons — by default at least
-**80%** outside drought, and always a strict majority. This is where the ranking
-(including its Bayesian success-history multiplier) is exploited.
+The focus list began as a **uniform-random** pick, then moved to a
+**parquet-coupled impact-weighted ranking** (`rank_focus_neurons*`, scoring
+`error × impact^γ × gradient × frequency [+ signals]` over recorded discovery
+data). That ranking is where the ~2h focus stall came from: it forced a parquet
+decode before any neuron was picked. Issue #1766 replaces the focus-choosing path
+with the structure-weighted random draw of §2 — keeping the "land mostly on
+high-impact neurons, but still explore" intent while removing the multi-GB I/O.
 
-### Bounded exploration quota and eventual coverage
+The wall-clock guard (`FocusDeadline`, #1375/#3172), the eager-vs-lazy loader
+(#1172/#1376), the perf-cliff WARN (#1377), and the #1662 exploit/explore
+allocator were all mitigations for the *parquet-coupled* ranking. They no longer
+bound the FFI focus path (there is nothing multi-GB left to bound). The
+`rank_focus_neurons*` Rust functions and their record-derived signals (§7, §8)
+are retained for **analysis-time** ranking, not for choosing the focus set.
 
-The remaining slots (default **20%**, at least one when the set has capacity)
-rotate deterministically through the **complete eligible tail** of the ranked
-list. The rotation is seeded by `focusSelectionCursor` — a **monotonic
-per-creature cursor** the caller advances every pass and **never resets when a
-candidate succeeds**. Because the walk advances by the exploration quota each
-pass and skips the exploitation head, every eligible neuron is selected within a
-finite number of passes and success does not reset coverage progress.
+## 7. Environment knobs
 
-### Drought stays exploitative
-
-Once the creature's `epochsSinceLastAcceptedCandidate` meets or exceeds the
-drought threshold (`NEAT_AI_DISCOVERY_DROUGHT_LOG_THRESHOLD`, Issue #1202),
-drought **widens** the exploration quota
-(`DROUGHT_EXPLORATION_FRACTION` = 0.4 vs `DEFAULT_EXPLORATION_FRACTION` = 0.2)
-but exploitation always keeps a strict majority (>50%). Drought never discards
-exploitation.
-
-> **Caller contract.** The focus-set size `N` comes from `focusSetSize`
-> (default 6, NEAT-AI's `discoveryMaxNeurons`); the candidate pool is the
-> `maxResults` ranked neurons. Pass a `maxResults` comfortably larger than `N`
-> so exploration has an unexplored tail to sweep, and advance
-> `focusSelectionCursor` monotonically for eventual full coverage.
-
-```mermaid
-flowchart TD
-    R[Ranked neurons<br/>weightedScore each] --> Q{drought active?}
-    Q -- Yes --> W[explore quota = 40%<br/>capped to strict majority]
-    Q -- No --> N2[explore quota = 20%<br/>≥80% exploitation]
-    W --> EX[Exploitation: top slots<br/>by ranking/history]
-    N2 --> EX
-    EX --> EP[Exploration: rotate eligible tail<br/>by monotonic focusSelectionCursor]
-    EP --> O[focusSelection<br/>allocation diagnostics + WARN if raw over 0.5]
-```
+Every focus knob — with its default, valid range, and description — is documented
+once in the single authoritative reference,
+[docs/CONFIGURATION.md § Focus selection & ranking](CONFIGURATION.md#focus-selection--ranking).
+The structure-only focus draw of §2 needs **none** of them: `focusSetSize` and
+`focusSelectionCursor` are request fields, not env knobs. The remaining
+`NEAT_AI_DISCOVERY_FOCUS_*` knobs (ranking budget, memory budget/margin,
+perf-cliff, reconstruction mismatch, impact gate) govern the retained
+record-derived ranking (§8, §9), not the focus path.
 
 ---
 
-## 7. Reconstruction-mismatch focus signal (Issue #1634)
+## 8. Reconstruction-mismatch focus signal (Issue #1634) — record-derived ranking
+
+> Applies to the retained record-derived `rank_focus_neurons*` ranking, not the
+> structure-only focus path of §2.
 
 Impact-weighted ranking measures *how much a change would move the output* but
 not *which neurons the current model of the creature fails to explain*. The
-per-neuron **reconstruction mismatch** measures exactly the latter: for each
-selectable neuron we reconstruct its activation from its inbound synapses and
-compare it to the recorded activation.
+per-neuron **reconstruction mismatch** measures the latter: for each selectable
+neuron we reconstruct its activation from its inbound synapses and compare it to
+the recorded activation.
 
 ```text
 reconstructedValue      = bias + Σ (from_activation × weight)   over inbound synapses
@@ -189,192 +168,55 @@ reconstructedActivation = squash(reconstructedValue)
 reconstructionMismatch  = mean |recordedActivation − reconstructedActivation|
 ```
 
-A large mismatch means a squash/bias/structural change on that neuron is
-**high-leverage** — the recorded behaviour cannot be explained by the current
-inbound weights, squash, and bias. On the production creature (1661 hidden
-neurons, Issue #1631) **1117** neurons missed reconstruction by `>0.1` on at
-least one sample and **386** had a systematic mean mismatch `>0.05`, yet
-focus/candidate effort was collapsing to near-zero-delta targets.
-
-When enabled, the mismatch is folded into the focus score as an **additive**
-term, applied *after* the multiplicative gradient/frequency/history factors:
+When enabled, the mismatch is folded into the record-derived score as an
+**additive** term, applied *after* the multiplicative factors:
 
 ```text
 weightedScore = error × (impact + ε)^γ × gradientFactor × frequencyFactor × historyMultiplier
               + weight × reconstructionMismatch          # Issue #1634, additive
 ```
 
-Because the term is additive with a configurable `weight`, poorly-reconstructed
-neurons rise in the focus budget without letting the signal swamp the
-impact-driven ordering. The signal is **opt-in**
+The signal is **opt-in**
 (`NEAT_AI_DISCOVERY_FOCUS_RECONSTRUCTION_MISMATCH=1`) with a tunable weight
-(`NEAT_AI_DISCOVERY_FOCUS_RECONSTRUCTION_MISMATCH_WEIGHT`, default `0.1`); when
-disabled the score is byte-identical to the pre-#1634 path (`weight = 0` adds
-nothing). The reconstruction is computed once per ranking pass from the same
-record provider the ranking already uses — no export pass is required.
+(`…_WEIGHT`, default `0.1`); disabled it is byte-identical to the pre-#1634 path.
 
-Each ranked neuron surfaces its `reconstruction_mismatch` (`0.0` when the signal
-is disabled or no reconstruction was available for the neuron), so the shift in
-the focus budget is observable.
+## 9. Impact-magnitude gate (Issue #1635) — record-derived ranking
 
-```mermaid
-flowchart LR
-    REC[Recorded activation] --> D
-    IN[Inbound activations × weights<br/>+ bias, squashed] --> RC[Reconstructed activation]
-    RC --> D{mean abs delta}
-    D --> M[reconstructionMismatch]
-    M -->|× weight, additive| S[weightedScore]
-    BASE[error × impact^γ × factors] --> S
-    S --> RANK[Ranked focus list]
-```
+> Applies to the retained record-derived `rank_focus_neurons*` ranking, not the
+> structure-only focus path of §2 (which already draws by impact, so near-zero
+> impact neurons are naturally almost never selected).
 
----
-
-## 8. Impact-magnitude gate (Issue #1635)
-
-The constant-neuron filter (§ `NEAT_AI_DISCOVERY_FOCUS_EXCLUDE_CONSTANT_NEURONS`,
-Issue #1624) removes only neurons whose activation *never varies*. But snapshot
-mining on the production creature (Issue #1631) found a second, much larger
-waste class: neurons that **vary** across samples yet carry a near-zero
-downstream impact. From `derived.impactsByNeuronUuid`, **1303 / 4126** entries
-(**31.6%**) had `|impact| < 1e-6` — a heavy low-impact tail (p50 = 5.4e-6,
-p90 = 1.4e-4). Because these neurons are not constant, the #1624 filter leaves
-them in the focus pool, and every focus slot spent on them is a wasted candidate
-evaluation: no add-synapse / add-neuron change feeding a neuron that cannot move
-the output can succeed.
-
-The **impact-magnitude gate** drops any neuron whose structural impact magnitude
-is strictly below the configured threshold:
+The constant-neuron filter (`NEAT_AI_DISCOVERY_FOCUS_EXCLUDE_CONSTANT_NEURONS`,
+Issue #1624) removes only neurons whose activation *never varies*. Snapshot
+mining on the production creature (Issue #1631) found a larger waste class:
+neurons that **vary** yet carry a near-zero downstream impact (**31.6%** with
+`|impact| < 1e-6`). The **impact-magnitude gate** drops any neuron whose
+structural impact magnitude is strictly below the configured threshold:
 
 ```text
 gated  ⟺  |impact| < NEAT_AI_DISCOVERY_FOCUS_IMPACT_GATE_THRESHOLD   # default 1e-6
 ```
 
-- **Boundary rule — retain-on-equal.** A neuron *exactly* at the gate is kept;
-  only strictly-below is dropped. Non-finite impacts are treated as below the
-  gate.
+- **Boundary rule — retain-on-equal.** A neuron *exactly* at the gate is kept.
 - **Never silently dropped.** The gated count is logged
-  (`focus_ineligible_low_impact`, with the effective gate and remaining focus
-  count) and surfaced on `RankFocusStats.focus_ineligible_low_impact`, per the
-  fail-loud / no-silent-caps guidance.
-- **Complementary, not a replacement.** The gate runs *after* the constant
-  filter and removal-candidate identification, and does not touch the
-  `selectable` set fed to the constant-neuron *removal* path — a gated neuron is
-  still available for bias-fold removal (#306).
-- **Opt-in.** Enabled via `NEAT_AI_DISCOVERY_FOCUS_IMPACT_GATE=1` with a tunable
-  threshold; disabled by default so the throughput shift can be validated on a
-  reference snapshot before it becomes the default.
-
-```mermaid
-flowchart TD
-    R[Ranked neurons<br/>sorted by weightedScore] --> C{constant filter<br/>#1624 enabled?}
-    C -- Yes --> CF[Drop zero-variance neurons<br/>focus_ineligible_constant]
-    C -- No --> G
-    CF --> G{impact gate<br/>#1635 enabled?}
-    G -- Yes --> GF{"|impact| < gate?"}
-    GF -- Yes --> DROP[Gate out<br/>focus_ineligible_low_impact++]
-    GF -- No, retain-on-equal --> KEEP[Keep in focus list]
-    G -- No --> KEEP
-    DROP --> T[Truncate to maxResults]
-    KEEP --> T
-```
+  (`focus_ineligible_low_impact`) and surfaced on `RankFocusStats`.
+- **Opt-in.** Enabled via `NEAT_AI_DISCOVERY_FOCUS_IMPACT_GATE=1`.
 
 ---
-
-## 9. Removal triage — the opposite axis (Issue #1767)
-
-Focus and removal answer near-**opposite** questions, so they must be driven by
-opposite criteria over the *same* structural impact map. Removal is **not**
-"negate the focus score": high error never means remove (that assumption was
-disabled in Issue #414 after a 0% success rate). Removal is **low contribution
-versus the complexity savings from pruning**.
-
-| Concern | Criteria | When parquet is allowed |
-|---------|----------|-------------------------|
-| **Focus** | **High** structural impact, weighted-random (outputs seed at 1.0) | **Never** for choosing the set (#1766) |
-| **Removal** | Near-opposite: **low** contribution vs savings | Structure only for triage at focus time; activation-weighted gates run **later**, in analysis |
-
-### The seconds bar applies to removal too
-
-`identify_removal_candidates` already leaned toward low activation-weighted
-impact versus `costOfGrowth` — the right axis — but it consumed ranked neurons
-whose `mean_activation` comes from recorded discovery data, so removal triage
-inherited the focus-time parquet warm. On a production deployment that warm ran
-~2 h against a 12.5 GB discovery file before any useful discovery work began.
-
-`focus::triage_removal_candidates` (`src/focus/ranking/removal_triage.rs`) is
-the parquet-free triage. It takes a `CreatureJson` and nothing else — there is
-no file path to pass — and derives everything from topology:
-
-```text
-impact          = |structural impact|      # compute_impacts_public, path weights
-savings         = costOfGrowth × (1 + (incoming + outgoing) / 10)
-boostedSavings  = savings × REMOVAL_CANDIDATE_BOOST
-candidate  ⟺  boostedSavings > impact  and  boostedSavings − impact ≥ noiseFloor
-```
-
-- **Hidden neurons only.** Outputs seed the impact map at `1.0` and are the
-  add-neuron targets; inputs and constants are not selectable. This mirrors the
-  hidden-only gate in the constant-neuron removal path (#306).
-- **Sorted best-first** by `netImprovement = boostedSavings − impact`, with
-  ties broken by lower contribution then uuid, so the order is deterministic.
-- **Never silently capped.** Candidates dropped by the `REMOVE_LOW_IMPACT`
-  noise floor (#1142) are counted in `noiseFloorRejections`, and an invalid
-  `costOfGrowth` (non-finite or non-positive) is logged at WARN before the
-  default is substituted.
-
-### Which gates stay in the analysis phase
-
-Anything that needs recorded activations runs **after** the focus set is fixed,
-never as a prerequisite of picking it:
-
-| Gate | Needs records | Phase |
-|------|---------------|-------|
-| Savings vs structural impact | no | focus-time triage |
-| Noise floor on net improvement | no | focus-time triage |
-| `activation_weighted_impact = impact × mean_activation` | yes | analysis |
-| `REMOVAL_MEAN_ACTIVATION_THRESHOLD` gate (#892) | yes | analysis |
-| Constant-variance bias-fold removal (#306) | yes | analysis |
-
-```mermaid
-flowchart TD
-    C[Creature JSON] --> I[Structural impact map<br/>compute_impacts_public]
-    I --> F["Focus axis: HIGH impact<br/>weighted-random draw (#1766)"]
-    I --> T["Removal axis: LOW impact vs savings<br/>triage_removal_candidates (#1767)"]
-    F --> S[Focus set fixed]
-    T --> S
-    S --> P[Parquet decode — analysis phase only]
-    P --> G["Activation-weighted gates<br/>mean activation, constant variance"]
-    G --> R[Refined removal candidates]
-```
-
----
-
-## End-to-end flow
-
-```mermaid
-flowchart TD
-    A[Discovery run starts] --> B{Budget covers all neurons?}
-    B -- No, never --> C[Focus on ~6 selectable neurons]
-    C --> D[Impact-weighted ranking<br/>rank_focus_neurons*]
-    D --> E{Within wall-clock budget?<br/>FOCUS_RANKING_BUDGET_MS}
-    E -- Yes --> F[Return neurons ranked by output-error impact]
-    E -- No, budget exceeded --> G[Abort with retryable Timeout]
-    G --> H[Caller fallback:<br/>instant error-guided local ranking]
-    F --> I[Take top ~6 as focus set]
-    H --> I
-    I --> J[Run discovery over the focus set]
-```
 
 ## See also
 
 - [docs/IMPACT_CALCULATION.md](IMPACT_CALCULATION.md) — how neuron impact is
-  estimated.
+  estimated (the structural map the focus draw weights by).
+- [`src/focus/selection.rs`](../src/focus/selection.rs) — the structure-weighted
+  random focus draw (`select_focus_by_structural_impact`) and the retained
+  exploit/explore allocator (`select_focus_neurons`).
 - [`src/focus/`](../src/focus/) — the ranking implementation
   (`ranking/mod.rs`, `impact.rs`, `gradient.rs`, `layers.rs`, `allocation.rs`,
   `selection.rs`).
-- Issues: #1373 (incident), #1374, #1375, #1376, #1377, #1385 (guard work);
-  #1382, #1386 (this confirmation); #1445 (diversity floor and drought
-  rotation, superseded); #1662 (exploit/explore allocation and eventual
-  coverage); #1766 (structural-impact weighted-random focus, seconds bar);
-  #1767 (removal triage on the opposite axis, no focus-time parquet — §9).
+- Issues: #1373 (a comparable parquet-stall incident), #1374–#1377, #3172 (parquet-coupled
+  guard work, now off the focus path); #1445 / #1662 (record-derived
+  exploit/explore, superseded for focus by #1766); **#1766** (structure-weighted
+  random focus, no parquet, seconds-bar invariant).
+```
+
