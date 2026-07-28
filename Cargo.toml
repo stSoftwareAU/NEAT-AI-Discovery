@@ -1,6 +1,6 @@
 [package]
 name = "neat_ai_discovery"
-version = "0.74.170"
+version = "0.74.171"
 edition = "2024"
 license = "Apache-2.0"
 description = "High-performance Rust library for recording neuron activations and errors during NEAT-AI discovery, and scanning the recorded data to identify beneficial new synapses/neurons."
@@ -34,7 +34,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }  # Su
 
 [dev-dependencies]
 tempfile = "3.27"
-serial_test = "3.5"
+serial_test = "4.0"
 criterion = { version = "0.8", default-features = false, features = ["rayon", "cargo_bench_support"] }
 proptest = "1.11"  # Property-based testing for mathematical functions (Issue #573)
 naga = { version = "30", features = ["wgsl-in"] }  # WGSL parse/validate for shader behaviour tests (Issue #1467)
