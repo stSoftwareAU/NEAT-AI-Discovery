@@ -60,7 +60,7 @@ use crate::config::{
 };
 use crate::discovery_history::DiscoveryHistory;
 use crate::ffi_types::DiscoveryError;
-use crate::parquet_format::read_all_records_grouped_by_neuron;
+use crate::parquet_format::read_all_records_grouped_by_neuron_with_deadline;
 use crate::parquet_format::shared_records::load_grouped_records_shared;
 use crate::{CoordinatedStructuralCandidateJson, CreatureJson, NeuronJson};
 use anyhow::{Context, Result};
@@ -305,6 +305,23 @@ impl FocusDeadline {
         }
         Ok(())
     }
+
+    /// Project this deadline onto the wall clock so the parquet reader — which
+    /// checks a [`SystemTime`] at every record-batch boundary — can bill against
+    /// the same budget (Issue #3686).
+    ///
+    /// Returns `SystemTime::now()` when the deadline has already passed, so the
+    /// reader aborts immediately instead of wrapping into a distant future.
+    fn as_system_time(&self) -> SystemTime {
+        let now = Instant::now();
+        let remaining = self.expires_at.saturating_duration_since(now);
+        SystemTime::now() + remaining
+    }
+}
+
+/// Project an optional focus deadline onto the wall clock (Issue #3686).
+fn deadline_as_system_time(deadline: Option<FocusDeadline>) -> Option<SystemTime> {
+    deadline.map(|d| d.as_system_time())
 }
 
 /// Optional deadline check helper — a no-op when no deadline is configured.
@@ -506,11 +523,20 @@ fn build_provider(
     parquet_file: &str,
     selectable: &[&NeuronJson],
     plan: LoadingPlan,
+    deadline: Option<FocusDeadline>,
 ) -> Result<Arc<dyn RecordProvider>> {
+    // Issue #3686: the provider build is the single most expensive step of a
+    // ranking run — it decodes the whole recorded dataset — and it used to run
+    // with NO deadline. On a memory-constrained host (12.5 GB of records against
+    // 7 GB available) the lazy warm pass ground for 2 h 28 m past a 14-minute
+    // budget, and the run was only aborted afterwards, by which time the calling
+    // worker's 3 h wall-clock cap had killed it outright. Bill the build against
+    // the same deadline the ranking passes use.
+    let read_deadline = deadline_as_system_time(deadline);
     match plan.mode {
-        FocusLoadingMode::Lazy => Ok(build_lazy_provider(parquet_file, selectable)),
+        FocusLoadingMode::Lazy => Ok(build_lazy_provider(parquet_file, selectable, read_deadline)),
         FocusLoadingMode::Preload => {
-            let shared = load_grouped_records_shared(parquet_file, None)
+            let shared = load_grouped_records_shared(parquet_file, read_deadline)
                 .context("Failed to read discovery records from parquet file")?;
             Ok(Arc::new(EagerRecordProvider::from_shared(&shared)))
         }
@@ -531,10 +557,19 @@ fn build_provider(
 /// The per-neuron loader remains as a fallback for any neuron missing from the
 /// warm pass (e.g. neurons with no recorded data), and the bounded-but-
 /// sufficient cache still guarantees each is loaded at most once.
-fn build_lazy_provider(parquet_file: &str, selectable: &[&NeuronJson]) -> Arc<dyn RecordProvider> {
+///
+/// Issue #3686: the warm pass is bounded by `deadline`. A pass that cannot
+/// finish inside the run's wall-clock budget is abandoned (loudly) and the
+/// provider degrades to on-demand loading, so the run aborts within its budget
+/// instead of grinding hours past it.
+fn build_lazy_provider(
+    parquet_file: &str,
+    selectable: &[&NeuronJson],
+    deadline: Option<SystemTime>,
+) -> Arc<dyn RecordProvider> {
     let provider = LazyRecordProvider::with_capacity(parquet_file, selectable.len());
 
-    match read_all_records_grouped_by_neuron(parquet_file) {
+    match read_all_records_grouped_by_neuron_with_deadline(parquet_file, deadline) {
         Ok(mut grouped) => {
             let wanted: std::collections::HashSet<&str> =
                 selectable.iter().map(|n| n.uuid.as_str()).collect();
@@ -996,7 +1031,7 @@ fn rank_focus_core(args: &RankCoreArgs<'_>) -> Result<RankFocusStats> {
         FocusDeadline::resolve(start, args.shared_deadline_ms, plan.mode, plan.projected_mb);
     log_effective_budget(plan, deadline);
 
-    let provider = build_provider(args.parquet_file, &selectable, plan)?;
+    let provider = build_provider(args.parquet_file, &selectable, plan, deadline)?;
     let meta = LoadingMeta {
         mode: plan.mode,
         reason: plan.reason,
@@ -1666,6 +1701,116 @@ mod focus_deadline_tests {
         assert!(
             large.budget_ms >= small.budget_ms,
             "a larger projected dataset must not shrink the lazy budget",
+        );
+    }
+}
+
+/// Issue #3686: the lazy warm pass must be bounded by the run's wall-clock
+/// budget. These stay inline because `build_lazy_provider` and `FocusDeadline`
+/// are private to this module and cannot be reached from `tests/`.
+#[cfg(test)]
+mod warm_pass_deadline_tests {
+    use super::{FocusDeadline, NeuronJson, build_lazy_provider};
+    use crate::parquet_format::write_records_to_parquet;
+    use crate::types::DiscoverRecord;
+    use std::time::{Duration, Instant, SystemTime};
+    use tempfile::TempDir;
+
+    fn neuron(uuid: &str) -> NeuronJson {
+        NeuronJson {
+            uuid: uuid.to_string(),
+            neuron_type: "hidden".to_string(),
+            squash: "IDENTITY".to_string(),
+            bias: 0.0,
+        }
+    }
+
+    fn parquet_with_two_neurons(dir: &TempDir) -> String {
+        let path = dir.path().join("records.parquet");
+        let path_str = path.to_str().expect("utf-8 temp path").to_string();
+        let mut records = Vec::new();
+        for uuid in ["neuron-a", "neuron-b"] {
+            for obs in 0..8u32 {
+                records.push(DiscoverRecord::new(
+                    obs,
+                    uuid.to_string(),
+                    Some(0.5),
+                    0.25,
+                    vec![0.1, 0.2],
+                ));
+            }
+        }
+        write_records_to_parquet(&path_str, &records).expect("write test parquet");
+        path_str
+    }
+
+    #[test]
+    fn warm_pass_seeds_the_cache_within_budget() {
+        let dir = TempDir::new().expect("temp dir");
+        let path = parquet_with_two_neurons(&dir);
+        let a = neuron("neuron-a");
+        let b = neuron("neuron-b");
+        let selectable = vec![&a, &b];
+
+        let deadline = SystemTime::now() + Duration::from_secs(600);
+        let provider = build_lazy_provider(&path, &selectable, Some(deadline));
+
+        assert_eq!(
+            provider.len(),
+            2,
+            "a warm pass inside its budget must seed every selectable neuron",
+        );
+    }
+
+    /// The reported field failure: the warm pass ran with no deadline at all, so
+    /// a 12.5 GB decode on a memory-constrained host ground for 2 h 28 m past a
+    /// 14-minute budget and the calling worker was killed at its 3 h wall-clock
+    /// cap. An expired budget must abandon the warm pass, not spend it.
+    #[test]
+    fn expired_budget_abandons_the_warm_pass() {
+        let dir = TempDir::new().expect("temp dir");
+        let path = parquet_with_two_neurons(&dir);
+        let a = neuron("neuron-a");
+        let selectable = vec![&a];
+
+        let expired = SystemTime::now() - Duration::from_secs(1);
+        let provider = build_lazy_provider(&path, &selectable, Some(expired));
+
+        assert_eq!(
+            provider.len(),
+            0,
+            "an expired budget must abandon the warm pass instead of decoding the file",
+        );
+        // Fail SOFT, not silent: the provider still serves records on demand, so
+        // the caller's own deadline check decides the run's fate.
+        let records = provider
+            .get("neuron-a")
+            .expect("on-demand load must still work")
+            .expect("neuron-a has records");
+        assert_eq!(
+            records.len(),
+            8,
+            "on-demand fallback must return the records"
+        );
+    }
+
+    /// The deadline the reader bills against must be the SAME budget the ranking
+    /// passes enforce — an in-budget deadline projects to a future wall clock.
+    #[test]
+    fn focus_deadline_projects_onto_the_wall_clock() {
+        let now = Instant::now();
+        let deadline = FocusDeadline::new(now, 60_000);
+        let projected = deadline.as_system_time();
+        let remaining = projected
+            .duration_since(SystemTime::now())
+            .expect("an unexpired deadline must project into the future");
+        assert!(
+            remaining <= Duration::from_millis(61_000),
+            "projection must not exceed the configured budget + grace",
+        );
+        assert!(
+            remaining >= Duration::from_millis(55_000),
+            "projection must preserve the configured budget",
         );
     }
 }
