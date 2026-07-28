@@ -10,9 +10,9 @@ named here is handed to a follow-up issue.
 
 ## Headline
 
-**Three of the four behaviours the issue asks about are now correct.** Milestone
-#1774 landed them hours before the issue was filed, so the failing runs the
-issue describes almost certainly pre-date it. The remaining behaviour
+**Three of the four behaviours the issue asks about are now correct.**
+Milestone #1774 landed them hours before the issue was filed, so the failing
+runs the issue describes almost certainly pre-date it. The remaining behaviour
 (downstream bias adjustment on removal) is implemented and wired but sits behind
 a gate that **never fires in production**.
 
@@ -235,9 +235,9 @@ gap between "the floor is correctly scaled" and "the floor is reachable".
 → follow-up: **#1778 — re-derive the gain floor against the post-calibration
 scale**
 (and confirm whether the calibration constants belong upstream or downstream of
-the floor at all). Note that the fix is *not* simply to lower the floor —
-#1740's false-positive guard test is right that lowering it against a broken
-scale admits noise. The floor and the calibration constants have to move
+the floor at all). Note that the fix is *not* simply to lower the floor — the
+false-positive guard test from #1740 is right that lowering it against a
+broken scale admits noise. The floor and the calibration constants have to move
 together, on evidence.
 
 ## Root cause B — suppression state that is dead, unexpirable, or silent
