@@ -48,6 +48,9 @@
     clippy::cast_sign_loss
 )]
 
+use crate::CreatureJson;
+use rand::{RngExt, SeedableRng, rngs::StdRng};
+
 /// Concentration ratio (max weight ÷ total weight) at or above which the raw
 /// roulette is considered pathologically single-target and a WARN is emitted
 /// (Issue #1445, retained as a diagnostic under #1662).
@@ -270,6 +273,158 @@ pub fn select_focus_neurons(
         drought_active,
         pool_size: pool_len,
     }
+}
+
+/// A structure-only focus selection: the weighted-random-drawn focus set plus
+/// the full impact-ranked eligible pool (Issue #1766).
+///
+/// Produced entirely from creature topology — **no discovery records, no
+/// parquet**. The heavy record-derived ranking (`error × impact × gradient ×
+/// frequency`) is deliberately not on this path; parquet is decoded later, for
+/// the *analysis* of the chosen focus set, never for *choosing* it.
+#[derive(Debug, Clone)]
+pub struct StructuralFocusSelection {
+    /// The drawn focus set and its diagnostics. Reuses [`FocusSelection`] so the
+    /// FFI response shape is unchanged. Every slot is an impact-weighted draw, so
+    /// `exploitation_count == selected.len()` and `exploration_count == 0`.
+    pub selection: FocusSelection,
+    /// Every selectable neuron paired with its structural impact, sorted
+    /// impact-descending. `weight` is the structural impact (outputs seed `1.0`).
+    pub ranked: Vec<FocusCandidate>,
+}
+
+/// Select a focus set purely from creature **structure** using a weighted-random
+/// draw by structural impact (Issue #1766).
+///
+/// The algorithm (documented in `docs/FOCUS_SELECTION.md`):
+/// 1. Compute the structural impact map from topology alone
+///    ([`crate::focus::compute_impacts_public`]) — path-weight products with
+///    output neurons seeded at impact `1.0`. No records are read.
+/// 2. Keep the *selectable* neurons (everything except `input` / `constant`).
+///    Outputs stay in and, seeded at `1.0`, naturally dominate the weight mass —
+///    `output-0` is the highest-impact target by definition.
+/// 3. Draw `min(target_n, pool)` neurons **without replacement** by roulette over
+///    those impacts, so large creatures still explore beyond pure greed while
+///    mostly landing on high-impact neurons. `seed` makes the draw deterministic
+///    and reproducible; successive passes vary it (e.g. the monotonic cursor).
+/// 4. Neurons with zero / negative / non-finite impact carry zero weight; when
+///    the remaining pool is all-zero the draw falls back to a uniform pick so the
+///    focus set still fills.
+///
+/// This never opens a parquet file and completes in well under the "seconds bar"
+/// even on creatures with multi-GB recordings — impact is `O(neurons + synapses)`.
+#[must_use]
+pub fn select_focus_by_structural_impact(
+    creature: &CreatureJson,
+    target_n: usize,
+    seed: u64,
+) -> StructuralFocusSelection {
+    let impacts = super::impact::compute_impacts_public(creature);
+
+    let mut ranked: Vec<FocusCandidate> = creature
+        .neurons
+        .iter()
+        .filter(|n| super::ranking::is_selectable_type(&n.neuron_type))
+        .map(|n| {
+            let raw = impacts.get(&n.uuid).copied().unwrap_or(0.0);
+            let weight = if raw.is_finite() && raw > 0.0 {
+                raw
+            } else {
+                0.0
+            };
+            FocusCandidate {
+                neuron_uuid: n.uuid.clone(),
+                weight,
+            }
+        })
+        .collect();
+
+    // Present the eligible pool strongest-first (impact desc, uuid tie-break) so
+    // consumers still receive a stable ranked list. The draw below is over the
+    // same weights and is independent of this ordering.
+    ranked.sort_by(|a, b| {
+        b.weight
+            .total_cmp(&a.weight)
+            .then_with(|| a.neuron_uuid.cmp(&b.neuron_uuid))
+    });
+
+    let pool_len = ranked.len();
+    let weights: Vec<f32> = ranked.iter().map(|c| c.weight).collect();
+    let raw_ratio = weight_concentration_ratio(&weights);
+    let n = target_n.max(1);
+
+    let selected_idx = weighted_draw_without_replacement(&weights, n.min(pool_len), seed);
+    let selected: Vec<String> = selected_idx
+        .iter()
+        .map(|&i| ranked[i].neuron_uuid.clone())
+        .collect();
+    let selected_weights: Vec<f32> = selected_idx.iter().map(|&i| weights[i]).collect();
+    let effective = weight_concentration_ratio(&selected_weights);
+    let picked = selected.len();
+
+    let selection = FocusSelection {
+        selected,
+        raw_weight_concentration_ratio: raw_ratio,
+        weight_concentration_ratio: effective,
+        // Every slot is an impact-weighted draw (Issue #1766). The exploit/explore
+        // split of #1662 no longer applies; report all picks as exploitation so
+        // the FFI diagnostics stay populated.
+        exploitation_count: picked,
+        exploration_count: 0,
+        exploration_cursor: seed,
+        eligible_pool_size: pool_len,
+        cumulative_coverage: picked,
+        drought_active: false,
+        pool_size: pool_len,
+    };
+
+    StructuralFocusSelection { selection, ranked }
+}
+
+/// Draw `count` distinct indices from `weights` by roulette (weighted-random
+/// without replacement), seeded by `seed` for reproducibility (Issue #1766).
+///
+/// Positive weights are picked in proportion to their magnitude. When every
+/// remaining weight is zero the draw falls back to a uniform pick so the set
+/// still fills to `count` (or the pool is exhausted). Non-finite / negative
+/// weights are treated as zero.
+fn weighted_draw_without_replacement(weights: &[f32], count: usize, seed: u64) -> Vec<usize> {
+    let mut rng = StdRng::seed_from_u64(seed);
+    let mut remaining: Vec<usize> = (0..weights.len()).collect();
+    let mut chosen: Vec<usize> = Vec::with_capacity(count.min(weights.len()));
+
+    let clamp = |w: f32| -> f64 {
+        if w.is_finite() && w > 0.0 {
+            f64::from(w)
+        } else {
+            0.0
+        }
+    };
+
+    while chosen.len() < count && !remaining.is_empty() {
+        let total: f64 = remaining.iter().map(|&i| clamp(weights[i])).sum();
+        let pos = if total > 0.0 {
+            let target: f64 = rng.random_range(0.0..total);
+            let mut cumulative = 0.0f64;
+            // Default to the last remaining index to absorb floating-point drift
+            // where the running sum falls a hair short of `target`.
+            let mut hit = remaining.len() - 1;
+            for (p, &i) in remaining.iter().enumerate() {
+                cumulative += clamp(weights[i]);
+                if target < cumulative {
+                    hit = p;
+                    break;
+                }
+            }
+            hit
+        } else {
+            // All-zero remaining weights: uniform draw so the focus set still fills.
+            rng.random_range(0..remaining.len())
+        };
+        chosen.push(remaining.swap_remove(pos));
+    }
+
+    chosen
 }
 
 #[cfg(test)]
@@ -523,5 +678,135 @@ mod tests {
         let a = select_focus_neurons(&pool, 10, false, 17);
         let b = select_focus_neurons(&pool, 10, false, 17);
         assert_eq!(a, b, "identical inputs must produce identical output");
+    }
+}
+
+#[cfg(test)]
+mod structural_tests {
+    //! Issue #1766: structure-only weighted-random focus selection. These use
+    //! the private `weighted_draw_without_replacement` helper, so they live
+    //! inline rather than in `tests/`.
+    use super::*;
+    use crate::{CreatureJson, NeuronJson, SynapseJson};
+    use std::collections::HashSet;
+
+    fn neuron(uuid: &str, ntype: &str) -> NeuronJson {
+        NeuronJson {
+            uuid: uuid.to_string(),
+            neuron_type: ntype.to_string(),
+            squash: "IDENTITY".to_string(),
+            bias: 0.0,
+        }
+    }
+
+    fn synapse(from: &str, to: &str, weight: f32) -> SynapseJson {
+        SynapseJson {
+            from_uuid: from.to_string(),
+            to_uuid: to.to_string(),
+            weight,
+            synapse_type: None,
+        }
+    }
+
+    /// One output plus `n_hidden` hidden neurons each feeding the output.
+    fn star_creature(n_hidden: usize) -> CreatureJson {
+        let mut neurons = vec![neuron("output-0", "output")];
+        let mut synapses = Vec::new();
+        for i in 0..n_hidden {
+            let uuid = format!("hidden-{i}");
+            neurons.push(neuron(&uuid, "hidden"));
+            synapses.push(synapse(&uuid, "output-0", 1.0));
+        }
+        CreatureJson {
+            neurons,
+            synapses,
+            input: 0,
+            output: 1,
+        }
+    }
+
+    #[test]
+    fn output_seeds_at_impact_one_and_tops_the_ranked_pool() {
+        let creature = star_creature(4);
+        let sel = select_focus_by_structural_impact(&creature, 6, 0);
+        // Every selectable neuron (output + 4 hidden) is ranked; output leads.
+        assert_eq!(sel.ranked.len(), 5);
+        assert_eq!(sel.ranked[0].neuron_uuid, "output-0");
+        assert!((sel.ranked[0].weight - 1.0).abs() < 1e-6);
+        // Output — highest impact — must be drawn into the focus set.
+        assert!(sel.selection.selected.contains(&"output-0".to_string()));
+    }
+
+    #[test]
+    fn input_and_constant_neurons_are_excluded() {
+        let mut creature = star_creature(2);
+        creature.neurons.push(neuron("input-0", "input"));
+        creature.neurons.push(neuron("const-0", "constant"));
+        let sel = select_focus_by_structural_impact(&creature, 6, 0);
+        let ranked: HashSet<&str> = sel.ranked.iter().map(|c| c.neuron_uuid.as_str()).collect();
+        assert!(!ranked.contains("input-0"));
+        assert!(!ranked.contains("const-0"));
+        // output + 2 hidden remain.
+        assert_eq!(sel.ranked.len(), 3);
+    }
+
+    #[test]
+    fn draw_is_deterministic_for_a_fixed_seed() {
+        let creature = star_creature(20);
+        let a = select_focus_by_structural_impact(&creature, 6, 42);
+        let b = select_focus_by_structural_impact(&creature, 6, 42);
+        assert_eq!(a.selection.selected, b.selection.selected);
+        // Distinct seeds explore a different tail (positive-weight pool > N).
+        let c = select_focus_by_structural_impact(&creature, 6, 7);
+        assert_ne!(a.selection.selected, c.selection.selected);
+    }
+
+    #[test]
+    fn draw_size_is_capped_by_the_eligible_pool() {
+        let creature = star_creature(2); // 3 selectable, ask for 6
+        let sel = select_focus_by_structural_impact(&creature, 6, 0);
+        assert_eq!(sel.selection.selected.len(), 3);
+        let distinct: HashSet<&String> = sel.selection.selected.iter().collect();
+        assert_eq!(distinct.len(), 3, "picks must be without replacement");
+    }
+
+    #[test]
+    fn all_zero_impact_pool_still_fills_by_uniform_fallback() {
+        // Hidden neurons with no path to any output have zero structural impact.
+        let creature = CreatureJson {
+            neurons: vec![
+                neuron("h0", "hidden"),
+                neuron("h1", "hidden"),
+                neuron("h2", "hidden"),
+            ],
+            synapses: vec![],
+            input: 0,
+            output: 0,
+        };
+        let sel = select_focus_by_structural_impact(&creature, 2, 3);
+        assert_eq!(
+            sel.selection.selected.len(),
+            2,
+            "set fills despite zero weight"
+        );
+        let distinct: HashSet<&String> = sel.selection.selected.iter().collect();
+        assert_eq!(distinct.len(), 2);
+    }
+
+    #[test]
+    fn weighted_draw_respects_relative_weights() {
+        // A dominant weight should be picked first far more often than a tiny one.
+        let weights = vec![100.0f32, 1.0, 1.0, 1.0];
+        let mut first_is_heavy = 0;
+        for seed in 0..200u64 {
+            let picked = weighted_draw_without_replacement(&weights, 1, seed);
+            if picked[0] == 0 {
+                first_is_heavy += 1;
+            }
+        }
+        assert!(
+            first_is_heavy > 180,
+            "heavy weight should dominate single draws, got {first_is_heavy}/200"
+        );
     }
 }

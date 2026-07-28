@@ -11,8 +11,12 @@
 //! - `rank_focus_neurons_internal` surfaces a `focusSelection` block with the
 //!   concentration ratios and a diverse selected set, and each ranked neuron
 //!   carries its `weightedScore`.
-//! - Under drought (epochs >= the drought threshold) the selection rotates
-//!   across successive passes instead of repeating the same id.
+//!
+//! Issue #1766 supersedes the record-derived exploit/explore selection these
+//! tests originally guarded: the FFI focus path is now a structure-only
+//! weighted-random draw by structural impact that never opens the parquet. The
+//! behavioural assertions below have been updated to that contract; the input
+//! deserialisation tests are unchanged.
 
 use neat_ai_discovery::{
     RankFocusNeuronsInput, rank_focus_neurons_internal, record_discovery_internal,
@@ -161,15 +165,18 @@ fn focus_selection_is_surfaced_with_concentration_metrics() {
     assert!((0.0..=1.0).contains(&raw));
     assert!((0.0..=1.0).contains(&eff));
 
-    // The dominant neuron concentrates the raw roulette weight...
+    // Issue #1766: the raw ratio is now the concentration of the *structural
+    // impact* weights (spread between the dominant hidden neuron and the
+    // output-0 seed at 1.0), not the record-derived roulette. It stays a
+    // well-formed positive ratio.
     assert!(
-        raw > 0.5,
-        "expected raw concentration > 0.5 for the plateau fixture, got {raw}"
+        raw > 0.0,
+        "expected a positive raw structural-impact concentration, got {raw}"
     );
 
-    // Issue #1662: the allocation diagnostics are surfaced. Exploitation keeps a
-    // strict majority; a bounded exploration quota is reserved. (Replaces the
-    // #1445 `diversityFloorApplied` assertion — that behaviour is corrected.)
+    // Issue #1766: every focus slot is an impact-weighted draw, so all picks
+    // report as exploitation and the exploit/explore split of #1662 no longer
+    // applies. The diagnostics stay populated and internally consistent.
     let exploitation = fs["exploitationCount"].as_u64().unwrap();
     let exploration = fs["explorationCount"].as_u64().unwrap();
     let selected: Vec<String> = fs["selected"]
@@ -179,18 +186,9 @@ fn focus_selection_is_surfaced_with_concentration_metrics() {
         .map(|v| v.as_str().unwrap().to_string())
         .collect();
     assert_eq!(exploitation + exploration, selected.len() as u64);
-    assert!(
-        exploitation * 2 > selected.len() as u64,
-        "exploitation must be a strict majority, got {exploitation}/{}",
-        selected.len()
-    );
     assert!(fs["eligiblePoolSize"].as_u64().unwrap() >= selected.len() as u64);
     assert!(fs["explorationCursor"].is_number());
     assert!(fs["cumulativeCoverage"].is_number());
-
-    // Issue #1662 exploits ranking rather than flattening it, so the effective
-    // concentration is now the genuine metric over the selected weights (the
-    // #1445 artificial equal-share `eff < 0.5` assertion no longer applies).
     let _ = eff;
 
     // The selected set is diverse: >=3 distinct focus targets.
@@ -202,20 +200,19 @@ fn focus_selection_is_surfaced_with_concentration_metrics() {
 }
 
 #[test]
-fn drought_widens_exploration_and_advances_cursor() {
-    // Issue #1662: replaces the #1445 top-`K × N` rotation assertion. A large
-    // eligible pool gives the exploration cursor a tail to sweep; drought keeps
-    // a strict exploitation majority while the monotonic cursor advances.
+fn cursor_reseeds_structural_weighted_random_draw() {
+    // Issue #1766: supersedes the #1662 drought/exploit-explore rotation. Focus
+    // selection is now a structure-only weighted-random draw seeded by the
+    // monotonic per-creature cursor, so advancing the cursor reseeds the draw
+    // and sweeps a fresh tail while still landing on the high-impact neurons.
     let (creature, parquet_file, _guard) = build_plateau_parquet(40);
 
-    let select_for = |epochs: u64, cursor: u64| -> Value {
+    let select_for = |cursor: u64| -> Value {
         let rank_input = json!({
             "parquetFile": parquet_file,
             "creature": creature,
             "maxResults": 40,
             "focusSetSize": 6,
-            // Default drought threshold is 5 passes (#1202); 5+ signals drought.
-            "epochsSinceLastAcceptedCandidate": epochs,
             "focusSelectionCursor": cursor
         })
         .to_string();
@@ -234,20 +231,17 @@ fn drought_widens_exploration_and_advances_cursor() {
             .collect()
     };
 
-    let fs_a = select_for(5, 0);
-    let fs_b = select_for(6, 1);
-    let fs_c = select_for(7, 2);
+    let fs_a = select_for(0);
+    let fs_b = select_for(1);
+    let fs_c = select_for(2);
 
-    // Drought is active and reported.
-    assert!(fs_a["droughtActive"].as_bool().unwrap());
-    // Exploitation stays a strict majority under drought.
-    let exploitation = fs_a["exploitationCount"].as_u64().unwrap();
-    let total = fs_a["selected"].as_array().unwrap().len() as u64;
-    assert!(
-        exploitation * 2 > total,
-        "drought must keep exploitation majority, got {exploitation}/{total}"
+    // A fixed cursor is reproducible; different cursors reseed the draw.
+    let fs_a_again = select_for(0);
+    assert_eq!(
+        selected(&fs_a),
+        selected(&fs_a_again),
+        "a fixed cursor must reproduce the same focus set"
     );
-    assert!(fs_a["explorationCount"].as_u64().unwrap() >= 1);
 
     let pass_a = selected(&fs_a);
     let pass_b = selected(&fs_b);

@@ -581,190 +581,146 @@ pub fn rank_focus_neurons_internal(input_json: &str) -> Result<String> {
         return Ok(serde_json::to_string(&output)?);
     }
 
-    // Issue #1048 / #1077: Track that an analysis is active so the host
-    // knows not to delete the parquet temp directory until we finish.
-    // Uses an RAII guard so the counter is decremented even on panic.
-    let _active_guard = crate::cancellation::AnalysisActiveGuard::new();
+    // Issue #1766: focus SELECTION is now structure-only. It never opens the
+    // discovery parquet — impact is derived from creature topology (path weights;
+    // output neurons seed at 1.0) and the focus set is a weighted-random draw over
+    // that impact. Coupling focus choice to multi-GB record I/O was the root cause
+    // of the ~2h focus-stall incident: the analysis budget was burned reading records
+    // *before* any focus neuron was picked. Parquet stays for the analysis phase
+    // that runs *after* the focus set is chosen (see `analyze_parallel`), and
+    // record-derived removal-candidate detection moves off this path (companion
+    // issue) — so `removalCandidates` / `constantNeuronRemovals` are omitted here.
+    let start = std::time::Instant::now();
 
-    // Issue #1318: forward the optional task descriptor so OneHot / Margin
-    // topologies activate margin-aware focus ranking. Other topologies
-    // (Independent / Simplex / Unknown / OTHER) and `None` get the existing
-    // unweighted ranking.
-    // Issue #1407: thread the shared absolute discovery deadline so focus
-    // selection bills against the same budget as the analysis phase rather
-    // than opening a fresh independent window.
-    let rank_result = focus::rank_focus_neurons_with_descriptor_and_deadline(
-        &input.parquet_file,
-        &input.creature,
-        input.max_results,
-        input.cost_of_growth,
-        input.task_descriptor.as_ref(),
-        input.analysis_deadline_ms,
-    );
+    let focus_set_size = input.focus_set_size.unwrap_or(DEFAULT_FOCUS_SET_SIZE);
+    // The monotonic per-creature cursor (falling back to the drought epoch
+    // counter, then 0) seeds the weighted-random draw so successive passes
+    // explore fresh neurons while still landing mostly on high impact.
+    let seed = input
+        .focus_selection_cursor
+        .or(input.epochs_since_last_accepted_candidate)
+        .unwrap_or(0);
 
-    match rank_result {
-        Ok(stats) => {
-            // Issue #1445: Build the diversity-aware focus selection over the
-            // ranked pool BEFORE the neurons are consumed into JSON. The
-            // weighted_score stored on each ranked neuron is the roulette
-            // weight; selection enforces a diversity floor (or drought
-            // rotation) so a single dominant neuron cannot collapse the focus
-            // set to one target.
-            let focus_candidates: Vec<focus::FocusCandidate> = stats
-                .neurons
-                .iter()
-                .map(|n| focus::FocusCandidate {
-                    neuron_uuid: n.neuron_uuid.clone(),
-                    weight: n.weighted_score,
-                })
-                .collect();
-            let focus_set_size = input.focus_set_size.unwrap_or(DEFAULT_FOCUS_SET_SIZE);
-            let drought_threshold = u64::from(crate::config::drought_log_threshold());
-            let epochs = input.epochs_since_last_accepted_candidate.unwrap_or(0);
-            let drought_active = drought_threshold > 0 && epochs >= drought_threshold;
-            // Issue #1662: exploration rotates on a monotonic per-creature cursor
-            // that does NOT reset when a candidate succeeds, so coverage is
-            // eventual. Fall back to the drought epoch counter only when the host
-            // has not yet adopted the dedicated cursor field.
-            let focus_cursor = input.focus_selection_cursor.unwrap_or(epochs);
-            let focus_selection = focus::select_focus_neurons(
-                &focus_candidates,
-                focus_set_size,
-                drought_active,
-                focus_cursor,
-            );
+    let structural =
+        focus::select_focus_by_structural_impact(&input.creature, focus_set_size, seed);
+    let focus_selection = structural.selection;
 
-            // Issue #1662: WARN when the raw roulette is pathologically
-            // single-target so operators can see the collapse the exploit/explore
-            // allocation just spread, and surface the allocation diagnostics.
-            if focus_selection.raw_weight_concentration_ratio > focus::CONCENTRATION_WARN_THRESHOLD
-            {
-                tracing::warn!(
-                    raw_weight_concentration_ratio = focus_selection.raw_weight_concentration_ratio,
-                    effective_weight_concentration_ratio =
-                        focus_selection.weight_concentration_ratio,
-                    exploitation_count = focus_selection.exploitation_count,
-                    exploration_count = focus_selection.exploration_count,
-                    exploration_cursor = focus_selection.exploration_cursor,
-                    eligible_pool_size = focus_selection.eligible_pool_size,
-                    cumulative_coverage = focus_selection.cumulative_coverage,
-                    drought_active = focus_selection.drought_active,
-                    focus_set_size,
-                    "focus_selection_weight_concentration_high: a single neuron \
-                     dominated the focus-selection roulette; exploit/explore \
-                     allocation spread the focus set while keeping the ranking \
-                     majority"
-                );
-            }
-
-            let focus_selection_json = FocusSelectionJson {
-                selected: focus_selection.selected,
-                raw_weight_concentration_ratio: focus_selection.raw_weight_concentration_ratio,
-                weight_concentration_ratio: focus_selection.weight_concentration_ratio,
-                exploitation_count: focus_selection.exploitation_count,
-                exploration_count: focus_selection.exploration_count,
-                exploration_cursor: focus_selection.exploration_cursor,
-                eligible_pool_size: focus_selection.eligible_pool_size,
-                cumulative_coverage: focus_selection.cumulative_coverage,
-                drought_active: focus_selection.drought_active,
-                pool_size: focus_selection.pool_size,
-            };
-
-            let neurons: Vec<RankedNeuronJson> = stats
-                .neurons
-                .into_iter()
-                .map(|neuron| RankedNeuronJson {
-                    neuron_uuid: neuron.neuron_uuid,
-                    total_error: neuron.total_error,
-                    impact: neuron.impact,
-                    mean_activation: neuron.mean_activation,
-                    activation_weighted_impact: neuron.activation_weighted_impact,
-                    weighted_score: neuron.weighted_score,
-                })
-                .collect();
-            let removal_candidates: Vec<RemovalCandidateJson> = stats
-                .removal_candidates
-                .into_iter()
-                .map(|c| RemovalCandidateJson {
-                    neuron_uuid: c.neuron_uuid,
-                    total_error: c.total_error,
-                    impact: c.impact,
-                    mean_activation: c.mean_activation,
-                    activation_weighted_impact: c.activation_weighted_impact,
-                    incoming_synapses: c.incoming_synapses,
-                    outgoing_synapses: c.outgoing_synapses,
-                    removal_savings: c.removal_savings,
-                    expected_error_reduction: c.expected_error_reduction,
-                    reason: c.reason,
-                })
-                .collect();
-            let (error_kind, retryable) = no_error_fields();
-            let output = RankFocusNeuronsOutput {
-                success: true,
-                schema_version: SCHEMA_VERSION.to_string(),
-                neurons: Some(neurons),
-                focus_selection: Some(focus_selection_json),
-                removal_candidates: if removal_candidates.is_empty() {
-                    None
-                } else {
-                    Some(removal_candidates)
-                },
-                // Issue #306: Return constant neuron removal candidates
-                constant_neuron_removals: if stats.constant_neuron_removals.is_empty() {
-                    None
-                } else {
-                    Some(stats.constant_neuron_removals)
-                },
-                max_output_error: Some(stats.max_output_error),
-                processed_neurons: Some(stats.processed_neurons),
-                total_neurons: Some(stats.total_neurons),
-                duration_ms: Some(stats.duration_ms.min(u64::MAX as u128) as u64),
-                // Issue #1142: Surface rejection counts (e.g. removal candidates
-                // dropped by the noise-floor gate) so operators can root-cause
-                // "no candidates found" failures without re-running analysis.
-                rejection_breakdown: if stats.rejection_breakdown.is_empty() {
-                    None
-                } else {
-                    Some(stats.rejection_breakdown)
-                },
-                // Issue #1172: Surface the chosen record loading mode and
-                // memory budget projection so callers can tune low-memory
-                // hosts without scraping log lines.
-                loading_mode: Some(stats.loading_mode.as_str().to_string()),
-                lazy_reason: Some(stats.lazy_reason.as_str().to_string()),
-                budget_mb: stats.budget_mb,
-                projected_mb: Some(stats.projected_mb),
-                error: None,
-                error_kind,
-                retryable,
-            };
-            Ok(serde_json::to_string(&output)?)
-        }
-        Err(e) => {
-            let (err_msg, error_kind, retryable) = error_fields_from_anyhow(&e);
-            let output = RankFocusNeuronsOutput {
-                success: false,
-                schema_version: SCHEMA_VERSION.to_string(),
-                neurons: None,
-                focus_selection: None,
-                removal_candidates: None,
-                constant_neuron_removals: None,
-                max_output_error: None,
-                processed_neurons: None,
-                total_neurons: None,
-                duration_ms: None,
-                rejection_breakdown: None,
-                loading_mode: None,
-                lazy_reason: None,
-                budget_mb: None,
-                projected_mb: None,
-                error: Some(err_msg),
-                error_kind,
-                retryable,
-            };
-            Ok(serde_json::to_string(&output)?)
-        }
+    // WARN when the raw structural-impact weight is pathologically single-target
+    // so the collapse the weighted draw spread stays visible to operators.
+    if focus_selection.raw_weight_concentration_ratio > focus::CONCENTRATION_WARN_THRESHOLD {
+        tracing::warn!(
+            raw_weight_concentration_ratio = focus_selection.raw_weight_concentration_ratio,
+            effective_weight_concentration_ratio = focus_selection.weight_concentration_ratio,
+            eligible_pool_size = focus_selection.eligible_pool_size,
+            focus_set_size,
+            "focus_selection_weight_concentration_high: one neuron dominated the \
+             structural-impact weights; the weighted-random draw spread the focus \
+             set while keeping the high-impact majority"
+        );
     }
+
+    let focus_selection_json = FocusSelectionJson {
+        selected: focus_selection.selected,
+        raw_weight_concentration_ratio: focus_selection.raw_weight_concentration_ratio,
+        weight_concentration_ratio: focus_selection.weight_concentration_ratio,
+        exploitation_count: focus_selection.exploitation_count,
+        exploration_count: focus_selection.exploration_count,
+        exploration_cursor: focus_selection.exploration_cursor,
+        eligible_pool_size: focus_selection.eligible_pool_size,
+        cumulative_coverage: focus_selection.cumulative_coverage,
+        drought_active: focus_selection.drought_active,
+        pool_size: focus_selection.pool_size,
+    };
+
+    // Structure-only ranked pool (impact-ordered). `totalError` / `meanActivation`
+    // are record-derived and intentionally 0.0 on the focus path; `impact` and
+    // `weightedScore` both carry the structural impact used as the draw weight.
+    let total_neurons = structural.ranked.len();
+    let mut ranked = structural.ranked;
+    if let Some(limit) = input.max_results
+        && ranked.len() > limit
+    {
+        ranked.truncate(limit);
+    }
+    let neurons: Vec<RankedNeuronJson> = ranked
+        .into_iter()
+        .map(|c| RankedNeuronJson {
+            neuron_uuid: c.neuron_uuid,
+            total_error: 0.0,
+            impact: c.weight,
+            mean_activation: 0.0,
+            activation_weighted_impact: 0.0,
+            weighted_score: c.weight,
+        })
+        .collect();
+    let processed_neurons = neurons.len();
+
+    // Issue #1767: removal triage runs at focus time on the **near-opposite** axis
+    // to focus — focus draws HIGH structural impact, removal flags hidden neurons
+    // whose LOW structural contribution is outweighed by the complexity savings of
+    // pruning them. It is structure-only: no discovery parquet is opened, so it
+    // never reintroduces the focus-time parquet dependency #1766 removed. The
+    // activation-weighted gates that need records stay in the analysis phase.
+    // `costOfGrowth` defaults to NEAT-AI's Score.ts 1e-7.
+    let cost_of_growth = input.cost_of_growth.unwrap_or(1e-7);
+    let removal_outcome =
+        focus::identify_structural_removal_candidates(&input.creature, cost_of_growth);
+    let rejection_breakdown = removal_outcome.rejection_breakdown();
+    let removal_candidates: Vec<RemovalCandidateJson> = removal_outcome
+        .candidates
+        .into_iter()
+        .map(|c| RemovalCandidateJson {
+            neuron_uuid: c.neuron_uuid,
+            total_error: c.total_error,
+            impact: c.impact,
+            mean_activation: c.mean_activation,
+            activation_weighted_impact: c.activation_weighted_impact,
+            incoming_synapses: c.incoming_synapses,
+            outgoing_synapses: c.outgoing_synapses,
+            removal_savings: c.removal_savings,
+            expected_error_reduction: c.expected_error_reduction,
+            reason: c.reason,
+        })
+        .collect();
+
+    let (error_kind, retryable) = no_error_fields();
+    let output = RankFocusNeuronsOutput {
+        success: true,
+        schema_version: SCHEMA_VERSION.to_string(),
+        neurons: Some(neurons),
+        focus_selection: Some(focus_selection_json),
+        // Issue #1767: structure-only removal triage (near-opposite of focus).
+        removal_candidates: if removal_candidates.is_empty() {
+            None
+        } else {
+            Some(removal_candidates)
+        },
+        // Constant-neuron removal folds recorded activation variance into biases,
+        // so it needs records — it stays in the analysis phase, off the focus path.
+        constant_neuron_removals: None,
+        max_output_error: None,
+        processed_neurons: Some(processed_neurons),
+        total_neurons: Some(total_neurons),
+        duration_ms: Some(start.elapsed().as_millis().min(u64::MAX as u128) as u64),
+        // Issue #1142: surface removal candidates dropped by the noise-floor gate
+        // so operators can root-cause "no removal candidates" without re-running.
+        rejection_breakdown: if rejection_breakdown.is_empty() {
+            None
+        } else {
+            Some(rejection_breakdown)
+        },
+        // No parquet is loaded on the focus path (Issue #1766), so the loading-mode
+        // observability fields are omitted rather than reporting a decode that
+        // never happened.
+        loading_mode: None,
+        lazy_reason: None,
+        budget_mb: None,
+        projected_mb: None,
+        error: None,
+        error_kind,
+        retryable,
+    };
+    Ok(serde_json::to_string(&output)?)
 }
 
 /// Returns a calibration summary from discovery history (Issue #605).

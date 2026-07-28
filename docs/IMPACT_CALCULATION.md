@@ -385,6 +385,25 @@ savings = costOfGrowth × (1 + (incomingSynapses + outgoingSynapses) / 10)
 > computing `mean_absolute_activation` to prevent corruption of the removal
 > candidate ranking.
 
+### ⏱️ Phase split — structural triage now, activation weighting later (Issue #1767)
+
+`mean_absolute_activation` is **record-derived**, so the activation-weighted
+view above needs a discovery-parquet decode. That must never gate *focus*
+selection: on a production deployment the shared parquet warm burned ~2 h
+before any useful discovery work started.
+
+Removal is therefore split across two phases over the **same** impact map:
+
+| Phase | Metric | Records |
+|-------|--------|---------|
+| **Triage** (focus time) | `boostedSavings > \|structural_impact\|` | none — topology only |
+| **Gating** (analysis, after focus is fixed) | `boostedSavings > activation_weighted_impact`, plus the mean-activation and constant-variance gates | required |
+
+The triage phase is `focus::triage_removal_candidates`; the activation-weighted
+phase remains `identify_removal_candidates` inside the ranking pipeline. See
+[docs/FOCUS_SELECTION.md § 9](FOCUS_SELECTION.md#9-removal-triage--the-opposite-axis-issue-1767)
+for the opposite-axes rule that governs both.
+
 ---
 
 ## ♻️ Remove-Neuron Weight-Redistribution Compensation (Issue #1559)

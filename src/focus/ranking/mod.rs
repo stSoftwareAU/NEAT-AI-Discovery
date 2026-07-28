@@ -9,17 +9,25 @@
 //! - `record_providers` — Record provider trait and implementations (eager/lazy)
 //! - `score_calculation` — Individual neuron ranking score computation
 //! - `removal_candidates` — Removal candidate identification and constant neuron removal
+//! - `removal_triage` — Structure-only removal triage, no parquet (Issue #1767)
 //! - `reconstruction` — Reconstruction-mismatch focus signal (Issue #1634)
 
 #![allow(clippy::cast_possible_truncation)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 mod reconstruction;
 pub(super) mod record_providers;
 mod removal_candidates;
+mod removal_triage;
 mod score_calculation;
 
 // Re-export public API — all items remain accessible via `crate::focus::ranking::*`
 pub use record_providers::RecordProvider;
 pub use removal_candidates::{RemovalCandidate, SynapseCounts, calculate_removal_savings};
+// Issue #1767: structure-only removal triage helper — re-exported so `focus/mod.rs`
+// (and the FFI layer) can reach it via `crate::focus::ranking::*`.
+pub(crate) use removal_candidates::identify_structural_removal_candidates;
+pub use removal_triage::{
+    StructuralRemovalCandidate, StructuralRemovalTriage, triage_removal_candidates,
+};
 pub use score_calculation::{RankedNeuron, SelectionStats};
 
 // Issue #1172 — `decide_records_loading` budget plumbing.
@@ -529,12 +537,20 @@ fn build_provider(
     // the same deadline the ranking passes use.
     let read_deadline = deadline_as_system_time(deadline);
     match plan.mode {
-        FocusLoadingMode::Lazy => Ok(build_lazy_provider(parquet_file, selectable, read_deadline)),
-        FocusLoadingMode::Preload => {
-            let shared = load_grouped_records_shared(parquet_file, read_deadline)
-                .context("Failed to read discovery records from parquet file")?;
-            Ok(Arc::new(EagerRecordProvider::from_shared(&shared)))
-        }
+        FocusLoadingMode::Lazy => build_lazy_provider(parquet_file, selectable, deadline),
+        FocusLoadingMode::Preload => match load_grouped_records_shared(parquet_file, read_deadline)
+        {
+            Ok(shared) => Ok(Arc::new(EagerRecordProvider::from_shared(&shared))),
+            Err(read_err) => {
+                // Issue #1768: if the eager pre-load overran the wall-clock
+                // budget, abort with a distinct `eager_preload` context (a
+                // structured timeout) rather than a generic read error, so the
+                // abort point is unambiguous in the logs. A genuine read error
+                // *within* budget still surfaces verbatim.
+                check_deadline(deadline, "eager_preload")?;
+                Err(read_err).context("Failed to read discovery records from parquet file")
+            }
+        },
     }
 }
 
@@ -553,18 +569,28 @@ fn build_provider(
 /// warm pass (e.g. neurons with no recorded data), and the bounded-but-
 /// sufficient cache still guarantees each is loaded at most once.
 ///
-/// Issue #3686: the warm pass is bounded by `deadline`. A pass that cannot
-/// finish inside the run's wall-clock budget is abandoned (loudly) and the
-/// provider degrades to on-demand loading, so the run aborts within its budget
-/// instead of grinding hours past it.
+/// Issue #3686: the warm pass is bounded by `deadline` — the reader checks it at
+/// every record-batch boundary, so the decode cannot grind for hours past the
+/// budget.
+///
+/// Issue #1768: a warm pass that fails **because the wall-clock budget overran**
+/// aborts loudly with a distinct [`DiscoveryError::Timeout`] under the
+/// `lazy_warm_pass` context, rather than silently degrading to on-demand
+/// loading. The old soft fallback masked the timeout as a clean provider, so the
+/// observable abort only surfaced hours-equivalent later in the unrelated
+/// `verify_selectable_records` per-neuron loop — a misleading context and, worse,
+/// an on-demand path that re-reads the whole parquet file per neuron. Only a
+/// **genuine read error within budget** now earns the soft on-demand fallback,
+/// where the caller's own per-neuron deadline check still decides the run's fate.
 fn build_lazy_provider(
     parquet_file: &str,
     selectable: &[&NeuronJson],
-    deadline: Option<SystemTime>,
-) -> Arc<dyn RecordProvider> {
+    deadline: Option<FocusDeadline>,
+) -> Result<Arc<dyn RecordProvider>> {
     let provider = LazyRecordProvider::with_capacity(parquet_file, selectable.len());
+    let read_deadline = deadline_as_system_time(deadline);
 
-    match read_all_records_grouped_by_neuron_with_deadline(parquet_file, deadline) {
+    match read_all_records_grouped_by_neuron_with_deadline(parquet_file, read_deadline) {
         Ok(mut grouped) => {
             let wanted: std::collections::HashSet<&str> =
                 selectable.iter().map(|n| n.uuid.as_str()).collect();
@@ -577,14 +603,21 @@ fn build_lazy_provider(
             }
         }
         Err(read_err) => {
+            // If the deadline has passed, the read aborted BECAUSE of the budget:
+            // fail loud with a distinct `lazy_warm_pass` timeout so the run stops
+            // within budget at an unambiguous point. `check_deadline` returns the
+            // structured `DiscoveryError::Timeout` (and logs the context) only
+            // when expired; otherwise it is a no-op and we degrade gracefully.
+            check_deadline(deadline, "lazy_warm_pass")?;
             tracing::warn!(
                 error = %read_err,
-                "Lazy focus-ranking cache warm pass failed; falling back to on-demand per-neuron loading",
+                "Lazy focus-ranking cache warm pass failed within budget; \
+                 falling back to on-demand per-neuron loading",
             );
         }
     }
 
-    Arc::new(provider)
+    Ok(Arc::new(provider))
 }
 
 /// Emit the structured end-of-pass summary (Issue #1172). Always logged at
@@ -1705,7 +1738,7 @@ mod focus_deadline_tests {
 /// are private to this module and cannot be reached from `tests/`.
 #[cfg(test)]
 mod warm_pass_deadline_tests {
-    use super::{FocusDeadline, NeuronJson, build_lazy_provider};
+    use super::{DiscoveryError, FocusDeadline, NeuronJson, build_lazy_provider};
     use crate::parquet_format::write_records_to_parquet;
     use crate::types::DiscoverRecord;
     use std::time::{Duration, Instant, SystemTime};
@@ -1747,8 +1780,9 @@ mod warm_pass_deadline_tests {
         let b = neuron("neuron-b");
         let selectable = vec![&a, &b];
 
-        let deadline = SystemTime::now() + Duration::from_secs(600);
-        let provider = build_lazy_provider(&path, &selectable, Some(deadline));
+        let deadline = FocusDeadline::new(Instant::now(), 600_000);
+        let provider = build_lazy_provider(&path, &selectable, Some(deadline))
+            .expect("an in-budget warm pass must succeed");
 
         assert_eq!(
             provider.len(),
@@ -1757,35 +1791,62 @@ mod warm_pass_deadline_tests {
         );
     }
 
-    /// The reported field failure: the warm pass ran with no deadline at all, so
-    /// a 12.5 GB decode on a memory-constrained host ground for 2 h 28 m past a
-    /// 14-minute budget and the calling worker was killed at its 3 h wall-clock
-    /// cap. An expired budget must abandon the warm pass, not spend it.
+    /// Issue #1768 (supersedes #1769's soft-fail): a warm pass that overruns the
+    /// wall-clock budget must abort LOUDLY with a distinct `lazy_warm_pass`
+    /// [`DiscoveryError::Timeout`], **not** silently degrade to on-demand
+    /// loading. The old behaviour masked the timeout as a clean provider, so the
+    /// observable abort surfaced hours later under the misleading
+    /// `verify_selectable_records` context (the ~2 h field failure where a large
+    /// decode on a memory-constrained host ran hours past a ~14-minute budget).
+    ///
+    /// Business-logic change: this replaces the previous
+    /// `expired_budget_abandons_the_warm_pass` test, which asserted the soft
+    /// on-demand fallback that #1768 deliberately overturns for the overrun case.
     #[test]
-    fn expired_budget_abandons_the_warm_pass() {
+    fn expired_budget_aborts_the_warm_pass_loudly() {
         let dir = TempDir::new().expect("temp dir");
         let path = parquet_with_two_neurons(&dir);
         let a = neuron("neuron-a");
         let selectable = vec![&a];
 
-        let expired = SystemTime::now() - Duration::from_secs(1);
-        let provider = build_lazy_provider(&path, &selectable, Some(expired));
+        // Zero budget + zero grace anchored at "now" is already expired by the
+        // time the reader checks it, so the warm pass fails on the deadline.
+        let expired = FocusDeadline::with_grace_for_tests(Instant::now(), 0, 0);
+        // `.err()` (not `expect_err`) because the Ok variant — an
+        // `Arc<dyn RecordProvider>` — does not implement `Debug`.
+        let err = build_lazy_provider(&path, &selectable, Some(expired))
+            .err()
+            .expect("an expired budget must abort the warm pass, not degrade silently");
+        let discovery_err = err.downcast_ref::<DiscoveryError>().unwrap_or_else(|| {
+            panic!("the abort must be a structured DiscoveryError, got: {err:#}")
+        });
+        assert!(
+            matches!(discovery_err, DiscoveryError::Timeout { .. }),
+            "an overrun warm pass must abort with a Timeout, got {discovery_err:?}",
+        );
+    }
+
+    /// Issue #1768: a genuine read error *within* budget still degrades softly to
+    /// on-demand loading — only a deadline overrun aborts loudly. A missing
+    /// parquet file is a genuine (non-timeout) read failure, so the provider is
+    /// still returned (seeding nothing) and the caller's per-neuron deadline
+    /// check decides the run's fate.
+    #[test]
+    fn genuine_read_error_within_budget_degrades_softly() {
+        let dir = TempDir::new().expect("temp dir");
+        let missing = dir.path().join("does-not-exist.parquet");
+        let missing_str = missing.to_str().expect("utf-8 temp path").to_string();
+        let a = neuron("neuron-a");
+        let selectable = vec![&a];
+
+        let deadline = FocusDeadline::new(Instant::now(), 600_000);
+        let provider = build_lazy_provider(&missing_str, &selectable, Some(deadline))
+            .expect("a genuine in-budget read error must degrade softly, not abort");
 
         assert_eq!(
             provider.len(),
             0,
-            "an expired budget must abandon the warm pass instead of decoding the file",
-        );
-        // Fail SOFT, not silent: the provider still serves records on demand, so
-        // the caller's own deadline check decides the run's fate.
-        let records = provider
-            .get("neuron-a")
-            .expect("on-demand load must still work")
-            .expect("neuron-a has records");
-        assert_eq!(
-            records.len(),
-            8,
-            "on-demand fallback must return the records"
+            "a failed warm pass seeds nothing but still returns a usable provider",
         );
     }
 
