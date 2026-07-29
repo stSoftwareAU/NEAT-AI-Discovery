@@ -93,34 +93,15 @@ pub(crate) fn build_discovery_module_specs(
 /// The `deadline` parameter is forwarded to [`discovery_dispatch::detect_discovery_modules_parallel`]
 /// so that modules are skipped when the analysis time budget is exhausted,
 /// preventing the detection phase from running indefinitely.
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn prepare_and_detect_discovery_modules(
-    creature: &Arc<crate::CreatureJson>,
-    hidden_neurons: &Arc<Vec<(String, String, f32)>>,
-    shared_cache: &Arc<cache::RecordCache>,
-    tracker: &ModuleOutcomeTracker,
-    deadline: Option<std::time::SystemTime>,
-    cost_hint: CostFunctionHint,
-    task_descriptor: TaskDescriptor,
-    escalation_active: bool,
-) -> discovery_dispatch::DiscoveryModuleDetectionResults {
-    prepare_and_detect_discovery_modules_with_starvation(
-        creature,
-        hidden_neurons,
-        shared_cache,
-        tracker,
-        deadline,
-        None,
-        0,
-        cost_hint,
-        task_descriptor,
-        escalation_active,
-    )
-}
-
-/// Same contract as [`prepare_and_detect_discovery_modules`] but also forwards
-/// the per-creature [`ModuleStarvationTracker`] so modules in active
-/// starvation cooldown are skipped at detection time (Issue #1273).
+///
+/// ## Removed: starvation wrapper (Issue #1793)
+///
+/// A `..._with_starvation` twin of this function used to take a
+/// `ModuleStarvationTracker` and a `current_epoch`, and this function delegated
+/// to it with a hard-coded `None` / `0`. The tracker was never populated in
+/// production, so the pair was removed rather than wired — see the decision on
+/// Issue #1793. The population-wide [`ModuleOutcomeTracker`] gate below is the
+/// surviving per-module suppressor.
 ///
 /// ## Creature-scale module tiering (Issue #1547)
 ///
@@ -131,14 +112,12 @@ pub(crate) fn prepare_and_detect_discovery_modules(
 /// On escalation passes, below the threshold, or with tiering disabled
 /// (threshold `0`), the full set is dispatched exactly as before.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn prepare_and_detect_discovery_modules_with_starvation(
+pub(crate) fn prepare_and_detect_discovery_modules(
     creature: &Arc<crate::CreatureJson>,
     hidden_neurons: &Arc<Vec<(String, String, f32)>>,
     shared_cache: &Arc<cache::RecordCache>,
     tracker: &ModuleOutcomeTracker,
     deadline: Option<std::time::SystemTime>,
-    starvation_tracker: Option<&super::module_starvation_tracker::ModuleStarvationTracker>,
-    current_epoch: u64,
     cost_hint: CostFunctionHint,
     task_descriptor: TaskDescriptor,
     escalation_active: bool,
@@ -170,13 +149,7 @@ pub(crate) fn prepare_and_detect_discovery_modules_with_starvation(
         }
     }
 
-    discovery_dispatch::detect_discovery_modules_parallel_with_starvation(
-        modules,
-        deadline,
-        Some(tracker),
-        starvation_tracker,
-        current_epoch,
-    )
+    discovery_dispatch::detect_discovery_modules_parallel(modules, deadline, Some(tracker))
 }
 
 /// Filter expensive-tier discovery modules out of the dispatch set on large

@@ -1,7 +1,6 @@
 //! Creature-level discovery-drought alarm (Issue #1424).
 //!
-//! The per-pass drought diagnostic (Issue #1202) and the per-(creature, module)
-//! starvation tracker (Issue #1273) both log at WARN, but neither emits a
+//! The per-pass drought diagnostic (Issue #1202) logs at WARN, but it emits no
 //! durable, creature-level alarm when the *time since the last accepted
 //! candidate* crosses a "weeks" threshold. Droughts are therefore invisible
 //! until a human notices — which is exactly how Issue #1418 was found.

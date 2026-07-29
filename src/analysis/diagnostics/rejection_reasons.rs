@@ -95,17 +95,6 @@ pub const REJECTION_COORDINATED_TARGET_CAP_EXCEEDED: &str = "coordinated_target_
 pub const REJECTION_COORDINATED_COLLAPSE_BYPASS_WEIGHT_BELOW_FLOOR: &str =
     "coordinated_collapse_bypass_weight_below_floor";
 
-/// Discovery module was skipped because the per-(creature, module) starvation
-/// tracker has the module in active cooldown after
-/// `MODULE_STARVATION_FAILURE_STREAK` consecutive failures (Issue #1273).
-///
-/// One rejection count is recorded per module skipped during the parallel
-/// detection phase. Unlike the population-wide `MODULE_GATE_THRESHOLD`
-/// (Issue #1060), this signal is creature-scoped: a module that has failed
-/// repeatedly for this creature is paused while the candidate budget is
-/// redirected to alternative modules.
-pub const REJECTION_MODULE_STARVED: &str = "module_starved";
-
 /// Helpful add-synapse candidate was dropped by the CPU pre-reject screen
 /// *before* the GPU submit because it provably carries no usable signal
 /// (Issue #1544).
@@ -223,7 +212,6 @@ pub const ALL_REJECTION_REASONS: &[&str] = &[
     REJECTION_SAME_TARGET_SQUASH_DUPLICATE,
     REJECTION_COORDINATED_TARGET_CAP_EXCEEDED,
     REJECTION_COORDINATED_COLLAPSE_BYPASS_WEIGHT_BELOW_FLOOR,
-    REJECTION_MODULE_STARVED,
     REJECTION_CPU_PRE_REJECT_NO_SIGNAL,
     REJECTION_NO_SAMPLES,
     REJECTION_ZERO_IMPROVEMENT,
@@ -391,7 +379,6 @@ fn friendly_reason(reason: &str) -> String {
             "hidden-neuron collapse bypass-weight floor of {}",
             crate::analysis::constants::min_bypass_weight_for_collapse()
         ),
-        REJECTION_MODULE_STARVED => "per-creature module starvation cooldown".to_string(),
         REJECTION_CPU_PRE_REJECT_NO_SIGNAL => {
             "CPU pre-reject screen (no usable signal before GPU submit)".to_string()
         }

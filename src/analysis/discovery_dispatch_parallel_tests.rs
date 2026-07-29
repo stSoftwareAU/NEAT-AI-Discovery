@@ -9,11 +9,8 @@ use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson};
 
 use super::{
     DiscoveryDetectionResult, DiscoveryModuleSpec, ModuleOutcomeTracker,
-    detect_discovery_modules_parallel, detect_discovery_modules_parallel_with_starvation,
-    run_discovery_modules_parallel,
+    detect_discovery_modules_parallel, run_discovery_modules_parallel,
 };
-use crate::analysis::diagnostics::rejection_reasons::REJECTION_MODULE_STARVED;
-use crate::analysis::module_starvation_tracker::ModuleStarvationTracker;
 
 fn empty_synapse_result() -> shared::AnalyzeSynapsesResult {
     shared::AnalyzeSynapsesResult {
@@ -787,83 +784,17 @@ fn quality_skip_still_records_stats_for_skipped_modules() {
 }
 
 // =============================================================================
-// Issue #1273 — Per-creature, per-module starvation cooldown
+// Issue #1793 — the per-creature starvation cooldown was deleted, not wired
 // =============================================================================
 
-/// A starved module's `detect_fn` must be skipped during the parallel detection
-/// phase even when the module would otherwise produce candidates.
+/// Retargets the two Issue #1273 starvation tests. The tracker they exercised
+/// was never populated in production (the sole production caller hard-coded
+/// `None` / epoch `0`), so it was deleted. What must now hold is the inverse:
+/// the single detection entry point applies no per-creature cooldown at all —
+/// every module's `detect_fn` runs, and no `module_starved` rejection reaches
+/// the merge phase (the reason no longer exists).
 #[test]
-fn starvation_tracker_skips_detect_fn_when_module_is_starved() {
-    let _lock = crate::watchdog::lock_for_test_serialisation();
-    let _wd = crate::watchdog::Watchdog::start(crate::watchdog::WatchdogConfig {
-        stall_timeout: Duration::from_secs(60),
-        abort_delay: Duration::from_secs(1),
-    });
-
-    // Build a starvation tracker that already has "coordinated-structural"
-    // in active cooldown at epoch 5.
-    let mut starvation = ModuleStarvationTracker::with_thresholds(3, 10);
-    for epoch in 0..3 {
-        starvation.record_failure("coordinated-structural", epoch);
-    }
-    assert!(starvation.is_starved("coordinated-structural", 5));
-
-    // detect_fn must NOT execute for the starved module.
-    let invoked = Arc::new(AtomicUsize::new(0));
-    let invoked_clone = Arc::clone(&invoked);
-    let starved_spec = DiscoveryModuleSpec {
-        module_name: "coordinated-structural".to_string(),
-        phase_name: "test_phase",
-        max_candidates: 0,
-        detect_fn: Box::new(move || {
-            invoked_clone.fetch_add(1, Ordering::SeqCst);
-            Some(DiscoveryDetectionResult {
-                detected_count: 1,
-                candidates: vec![make_candidate(0.5)],
-            })
-        }),
-    };
-    let healthy_spec = make_module("change-bias", Some(vec![make_candidate(1.0)]));
-
-    let results = detect_discovery_modules_parallel_with_starvation(
-        vec![starved_spec, healthy_spec],
-        None,
-        None,
-        Some(&starvation),
-        5,
-    );
-
-    assert_eq!(
-        invoked.load(Ordering::SeqCst),
-        0,
-        "starved module's detect_fn must not run"
-    );
-
-    let starved_entry = results
-        .entries
-        .iter()
-        .find(|e| e.module_name == "coordinated-structural")
-        .expect("starved entry present");
-    assert!(
-        starved_entry.starved,
-        "entry must carry the starved flag for the merge phase"
-    );
-    assert!(starved_entry.result.is_none());
-
-    let healthy_entry = results
-        .entries
-        .iter()
-        .find(|e| e.module_name == "change-bias")
-        .expect("healthy entry present");
-    assert!(!healthy_entry.starved);
-    assert!(healthy_entry.result.is_some());
-}
-
-/// Merging detection results that include a starved entry must record one
-/// `module_starved` rejection in the synapse metadata so the drought
-/// diagnostic can attribute the lost candidate slot.
-#[test]
-fn merge_phase_records_module_starved_rejection() {
+fn detection_applies_no_per_creature_starvation_cooldown() {
     let _lock = crate::watchdog::lock_for_test_serialisation();
     let _wd = crate::watchdog::Watchdog::start(crate::watchdog::WatchdogConfig {
         stall_timeout: Duration::from_secs(60),
@@ -872,58 +803,8 @@ fn merge_phase_records_module_starved_rejection() {
 
     let mut syn = empty_synapse_result();
 
-    let mut starvation = ModuleStarvationTracker::with_thresholds(2, 100);
-    starvation.record_failure("coordinated-structural", 0);
-    starvation.record_failure("coordinated-structural", 1);
-
-    let starved_spec = DiscoveryModuleSpec {
-        module_name: "coordinated-structural".to_string(),
-        phase_name: "test_phase",
-        max_candidates: 0,
-        detect_fn: Box::new(|| {
-            Some(DiscoveryDetectionResult {
-                detected_count: 1,
-                candidates: vec![make_candidate(0.5)],
-            })
-        }),
-    };
-    let healthy_spec = make_module("change-bias", Some(vec![make_candidate(1.0)]));
-
-    let results = detect_discovery_modules_parallel_with_starvation(
-        vec![starved_spec, healthy_spec],
-        None,
-        None,
-        Some(&starvation),
-        2,
-    );
-
-    let mut tracker = ModuleOutcomeTracker::new();
-    super::merge_discovery_module_results(&mut syn, results, None, false, &mut tracker);
-
-    let count = syn
-        .metadata
-        .rejection_breakdown
-        .counts()
-        .get(REJECTION_MODULE_STARVED)
-        .copied()
-        .unwrap_or(0);
-    assert_eq!(count, 1, "exactly one module_starved rejection expected");
-
-    // The healthy module's candidate should still arrive at the synapse result.
-    assert_eq!(syn.coordinated_structural_candidates.len(), 1);
-}
-
-/// When no starvation tracker is provided (None), the detection phase must
-/// behave identically to the legacy path: every module's `detect_fn` runs and
-/// no `module_starved` rejection is recorded.
-#[test]
-fn starvation_tracker_optional_when_none_passed() {
-    let _lock = crate::watchdog::lock_for_test_serialisation();
-    let _wd = crate::watchdog::Watchdog::start(crate::watchdog::WatchdogConfig {
-        stall_timeout: Duration::from_secs(60),
-        abort_delay: Duration::from_secs(1),
-    });
-
+    // The exact module that motivated Issue #1273 — 41 consecutive failures on
+    // one creature. Nothing may suppress it at detection time now.
     let invoked = Arc::new(AtomicUsize::new(0));
     let invoked_clone = Arc::clone(&invoked);
     let spec = DiscoveryModuleSpec {
@@ -939,10 +820,20 @@ fn starvation_tracker_optional_when_none_passed() {
         }),
     };
 
-    let results =
-        detect_discovery_modules_parallel_with_starvation(vec![spec], None, None, None, 999);
+    let results = detect_discovery_modules_parallel(vec![spec], None, None);
 
     assert_eq!(invoked.load(Ordering::SeqCst), 1);
-    assert!(!results.entries[0].starved);
     assert!(results.entries[0].result.is_some());
+
+    let mut tracker = ModuleOutcomeTracker::new();
+    super::merge_discovery_module_results(&mut syn, results, None, false, &mut tracker);
+
+    assert!(
+        !syn.metadata
+            .rejection_breakdown
+            .counts()
+            .contains_key("module_starved"),
+        "the module_starved rejection reason was removed with the tracker"
+    );
+    assert_eq!(syn.coordinated_structural_candidates.len(), 1);
 }

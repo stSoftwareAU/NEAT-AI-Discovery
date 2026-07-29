@@ -30,8 +30,7 @@ INFO Issue #1422: effective drought-mitigation config
     low_success_rate_threshold=0.2 conservative_mode_max_epochs=20
     conservative_gain_multiplier=10 target_cooldown_failures=3
     target_cooldown_epochs=10 staleness_conservative_divisor=2
-    staleness_extended_drought_divisor=4 module_starvation_failure_streak=15
-    drought_alarm_epochs="100"
+    staleness_extended_drought_divisor=4 drought_alarm_epochs="100"
 ```
 
 `drought_reset_after_epochs` renders as `"disabled"` when the operator has set
@@ -156,7 +155,7 @@ flowchart TD
     B -- evaluated --> D{Candidates > 0?}
     D -- yes --> E["Completed: productive"]
     D -- no --> F["Completed: genuinely empty"]
-    C -. excluded from .-> G[Drought / cooldown / starvation accounting]
+    C -. excluded from .-> G[Drought / cooldown accounting]
     F --> G
     E --> G
 ```

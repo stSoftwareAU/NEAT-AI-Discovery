@@ -32,7 +32,7 @@ use neat_ai_discovery::analysis::candidate_starvation::{
 use neat_ai_discovery::analysis::diagnostics::RejectionBreakdown;
 use neat_ai_discovery::analysis::diagnostics::rejection_reasons::{
     ALL_REJECTION_REASONS, REJECTION_BELOW_EXPECTED_GAIN_FLOOR, REJECTION_BELOW_MULTI_OP_FLOOR,
-    REJECTION_MODULE_STARVED, REJECTION_NO_ELIGIBLE_SOURCES, REJECTION_NON_POSITIVE_GAIN,
+    REJECTION_NO_ELIGIBLE_SOURCES, REJECTION_NO_TARGET_RECORDS, REJECTION_NON_POSITIVE_GAIN,
     REJECTION_TARGET_SATURATED,
 };
 use std::collections::HashSet;
@@ -81,7 +81,7 @@ fn starved_profile_triggers_widening() {
     // dominate — generation genuinely is the limiting factor.
     let b = breakdown(&[
         (REJECTION_NO_ELIGIBLE_SOURCES, 120),
-        (REJECTION_MODULE_STARVED, 30),
+        (REJECTION_NO_TARGET_RECORDS, 30),
         (REJECTION_TARGET_SATURATED, 45),
     ]);
     let signals = signals_from_breakdown(&b, 0);

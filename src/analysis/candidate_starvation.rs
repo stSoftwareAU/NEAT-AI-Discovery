@@ -92,7 +92,6 @@ pub const GATE_SIDE_REJECTION_REASONS: &[&str] = &[
 pub const UPSTREAM_REJECTION_REASONS: &[&str] = &[
     reasons::REJECTION_DUPLICATE_OF_FAILURE_CACHE,
     reasons::REJECTION_ADD_SYNAPSE_GATED,
-    reasons::REJECTION_MODULE_STARVED,
     reasons::REJECTION_CPU_PRE_REJECT_NO_SIGNAL,
     reasons::REJECTION_NO_SAMPLES,
     reasons::REJECTION_NO_TARGET_RECORDS,
@@ -346,7 +345,7 @@ mod tests {
         // Almost nothing reaches the gate; upstream filters dominate.
         let b = breakdown(&[
             (reasons::REJECTION_NO_ELIGIBLE_SOURCES, 120),
-            (reasons::REJECTION_MODULE_STARVED, 30),
+            (reasons::REJECTION_NO_TARGET_RECORDS, 30),
             (reasons::REJECTION_TARGET_SATURATED, 45),
         ]);
         let signals = signals_from_breakdown(&b, 0);

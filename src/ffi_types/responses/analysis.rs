@@ -97,7 +97,7 @@ pub struct AnalyzeParallelOutput {
     /// memory pressure, or missing GPU) and never evaluated the creature
     /// (Issue #1421). Such a pass returns 0 candidates but is NOT evidence of
     /// search exhaustion — the host must exclude it from drought / target
-    /// cooldown / module starvation accounting.
+    /// cooldown accounting.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub environmentally_disabled: Option<analysis::EnvironmentalDisableReason>,
     /// Consolidated explanation for a zero-candidate pass (Issue #1446).

@@ -2,8 +2,8 @@
 //! (Issue #1422).
 //!
 //! The adaptive-mitigation stack (conservative mode #1132, adaptive staleness
-//! #1203, adaptive cooldown #1204, target cooldown #1130, module starvation
-//! #1273, drought reset #1205) is tuned by a spread of environment variables.
+//! #1203, adaptive cooldown #1204, target cooldown #1130, drought reset #1205)
+//! is tuned by a spread of environment variables.
 //! Their *effective* values were previously invisible at runtime, so a drought
 //! could not be diagnosed without reading the source. This module snapshots
 //! every lever and emits a single structured log line at startup so a drought
@@ -41,9 +41,6 @@ pub struct DroughtMitigationConfig {
     /// Divisor applied to the staleness window during an extended drought
     /// (Issue #1203).
     pub staleness_extended_drought_divisor: u64,
-    /// Consecutive per-module failures before a module is starved out
-    /// (Issue #1273).
-    pub module_starvation_failure_streak: u32,
     /// Epochs-since-last-acceptance at which the creature-level drought alarm
     /// fires, or `None` when deliberately disabled (Issue #1424).
     pub drought_alarm_epochs: Option<u32>,
@@ -59,8 +56,7 @@ impl DroughtMitigationConfig {
     pub fn from_env() -> Self {
         use crate::analysis::constants::{
             TARGET_COOLDOWN_CONSECUTIVE_FAILURES, TARGET_COOLDOWN_EPOCHS,
-            module_starvation_failure_streak, staleness_conservative_divisor,
-            staleness_extended_drought_divisor,
+            staleness_conservative_divisor, staleness_extended_drought_divisor,
         };
 
         Self {
@@ -75,7 +71,6 @@ impl DroughtMitigationConfig {
                 .unwrap_or(TARGET_COOLDOWN_EPOCHS),
             staleness_conservative_divisor: staleness_conservative_divisor(),
             staleness_extended_drought_divisor: staleness_extended_drought_divisor(),
-            module_starvation_failure_streak: module_starvation_failure_streak(),
             drought_alarm_epochs: super::drought_alarm_epochs(),
             remove_neuron_drought_factor: super::remove_neuron_drought_factor(),
         }
@@ -115,7 +110,6 @@ pub fn log_effective_drought_mitigation_config() {
         target_cooldown_epochs = cfg.target_cooldown_epochs,
         staleness_conservative_divisor = cfg.staleness_conservative_divisor,
         staleness_extended_drought_divisor = cfg.staleness_extended_drought_divisor,
-        module_starvation_failure_streak = cfg.module_starvation_failure_streak,
         drought_alarm_epochs = cfg.drought_alarm_display().as_str(),
         remove_neuron_drought_factor = cfg.remove_neuron_drought_factor,
         "Issue #1422: effective drought-mitigation config"
