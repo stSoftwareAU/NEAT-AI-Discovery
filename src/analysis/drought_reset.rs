@@ -242,6 +242,39 @@ mod tests {
         assert!(tracker.drought_reset_tombstone().is_none());
     }
 
+    /// Issue #1790: the orchestrator sources `current_epoch` from the global
+    /// tracker's internal counter (`orchestration.rs`). Now that the counter
+    /// actually advances, the reset must fire at that non-zero epoch and stamp
+    /// the tombstone with it — not with `0`.
+    #[test]
+    fn reset_at_advanced_internal_epoch_stamps_non_zero_tombstone() {
+        let mut tracker = TargetFailureTracker::with_thresholds(2, 100);
+        // Three discovery passes' worth of epoch advance, then two failures
+        // recorded through the internal-counter path.
+        tracker.advance_epoch();
+        tracker.advance_epoch();
+        tracker.advance_epoch();
+        tracker.record_failure_now("A");
+        tracker.record_failure_now("A");
+        assert!(tracker.is_in_cooldown_now("A"));
+
+        // Mirrors `orchestration.rs`: epoch_for_reset = guard.current_epoch().
+        let epoch_for_reset = tracker.current_epoch();
+        assert_eq!(epoch_for_reset, 3, "the internal counter must have moved");
+
+        let out = maybe_perform_drought_reset(None, Some(&mut tracker), 10, 10, epoch_for_reset)
+            .expect("fires at the advanced epoch");
+
+        assert_eq!(out.reset_epoch, 3);
+        assert_eq!(out.target_cooldown_cleared, 1);
+        assert!(!tracker.is_in_cooldown_now("A"));
+        assert_eq!(
+            tracker.drought_reset_tombstone(),
+            Some(3),
+            "tombstone must carry the current non-zero epoch"
+        );
+    }
+
     #[test]
     fn fires_without_cache_supplied() {
         let mut tracker = populated_tracker();

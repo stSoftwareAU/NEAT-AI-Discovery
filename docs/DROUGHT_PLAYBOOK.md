@@ -219,7 +219,10 @@ Notes:
   staleness window (Issue #1203 — see below).
 - **Target cooldown** drops a target after
   `NEAT_AI_DISCOVERY_TARGET_COOLDOWN_FAILURES` consecutive failures and keeps
-  it out for `NEAT_AI_DISCOVERY_TARGET_COOLDOWN_EPOCHS` epochs.
+  it out for `NEAT_AI_DISCOVERY_TARGET_COOLDOWN_EPOCHS` epochs. The cooldown
+  clock is the tracker's own epoch counter, advanced exactly once per discovery
+  pass at the head of `analyze_all` (Issue #1790), so both the neuron and
+  synapse cooldown filters see one consistent epoch per pass.
 - **Conservative mode** is creature-level: the same module set is biased, the
   coordinated-structural gain floor is tightened by
   `NEAT_AI_DISCOVERY_CONSERVATIVE_GAIN_MULTIPLIER`× (default 10×), and high-risk
