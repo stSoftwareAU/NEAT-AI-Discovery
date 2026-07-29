@@ -337,8 +337,14 @@ fn apply_impact_discounting(
 /// Drop add-neuron candidates whose `expected_creature_score_gain` is below
 /// the absolute noise floor (Issue #1191).
 ///
-/// Reads the configured floor via [`min_expected_creature_score_gain`]
-/// (overridable through `NEAT_AI_DISCOVERY_MIN_EXPECTED_GAIN`). Each drop is
+/// Reads the configured floor via
+/// [`min_expected_gain_floor_for_neurons`](crate::analysis::constants::min_expected_gain_floor_for_neurons)
+/// (overridable through `NEAT_AI_DISCOVERY_MIN_EXPECTED_GAIN`). The gains
+/// reaching this filter are post-calibration, so the configured screen is
+/// converted into that scale by `NEURON_PREDICTION_CALIBRATION` first — before
+/// Issue #1778 it was compared raw, which made the floor 333× stricter than
+/// intended and unreachable by any candidate the pipeline can produce. Each
+/// drop is
 /// recorded against the global
 /// [`candidates_below_gain_floor_total`](crate::observability::GainFloorMetrics)
 /// counter so operators can see how many candidates the floor removes per
@@ -350,7 +356,7 @@ fn apply_impact_discounting(
 pub fn apply_min_expected_gain_floor_for_neurons(
     candidates: &mut Vec<CandidateNeuronJson>,
 ) -> usize {
-    let floor = crate::analysis::constants::min_expected_creature_score_gain();
+    let floor = crate::analysis::constants::min_expected_gain_floor_for_neurons();
     let before = candidates.len();
     candidates.retain(|c| c.expected_creature_score_gain >= floor);
     let dropped = before - candidates.len();

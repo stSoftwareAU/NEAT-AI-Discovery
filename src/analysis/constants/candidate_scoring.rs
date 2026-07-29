@@ -979,6 +979,25 @@ pub const ADAPTIVE_PROPOSAL_SIGN_FLIP_PROBABILITY: f32 = 0.15;
 /// Overridable via the `NEAT_AI_DISCOVERY_MIN_EXPECTED_GAIN` environment
 /// variable.
 ///
+/// ## Scale — this value is denominated in the *pre-calibration* prediction
+/// scale (Issue #1778)
+///
+/// This is the noise screen on the **raw prediction**: the smallest creature
+/// error reduction a candidate can predict before that prediction is dominated
+/// by round-off in the downstream evaluator. It is *not* denominated in the
+/// realised creature-score-delta scale that
+/// `expected_creature_score_gain` carries after
+/// [`NEURON_PREDICTION_CALIBRATION`] / [`SYNAPSE_PREDICTION_CALIBRATION`] have
+/// been applied.
+///
+/// Comparing it directly against a post-calibration gain — as the filters did
+/// before Issue #1778 — silently multiplied the screen's strictness by
+/// `1 / calibration`, i.e. 333× for add-neuron and 3333× for add-synapse, so no
+/// candidate the pipeline can produce could clear it. Call
+/// [`min_expected_gain_floor_for_neurons`] /
+/// [`min_expected_gain_floor_for_synapses`] at a post-calibration comparison
+/// site instead; they convert this value into the calibrated scale.
+///
 /// ## Valid Range
 /// Must be > 0.0. Values above 1e-3 may filter genuinely useful candidates.
 /// Values below 1e-8 defeat the purpose of the floor.
@@ -1015,6 +1034,81 @@ pub fn min_expected_creature_score_gain() -> f32 {
             MIN_EXPECTED_CREATURE_SCORE_GAIN_FLOOR,
             MIN_EXPECTED_CREATURE_SCORE_GAIN_CEILING,
         )
+}
+
+/// Absolute backstop under the calibrated gain floor (Issue #1778).
+///
+/// [`calibrated_gain_floor`] converts the pre-calibration noise screen into the
+/// calibrated scale by multiplying by the per-type calibration constant. This
+/// backstop stops that conversion from ever opening the screen wider than the
+/// band in which the estimate is known to be uncorrelated with the outcome.
+///
+/// Evidence (`docs/analysis/candidate-rate-diagnosis-1777.md`): the production
+/// coordinated `change-squash` that estimated `4.17e-10` realised `-8.65e-4` —
+/// an actively harmful change whose estimate carried no usable signal, and the
+/// exact false acceptance the Issue #1740 guard tests exist to prevent. `1e-9`
+/// sits above that whole collapsed band while remaining two orders below the
+/// smallest realised *accepted* delta (`1.95e-7`), so it rejects noise without
+/// touching the achievable band.
+///
+/// ## Valid Range
+/// Must be > 0.0 and well below the smallest realised accepted delta
+/// (`~1.95e-7`). Values above 1e-7 would re-reject the achievable band.
+pub const GAIN_FLOOR_NOISE_BACKSTOP: f32 = 1e-9;
+
+/// Convert the pre-calibration noise screen into the calibrated scale
+/// (Issue #1778).
+///
+/// `expected_creature_score_gain` reaches the add-neuron / add-synapse floor
+/// filters *after* the fixed per-type calibration constant has rescaled it from
+/// the prediction scale into the realised creature-score-delta scale. The
+/// screen itself ([`min_expected_creature_score_gain`]) is denominated in the
+/// prediction scale, so it must be rescaled the same way before the comparison
+/// is meaningful.
+///
+/// Only the **fixed, type-level** calibration constant is divided out here. The
+/// per-creature calibration *correction* (`calibration_correction.rs`, Issue
+/// #1131) stays on the candidate side deliberately: it is evidence that *this
+/// creature's* predictions over-shoot, so tightening acceptance in response is
+/// the intended behaviour. The base constant is not evidence about a candidate
+/// at all — it differs 10× between add-neuron and add-synapse purely by
+/// candidate *type*, and leaving it only on the candidate side made the floor
+/// 10× stricter for synapses for no reason connected to their merit.
+///
+/// Returns `0.0` when the screen is configured off (`0.0` is the documented
+/// "disable the floor" override). A `calibration` outside `(0.0, 1.0]` is not a
+/// units conversion, so the unconverted screen is returned rather than a
+/// silently widened one.
+#[must_use]
+pub fn calibrated_gain_floor(calibration: f32) -> f32 {
+    let configured = min_expected_creature_score_gain();
+    if configured <= 0.0 {
+        return 0.0;
+    }
+    if !calibration.is_finite() || calibration <= 0.0 || calibration > 1.0 {
+        return configured;
+    }
+    (configured * calibration).max(GAIN_FLOOR_NOISE_BACKSTOP)
+}
+
+/// Effective post-calibration expected-gain floor for add-neuron candidates
+/// (Issue #1778).
+///
+/// [`calibrated_gain_floor`] applied to [`NEURON_PREDICTION_CALIBRATION`]:
+/// `1e-5 × 0.003 = 3e-8` at the default screen.
+#[must_use]
+pub fn min_expected_gain_floor_for_neurons() -> f32 {
+    calibrated_gain_floor(NEURON_PREDICTION_CALIBRATION)
+}
+
+/// Effective post-calibration expected-gain floor for add-synapse candidates
+/// (Issue #1778).
+///
+/// [`calibrated_gain_floor`] applied to [`SYNAPSE_PREDICTION_CALIBRATION`]:
+/// `1e-5 × 0.0003 = 3e-9` at the default screen.
+#[must_use]
+pub fn min_expected_gain_floor_for_synapses() -> f32 {
+    calibrated_gain_floor(SYNAPSE_PREDICTION_CALIBRATION)
 }
 
 // =============================================================================

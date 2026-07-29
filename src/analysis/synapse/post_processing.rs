@@ -25,8 +25,13 @@ use crate::analysis::scoring::calibration_correction::{
 /// the absolute noise floor (Issue #1191).
 ///
 /// Reads the configured floor via
-/// [`min_expected_creature_score_gain`](crate::analysis::constants::min_expected_creature_score_gain)
-/// (overridable through `NEAT_AI_DISCOVERY_MIN_EXPECTED_GAIN`). Each drop is
+/// [`min_expected_gain_floor_for_synapses`](crate::analysis::constants::min_expected_gain_floor_for_synapses)
+/// (overridable through `NEAT_AI_DISCOVERY_MIN_EXPECTED_GAIN`). The gains
+/// reaching this filter are post-calibration, so the configured screen is
+/// converted into that scale by `SYNAPSE_PREDICTION_CALIBRATION` first — before
+/// Issue #1778 it was compared raw, which made the floor 3333× stricter than
+/// intended and unreachable by any candidate the pipeline can produce. Each
+/// drop is
 /// recorded against the global
 /// [`candidates_below_gain_floor_total`](crate::observability::GainFloorMetrics)
 /// counter so operators can see how many candidates the floor removes per
@@ -38,7 +43,7 @@ use crate::analysis::scoring::calibration_correction::{
 pub fn apply_min_expected_gain_floor_for_synapses(
     candidates: &mut Vec<CandidateSynapseJson>,
 ) -> usize {
-    let floor = crate::analysis::constants::min_expected_creature_score_gain();
+    let floor = crate::analysis::constants::min_expected_gain_floor_for_synapses();
     let before = candidates.len();
     candidates.retain(|c| c.expected_creature_score_gain >= floor);
     let dropped = before - candidates.len();
