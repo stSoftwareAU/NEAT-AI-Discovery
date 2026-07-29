@@ -634,10 +634,24 @@ Two changes make that path safe:
 - **Escape hatch** — once `discoveryOutcomeLog` shows 3 consecutive empty
   passes, `previousNeuronFingerprints` is ignored and the full focus set is
   re-analysed against the new recordings. A `tracing::warn!` names the bypass.
-- **Visible drop** — when every focus neuron is skipped, the pass records one
-  `fingerprint_unchanged` rejection per skipped neuron. The count reaches the
-  operator through `zeroCandidateSummary.rejectionBreakdown` (there is no
-  synapse / neuron metadata on that path) and feeds the starvation classifier.
+- **Visible drop** — the pass records one `fingerprint_unchanged` rejection per
+  skipped neuron. The count reaches the operator through
+  `zeroCandidateSummary.rejectionBreakdown` (there is no synapse / neuron
+  metadata on a whole-pass skip) and feeds the starvation classifier.
+
+##### Partial Skips Are Counted Too (Issue #1801)
+
+Issue #1781 counted the drop only when **every** focus neuron was unchanged. The
+far more common **partial** skip — the cache drops some focus neurons and the
+pass proceeds with the rest — was silent, so those never-analysed neurons read as
+gate rejections in the candidate-rate diagnosis.
+
+Every `analyzeAll` return path now reports `fingerprint_unchanged` equal to
+`fingerprintCacheHits`, whole-pass and partial alike. The paths are mutually
+exclusive, so the same hits are never counted twice, and a pass with zero cache
+hits records no entry at all. Because `fingerprint_unchanged` is an *upstream*
+rejection reason, the starvation classifier attributes the skip to generation
+(the neuron was never analysed), not to over-rejection at the gate.
 
 #### Within-Batch Same-Target Short-Circuit (Issue #1796)
 

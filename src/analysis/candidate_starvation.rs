@@ -458,6 +458,34 @@ mod tests {
         assert!(recommend_widening(class));
     }
 
+    /// Issue #1801: focus neurons dropped by a *partial* fingerprint skip were
+    /// never analysed, so they must land in the upstream (starvation-evidence)
+    /// bucket and never be mistaken for gate rejections.
+    #[test]
+    fn partial_fingerprint_skip_counts_as_upstream_not_gate_rejection() {
+        let b = breakdown(&[
+            (reasons::REJECTION_FINGERPRINT_UNCHANGED, 7),
+            (reasons::REJECTION_BELOW_EXPECTED_GAIN_FLOOR, 2),
+        ]);
+        let signals = signals_from_breakdown(&b, 0);
+        assert_eq!(
+            signals.upstream_rejections, 7,
+            "a partial fingerprint skip is pre-gate evidence"
+        );
+        assert_eq!(
+            signals.gate_side_rejections, 2,
+            "only the gain-floor rejections reached the gate"
+        );
+
+        let class = classify(&signals, &StarvationConfig::default());
+        assert_eq!(
+            class,
+            StarvationClass::CandidateStarved,
+            "unanalysed focus neurons outnumbering the formed proposals is starvation evidence"
+        );
+        assert!(recommend_widening(class));
+    }
+
     /// A tie is not a majority: equal upstream and formed counts leave the
     /// formed-proposal floor in charge.
     #[test]
