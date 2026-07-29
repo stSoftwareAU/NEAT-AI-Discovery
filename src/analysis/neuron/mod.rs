@@ -200,6 +200,7 @@ pub fn analyze_neurons_with_cache_and_gpu_queue(
     // long-run observability can track the savings. `filter_cooldown_targets`
     // already emits an info-level log on non-zero counts; this line ties the
     // counter to the neuron analysis phase for downstream diagnostics.
+    let cooldown_skipped = prep.cooldown_skipped;
     if prep.cooldown_skipped > 0 {
         tracing::debug!(
             phase = "neuron",
@@ -469,5 +470,10 @@ pub fn analyze_neurons_with_cache_and_gpu_queue(
         diagnostics: &diagnostics,
         gpu_used,
     };
-    post_processing::build_neuron_results(&result_params)
+    let mut result = post_processing::build_neuron_results(&result_params)?;
+    // Issue #1791: surface the real cooldown filter return value so the drought
+    // diagnostic's `target_cooldown_skipped` metric stops reporting a constant
+    // `0` and the suppression becomes observable in production pass logs.
+    result.metadata.target_cooldown_skipped = cooldown_skipped;
+    Ok(result)
 }

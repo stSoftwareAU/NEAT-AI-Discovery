@@ -159,6 +159,21 @@ pub struct SynapseAnalysisMetadata {
     /// recording failure from genuine search exhaustion.
     pub insufficient_recording:
         Option<crate::analysis::insufficient_recording::InsufficientRecordingDiagnostic>,
+
+    /// Number of focus targets this phase dropped because they were in
+    /// cooldown (Issue #1791).
+    ///
+    /// The real return value of `apply_target_cooldown`, surfaced so
+    /// `analyze_all` can feed the drought diagnostic's
+    /// `target_cooldown_skipped` metric instead of a hard-coded `0`.
+    pub target_cooldown_skipped: u32,
+
+    /// One verdict per focus target for this pass (Issue #1791).
+    ///
+    /// Snapshotted from the per-target diagnostics at result finalisation and
+    /// flushed — merged with the neuron phase's list — to the global
+    /// target-failure tracker exactly once per pass by `analyze_all`.
+    pub target_pass_outcomes: Vec<crate::analysis::target_pass_outcomes::TargetPassOutcome>,
 }
 
 /// Metadata about neuron analysis for diagnostics and observability.
@@ -237,6 +252,16 @@ pub struct NeuronAnalysisMetadata {
     /// See `SynapseAnalysisMetadata::insufficient_recording` for full docs.
     pub insufficient_recording:
         Option<crate::analysis::insufficient_recording::InsufficientRecordingDiagnostic>,
+
+    /// Focus targets dropped for cooldown by this phase (Issue #1791).
+    ///
+    /// See `SynapseAnalysisMetadata::target_cooldown_skipped` for full docs.
+    pub target_cooldown_skipped: u32,
+
+    /// Per-target verdicts for this pass (Issue #1791).
+    ///
+    /// See `SynapseAnalysisMetadata::target_pass_outcomes` for full docs.
+    pub target_pass_outcomes: Vec<crate::analysis::target_pass_outcomes::TargetPassOutcome>,
 }
 
 /// Result of synapse analysis

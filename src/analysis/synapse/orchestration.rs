@@ -62,7 +62,7 @@ pub(crate) fn analyze_synapses_with_cache_impl(
     // before we incur any per-target analysis cost.
     // Issue #1204: thread the discovery outcome log so cooldown relaxes during
     // a drought when mode/drought signals are available.
-    let _cooldown_skipped =
+    let cooldown_skipped =
         apply_target_cooldown(&mut focus_order, input.discovery_outcome_log.as_ref());
 
     log_analysis_start(
@@ -191,7 +191,7 @@ pub(crate) fn analyze_synapses_with_cache_impl(
         );
     }
     let mcmc_summary = mcmc_tracker.build_summary();
-    finalise_synapse_results(FinaliseParams {
+    let mut result = finalise_synapse_results(FinaliseParams {
         collectors,
         completed_count,
         total_focus_count,
@@ -201,7 +201,11 @@ pub(crate) fn analyze_synapses_with_cache_impl(
         cache,
         order_map: &ctx.order_map,
         mcmc_summary,
-    })
+    })?;
+    // Issue #1791: surface the real cooldown filter return value so the drought
+    // diagnostic's `target_cooldown_skipped` metric reflects actual suppression.
+    result.metadata.target_cooldown_skipped = cooldown_skipped;
+    Ok(result)
 }
 
 /// Drop focus targets in cooldown via the global target-failure tracker

@@ -26,10 +26,12 @@
 //!
 //! # Global Tracker
 //!
-//! A process-global tracker is exposed via [`global_tracker`]. The FFI
-//! `record_discovery_result` hook (and analogues inside Rust) should forward
-//! per-target pass/fail signals to the global tracker so preparation layers
-//! consult a consistent view.
+//! A process-global tracker is exposed via [`global_tracker`]. Its per-target
+//! pass/fail signals are written by
+//! [`crate::analysis::target_pass_outcomes::flush_target_pass_outcomes`], which
+//! `analysis::analyze_all` calls exactly once per discovery pass with the merged
+//! neuron and synapse verdicts (Issue #1791) — one record per target per pass,
+//! never per candidate, under a single lock.
 //!
 //! Its epoch is advanced by [`advance_global_epoch`], called exactly once per
 //! discovery pass at the head of `analysis::analyze_all` (Issue #1790) —
@@ -462,6 +464,26 @@ pub fn advance_global_epoch() -> u64 {
         Err(poisoned) => poisoned.into_inner(),
     };
     guard.advance_epoch()
+}
+
+/// Drop every per-target state held by the process-global tracker, preserving
+/// the epoch counter (Issue #1791).
+///
+/// Now that the tracker is genuinely populated, its state outlives a single
+/// creature within a process. Callers that reuse one process across unrelated
+/// populations — and tests that share a binary and reuse synthetic target UUIDs
+/// such as `output-0` — need an explicit way to start from a clean slate.
+///
+/// Returns the number of target states removed.
+pub fn reset_global_tracker() -> usize {
+    let mut guard = match global_tracker().lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    let removed = guard.states.len();
+    guard.states.clear();
+    guard.tombstone_reset_epoch = None;
+    removed
 }
 
 #[cfg(test)]

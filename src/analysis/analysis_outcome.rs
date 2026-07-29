@@ -79,19 +79,35 @@ impl AnalysisOutcome {
     /// count — even when that count is zero (true search exhaustion).
     #[must_use]
     pub fn from_result(result: &AnalyzeAllResult) -> Self {
-        if result.memory_budget_exceeded {
+        Self::from_pass_flags(
+            result.memory_budget_exceeded,
+            result.memory_pressure_cancelled,
+            Self::count_candidates(result),
+        )
+    }
+
+    /// Classify a pass from its environmental gate flags (Issue #1791).
+    ///
+    /// Shares its logic with [`Self::from_result`] so callers that hold the raw
+    /// flags — `analyze_all` before it has assembled its `AnalyzeAllResult` —
+    /// classify a pass identically to callers that hold the finished result.
+    #[must_use]
+    pub fn from_pass_flags(
+        memory_budget_exceeded: bool,
+        memory_pressure_cancelled: bool,
+        candidates: usize,
+    ) -> Self {
+        if memory_budget_exceeded {
             return Self::EnvironmentallyDisabled {
                 reason: EnvironmentalDisableReason::MemoryGated,
             };
         }
-        if result.memory_pressure_cancelled {
+        if memory_pressure_cancelled {
             return Self::EnvironmentallyDisabled {
                 reason: EnvironmentalDisableReason::MemoryPressure,
             };
         }
-        Self::Completed {
-            candidates: Self::count_candidates(result),
-        }
+        Self::Completed { candidates }
     }
 
     /// Outcome for the GPU-unavailable early return, which surfaces as an

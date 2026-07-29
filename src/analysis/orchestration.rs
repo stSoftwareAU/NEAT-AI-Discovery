@@ -1334,6 +1334,40 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
         neu.metadata.rolling_success_rate = rolling_success_rate;
     }
 
+    // Issue #1791: flush this pass's per-target outcomes to the global
+    // target-failure tracker. The tracker was read by both preparation layers
+    // but never written, so `is_empty()` short-circuited every cooldown filter
+    // and the suppression was permanently inert.
+    //
+    // One flush per pass, under a single lock, merging both modules' verdicts:
+    // the tracker is per-target-per-*pass*, and the epoch only advances once per
+    // pass (Issue #1790), so recording each module separately would grow a
+    // target's streak twice as fast as the cooldown window can expire it.
+    let mut pass_target_outcomes: Vec<super::target_pass_outcomes::TargetPassOutcome> = Vec::new();
+    let mut target_cooldown_skipped = 0u32;
+    let mut pass_candidates = 0usize;
+    if let Some(syn) = synapse_result.as_ref() {
+        pass_target_outcomes.extend(syn.metadata.target_pass_outcomes.iter().cloned());
+        target_cooldown_skipped =
+            target_cooldown_skipped.saturating_add(syn.metadata.target_cooldown_skipped);
+        pass_candidates = pass_candidates.saturating_add(syn.metadata.candidates_returned);
+    }
+    if let Some(neu) = neuron_result.as_ref() {
+        pass_target_outcomes.extend(neu.metadata.target_pass_outcomes.iter().cloned());
+        target_cooldown_skipped =
+            target_cooldown_skipped.saturating_add(neu.metadata.target_cooldown_skipped);
+        pass_candidates = pass_candidates.saturating_add(neu.metadata.candidates_returned);
+    }
+    let pass_analysis_outcome = super::AnalysisOutcome::from_pass_flags(
+        memory_budget_exceeded,
+        crate::cancellation::is_memory_pressure_cancelled(),
+        pass_candidates,
+    );
+    super::target_pass_outcomes::flush_target_pass_outcomes(
+        &pass_target_outcomes,
+        &pass_analysis_outcome,
+    );
+
     // Issue #1202: Drought diagnostic. When the trailing-failure streak in the
     // caller-supplied outcome log crosses the configured threshold, emit a
     // single structured warn log and attach the payload to both metadata
@@ -1390,7 +1424,10 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
             candidate_cache: None,
             target_tracker: tracker_snapshot.as_ref(),
             current_epoch,
-            target_cooldown_skipped: 0,
+            // Issue #1791: the real per-phase filter return value, no longer a
+            // hard-coded `0`. A permanently-zero value across a fleet is the
+            // production signature that tracker population has regressed.
+            target_cooldown_skipped,
             rejection_breakdown,
             candidates_returned,
             starvation_tracker: None,

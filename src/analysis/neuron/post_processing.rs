@@ -230,6 +230,12 @@ pub(crate) fn build_neuron_results(
             creature_drought_alarm: None,
             // Issue #1444: populated by orchestration's fail-fast gate only.
             insufficient_recording: None,
+            // Issue #1791: set by `analyze_neurons_*` from the preparation
+            // phase's real `apply_target_cooldown` return value.
+            target_cooldown_skipped: 0,
+            // Issue #1791: one verdict per target, flushed to the global
+            // cooldown tracker once per pass by `analyze_all`.
+            target_pass_outcomes: params.diagnostics.pass_outcomes(),
         },
     })
 }

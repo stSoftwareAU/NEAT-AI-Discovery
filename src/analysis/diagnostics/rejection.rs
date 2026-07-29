@@ -318,6 +318,28 @@ impl TargetDiagnostics {
         }
     }
 
+    /// Snapshot one per-target verdict per target for the global cooldown
+    /// tracker (Issue #1791).
+    ///
+    /// A target counts as evaluated once at least one candidate source was
+    /// actually tried against it. Targets the pass never reached (deadline,
+    /// cooldown) contribute no evidence and must not move their streak.
+    pub(crate) fn pass_outcomes(
+        &self,
+    ) -> Vec<crate::analysis::target_pass_outcomes::TargetPassOutcome> {
+        self.entries
+            .iter()
+            .map(|entry_ref| {
+                let entry = entry_ref.value();
+                crate::analysis::target_pass_outcomes::TargetPassOutcome::new(
+                    entry.target_uuid.clone(),
+                    entry.had_candidate,
+                    entry.evaluated_candidates > 0,
+                )
+            })
+            .collect()
+    }
+
     pub(crate) fn emit_logs(&self) {
         if !self.log_enabled {
             return;

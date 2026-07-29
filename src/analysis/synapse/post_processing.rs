@@ -737,6 +737,12 @@ pub(crate) fn build_metadata(
         creature_drought_alarm: None,
         // Issue #1444: populated by orchestration's fail-fast gate only.
         insufficient_recording: None,
+        // Issue #1791: set by `analyse_synapses` from the real
+        // `apply_target_cooldown` return value.
+        target_cooldown_skipped: 0,
+        // Issue #1791: set by `finalise_synapse_results` from the per-target
+        // diagnostics.
+        target_pass_outcomes: Vec::new(),
     }
 }
 
