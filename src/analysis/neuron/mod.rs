@@ -230,6 +230,11 @@ pub fn analyze_neurons_with_cache_and_gpu_queue(
     let within_batch_failures =
         Arc::new(crate::analysis::within_batch_failures::WithinBatchFailureTracker::new());
 
+    // Issue #1798: per-batch counters for the pre-evaluation drop sites. Same
+    // lifetime and sharing model as the within-batch tracker above.
+    let evaluation_drops =
+        Arc::new(crate::analysis::evaluation_drops::EvaluationDropCounters::new());
+
     let focus_order_arc = Arc::new(focus_order);
     let ordered_neurons_arc = Arc::new(ordered_neurons);
     let order_map_arc = Arc::new(prep.order_map);
@@ -416,6 +421,7 @@ pub fn analyze_neurons_with_cache_and_gpu_queue(
                     scan_plan: &scan_plan,
                     target_saturation,
                     within_batch_failures: &within_batch_failures,
+                    evaluation_drops: &evaluation_drops,
                 };
                 evaluation::evaluate_neuron_candidates(
                     &work_results,
@@ -477,6 +483,14 @@ pub fn analyze_neurons_with_cache_and_gpu_queue(
     // evaluation loop stays allocation-free.
     crate::analysis::within_batch_failures::fold_within_batch_skips(
         &within_batch_failures,
+        &mut result.metadata.rejection_breakdown,
+    );
+    // Issue #1798: same treatment for the pre-evaluation drop sites — no
+    // samples built for the source, or a constant source carrying no signal.
+    // Folded once from the aggregate counters, so the per-candidate loop stays
+    // plain integer increments.
+    crate::analysis::evaluation_drops::fold_evaluation_drops(
+        &evaluation_drops,
         &mut result.metadata.rejection_breakdown,
     );
     // Issue #1791: surface the real cooldown filter return value so the drought

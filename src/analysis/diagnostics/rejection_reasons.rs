@@ -111,6 +111,15 @@ pub const REJECTION_CPU_PRE_REJECT_NO_SIGNAL: &str = "cpu_pre_reject_no_signal";
 /// Synapse: no overlapping discovery samples between source and target.
 pub const REJECTION_NO_SAMPLES: &str = "no_samples";
 
+/// Neuron: the source neuron's activation carried no variance across the
+/// discovery samples, so `compute_source_variance_discount` collapsed to
+/// (near) zero and the candidate was dropped before evaluation (Issue #1798).
+///
+/// Distinct from [`REJECTION_NO_SAMPLES`]: the source exists and *was*
+/// sampled, it just carries no signal — a constant source cannot explain any
+/// variation in the target's error, so no weight fitted to it is meaningful.
+pub const REJECTION_ZERO_SOURCE_VARIANCE: &str = "zero_source_variance";
+
 /// Synapse: GPU evaluation reported zero consistent improvement.
 pub const REJECTION_ZERO_IMPROVEMENT: &str = "zero_improvement";
 
@@ -237,6 +246,7 @@ pub const ALL_REJECTION_REASONS: &[&str] = &[
     REJECTION_COORDINATED_COLLAPSE_BYPASS_WEIGHT_BELOW_FLOOR,
     REJECTION_CPU_PRE_REJECT_NO_SIGNAL,
     REJECTION_NO_SAMPLES,
+    REJECTION_ZERO_SOURCE_VARIANCE,
     REJECTION_ZERO_IMPROVEMENT,
     REJECTION_BELOW_THRESHOLD,
     REJECTION_NO_TARGET_RECORDS,
@@ -408,6 +418,9 @@ fn friendly_reason(reason: &str) -> String {
             "CPU pre-reject screen (no usable signal before GPU submit)".to_string()
         }
         REJECTION_NO_SAMPLES => "no overlapping discovery samples".to_string(),
+        REJECTION_ZERO_SOURCE_VARIANCE => {
+            "constant source activation (no variance to fit a weight to)".to_string()
+        }
         REJECTION_ZERO_IMPROVEMENT => "zero consistent improvement in GPU stats".to_string(),
         REJECTION_BELOW_THRESHOLD => "expected-improvement per-target threshold".to_string(),
         REJECTION_NO_TARGET_RECORDS => "no target activation records".to_string(),
@@ -555,6 +568,27 @@ mod tests {
         assert!(
             summary.contains("per-target cooldown"),
             "summary should name the cooldown filter, got: {summary}"
+        );
+    }
+
+    /// Issue #1798: zero source variance is a distinct cause from
+    /// `no_samples` — the source was sampled, it just carries no signal. Pin
+    /// the stable name, its presence in the documented list, and that it does
+    /// not collide with the no-samples reason.
+    #[test]
+    fn zero_source_variance_is_a_documented_reason() {
+        assert_eq!(REJECTION_ZERO_SOURCE_VARIANCE, "zero_source_variance");
+        assert_ne!(REJECTION_ZERO_SOURCE_VARIANCE, REJECTION_NO_SAMPLES);
+        assert!(
+            ALL_REJECTION_REASONS.contains(&REJECTION_ZERO_SOURCE_VARIANCE),
+            "REJECTION_ZERO_SOURCE_VARIANCE missing from ALL_REJECTION_REASONS"
+        );
+        let mut b = RejectionBreakdown::new();
+        b.record_many(REJECTION_ZERO_SOURCE_VARIANCE, 6);
+        let summary = top_level_summary(&b, Some(6)).expect("summary");
+        assert!(
+            summary.contains("constant source activation"),
+            "summary should name the constant source, got: {summary}"
         );
     }
 

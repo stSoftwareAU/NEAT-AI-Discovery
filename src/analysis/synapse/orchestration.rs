@@ -103,6 +103,10 @@ pub(crate) fn analyze_synapses_with_cache_impl(
     // duration of this orchestration call only.
     let within_batch_failures =
         Arc::new(crate::analysis::within_batch_failures::WithinBatchFailureTracker::new());
+    // Issue #1798: per-batch counters for the evaluation drop sites. Same
+    // lifetime and sharing model as the within-batch tracker above.
+    let evaluation_drops =
+        Arc::new(crate::analysis::evaluation_drops::EvaluationDropCounters::new());
     let ctx = Arc::new(target_analysis::TargetAnalysisContext {
         ordered_neurons: Arc::new(lookups.ordered_neurons),
         order_map: Arc::new(lookups.order_map),
@@ -124,6 +128,7 @@ pub(crate) fn analyze_synapses_with_cache_impl(
         temperature: input.temperature,
         mcmc_tracker: mcmc_tracker.clone(),
         within_batch_failures: within_batch_failures.clone(),
+        evaluation_drops: evaluation_drops.clone(),
     });
 
     // Phase 6: Process each focus neuron in parallel — thread-local collection (Issue #744)
@@ -208,6 +213,14 @@ pub(crate) fn analyze_synapses_with_cache_impl(
     // result-collection loop stays allocation-free.
     crate::analysis::within_batch_failures::fold_within_batch_skips(
         &within_batch_failures,
+        &mut result.metadata.rejection_breakdown,
+    );
+    // Issue #1798: same treatment for the evaluation drop site — a work item
+    // whose samples were all filtered out never reaches the accept gate.
+    // Folded once from the aggregate counter, so the per-candidate
+    // result-collection loop stays plain integer increments.
+    crate::analysis::evaluation_drops::fold_evaluation_drops(
+        &evaluation_drops,
         &mut result.metadata.rejection_breakdown,
     );
     // Issue #1791: surface the real cooldown filter return value so the drought

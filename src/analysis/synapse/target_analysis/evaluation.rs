@@ -113,7 +113,13 @@ pub(crate) fn collect_and_process_helpful_results(
             }
 
             let full_total_count = work.samples.len() as u32;
-            if full_total_count == 0 {
+            // Issue #1798: count the drop (`no_samples`) instead of dropping
+            // silently — the candidate never reaches the accept gate, so the
+            // starvation classifier could not otherwise see it.
+            if ctx
+                .evaluation_drops
+                .drop_for_empty_samples(work.samples.as_slice())
+            {
                 continue;
             }
 

@@ -73,6 +73,10 @@ pub(crate) struct TargetAnalysisContext<'a> {
     /// skipped for the remainder of the batch.
     pub within_batch_failures:
         Arc<crate::analysis::within_batch_failures::WithinBatchFailureTracker>,
+    /// Issue #1798: per-batch counters for the evaluation drop sites, shared
+    /// across rayon workers and folded into the metadata rejection breakdown
+    /// once for this surface.
+    pub evaluation_drops: Arc<crate::analysis::evaluation_drops::EvaluationDropCounters>,
 }
 
 /// Results from analysing a single target neuron.
