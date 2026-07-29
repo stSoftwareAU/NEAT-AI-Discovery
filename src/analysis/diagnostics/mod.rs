@@ -161,6 +161,79 @@ mod tests {
         assert!(output_entry.had_candidate);
     }
 
+    /// Issue #1791: the synapse per-target verdicts fed to the global cooldown
+    /// tracker. One verdict per target regardless of candidate count.
+    #[test]
+    fn test_target_diagnostics_pass_outcomes() {
+        let diagnostics = TargetDiagnostics::new_for_tests(&["accepted", "rejected", "untouched"]);
+
+        diagnostics.record_candidate_attempt("accepted", true);
+        diagnostics.mark_candidate_selected("accepted");
+        // Three rejected candidates for one target is still one verdict.
+        for _ in 0..3 {
+            diagnostics.record_candidate_attempt("rejected", true);
+        }
+
+        let outcomes = diagnostics.pass_outcomes();
+        assert_eq!(
+            outcomes.len(),
+            3,
+            "one verdict per target, never per candidate"
+        );
+
+        let accepted = outcomes
+            .iter()
+            .find(|o| o.target_uuid == "accepted")
+            .unwrap();
+        assert!(accepted.had_candidate && accepted.evaluated);
+
+        let rejected = outcomes
+            .iter()
+            .find(|o| o.target_uuid == "rejected")
+            .unwrap();
+        assert!(!rejected.had_candidate && rejected.evaluated);
+
+        let untouched = outcomes
+            .iter()
+            .find(|o| o.target_uuid == "untouched")
+            .unwrap();
+        assert!(
+            !untouched.evaluated,
+            "a target the pass never reached carries no failure evidence"
+        );
+    }
+
+    /// Issue #1791: the neuron per-target verdicts. Pre-analysis filters never
+    /// evaluated the target, so they must not count as evaluated.
+    #[test]
+    fn test_neuron_diagnostics_pass_outcomes() {
+        let diagnostics =
+            NeuronDiagnostics::new_for_tests(&["accepted", "rejected", "hidden", "untouched"]);
+
+        diagnostics.record_candidate_attempt("accepted", true);
+        diagnostics.mark_candidate_selected("accepted");
+        diagnostics.record_candidate_attempt("rejected", true);
+        diagnostics.record_candidate_attempt("hidden", true);
+        diagnostics.mark_hidden_filtered("hidden");
+
+        let outcomes = diagnostics.pass_outcomes();
+        let by_uuid = |uuid: &str| {
+            outcomes
+                .iter()
+                .find(|o| o.target_uuid == uuid)
+                .unwrap()
+                .clone()
+        };
+
+        assert!(by_uuid("accepted").had_candidate);
+        assert!(by_uuid("rejected").evaluated && !by_uuid("rejected").had_candidate);
+        assert!(
+            !by_uuid("hidden").evaluated,
+            "a pre-analysis filtered target must not extend its streak"
+        );
+        assert!(!by_uuid("untouched").evaluated);
+    }
+
     #[test]
     fn test_require_unique_focus_empty() {
         let result = require_unique_focus(&[], "test");
