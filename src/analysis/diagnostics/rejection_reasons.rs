@@ -206,6 +206,17 @@ pub const REJECTION_FINGERPRINT_UNCHANGED: &str = "fingerprint_unchanged";
 /// with the aggregate skip logs.
 pub const REJECTION_WITHIN_BATCH_TARGET_SHORT_CIRCUIT: &str = "within_batch_target_short_circuit";
 
+/// Focus target was dropped by the per-target cooldown filter because it had
+/// failed on too many consecutive passes (Issue #1130, counted from Issue
+/// #1797).
+///
+/// The whole target is removed from the focus order *before* any per-target
+/// analysis cost is incurred, so none of its candidates are ever generated or
+/// evaluated. One count is recorded per skipped target, per surface (synapse /
+/// neuron), from that surface's `apply_target_cooldown` return value — the same
+/// number the cooldown filter's aggregate log reports.
+pub const REJECTION_TARGET_COOLDOWN_SKIPPED: &str = "target_cooldown_skipped";
+
 /// All documented rejection reason names. Used for assertions and
 /// documentation. Keep this list in sync with the constants above.
 pub const ALL_REJECTION_REASONS: &[&str] = &[
@@ -240,6 +251,7 @@ pub const ALL_REJECTION_REASONS: &[&str] = &[
     REJECTION_REMOVE_NEURON_DROUGHT_DEPRIORITISED,
     REJECTION_FINGERPRINT_UNCHANGED,
     REJECTION_WITHIN_BATCH_TARGET_SHORT_CIRCUIT,
+    REJECTION_TARGET_COOLDOWN_SKIPPED,
 ];
 
 // =============================================================================
@@ -424,6 +436,9 @@ fn friendly_reason(reason: &str) -> String {
             "within-batch same-target short-circuit after {} failure(s) for the target",
             crate::analysis::constants::WITHIN_BATCH_TARGET_FAILURE_LIMIT
         ),
+        REJECTION_TARGET_COOLDOWN_SKIPPED => {
+            "per-target cooldown after repeated consecutive failures".to_string()
+        }
         other => other.replace('_', " "),
     }
 }
@@ -521,6 +536,25 @@ mod tests {
         assert!(
             summary.contains("within-batch same-target short-circuit"),
             "summary should name the short-circuit, got: {summary}"
+        );
+    }
+
+    /// Issue #1797: the target-cooldown reason was documented in
+    /// `target_failure_tracker` but never defined or emitted. Pin both the
+    /// stable name and its presence in the documented list.
+    #[test]
+    fn target_cooldown_skipped_is_a_documented_reason() {
+        assert_eq!(REJECTION_TARGET_COOLDOWN_SKIPPED, "target_cooldown_skipped");
+        assert!(
+            ALL_REJECTION_REASONS.contains(&REJECTION_TARGET_COOLDOWN_SKIPPED),
+            "REJECTION_TARGET_COOLDOWN_SKIPPED missing from ALL_REJECTION_REASONS"
+        );
+        let mut b = RejectionBreakdown::new();
+        b.record_many(REJECTION_TARGET_COOLDOWN_SKIPPED, 4);
+        let summary = top_level_summary(&b, Some(4)).expect("summary");
+        assert!(
+            summary.contains("per-target cooldown"),
+            "summary should name the cooldown filter, got: {summary}"
         );
     }
 

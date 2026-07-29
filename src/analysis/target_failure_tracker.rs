@@ -374,10 +374,31 @@ impl TargetFailureTracker {
     }
 }
 
+/// Fold a phase's cooldown-skip count into its rejection breakdown under the
+/// documented `target_cooldown_skipped` reason (Issue #1797).
+///
+/// Called once per surface (synapse / neuron) with that surface's
+/// [`filter_cooldown_targets`] return value, so the count in the breakdown
+/// always agrees with the filter's aggregate log and neither surface double
+/// counts the other's skips. Returns `skipped` unchanged for call-site
+/// chaining. Recording is skipped when `skipped == 0`, so the reason key is
+/// absent rather than present-and-zero.
+pub fn fold_target_cooldown_skips(
+    skipped: u32,
+    breakdown: &mut crate::analysis::diagnostics::RejectionBreakdown,
+) -> u32 {
+    breakdown.record_many_u32(
+        crate::analysis::diagnostics::rejection_reasons::REJECTION_TARGET_COOLDOWN_SKIPPED,
+        skipped,
+    );
+    skipped
+}
+
 /// Remove focus targets currently in cooldown.
 ///
 /// Returns the number of targets dropped so callers can emit a diagnostic
-/// counter (the `cooldown_skipped` reason-name per Issue #1129's convention).
+/// counter (the `target_cooldown_skipped` reason-name per Issue #1129's
+/// convention, folded in by [`fold_target_cooldown_skips`]).
 pub fn filter_cooldown_targets(
     focus_order: &mut Vec<String>,
     tracker: &TargetFailureTracker,

@@ -250,4 +250,38 @@ mod tests {
         assert_eq!(diag.target_cooldown_active_count, 1);
         assert_eq!(diag.total_candidates_considered, 4); // 3 rejected + 1 returned.
     }
+
+    /// Issue #1797: a pass with K cooldown-skipped targets reports K in the
+    /// diagnostic payload *and* under the documented reason name in the
+    /// breakdown it was built from — no fabricated zero.
+    #[test]
+    fn cooldown_skipped_surfaces_in_diagnostic_and_breakdown() {
+        use crate::analysis::diagnostics::rejection_reasons::REJECTION_TARGET_COOLDOWN_SKIPPED;
+        use crate::analysis::target_failure_tracker::fold_target_cooldown_skips;
+
+        const K: u32 = 6;
+        let mut breakdown = RejectionBreakdown::new();
+        fold_target_cooldown_skips(K, &mut breakdown);
+
+        let inputs = DroughtInputs {
+            consecutive_failures: 5,
+            rolling_success_rate: 0.0,
+            discovery_mode: DiscoveryMode::Normal,
+            target_tracker: None,
+            current_epoch: 0,
+            target_cooldown_skipped: K,
+            rejection_breakdown: &breakdown,
+            candidates_returned: 0,
+        };
+
+        let diag = emit_drought_diagnostic(&inputs, 5).expect("emits");
+        assert_eq!(diag.target_cooldown_skipped, K);
+        assert_eq!(
+            diag.dominant_rejection_reason.as_deref(),
+            Some(REJECTION_TARGET_COOLDOWN_SKIPPED),
+            "the cooldown skips must surface under the documented reason name"
+        );
+        assert_eq!(diag.dominant_rejection_count, K);
+        assert_eq!(diag.total_candidates_rejected, K);
+    }
 }

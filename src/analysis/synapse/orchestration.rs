@@ -213,6 +213,13 @@ pub(crate) fn analyze_synapses_with_cache_impl(
     // Issue #1791: surface the real cooldown filter return value so the drought
     // diagnostic's `target_cooldown_skipped` metric reflects actual suppression.
     result.metadata.target_cooldown_skipped = cooldown_skipped;
+    // Issue #1797: also record it as a rejection reason — the starvation
+    // classifier reads only the breakdown, so a dropped target is otherwise
+    // invisible to the decision that un-suppresses it.
+    crate::analysis::target_failure_tracker::fold_target_cooldown_skips(
+        cooldown_skipped,
+        &mut result.metadata.rejection_breakdown,
+    );
     Ok(result)
 }
 
