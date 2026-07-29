@@ -195,18 +195,17 @@ pub fn analyze_parallel_internal(input_json: &str) -> Result<String> {
             // gate), computed from the same RejectionBreakdown the diagnosis
             // reads. This changes nothing on the accept path (#1623): it only
             // suppresses a widening hint that would otherwise waste host effort.
-            let mut combined_breakdown = synapse
-                .as_ref()
-                .map_or_else(analysis::diagnostics::RejectionBreakdown::new, |s| {
-                    s.metadata.rejection_breakdown.clone()
-                });
-            if let Some(n) = neuron.as_ref() {
-                combined_breakdown.merge_from(n.metadata.rejection_breakdown.counts());
-            }
             // Issue #1781: pass-level drops (currently the whole-pass
-            // fingerprint skip) never reach either surface's metadata, so fold
-            // them in before the starvation classifier reads the breakdown.
-            combined_breakdown.merge_from(result.pass_rejection_breakdown.counts());
+            // fingerprint skip) never reach either surface's metadata, and
+            // Issue #1800: failure-cache suppression is counted only at this
+            // boundary. Both are folded in before the starvation classifier
+            // reads the breakdown.
+            let combined_breakdown = starvation_classifier_breakdown(
+                synapse.as_ref().map(|s| &s.metadata.rejection_breakdown),
+                neuron.as_ref().map(|n| &n.metadata.rejection_breakdown),
+                &result.pass_rejection_breakdown,
+                syn_suppressed.saturating_add(neu_suppressed),
+            );
             let surviving_candidates = synapse
                 .as_ref()
                 .map_or(0, |s| s.metadata.candidates_returned)
@@ -483,6 +482,41 @@ fn neuron_candidate_identities(
 /// `REJECTION_DUPLICATE_OF_FAILURE_CACHE` reason with the cross-stack
 /// failure-cache suppression count (Issue #1447). Keeps duplicate suppression
 /// visible in the surfaced rejection stats.
+/// Assemble the rejection breakdown the starvation classifier reads for a pass
+/// (Issue #1800).
+///
+/// Folds, in one place: both surfaces' metadata breakdowns, the pass-level
+/// breakdown (#1781), and the cross-stack failure-cache suppression count
+/// (#1447, `syn_suppressed + neu_suppressed`) under
+/// `REJECTION_DUPLICATE_OF_FAILURE_CACHE`. That suppression is the very
+/// evidence of starvation, so it must be present *before*
+/// `candidate_starvation::signals_from_breakdown` reads the breakdown —
+/// otherwise the classifier can never recommend bypassing it.
+///
+/// The count lands here exactly once: the surfaced per-surface wire maps are
+/// built separately by `breakdown_with_failure_cache` and never feed back
+/// into this breakdown.
+#[must_use]
+pub fn starvation_classifier_breakdown(
+    synapse_breakdown: Option<&analysis::diagnostics::RejectionBreakdown>,
+    neuron_breakdown: Option<&analysis::diagnostics::RejectionBreakdown>,
+    pass_breakdown: &analysis::diagnostics::RejectionBreakdown,
+    failure_cache_suppressed: usize,
+) -> analysis::diagnostics::RejectionBreakdown {
+    let mut combined = synapse_breakdown.cloned().unwrap_or_default();
+    if let Some(neuron) = neuron_breakdown {
+        combined.merge_from(neuron.counts());
+    }
+    combined.merge_from(pass_breakdown.counts());
+    // `record_many` is a no-op at zero, so an unsuppressed pass keeps the
+    // reason absent rather than present-and-zero.
+    combined.record_many(
+        analysis::diagnostics::rejection_reasons::REJECTION_DUPLICATE_OF_FAILURE_CACHE,
+        u32::try_from(failure_cache_suppressed).unwrap_or(u32::MAX),
+    );
+    combined
+}
+
 fn breakdown_with_failure_cache(
     breakdown: &analysis::diagnostics::RejectionBreakdown,
     suppressed: usize,
@@ -917,5 +951,36 @@ mod failure_cache_handshake_wiring_tests {
         let breakdown = RejectionBreakdown::new();
         let map = breakdown_with_failure_cache(&breakdown, 0);
         assert!(!map.contains_key(REJECTION_DUPLICATE_OF_FAILURE_CACHE));
+    }
+
+    /// Issue #1800: the classifier input carries the suppression count once,
+    /// and building the surfaced wire maps from the same surface breakdowns
+    /// does not add a second copy to it.
+    #[test]
+    fn classifier_breakdown_folds_suppression_without_double_counting() {
+        let mut synapse = RejectionBreakdown::new();
+        synapse.record_many(REJECTION_BELOW_THRESHOLD, 3);
+        let mut neuron = RejectionBreakdown::new();
+        neuron.record_many(REJECTION_BELOW_THRESHOLD, 1);
+
+        let combined = starvation_classifier_breakdown(
+            Some(&synapse),
+            Some(&neuron),
+            &RejectionBreakdown::new(),
+            5,
+        );
+
+        assert_eq!(
+            combined.counts().get(REJECTION_DUPLICATE_OF_FAILURE_CACHE),
+            Some(&5)
+        );
+        assert_eq!(combined.counts().get(REJECTION_BELOW_THRESHOLD), Some(&4));
+        assert_eq!(combined.total(), 9);
+
+        // The surfaced wire maps are built independently and leave the
+        // classifier input untouched.
+        let _syn_map = breakdown_with_failure_cache(&synapse, 3);
+        let _neu_map = breakdown_with_failure_cache(&neuron, 2);
+        assert_eq!(combined.total(), 9);
     }
 }

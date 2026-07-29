@@ -545,6 +545,37 @@ The suppressed count is also wired into `rejectionBreakdown` under the stable
 reason `duplicate_of_failure_cache`, so duplicate suppression is no longer
 invisible in the Rust-side rejection stats.
 
+**Classifier ordering (Issue #1800).** The pass total
+(`synapse + neuron` suppressed) is folded into the breakdown the starvation
+classifier reads **before** it classifies, not only into the surfaced wire maps
+afterwards. Suppression is the evidence of starvation, so a classifier blind to
+it could never recommend bypassing the very filter causing the drought: any
+pass with at least `4` gate-side rejections read as `ProposalRichOverRejected`
+and the handshake stayed disabled however much suppression was occurring. The
+per-surface `rejectionBreakdown` maps and `failureCacheSuppressedCount` are
+unchanged; the count is folded into the classifier input exactly once.
+
+```mermaid
+flowchart LR
+    S["synapse rejectionBreakdown"] --> C["combined breakdown"]
+    N["neuron rejectionBreakdown"] --> C
+    P["pass rejectionBreakdown\n(#1781)"] --> C
+    F["failure-cache suppressed\nsyn + neu (#1447)"] --> C
+    C --> SIG["signals_from_breakdown"]
+    SIG --> CL["candidate_starvation::classify"]
+    CL --> G["gate_escalation → noveltyEscalationActive"]
+    S --> W1["synapseMetadata.rejectionBreakdown"]
+    N --> W2["neuronMetadata.rejectionBreakdown"]
+    F --> W1
+    F --> W2
+```
+
+Because upstream evidence is what the fold contributes, `classify` treats
+pre-gate drops outnumbering the proposals the generator provably formed as
+starvation regardless of the formed-proposal floor. The converged production
+profile of Issue #1737 (thousands of gate-side rejections, effectively no
+upstream drops) stays `ProposalRichOverRejected`.
+
 **Handshake contract.** When `noveltyEscalationActive` is `true`, the NEAT-AI
 consumer should **skip its failure-cache filter for the top-K candidates** of
 this pass (mirroring the Issue #1423 novelty-escalation intent) so at least one

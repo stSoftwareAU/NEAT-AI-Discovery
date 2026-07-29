@@ -243,9 +243,14 @@ pub enum StarvationClass {
 /// 1. If the pass is accepting candidates at or above
 ///    [`StarvationConfig::healthy_accept_rate`], it is [`Healthy`].
 /// 2. Otherwise, with the accept rate collapsed, the run is
-///    [`ProposalRichOverRejected`] when the generator provably formed at least
-///    [`StarvationConfig::min_formed_proposals`] proposals, and
-///    [`CandidateStarved`] when it did not.
+///    [`CandidateStarved`] when the pre-gate drops
+///    ([`UPSTREAM_REJECTION_REASONS`]) outnumber the proposals the generator
+///    provably formed — most candidates died before ever being scored, so
+///    generation is the bottleneck however many reached the gate (Issue
+///    #1800).
+/// 3. Otherwise the run is [`ProposalRichOverRejected`] when the generator
+///    provably formed at least [`StarvationConfig::min_formed_proposals`]
+///    proposals, and [`CandidateStarved`] when it did not.
 ///
 /// [`Healthy`]: StarvationClass::Healthy
 /// [`ProposalRichOverRejected`]: StarvationClass::ProposalRichOverRejected
@@ -258,6 +263,16 @@ pub fn classify(signals: &GenerationSignals, cfg: &StarvationConfig) -> Starvati
         if rate >= f64::from(cfg.healthy_accept_rate) {
             return StarvationClass::Healthy;
         }
+    }
+
+    // Issue #1800: without this branch the upstream partition could never
+    // change a verdict — the converged-profile floor below decides on formed
+    // proposals alone, so a pass drowning in failure-cache suppression still
+    // read as over-rejected and the widening bypass stayed disabled. Strict
+    // majority keeps the #1737 profile (thousands gate-side, ~no upstream)
+    // firmly over-rejected.
+    if signals.upstream_rejections > signals.proposals_formed() {
+        return StarvationClass::CandidateStarved;
     }
 
     if signals.proposals_formed() >= cfg.min_formed_proposals {
@@ -422,6 +437,40 @@ mod tests {
         );
         assert_eq!(class, StarvationClass::ProposalRichOverRejected);
         assert!(!recommend_widening(class));
+    }
+
+    /// Issue #1800: once failure-cache suppression is folded into the
+    /// breakdown, upstream evidence outweighing the formed proposals must flip
+    /// the verdict to starved — otherwise the fold could never change a
+    /// decision.
+    #[test]
+    fn dominant_upstream_evidence_overrides_the_formed_proposal_floor() {
+        let b = breakdown(&[
+            (reasons::REJECTION_BELOW_EXPECTED_GAIN_FLOOR, 4),
+            (reasons::REJECTION_DUPLICATE_OF_FAILURE_CACHE, 9),
+        ]);
+        let signals = signals_from_breakdown(&b, 0);
+        assert_eq!(signals.proposals_formed(), 4);
+        assert_eq!(signals.upstream_rejections, 9);
+
+        let class = classify(&signals, &StarvationConfig::default());
+        assert_eq!(class, StarvationClass::CandidateStarved);
+        assert!(recommend_widening(class));
+    }
+
+    /// A tie is not a majority: equal upstream and formed counts leave the
+    /// formed-proposal floor in charge.
+    #[test]
+    fn balanced_upstream_evidence_stays_over_rejected() {
+        let b = breakdown(&[
+            (reasons::REJECTION_BELOW_EXPECTED_GAIN_FLOOR, 9),
+            (reasons::REJECTION_DUPLICATE_OF_FAILURE_CACHE, 9),
+        ]);
+        let signals = signals_from_breakdown(&b, 0);
+        assert_eq!(
+            classify(&signals, &StarvationConfig::default()),
+            StarvationClass::ProposalRichOverRejected
+        );
     }
 
     #[test]
