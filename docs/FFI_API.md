@@ -480,8 +480,6 @@ per `analyze_all` invocation when the diagnostic fires.
       "consecutiveFailures": 6,
       "rollingSuccessRate": 0.0,
       "discoveryMode": "conservative",
-      "candidateCacheSize": 128,
-      "candidateCacheSuppressedCount": 42,
       "targetCooldownActiveCount": 3,
       "targetCooldownSkipped": 5,
       "dominantRejectionReason": "no_eligible_sources",
@@ -501,8 +499,6 @@ per `analyze_all` invocation when the diagnostic fires.
 | `consecutiveFailures` | Trailing-failure streak from the caller-supplied `discoveryOutcomeLog`. |
 | `rollingSuccessRate` | Rolling success rate over the most recent window (0.0–1.0). |
 | `discoveryMode` | `"normal"` or `"conservative"` (Issue #1132). |
-| `candidateCacheSize` | Total entries in the candidate outcome cache. `0` when no cache is supplied. |
-| `candidateCacheSuppressedCount` | Failed cache entries still inside the staleness window — actively suppressing new candidates. |
 | `targetCooldownActiveCount` | Targets currently in cooldown via the per-target failure tracker (Issue #1130). |
 | `targetCooldownSkipped` | Targets dropped by the cooldown filter on the most recent run (best-effort, `0` when not tracked). |
 | `dominantRejectionReason` | Stable name of the rejection reason with the highest count (or `null` when nothing was rejected). |

@@ -1,11 +1,10 @@
 //! Rolling per-creature failure window for the drought diagnostic (Issue #1274).
 //!
-//! The [`CandidateOutcomeCache`](super::candidate_cache::CandidateOutcomeCache)
-//! tracks which `(source, target, operation)` triples failed and when, so they
-//! can be suppressed. That cache is keyed by candidate identity and replaces
-//! older entries; it does not preserve the **shape** of recent failures —
-//! which module emitted them, which target neuron they pointed at, how many
-//! operations they bundled, and whether the predicted gain matched reality.
+//! The caller-supplied failure cache records which candidates failed and by how
+//! much, keyed by candidate identity. It does not preserve the **shape** of
+//! recent failures — which module emitted them, which target neuron they
+//! pointed at, how many operations they bundled, and whether the predicted gain
+//! matched reality.
 //!
 //! This module fills that gap. [`RecentFailureWindow`] keeps a bounded, FIFO
 //! log of the most recent failed candidates, capturing just enough metadata
