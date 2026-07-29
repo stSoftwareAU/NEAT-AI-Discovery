@@ -143,10 +143,18 @@ pub use ffi_types::{
 // The list is intentionally explicit (Issue #1256) — see the rationale
 // on the `ffi_types` re-export above.
 pub use ffi_internal::{
-    analyze_parallel_internal, check_gpu_available_internal,
-    export_visualisation_snapshot_internal, get_calibration_summary_internal,
-    get_library_version_internal, merge_discovery_parquet_internal, rank_focus_neurons_internal,
-    read_discovery_records, record_discovery_internal,
+    analyze_parallel_internal,
+    check_gpu_available_internal,
+    export_visualisation_snapshot_internal,
+    get_calibration_summary_internal,
+    get_library_version_internal,
+    merge_discovery_parquet_internal,
+    rank_focus_neurons_internal,
+    read_discovery_records,
+    record_discovery_internal,
+    // Issue #1800: the classifier-input breakdown assembly, exposed so the
+    // fold ordering is testable without driving a full analysis pass.
+    starvation_classifier_breakdown,
 };
 
 use std::sync::OnceLock;
