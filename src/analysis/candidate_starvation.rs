@@ -94,6 +94,10 @@ pub const UPSTREAM_REJECTION_REASONS: &[&str] = &[
     reasons::REJECTION_ADD_SYNAPSE_GATED,
     reasons::REJECTION_CPU_PRE_REJECT_NO_SIGNAL,
     reasons::REJECTION_NO_SAMPLES,
+    // Issue #1798: a constant source is dropped before evaluation, so the
+    // candidate never reached the gate — generation-side evidence, not
+    // over-rejection.
+    reasons::REJECTION_ZERO_SOURCE_VARIANCE,
     reasons::REJECTION_NO_TARGET_RECORDS,
     reasons::REJECTION_INSUFFICIENT_RECORDING,
     reasons::REJECTION_NO_ELIGIBLE_SOURCES,

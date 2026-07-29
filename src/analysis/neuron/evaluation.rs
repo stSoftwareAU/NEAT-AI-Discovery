@@ -14,7 +14,7 @@ use std::time::SystemTime;
 
 use crate::analysis::diagnostics::NeuronDiagnostics;
 use crate::analysis::gpu::GpuWorkQueue;
-use crate::analysis::samples::{EPSILON, HelpfulSample, compute_source_variance_discount};
+use crate::analysis::samples::{HelpfulSample, compute_source_variance_discount};
 use crate::analysis::scoring::cross_validation::{
     CrossValidationConfig, compute_cross_validation_score,
 };
@@ -55,6 +55,10 @@ pub(crate) struct NeuronEvalContext<'a> {
     /// Issue #1164: Within-batch target-failure short-circuit tracker.
     pub within_batch_failures:
         &'a Arc<crate::analysis::within_batch_failures::WithinBatchFailureTracker>,
+    /// Issue #1798: per-batch counters for the pre-evaluation drop sites
+    /// (no samples / constant source), folded into the metadata rejection
+    /// breakdown once per surface.
+    pub evaluation_drops: &'a Arc<crate::analysis::evaluation_drops::EvaluationDropCounters>,
 }
 
 /// Evaluate neuron candidates for all sources with samples against a single
@@ -76,7 +80,10 @@ pub(crate) fn evaluate_neuron_candidates(
             break;
         }
 
-        if result.samples.is_empty() {
+        // Issue #1798: count the drop (`no_samples`) instead of dropping
+        // silently — the candidate never reaches the accept gate, so the
+        // starvation classifier could not otherwise see it.
+        if ctx.evaluation_drops.drop_for_empty_samples(&result.samples) {
             continue;
         }
 
@@ -96,8 +103,13 @@ pub(crate) fn evaluate_neuron_candidates(
         // Issue #130 (v0.2.2): Compute source variance discount.
         // If source activation has low variance, predictions are unreliable.
         let source_variance_discount = compute_source_variance_discount(&result.samples);
-        if source_variance_discount <= EPSILON {
-            // Source is constant - skip evaluation entirely
+        // Source is constant — skip evaluation entirely. Issue #1798: counted
+        // as `zero_source_variance`, a distinct cause from `no_samples` (the
+        // source was sampled, it just carries no signal).
+        if ctx
+            .evaluation_drops
+            .drop_for_zero_source_variance(source_variance_discount)
+        {
             continue;
         }
 

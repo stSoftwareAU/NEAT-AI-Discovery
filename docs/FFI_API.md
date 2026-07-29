@@ -681,6 +681,48 @@ cooldown filter log. It is classified as an **upstream** rejection: the target
 was never analysed, so no proposal could reach the accept gate. Cooldown
 filtering behaviour itself is unchanged — this is observability only.
 
+#### Evaluation Drop Sites (Issue #1798)
+
+Three per-candidate drop sites inside the evaluation loops discarded candidates
+without incrementing any counter, so the drops were invisible to the starvation
+classifier:
+
+| Surface | Condition | Stable reason |
+|---------|-----------|---------------|
+| neuron | sample building produced no samples for the source | `no_samples` |
+| neuron | the source activation carries no variance (constant source) | `zero_source_variance` |
+| synapse | the GPU work item had no samples | `no_samples` |
+
+`zero_source_variance` is a **distinct** cause from `no_samples`: the source
+exists and *was* sampled, it just carries no signal, so no weight fitted to it
+is meaningful.
+
+```json
+{
+  "neuronMetadata": {
+    "rejectionBreakdown": { "no_samples": 3, "zero_source_variance": 2 }
+  }
+}
+```
+
+```mermaid
+flowchart LR
+    C["candidate → target T"] --> S{"samples empty?"}
+    S -->|yes| N["no_samples++"]
+    S -->|no| V{"source variance ≤ ε?"}
+    V -->|yes| Z["zero_source_variance++"]
+    V -->|no| E["GPU evaluation → accept gate"]
+    N --> B["rejectionBreakdown\n(folded once per surface)"]
+    Z --> B
+    B --> CL["candidate_starvation::classify\n(upstream — never reached the gate)"]
+```
+
+Counts accumulate in per-batch integer counters and are folded into the
+breakdown once per surface, so the per-candidate loop stays allocation-free and
+the neuron and synapse surfaces cannot double count. Both reasons are
+classified as **upstream** rejections: the candidate never reached the accept
+gate. Drop behaviour itself is unchanged — this is observability only.
+
 ### Zero-Candidate Summary (Issue #1446)
 
 When a discovery pass produces **no candidates of any kind** (no helpful or
