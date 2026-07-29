@@ -3,10 +3,16 @@
 //! When the rolling outcome log shows N consecutive trailing failures, the
 //! orchestrator emits a single structured `tracing::warn!` event and attaches
 //! a [`DroughtDiagnostic`] payload to the FFI metadata. The diagnostic
-//! consolidates suppression signals from the candidate cache, the per-target
-//! cooldown tracker, the rejection breakdown, and the discovery mode so
-//! operators can root-cause "no successful candidates for a while" without
-//! re-running analysis under elevated logging.
+//! consolidates suppression signals from the per-target cooldown tracker, the
+//! per-module starvation tracker, the rejection breakdown, and the discovery
+//! mode so operators can root-cause "no successful candidates for a while"
+//! without re-running analysis under elevated logging.
+//!
+//! Issue #1792: the payload also reported `candidateCacheSize` and
+//! `candidateCacheSuppressedCount`, but the cache behind them was never
+//! constructed outside tests, so both counters were structurally always `0` —
+//! reading as "the cache is empty" rather than "there is no cache". They have
+//! been removed along with the cache.
 //!
 //! # Diagnostic shape
 //!
@@ -22,7 +28,6 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::candidate_cache::CandidateOutcomeCache;
 use super::diagnostics::RejectionBreakdown;
 use super::discovery_mode::DiscoveryMode;
 use super::module_starvation_tracker::ModuleStarvationTracker;
@@ -72,11 +77,6 @@ pub struct DroughtDiagnostic {
     pub rolling_success_rate: f32,
     /// Current creature-level discovery mode (`"normal"` / `"conservative"`).
     pub discovery_mode: DiscoveryMode,
-    /// Total entries in the candidate outcome cache (success and failure).
-    pub candidate_cache_size: usize,
-    /// Failed candidate cache entries still inside the staleness window —
-    /// these are actively suppressing candidate generation.
-    pub candidate_cache_suppressed_count: usize,
     /// Number of target neurons currently in cooldown via
     /// [`TargetFailureTracker`].
     pub target_cooldown_active_count: usize,
@@ -111,7 +111,6 @@ pub struct DroughtInputs<'a> {
     pub consecutive_failures: u32,
     pub rolling_success_rate: f32,
     pub discovery_mode: DiscoveryMode,
-    pub candidate_cache: Option<&'a CandidateOutcomeCache>,
     pub target_tracker: Option<&'a TargetFailureTracker>,
     pub current_epoch: u64,
     pub target_cooldown_skipped: u32,
@@ -138,10 +137,6 @@ pub fn emit_drought_diagnostic(
         return None;
     }
 
-    let candidate_cache_size = inputs.candidate_cache.map_or(0, CandidateOutcomeCache::len);
-    let candidate_cache_suppressed_count = inputs
-        .candidate_cache
-        .map_or(0, |c| c.suppressed_count(inputs.current_epoch));
     let target_cooldown_active_count = inputs
         .target_tracker
         .map_or(0, |t| t.active_cooldown_count(inputs.current_epoch));
@@ -162,8 +157,6 @@ pub fn emit_drought_diagnostic(
         consecutive_failures: inputs.consecutive_failures,
         rolling_success_rate: inputs.rolling_success_rate,
         discovery_mode: inputs.discovery_mode,
-        candidate_cache_size,
-        candidate_cache_suppressed_count,
         target_cooldown_active_count,
         target_cooldown_skipped: inputs.target_cooldown_skipped,
         dominant_rejection_reason,
@@ -177,8 +170,6 @@ pub fn emit_drought_diagnostic(
         consecutive_failures = diagnostic.consecutive_failures,
         rolling_success_rate = diagnostic.rolling_success_rate,
         discovery_mode = inputs.discovery_mode.as_str(),
-        candidate_cache_size = diagnostic.candidate_cache_size,
-        candidate_cache_suppressed_count = diagnostic.candidate_cache_suppressed_count,
         target_cooldown_active_count = diagnostic.target_cooldown_active_count,
         target_cooldown_skipped = diagnostic.target_cooldown_skipped,
         dominant_rejection_reason = diagnostic
@@ -214,7 +205,6 @@ mod tests {
             consecutive_failures: 4,
             rolling_success_rate: 0.0,
             discovery_mode: DiscoveryMode::Normal,
-            candidate_cache: None,
             target_tracker: None,
             current_epoch: 0,
             target_cooldown_skipped: 0,
@@ -232,7 +222,6 @@ mod tests {
             consecutive_failures: 5,
             rolling_success_rate: 0.0,
             discovery_mode: DiscoveryMode::Conservative,
-            candidate_cache: None,
             target_tracker: None,
             current_epoch: 0,
             target_cooldown_skipped: 2,
@@ -254,12 +243,7 @@ mod tests {
     }
 
     #[test]
-    fn diagnostic_aggregates_cache_and_tracker_counts() {
-        let mut cache = CandidateOutcomeCache::new();
-        cache.record("src1", "tgt1", "addSynapse", false, 0);
-        cache.record("src2", "tgt2", "addSynapse", false, 0);
-        cache.record("src3", "tgt3", "addSynapse", true, 0);
-
+    fn diagnostic_aggregates_tracker_counts() {
         let mut tracker = TargetFailureTracker::with_thresholds(2, 100);
         tracker.record_failure("tgt-x", 0);
         tracker.record_failure("tgt-x", 1);
@@ -269,7 +253,6 @@ mod tests {
             consecutive_failures: 6,
             rolling_success_rate: 0.0,
             discovery_mode: DiscoveryMode::Normal,
-            candidate_cache: Some(&cache),
             target_tracker: Some(&tracker),
             current_epoch: 1,
             target_cooldown_skipped: 0,
@@ -279,8 +262,6 @@ mod tests {
         };
 
         let diag = emit_drought_diagnostic(&inputs, 5).expect("emits");
-        assert_eq!(diag.candidate_cache_size, 3);
-        assert_eq!(diag.candidate_cache_suppressed_count, 2);
         assert_eq!(diag.target_cooldown_active_count, 1);
         assert_eq!(diag.total_candidates_considered, 4); // 3 rejected + 1 returned.
         assert_eq!(diag.starved_module_count, 0);
@@ -301,7 +282,6 @@ mod tests {
             consecutive_failures: 6,
             rolling_success_rate: 0.0,
             discovery_mode: DiscoveryMode::Conservative,
-            candidate_cache: None,
             target_tracker: None,
             current_epoch: 1,
             target_cooldown_skipped: 0,

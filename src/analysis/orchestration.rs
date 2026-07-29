@@ -1421,7 +1421,6 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
             consecutive_failures,
             rolling_success_rate,
             discovery_mode,
-            candidate_cache: None,
             target_tracker: tracker_snapshot.as_ref(),
             current_epoch,
             // Issue #1791: the real per-phase filter return value, no longer a
@@ -1444,8 +1443,8 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
         }
 
         // Issue #1205: Operator escape hatch — after the drought diagnostic
-        // has surfaced, optionally force a one-shot reset of failed-candidate
-        // cache entries and active target cooldowns. Driven by
+        // has surfaced, optionally force a one-shot reset of the active target
+        // cooldowns. Driven by
         // `NEAT_AI_DISCOVERY_DROUGHT_RESET_AFTER_EPOCHS`; disabled when unset.
         if let Some(drought_reset_after) = crate::config::drought_reset_after_epochs() {
             // Re-lock the global tracker so we can mutate it. The earlier
@@ -1454,7 +1453,6 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
             if let Ok(mut guard) = super::target_failure_tracker::global_tracker().lock() {
                 let epoch_for_reset = guard.current_epoch();
                 let _ = super::drought_reset::maybe_perform_drought_reset(
-                    None,
                     Some(&mut *guard),
                     consecutive_failures,
                     drought_reset_after,
@@ -1471,7 +1469,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
         if consecutive_failures == 0
             && let Ok(mut guard) = super::target_failure_tracker::global_tracker().lock()
         {
-            super::drought_reset::rearm_drought_reset(None, Some(&mut *guard));
+            super::drought_reset::rearm_drought_reset(Some(&mut *guard));
         }
     }
 

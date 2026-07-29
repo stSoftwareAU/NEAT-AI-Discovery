@@ -6,8 +6,10 @@
 //! environmentally-disabled pass is excluded from the drought diagnostic, the
 //! per-target cooldown tracker, and the per-module starvation tracker, while a
 //! genuine empty pass is still counted.
+//!
+//! Issue #1792: the `CandidateOutcomeCache::record_unless_disabled` case was
+//! dropped with the cache, which was never constructed outside tests.
 
-use neat_ai_discovery::analysis::candidate_cache::CandidateOutcomeCache;
 use neat_ai_discovery::analysis::discovery_mode::DiscoveryOutcomeLog;
 use neat_ai_discovery::analysis::module_starvation_tracker::ModuleStarvationTracker;
 use neat_ai_discovery::analysis::target_failure_tracker::TargetFailureTracker;
@@ -55,17 +57,6 @@ fn n_gated_passes_do_not_trip_module_starvation() {
     }
     assert!(!tracker.is_starved("coordinated-structural", 25));
     assert_eq!(tracker.starved_module_count(25), 0);
-}
-
-/// AC3: N consecutive gated passes do not suppress candidates in the cache.
-#[test]
-fn n_gated_passes_do_not_suppress_candidates() {
-    let mut cache = CandidateOutcomeCache::new();
-    for epoch in 0..25 {
-        assert!(!cache.record_unless_disabled("src", "tgt", "addSynapse", false, epoch, &GATED));
-    }
-    assert_eq!(cache.len(), 0);
-    assert_eq!(cache.suppressed_count(25), 0);
 }
 
 /// Regression guard: a genuine empty pass IS still counted everywhere, so the
