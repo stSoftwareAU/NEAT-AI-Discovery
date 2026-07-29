@@ -3,8 +3,9 @@
 ## Summary
 
 Issue #1777 asked four behaviour questions about discovery and why the
-successful-candidate rate has stayed near zero on both GRQ and GRQ-teams — the
-latter explicitly ruling out the plateau explanation. This PR delivers the
+successful-candidate rate has stayed near zero on both the converged production
+network and a still-improving production deployment — the latter explicitly
+ruling out the plateau explanation. This PR delivers the
 diagnostic report those questions were asked for, plus a characterisation suite
 that measures the fault it found. **Closes #1777.**
 
@@ -36,8 +37,8 @@ rejected, so a perfect single change must beat the entire observed band by an
 order of magnitude just to reach the floor. This reproduces the `~1e-10`
 persisted gains #1737 observed, and because it is a fixed property of the
 scoring pipeline rather than of convergence, it suppresses **non-plateaued
-networks identically** — which is exactly the GRQ-teams observation the issue
-raised.
+networks identically** — which is exactly the still-improving-deployment
+observation the issue raised.
 
 Earlier audits missed it by looking at each half alone: #1738 audited
 impact/contribution through MAX/MIN/IF (12 of 1660 neurons — the narrowing #1737

@@ -22,8 +22,9 @@ acceptance floor it must clear**: the shipped calibration constants shrink every
 estimate by 3–4 orders of magnitude *before* a fixed `1e-5` floor is applied, so
 the floor is unreachable for any change a converged network can actually
 deliver. That reproduces the `~1e-10` persisted gains #1737 observed, and it
-explains GRQ-teams too — it is a property of the scoring pipeline, not of
-network convergence, so it does **not** require a plateau.
+explains the still-improving production deployment too — it is a property of
+the scoring pipeline, not of network convergence, so it does **not** require a
+plateau.
 
 ```mermaid
 flowchart TD
@@ -219,9 +220,10 @@ drives the **shipped** discount functions and pins each figure above.
 Two properties make it the best explanation for the reported symptom:
 
 1. **It does not require a plateau.** The mismatch is a property of the scoring
-   pipeline, so it suppresses GRQ-teams — which has not plateaued — exactly as
-   it suppresses the converged GRQ network. That is precisely the observation
-   the issue says rules the plateau explanation out.
+   pipeline, so it suppresses the still-improving production deployment —
+   which has not plateaued — exactly as it suppresses the converged production
+   network. That is precisely the observation the issue says rules the plateau
+   explanation out.
 2. **It ratchets.** The failure-cache correction only ever discounts, never
    inflates (`NEUTRAL_CORRECTION = 1.0` is the upper clamp,
    `calibration_correction.rs:126`), and it is fed by the realised outcomes of
@@ -324,9 +326,10 @@ classifier).
 
 ## Answering the issue's framing question
 
-The issue notes that GRQ-teams "absolutely hasn't plateaued so that excuse is
-out". That is consistent with everything above. Root cause A is a fixed-scale
-property of the scoring pipeline and root cause B is state-machine behaviour;
+The issue notes that the still-improving production deployment "absolutely
+hasn't plateaued so that excuse is out". That is consistent with everything
+above. Root cause A is a fixed-scale property of the scoring pipeline and root
+cause B is state-machine behaviour;
 neither depends on the network being converged. The plateau conclusion recorded
 in `production_discovery_regression.rs` (`PLATEAU_ACCEPTED_RUN_RATE = 0.05`)
 should be read as a *measurement* of the current pipeline, not as evidence that
