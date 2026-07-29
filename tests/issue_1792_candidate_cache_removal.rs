@@ -44,8 +44,10 @@ fn drought_reset_has_no_cache_parameter_and_still_clears_cooldowns() {
 
     // Exhaustive — no `..`. Re-adding `candidate_cache_failed_cleared` breaks
     // this pattern and fails the build.
+    // Issue #1794 added `target_tracker_input`; the pattern stays exhaustive.
     let DroughtResetOutcome {
         target_cooldown_cleared,
+        target_tracker_input: _,
         reset_epoch,
         drought_reset_after,
     } = outcome;
