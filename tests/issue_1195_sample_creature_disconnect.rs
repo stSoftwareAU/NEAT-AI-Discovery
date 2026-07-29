@@ -40,6 +40,7 @@ fn fc_entry(
         target_uuid: Some(target_uuid.to_string()),
         improved_count: Some(improved),
         total_count: Some(total),
+        age_epochs: None,
     }
 }
 
@@ -337,6 +338,7 @@ fn legacy_entries_without_counts_do_not_record_penalty() {
         target_uuid: None,
         improved_count: None,
         total_count: None,
+        age_epochs: None,
     };
     let correction = CalibrationCorrection::from_failure_cache(&[entry]);
     assert!(correction.disconnect_penalties_as_map().is_empty());

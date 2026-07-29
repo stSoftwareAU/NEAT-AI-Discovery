@@ -103,6 +103,9 @@ pub const UPSTREAM_REJECTION_REASONS: &[&str] = &[
     reasons::REJECTION_CONSTANT_NEURON_FILTERED,
     reasons::REJECTION_NO_DIAGNOSTICS,
     reasons::REJECTION_TARGET_SATURATED,
+    // Issue #1781: focus neurons skipped by the structural fingerprint cache
+    // were never analysed at all, so no proposal could reach the gate.
+    reasons::REJECTION_FINGERPRINT_UNCHANGED,
 ];
 
 /// Rejection reasons recorded when a candidate *was* generated but was capped or

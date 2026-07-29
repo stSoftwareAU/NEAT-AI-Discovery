@@ -244,6 +244,19 @@ pub struct FailureCacheEntry {
     /// statistics.
     #[serde(default)]
     pub total_count: Option<u32>,
+
+    /// Age of this entry in discovery passes, as reported by the host that
+    /// persists the cache (Issue #1781).
+    ///
+    /// The failure cache lives in NEAT-AI and is re-supplied on every call, so
+    /// without this field Rust has no way to tell a failure recorded moments
+    /// ago from one recorded hundreds of passes back — and therefore no way to
+    /// expire it. Populated from `ageEpochs` (or the `epochsSinceRecorded`
+    /// alias). `None` for legacy entries that omit it; see
+    /// [`crate::analysis::failure_cache_handshake`] for how an unknown age
+    /// restricts what an entry may suppress.
+    #[serde(default)]
+    pub age_epochs: Option<u32>,
 }
 
 /// Wire-format helper for [`FailureCacheEntry`] (Issue #1162).
@@ -269,6 +282,10 @@ struct FailureCacheEntryRaw {
     /// neuron's UUID.
     #[serde(default)]
     target_uuid: Option<String>,
+    /// Issue #1781: age of the entry in discovery passes. Accepts either
+    /// `ageEpochs` or the `epochsSinceRecorded` spelling.
+    #[serde(default, alias = "epochsSinceRecorded")]
+    age_epochs: Option<u32>,
     /// Issue #1195: per-sample success counters populated by the upstream
     /// emitter. Both fields are optional for backward compatibility.
     #[serde(default)]
@@ -330,6 +347,7 @@ impl From<FailureCacheEntryRaw> for FailureCacheEntry {
             target_uuid,
             improved_count: raw.improved_count,
             total_count: raw.total_count,
+            age_epochs: raw.age_epochs,
         }
     }
 }
@@ -721,6 +739,7 @@ mod tests {
             target_uuid: None,
             improved_count: None,
             total_count: None,
+            age_epochs: None,
         }
     }
 
@@ -739,6 +758,7 @@ mod tests {
             target_uuid: None,
             improved_count: None,
             total_count: None,
+            age_epochs: None,
         }
     }
 
@@ -757,6 +777,7 @@ mod tests {
             target_uuid: None,
             improved_count: None,
             total_count: None,
+            age_epochs: None,
         }
     }
 

@@ -299,6 +299,14 @@ pub struct AnalyzeAllResult {
     /// Contains the tracker passed in (or a default), updated with candidate counts
     /// from this run. Callers should persist this and pass it back on subsequent runs.
     pub module_outcome_tracker: crate::analysis::module_weights::ModuleOutcomeTracker,
+    /// Rejections recorded at pass level, outside the synapse / neuron metadata
+    /// (Issue #1781).
+    ///
+    /// A pass can be dropped whole *before* either surface produces metadata —
+    /// currently when every focus neuron is skipped by the fingerprint cache.
+    /// Those drops used to be invisible; the counts here are merged into the
+    /// combined breakdown and into `zeroCandidateSummary` by the FFI layer.
+    pub pass_rejection_breakdown: crate::analysis::diagnostics::RejectionBreakdown,
 }
 
 /// Reason why no synapse candidate was found for a target neuron

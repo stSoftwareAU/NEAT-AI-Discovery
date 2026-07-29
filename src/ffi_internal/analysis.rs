@@ -203,6 +203,10 @@ pub fn analyze_parallel_internal(input_json: &str) -> Result<String> {
             if let Some(n) = neuron.as_ref() {
                 combined_breakdown.merge_from(n.metadata.rejection_breakdown.counts());
             }
+            // Issue #1781: pass-level drops (currently the whole-pass
+            // fingerprint skip) never reach either surface's metadata, so fold
+            // them in before the starvation classifier reads the breakdown.
+            combined_breakdown.merge_from(result.pass_rejection_breakdown.counts());
             let surviving_candidates = synapse
                 .as_ref()
                 .map_or(0, |s| s.metadata.candidates_returned)
@@ -248,6 +252,7 @@ pub fn analyze_parallel_internal(input_json: &str) -> Result<String> {
                 let summary = build_zero_candidate_summary(
                     synapse.as_ref().map(|s| &s.metadata),
                     neuron.as_ref().map(|n| &n.metadata),
+                    &result.pass_rejection_breakdown,
                     environmental_gates,
                 );
                 // Emit a single structured WARN naming the dominant reason for

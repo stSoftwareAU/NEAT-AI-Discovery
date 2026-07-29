@@ -17,11 +17,13 @@ use crate::observability::{
 use crate::{AnalyzeAllInput, AnalyzeNeuronsInput, AnalyzeSynapsesInput};
 
 use super::cost_function_hint::CostFunctionHint;
+use super::diagnostics::{RejectionBreakdown, rejection_reasons};
 use super::shared::{AnalyzeAllResult, AnalyzeNeuronsResult, AnalyzeSynapsesResult};
 use super::task_descriptor::TaskDescriptor;
 use super::{
-    cache, candidate_aggregation, candidate_compression, discovery_dispatch, module_dispatch_specs,
-    module_weights, neuron, neuron_fingerprint, synapse, utils,
+    cache, candidate_aggregation, candidate_compression, discovery_dispatch,
+    fingerprint_skip_escape, module_dispatch_specs, module_weights, neuron, neuron_fingerprint,
+    synapse, utils,
 };
 
 /// Aggregate rejection counts from synapse `no_candidate_reasons` into the
@@ -330,9 +332,29 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
     let cost_hint: CostFunctionHint = task_descriptor.cost_function_hint();
 
     // Issue #490: Compute current fingerprints and filter unchanged neurons.
+    // Issue #1781: the structural fingerprint cache is released while the
+    // creature is in a drought — the topology cannot change while nothing is
+    // accepted, so the cache would otherwise skip every focus neuron pass after
+    // pass, ignoring freshly recorded data.
     let current_fingerprints = neuron_fingerprint::compute_neuron_fingerprints(&input.creature);
+    let fingerprint_cache_bypassed = fingerprint_skip_escape::should_bypass_fingerprint_cache(
+        input.discovery_outcome_log.as_ref(),
+        fingerprint_skip_escape::DEFAULT_FINGERPRINT_SKIP_DROUGHT_EPOCHS,
+    );
+    if fingerprint_cache_bypassed && input.previous_neuron_fingerprints.is_some() {
+        tracing::warn!(
+            focus_neurons = input.focus_neurons.len(),
+            drought_epochs = fingerprint_skip_escape::DEFAULT_FINGERPRINT_SKIP_DROUGHT_EPOCHS,
+            "Issue #1781: drought escape hatch — ignoring previousNeuronFingerprints and \
+             re-analysing the full focus set"
+        );
+    }
     let (effective_focus_neurons, fingerprint_cache_hits, fingerprint_cache_misses) =
-        if let Some(prev_fp) = &input.previous_neuron_fingerprints {
+        if let Some(prev_fp) = input
+            .previous_neuron_fingerprints
+            .as_ref()
+            .filter(|_| !fingerprint_cache_bypassed)
+        {
             let filter_result = neuron_fingerprint::filter_changed_neurons(
                 &input.focus_neurons,
                 &input.creature,
@@ -369,14 +391,25 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
             fingerprint_cache_hits,
             fingerprint_cache_misses,
             module_outcome_tracker: input.module_outcome_tracker.clone().unwrap_or_default(),
+            pass_rejection_breakdown: RejectionBreakdown::new(),
         });
     }
 
     // If all focus neurons were skipped by fingerprint filtering, return early.
     if effective_focus_neurons.is_empty() && (include_synapse || include_neuron) {
-        if utils::verbose_enabled() {
-            tracing::debug!("all focus neurons unchanged — skipping GPU analysis");
-        }
+        // Issue #1781: count the whole-pass drop so it is not silent. Without
+        // this the pass returns nothing at all — no candidates, no breakdown,
+        // no diagnostic — and reads as unexplained search exhaustion.
+        tracing::warn!(
+            skipped_focus_neurons = fingerprint_cache_hits,
+            "Issue #1781: every focus neuron was unchanged — whole pass skipped, \
+             recorded as fingerprint_unchanged"
+        );
+        let mut pass_rejection_breakdown = RejectionBreakdown::new();
+        pass_rejection_breakdown.record_many_u32(
+            rejection_reasons::REJECTION_FINGERPRINT_UNCHANGED,
+            u32::try_from(fingerprint_cache_hits).unwrap_or(u32::MAX),
+        );
         return Ok(AnalyzeAllResult {
             synapse: None,
             neuron: None,
@@ -387,6 +420,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
             fingerprint_cache_hits,
             fingerprint_cache_misses,
             module_outcome_tracker: input.module_outcome_tracker.clone().unwrap_or_default(),
+            pass_rejection_breakdown,
         });
     }
 
@@ -407,6 +441,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
             fingerprint_cache_hits,
             fingerprint_cache_misses,
             module_outcome_tracker: input.module_outcome_tracker.clone().unwrap_or_default(),
+            pass_rejection_breakdown: RejectionBreakdown::new(),
         });
     }
 
@@ -435,6 +470,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
             fingerprint_cache_hits,
             fingerprint_cache_misses,
             module_outcome_tracker: input.module_outcome_tracker.clone().unwrap_or_default(),
+            pass_rejection_breakdown: RejectionBreakdown::new(),
         });
     }
 
@@ -533,6 +569,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
                 fingerprint_cache_hits,
                 fingerprint_cache_misses,
                 module_outcome_tracker: input.module_outcome_tracker.clone().unwrap_or_default(),
+                pass_rejection_breakdown: RejectionBreakdown::new(),
             });
         }
         Err(e) => return Err(e).context("failed to load parquet record cache for analysis"),
@@ -562,6 +599,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
             fingerprint_cache_hits,
             fingerprint_cache_misses,
             module_outcome_tracker: input.module_outcome_tracker.clone().unwrap_or_default(),
+            pass_rejection_breakdown: RejectionBreakdown::new(),
         });
     }
 
@@ -579,6 +617,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
             fingerprint_cache_hits,
             fingerprint_cache_misses,
             module_outcome_tracker: input.module_outcome_tracker.clone().unwrap_or_default(),
+            pass_rejection_breakdown: RejectionBreakdown::new(),
         });
     }
 
@@ -634,6 +673,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
                 fingerprint_cache_hits,
                 fingerprint_cache_misses,
                 module_outcome_tracker: input.module_outcome_tracker.clone().unwrap_or_default(),
+                pass_rejection_breakdown: RejectionBreakdown::new(),
             });
         }
     }
@@ -713,6 +753,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
                 fingerprint_cache_hits,
                 fingerprint_cache_misses,
                 module_outcome_tracker: input.module_outcome_tracker.clone().unwrap_or_default(),
+                pass_rejection_breakdown: RejectionBreakdown::new(),
             });
         }
         Err(e) => return Err(e).context("failed during analysis dispatch"),
@@ -1458,5 +1499,6 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
         fingerprint_cache_hits,
         fingerprint_cache_misses,
         module_outcome_tracker: tracker,
+        pass_rejection_breakdown: RejectionBreakdown::new(),
     })
 }
