@@ -297,6 +297,24 @@ Notes:
   (Issue #1205, env var `NEAT_AI_DISCOVERY_DROUGHT_RESET_AFTER_EPOCHS`) can
   clear failed cache entries and active cooldowns in one shot. A successful
   pass re-arms the lever.
+- **A reset that clears nothing is a no-op, not a success (Issue #1794).** When
+  the escape hatch fires with no active cooldowns to flush it logs at `error!`
+  — `drought escape hatch fired as a NO-OP` — with `noop=true` and
+  `target_tracker_input` naming *why*: `unwired` (no tracker supplied at all)
+  versus `wired_empty` (tracker supplied, nothing in cooldown). A no-op does
+  **not** stamp the one-shot tombstone, so the lever stays armed and a later
+  pass in the same streak can still do real work. `unwired` in production is a
+  wiring bug; `wired_empty` means the drought is not cooldown-bound and the
+  cause lies elsewhere in this playbook.
+
+  ```mermaid
+  flowchart TD
+      A[Escape hatch fires] --> B{Cooldown entries cleared?}
+      B -- "&gt; 0" --> C["warn!: cleared N cooldowns<br/>tombstone stamped — one-shot consumed"]
+      B -- "0" --> D["error!: NO-OP, nothing reset<br/>target_tracker_input = unwired | wired_empty"]
+      D --> E[No tombstone — lever stays armed for the streak]
+  ```
+
 - Adaptive target-cooldown relaxation is tracked under **Issue #1204** and is
   not yet shipped. Until it lands the target cooldown thresholds remain
   static (`TARGET_COOLDOWN_FAILURES`, `TARGET_COOLDOWN_EPOCHS`); the operator
@@ -368,7 +386,7 @@ rate, then starts producing empty passes. This example uses the defaults.
 | 56 | 6 | 0.0 | **Conservative** | `discoveryMode="conservative"` in FFI metadata. High-risk modules penalised, coordinated gain floor × 10. The target-cooldown window also relaxes (Issue #1204). | `discoveryMode` in the FFI metadata. |
 | 57–69 | 7–19 | 0.0 | Conservative | Conservative mode persists. `targetCooldownActiveCount` declines as the relaxed cooldown window re-enables targets. | Watch `targetCooldownActiveCount` ramp down. |
 | 70 | 20 | 0.0 | Conservative→**Extended Drought** | Streak crosses `CONSERVATIVE_MODE_MAX_EPOCHS`. Conservative bias drops. | Mode in metadata flips back to `"normal"`; the drought diagnostic still fires every pass. |
-| 71–79 | 21–29 | 0.0 | Extended Drought | If the streak crosses `DROUGHT_RESET_AFTER_EPOCHS` (default 50, Issue #1422), the one-shot operator reset fires here. | Look for the one-shot `warn!`: `drought escape hatch fired — cleared N active target cooldowns`. |
+| 71–79 | 21–29 | 0.0 | Extended Drought | If the streak crosses `DROUGHT_RESET_AFTER_EPOCHS` (default 50, Issue #1422), the one-shot operator reset fires here. | Look for the one-shot `warn!`: `drought escape hatch fired — cleared N active target cooldowns`. An `error!` reading `drought escape hatch fired as a NO-OP` instead means the reset had nothing to flush (Issue #1794). |
 | 80 | 30 | 0.0 | Extended Drought | A new candidate finally succeeds. Streak collapses to 0 and the reset tombstone clears, re-arming the lever. | Mode resumes Normal on the next pass. |
 
 What an operator should look at, in order:
