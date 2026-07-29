@@ -31,6 +31,11 @@
 //! per-target pass/fail signals to the global tracker so preparation layers
 //! consult a consistent view.
 //!
+//! Its epoch is advanced by [`advance_global_epoch`], called exactly once per
+//! discovery pass at the head of `analysis::analyze_all` (Issue #1790) —
+//! before either preparation layer reads it, so the neuron and synapse
+//! cooldown filters observe the same epoch for the whole pass.
+//!
 //! # Operator playbook
 //!
 //! See [`docs/DROUGHT_PLAYBOOK.md`](https://github.com/stSoftwareAU/NEAT-AI-Discovery/blob/main/docs/DROUGHT_PLAYBOOK.md)
@@ -438,6 +443,27 @@ pub fn global_tracker() -> &'static Mutex<TargetFailureTracker> {
     TRACKER.get_or_init(|| Mutex::new(TargetFailureTracker::new()))
 }
 
+/// Advance the process-global tracker by exactly one discovery pass, returning
+/// the new epoch (Issue #1790).
+///
+/// `analysis::analyze_all` is the single production caller and invokes this
+/// once at the head of every pass — before either preparation layer's
+/// `apply_target_cooldown` reads the epoch — so the neuron and synapse paths
+/// observe one consistent value for the whole pass and the counter moves by
+/// exactly one per pass. Without it the counter is frozen at `0`, `current_epoch
+/// < failure_epoch + cooldown_epochs` never becomes false, and any target that
+/// enters cooldown stays suppressed for the life of the process.
+///
+/// A poisoned lock is recovered rather than propagated: refusing to advance is
+/// the exact failure this function exists to prevent.
+pub fn advance_global_epoch() -> u64 {
+    let mut guard = match global_tracker().lock() {
+        Ok(guard) => guard,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    guard.advance_epoch()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -665,5 +691,109 @@ mod tests {
 
         assert_eq!(skipped, 1);
         assert_eq!(focus, vec!["target-healthy".to_string()]);
+    }
+
+    /// Issue #1790: `advance_epoch` moves the internal counter by exactly one
+    /// and returns the new value.
+    #[test]
+    fn advance_epoch_increments_by_exactly_one() {
+        let mut tracker = TargetFailureTracker::with_thresholds(2, 5);
+        assert_eq!(tracker.current_epoch(), 0);
+        assert_eq!(tracker.advance_epoch(), 1);
+        assert_eq!(tracker.current_epoch(), 1);
+        assert_eq!(tracker.advance_epoch(), 2);
+        assert_eq!(tracker.current_epoch(), 2);
+    }
+
+    /// Issue #1790: the internal-counter path (`record_failure_now` /
+    /// `is_in_cooldown_now` / `advance_epoch`) must expire a cooldown at
+    /// exactly `failure_epoch + cooldown_epochs`. A frozen counter — the
+    /// original bug — leaves the target suppressed forever.
+    #[test]
+    fn internal_epoch_expires_cooldown_at_exact_boundary() {
+        let mut tracker = TargetFailureTracker::with_thresholds(2, 3);
+
+        // Start the failures at a non-zero epoch so a frozen counter cannot
+        // accidentally satisfy the assertions below.
+        tracker.advance_epoch();
+        tracker.advance_epoch();
+        let failure_epoch = tracker.current_epoch();
+        assert_eq!(failure_epoch, 2);
+
+        tracker.record_failure_now("T");
+        tracker.record_failure_now("T");
+        assert!(
+            tracker.is_in_cooldown_now("T"),
+            "threshold reached — target must be in cooldown at the failure epoch"
+        );
+
+        // Epochs 3 and 4 are still inside the window (2 + 3 = 5).
+        for _ in 0..2 {
+            let epoch = tracker.advance_epoch();
+            assert!(
+                epoch < failure_epoch + 3,
+                "test setup: epoch {epoch} must still be inside the window"
+            );
+            assert!(
+                tracker.is_in_cooldown_now("T"),
+                "target must stay in cooldown at epoch {epoch}"
+            );
+        }
+
+        // Epoch 5 == failure_epoch + cooldown_epochs — the window has elapsed.
+        assert_eq!(tracker.advance_epoch(), failure_epoch + 3);
+        assert!(
+            !tracker.is_in_cooldown_now("T"),
+            "cooldown must expire exactly at failure_epoch + cooldown_epochs"
+        );
+    }
+
+    /// Issue #1790: `record_success_now` clears an active cooldown recorded
+    /// through the internal counter, even after the epoch has advanced.
+    #[test]
+    fn record_success_now_clears_cooldown_from_internal_epoch() {
+        let mut tracker = TargetFailureTracker::with_thresholds(2, 100);
+        tracker.record_failure_now("T");
+        tracker.record_failure_now("T");
+        tracker.advance_epoch();
+        assert!(tracker.is_in_cooldown_now("T"));
+
+        tracker.record_success_now("T");
+        assert!(!tracker.is_in_cooldown_now("T"));
+        assert_eq!(
+            tracker.state("T").and_then(|s| s.last_improvement_epoch),
+            Some(1),
+            "the success must be stamped with the advanced internal epoch"
+        );
+    }
+
+    /// Issue #1790: `clear_cooldown_entries` at a non-zero epoch drops only
+    /// the still-active cooldowns and stamps the tombstone with that epoch.
+    /// Entries whose window has already elapsed are retained (they no longer
+    /// suppress anything).
+    #[test]
+    fn clear_cooldown_entries_at_non_zero_epoch() {
+        let mut tracker = TargetFailureTracker::with_thresholds(2, 5);
+
+        // "stale" fails at epoch 0 — its window closes at epoch 5.
+        tracker.record_failure("stale", 0);
+        tracker.record_failure("stale", 0);
+        // "active" fails at epoch 4 — its window closes at epoch 9.
+        tracker.record_failure("active", 4);
+        tracker.record_failure("active", 4);
+
+        let removed = tracker.clear_cooldown_entries(6);
+
+        assert_eq!(removed, 1, "only the still-active cooldown is dropped");
+        assert!(tracker.state("active").is_none());
+        assert!(
+            tracker.state("stale").is_some(),
+            "an already-expired entry is not an active cooldown"
+        );
+        assert_eq!(
+            tracker.drought_reset_tombstone(),
+            Some(6),
+            "the tombstone must carry the non-zero reset epoch"
+        );
     }
 }

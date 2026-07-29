@@ -299,6 +299,19 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
     // so that a prior SIGTERM does not immediately abort this invocation.
     crate::cancellation::reset_cancellation();
 
+    // Issue #1790: advance the global target-cooldown epoch exactly once per
+    // discovery pass, at the head of the pass. Both `apply_target_cooldown`
+    // call sites (neuron preparation and synapse orchestration) read the epoch
+    // off this tracker later in the pass, so advancing here — rather than
+    // inside each — gives them one consistent value and moves the counter by
+    // exactly one per pass. Without this the counter never left `0` and no
+    // cooldown could ever expire.
+    let pass_epoch = super::target_failure_tracker::advance_global_epoch();
+    tracing::debug!(
+        pass_epoch,
+        "Issue #1790: advanced the global target-cooldown epoch for this discovery pass"
+    );
+
     // Phase timer for total analysis (Issue #214). Also drives the consolidated
     // per-cycle deadline-consumption breakdown total (Issue #1409).
     let total_timer = PhaseTimer::new("total_analysis");
