@@ -12,11 +12,16 @@
 //! 2. **Drought demotion (#1448, [`super::remove_neuron_drought`])** further
 //!    deprioritises remove-neuron candidates during a search-exhaustion drought.
 //!
-//! This module promotes neurons the constant-neuron detector (a sibling
-//! sub-issue of the #1620 milestone) has flagged: it overwrites the flagged
-//! candidate's `expected_creature_score_gain` with
-//! [`CONSTANT_NEURON_PRIORITY_GAIN`], so the candidate ranks ahead of the normal
-//! gain-ranked stream instead of being ranked ≈0 and dropped.
+//! This module promotes flagged neurons: it overwrites the flagged candidate's
+//! `expected_creature_score_gain` with [`CONSTANT_NEURON_PRIORITY_GAIN`], so the
+//! candidate ranks ahead of the normal gain-ranked stream instead of being ranked
+//! ≈0 and dropped.
+//!
+//! Flags come from two seams. The structural detector (a sibling sub-issue of the
+//! #1620 milestone) owns [`functionally_constant_neuron_uuids`] and is still
+//! unwired. The live source is [`bias_folded_constant_neuron_uuids`] (Issue
+//! #1779): the neurons whose removal candidate carries an **accepted** #1623 bias
+//! fold, measured against the recorded activations.
 //!
 //! ## Where it hooks in
 //!
@@ -111,6 +116,32 @@ pub fn promote_constant_remove_neuron_candidates(
 #[must_use]
 pub fn functionally_constant_neuron_uuids(_creature: &CreatureJson) -> HashSet<String> {
     HashSet::new()
+}
+
+/// Collect the UUIDs of neurons **measured** functionally constant this pass —
+/// those whose sole-op `RemoveNeuron` candidate carries an accepted #1623 bias
+/// fold (Issue #1779).
+///
+/// This is the verified flag source the #1622 promotion was waiting on. The fold
+/// is only attached when the evaluate-before-accept gate passes against the
+/// recorded activations, which is exactly the safety condition this module's
+/// promotion relies on: the removal is behaviour-preserving because the neuron's
+/// fixed contribution is folded into its targets' biases. A candidate with no
+/// fold — a variance-carrying neuron, one that only *looks* constant, or one with
+/// no recorded activations — is never flagged, so nothing is promoted on
+/// assumption.
+///
+/// Complements (rather than replaces) the structural
+/// [`functionally_constant_neuron_uuids`] seam: the orchestrator unions the two.
+#[must_use]
+pub fn bias_folded_constant_neuron_uuids(
+    candidates: &[CoordinatedStructuralCandidateJson],
+) -> HashSet<String> {
+    candidates
+        .iter()
+        .filter(|c| c.constant_neuron_bias_fold.is_some())
+        .filter_map(|c| single_op_remove_neuron_uuid(c).map(ToString::to_string))
+        .collect()
 }
 
 #[cfg(test)]
@@ -224,5 +255,71 @@ mod tests {
         )
         .expect("valid creature JSON");
         assert!(functionally_constant_neuron_uuids(&creature).is_empty());
+    }
+
+    /// A candidate carrying an accepted bias fold is the measured flag source
+    /// (Issue #1779).
+    #[test]
+    fn bias_folded_candidate_is_flagged() {
+        let mut folded = remove_candidate("c", -0.75);
+        folded.constant_neuron_bias_fold = Some(crate::ConstantNeuronBiasFoldJson {
+            constant_activation: 0.02,
+            activation_variance: 0.0,
+            max_residual: 0.0,
+            folded_targets: vec![crate::FoldedBiasDeltaJson {
+                target_neuron_uuid: "out-0".to_string(),
+                bias_delta: 0.06,
+            }],
+        });
+        let mut candidates = vec![folded, remove_candidate("varying", -0.1)];
+
+        let flags = bias_folded_constant_neuron_uuids(&candidates);
+        assert_eq!(flags.len(), 1, "only the folded candidate is flagged");
+        assert!(flags.contains("c"));
+
+        // …and the flag is what lifts it past the gain floor.
+        let promoted = promote_constant_remove_neuron_candidates(&mut candidates, &flags);
+        assert_eq!(promoted, 1);
+        assert!(
+            (candidates[0].expected_creature_score_gain - CONSTANT_NEURON_PRIORITY_GAIN).abs()
+                < f32::EPSILON
+        );
+        assert!((candidates[1].expected_creature_score_gain + 0.1).abs() < f32::EPSILON);
+    }
+
+    /// No fold ⇒ no flag: nothing is promoted on assumption.
+    #[test]
+    fn unfolded_candidates_flag_nothing() {
+        let candidates = vec![remove_candidate("a", -0.2), remove_candidate("b", 0.0)];
+        assert!(bias_folded_constant_neuron_uuids(&candidates).is_empty());
+        assert!(bias_folded_constant_neuron_uuids(&[]).is_empty());
+    }
+
+    /// A multi-op candidate is not a bare removal, so its fold (if any) does not
+    /// flag the neuron.
+    #[test]
+    fn multi_op_folded_candidate_is_not_flagged() {
+        let mut candidate = CoordinatedStructuralCandidateJson {
+            remove_neuron_compensation: None,
+            constant_neuron_bias_fold: None,
+            operations: vec![
+                CoordinatedStructuralOpJson::SetBias {
+                    neuron_uuid: "out-0".to_string(),
+                    bias: 0.1,
+                },
+                CoordinatedStructuralOpJson::RemoveNeuron {
+                    neuron_uuid: "c".to_string(),
+                },
+            ],
+            expected_creature_score_gain: 0.01,
+            comment: None,
+        };
+        candidate.constant_neuron_bias_fold = Some(crate::ConstantNeuronBiasFoldJson {
+            constant_activation: 0.0,
+            activation_variance: 0.0,
+            max_residual: 0.0,
+            folded_targets: Vec::new(),
+        });
+        assert!(bias_folded_constant_neuron_uuids(&[candidate]).is_empty());
     }
 }

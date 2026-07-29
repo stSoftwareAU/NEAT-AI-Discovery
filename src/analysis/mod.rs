@@ -132,8 +132,8 @@ pub use remove_neuron_gain::{
 // #1518 gain ranking and #1448 drought demotion as priority remove-neuron
 // candidates.
 pub use remove_neuron_constant_promotion::{
-    CONSTANT_NEURON_PRIORITY_GAIN, functionally_constant_neuron_uuids,
-    promote_constant_remove_neuron_candidates,
+    CONSTANT_NEURON_PRIORITY_GAIN, bias_folded_constant_neuron_uuids,
+    functionally_constant_neuron_uuids, promote_constant_remove_neuron_candidates,
 };
 
 // Issue #1623: bias-fold removal for functionally-constant hidden neurons —

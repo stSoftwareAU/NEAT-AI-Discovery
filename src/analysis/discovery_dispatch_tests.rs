@@ -867,10 +867,22 @@ fn remove_neuron_candidate_carries_covariance_and_redistribution() {
 /// Routing test: a constant-neuron candidate is **not** given a redistribution
 /// remedy here — it routes to the #1623 bias-fold path — even when a
 /// shared-target survivor with correlated records exists.
+///
+/// Issue #1779 changed the routing input from the *declared* neuron class to
+/// *measured* constancy, so this fixture now records genuinely constant
+/// activations for `konst`. The contract under test is unchanged; only the
+/// evidence the router reads is. A declared-constant neuron whose records vary is
+/// covered by `tests/analysis/issue_1779_hidden_constant_bias_fold.rs`, which
+/// pins its new destination (redistribution).
 #[test]
 fn constant_neuron_candidate_is_not_given_redistribution() {
     let creature = creature_with_constant_neuron();
-    let records = correlated_records("konst", "sib");
+    let mut records = Vec::new();
+    for (obs, &a) in [1.0_f32, 2.0, 3.0].iter().enumerate() {
+        let obs = u32::try_from(obs).expect("small index");
+        records.push(record(obs, "konst", 0.25));
+        records.push(record(obs, "sib", a));
+    }
     let mut candidates = vec![remove_neuron_candidate("konst", -0.01)];
 
     let attached = apply_remove_neuron_compensation(&creature, &records, &mut candidates);

@@ -1074,13 +1074,15 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
         // path, alongside the #1559 redistribution above. A genuinely-constant
         // neuron carries no per-sample variance, so a plain bias fold is fully
         // compensable — no survivor redistribution is needed. For each sole-op
-        // RemoveNeuron candidate that removes a constant-class neuron, evaluate
-        // the fold behind the evaluate-before-accept gate and emit the folded
-        // per-target bias deltas so the applier folds the constant contribution
-        // into downstream biases rather than folding a mean. Routing is by class,
-        // mutually exclusive with the redistribution path: a looks-constant or
-        // no-records candidate is rejected fail-loud (no fold emitted, never
-        // deleted blind), the same records gathered above are reused.
+        // RemoveNeuron candidate whose neuron is *measured* functionally constant
+        // (Issue #1779 — the declared `"constant"` class never reaches here, as
+        // every producer emits hidden neurons), evaluate the fold behind the
+        // evaluate-before-accept gate and emit the folded per-target bias deltas
+        // so the applier folds the constant contribution into downstream biases
+        // rather than folding a mean. Routing is mutually exclusive with the
+        // redistribution path: a looks-constant or no-records candidate is
+        // rejected fail-loud (no fold emitted, never deleted blind), and the same
+        // records gathered above are reused.
         let folded = super::discovery_dispatch::apply_constant_neuron_bias_fold(
             &input.creature,
             &records,
@@ -1148,11 +1150,22 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
     // sub-issue of the #1620 milestone) flags such neurons; this overrides the
     // flagged candidate's gain with the priority marker AFTER the honest-gain
     // override and drought demotion (bypassing both) and BEFORE the final gain
-    // floor (so the promoted candidate survives). Until the detector is wired
-    // the flag set is empty and this is a documented no-op.
+    // floor (so the promoted candidate survives). The structural detector seam is
+    // still unwired (it flags nothing), so Issue #1779 supplies the measured flag
+    // source: every candidate that just received an accepted #1623 bias fold
+    // above. That is the same evaluate-before-accept verification this module's
+    // safety argument rests on — without it the honest gain (≈ −0.75 for a
+    // harmless constant neuron) is below the floor and the fold never reaches the
+    // consumer at all.
     if let Some(syn) = synapse_result.as_mut() {
-        let flagged = super::remove_neuron_constant_promotion::functionally_constant_neuron_uuids(
-            &input.creature,
+        let mut flagged =
+            super::remove_neuron_constant_promotion::functionally_constant_neuron_uuids(
+                &input.creature,
+            );
+        flagged.extend(
+            super::remove_neuron_constant_promotion::bias_folded_constant_neuron_uuids(
+                &syn.coordinated_structural_candidates,
+            ),
         );
         let promoted =
             super::remove_neuron_constant_promotion::promote_constant_remove_neuron_candidates(

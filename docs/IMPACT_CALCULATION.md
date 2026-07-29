@@ -459,8 +459,14 @@ operation is a `RemoveNeuron`, attaches a `removeNeuronCompensation` block to th
 emitted candidate JSON: the optimal `deltaWeight`, the compact covariance
 statistic (`sampleCount`, variances, covariance, correlation), the bias-only and
 redistributed residual variances, and the `fullyCompensable` flag. Routing is by
-neuron **class** — constant neurons (no per-sample variance) are left untouched
-for the #1623 bias-fold remedy, not duplicated here. Consistent with
+**measured** constancy (Issue #1779) — a neuron whose recorded activations are
+constant within the #1623 fold gate carries no per-sample variance to
+redistribute and is left untouched for the bias-fold remedy, not duplicated here.
+Routing on the *declared* `neuron_type == "constant"` class instead (the original
+#1689 gate) made the fold unreachable: every producer of a sole-op `RemoveNeuron`
+emits **hidden** neurons, so a functionally-constant hidden neuron — the
+realistic case — was deleted with no fold and picked up a zero-valued
+redistribution remedy carrying no bias information. Consistent with
 propose-and-evaluate, provably-regressive removals are **not** gated at proposal
 time: the remedy is attached and evaluation decides. Candidates with no
 shared-target survivor or no aligned records are emitted with the field absent —
