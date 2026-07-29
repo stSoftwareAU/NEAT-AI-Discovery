@@ -138,7 +138,7 @@ rescale is guarded from the same direction:
   than silently widening it.
 
 No coordinated-structural floor is changed. That path has its own floors, which
-#1740 reviewed and pinned on realised evidence, and the issue's break-even
+Issue #1740 reviewed and pinned on realised evidence, and the issue's break-even
 evidence covers add-neuron and add-synapse only.
 
 ## Scope note
