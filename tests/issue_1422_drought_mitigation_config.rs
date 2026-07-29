@@ -11,9 +11,8 @@
 //!   both defaults and env overrides.
 
 use neat_ai_discovery::analysis::constants::{
-    MODULE_STARVATION_FAILURE_STREAK, STALENESS_CONSERVATIVE_DIVISOR,
-    STALENESS_EXTENDED_DROUGHT_DIVISOR, TARGET_COOLDOWN_CONSECUTIVE_FAILURES,
-    TARGET_COOLDOWN_EPOCHS,
+    STALENESS_CONSERVATIVE_DIVISOR, STALENESS_EXTENDED_DROUGHT_DIVISOR,
+    TARGET_COOLDOWN_CONSECUTIVE_FAILURES, TARGET_COOLDOWN_EPOCHS,
 };
 use neat_ai_discovery::analysis::creature_drought_alarm::DEFAULT_DROUGHT_ALARM_EPOCHS;
 use neat_ai_discovery::analysis::discovery_mode::{
@@ -132,7 +131,6 @@ fn from_env_reports_compiled_defaults_when_unset() {
         EnvGuard::unset("NEAT_AI_DISCOVERY_TARGET_COOLDOWN_EPOCHS"),
         EnvGuard::unset("NEAT_AI_DISCOVERY_STALENESS_CONSERVATIVE_DIVISOR"),
         EnvGuard::unset("NEAT_AI_DISCOVERY_STALENESS_EXTENDED_DROUGHT_DIVISOR"),
-        EnvGuard::unset("NEAT_AI_DISCOVERY_MODULE_STARVATION_FAILURE_STREAK"),
         EnvGuard::unset("NEAT_AI_DISCOVERY_DROUGHT_ALARM_EPOCHS"),
     ];
 
@@ -173,10 +171,6 @@ fn from_env_reports_compiled_defaults_when_unset() {
         cfg.staleness_extended_drought_divisor,
         STALENESS_EXTENDED_DROUGHT_DIVISOR
     );
-    assert_eq!(
-        cfg.module_starvation_failure_streak,
-        MODULE_STARVATION_FAILURE_STREAK
-    );
 
     // Default lever renders as its numeric threshold, not "disabled".
     assert_eq!(
@@ -193,7 +187,6 @@ fn from_env_reflects_overrides() {
         EnvGuard::set("NEAT_AI_DISCOVERY_DROUGHT_LOG_THRESHOLD", "9"),
         EnvGuard::set("NEAT_AI_DISCOVERY_TARGET_COOLDOWN_FAILURES", "4"),
         EnvGuard::set("NEAT_AI_DISCOVERY_TARGET_COOLDOWN_EPOCHS", "25"),
-        EnvGuard::set("NEAT_AI_DISCOVERY_MODULE_STARVATION_FAILURE_STREAK", "30"),
         EnvGuard::set("NEAT_AI_DISCOVERY_DROUGHT_ALARM_EPOCHS", "0"),
     ];
 
@@ -203,7 +196,6 @@ fn from_env_reflects_overrides() {
     assert_eq!(cfg.drought_log_threshold, 9);
     assert_eq!(cfg.target_cooldown_failures, 4);
     assert_eq!(cfg.target_cooldown_epochs, 25);
-    assert_eq!(cfg.module_starvation_failure_streak, 30);
     assert_eq!(cfg.drought_alarm_epochs, None);
 
     // Disabled levers render as "disabled" for the structured log line.

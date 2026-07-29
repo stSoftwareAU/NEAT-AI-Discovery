@@ -94,7 +94,6 @@ fn drought_diagnostic_json_has_no_candidate_cache_keys() {
         target_cooldown_skipped: 0,
         rejection_breakdown: &breakdown,
         candidates_returned: 1,
-        starvation_tracker: None,
     };
 
     let diagnostic = emit_drought_diagnostic(&inputs, 5).expect("emits at threshold");

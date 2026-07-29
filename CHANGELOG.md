@@ -6,6 +6,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Removed
+
+#### `ModuleStarvationTracker` deleted rather than wired (Issue #1793)
+
+The per-(creature, module) starvation cooldown (Issue #1273) was never populated
+in production: the sole production caller reached it through a wrapper that
+hard-coded `starvation_tracker = None, current_epoch = 0`, and the tracker could
+have no producer at its documented per-`analyze_all` scope. The live
+`ModuleOutcomeTracker` gate already suppresses persistently-failing modules from
+real data, so the dead layer was removed instead of duplicated.
+
+- Removed `analysis::module_starvation_tracker`, the
+  `prepare_and_detect_discovery_modules_with_starvation` /
+  `detect_discovery_modules_parallel_with_starvation` wrappers, and the
+  `DiscoveryModuleDetectionEntry.starved` flag.
+- **Breaking (FFI payload):** `droughtDiagnostic.starvedModuleCount` is no
+  longer serialised — it could only ever be `0`. The `module_starved` rejection
+  reason is gone from `ALL_REJECTION_REASONS` for the same reason.
+- **Breaking (config):** `NEAT_AI_DISCOVERY_MODULE_STARVATION_FAILURE_STREAK`
+  and `NEAT_AI_DISCOVERY_MODULE_STARVATION_COOLDOWN_EPOCHS` are removed; they
+  configured a tracker that no longer exists.
+
 ### Fixed
 
 #### Failure-cache entries expire; fingerprint skip gains an escape hatch (Issue #1781)

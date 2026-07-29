@@ -55,7 +55,6 @@ pub mod fingerprint_skip_escape;
 pub mod gpu;
 pub mod insufficient_recording;
 pub mod merge_redundant_neuron;
-pub mod module_starvation_tracker;
 pub mod module_tiering;
 pub mod module_weights;
 pub mod neuron;
