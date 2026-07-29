@@ -608,6 +608,42 @@ Two changes make that path safe:
   operator through `zeroCandidateSummary.rejectionBreakdown` (there is no
   synapse / neuron metadata on that path) and feeds the starvation classifier.
 
+#### Within-Batch Same-Target Short-Circuit (Issue #1796)
+
+When a candidate targeting neuron T fails within a batch, every remaining
+same-target candidate in that batch is short-circuited (Issue #1164). The limit
+is `1` by default (`NEAT_AI_DISCOVERY_BATCH_TARGET_FAILURE_LIMIT`), so a single
+failure suppresses all the rest — previously without incrementing any counter,
+so the classifier could not see the drop.
+
+Each surface now folds its aggregate skip count into `rejectionBreakdown` under
+the stable reason `within_batch_target_short_circuit`:
+
+```json
+{
+  "synapseMetadata": {
+    "rejectionBreakdown": { "within_batch_target_short_circuit": 3 }
+  }
+}
+```
+
+```mermaid
+flowchart LR
+    C1["candidate 1 → target T"] --> E["GPU evaluation"]
+    E -->|fails| F["record_failure(T)"]
+    C2["candidates 2..N → target T"] --> S{"should_skip(T)?"}
+    F -.-> S
+    S -->|yes| K["record_skip()"]
+    K --> B["rejectionBreakdown\nwithin_batch_target_short_circuit: N-1"]
+    B --> CL["candidate_starvation::classify\n(upstream — never reached the gate)"]
+```
+
+The count is folded once per surface from that surface's own tracker, so it
+always equals the `within_batch_skipped` value in the aggregate skip log and
+cannot be double counted across the neuron and synapse surfaces. It is
+classified as an **upstream** rejection: the suppressed candidates were never
+evaluated, so none reached the accept gate.
+
 ### Zero-Candidate Summary (Issue #1446)
 
 When a discovery pass produces **no candidates of any kind** (no helpful or

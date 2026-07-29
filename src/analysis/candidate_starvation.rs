@@ -105,6 +105,9 @@ pub const UPSTREAM_REJECTION_REASONS: &[&str] = &[
     // Issue #1781: focus neurons skipped by the structural fingerprint cache
     // were never analysed at all, so no proposal could reach the gate.
     reasons::REJECTION_FINGERPRINT_UNCHANGED,
+    // Issue #1796: same-target candidates short-circuited after an earlier
+    // within-batch failure were never evaluated, so none reached the gate.
+    reasons::REJECTION_WITHIN_BATCH_TARGET_SHORT_CIRCUIT,
 ];
 
 /// Rejection reasons recorded when a candidate *was* generated but was capped or

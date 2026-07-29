@@ -471,9 +471,90 @@ pub fn analyze_neurons_with_cache_and_gpu_queue(
         gpu_used,
     };
     let mut result = post_processing::build_neuron_results(&result_params)?;
+    // Issue #1796: turn the within-batch short-circuit skips into a rejection
+    // reason so the starvation classifier (which reads only the breakdown) can
+    // see them. Folded once, from the aggregate count, so the per-candidate
+    // evaluation loop stays allocation-free.
+    crate::analysis::within_batch_failures::fold_within_batch_skips(
+        &within_batch_failures,
+        &mut result.metadata.rejection_breakdown,
+    );
     // Issue #1791: surface the real cooldown filter return value so the drought
     // diagnostic's `target_cooldown_skipped` metric stops reporting a constant
     // `0` and the suppression becomes observable in production pass logs.
     result.metadata.target_cooldown_skipped = cooldown_skipped;
     Ok(result)
+}
+
+#[cfg(test)]
+mod within_batch_rejection_tests {
+    use crate::analysis::candidate_starvation::signals_from_breakdown;
+    use crate::analysis::diagnostics::rejection_reasons::REJECTION_WITHIN_BATCH_TARGET_SHORT_CIRCUIT;
+    use crate::analysis::shared::NeuronAnalysisMetadata;
+    use crate::analysis::within_batch_failures::{
+        WithinBatchFailureTracker, fold_within_batch_skips,
+    };
+
+    /// Drive a batch of same-target candidates through the tracker exactly as
+    /// `evaluation::evaluate_neuron_candidates` does: the first candidate is
+    /// evaluated and fails, every later candidate is short-circuited.
+    fn drive_same_target_batch(tracker: &WithinBatchFailureTracker, target: &str, following: u32) {
+        assert!(
+            !tracker.should_skip(target),
+            "the first same-target candidate must be evaluated"
+        );
+        tracker.record_failure(target);
+        for _ in 0..following {
+            assert!(
+                tracker.should_skip(target),
+                "later same-target candidates must be short-circuited"
+            );
+            tracker.record_skip();
+        }
+    }
+
+    /// Issue #1796: the short-circuited candidates must surface as
+    /// `within_batch_target_short_circuit` in the neuron metadata breakdown
+    /// rather than being dropped silently.
+    #[test]
+    fn within_batch_skips_recorded_as_rejections() {
+        const FOLLOWING: u32 = 5;
+        let tracker = WithinBatchFailureTracker::with_threshold(1);
+        drive_same_target_batch(&tracker, "target-A", FOLLOWING);
+
+        let mut metadata = NeuronAnalysisMetadata::default();
+        let folded = fold_within_batch_skips(&tracker, &mut metadata.rejection_breakdown);
+
+        assert_eq!(folded, FOLLOWING);
+        assert_eq!(
+            metadata
+                .rejection_breakdown
+                .counts()
+                .get(REJECTION_WITHIN_BATCH_TARGET_SHORT_CIRCUIT),
+            Some(&FOLLOWING),
+            "the surfaced breakdown must report every short-circuited candidate"
+        );
+        // The recorded counter and the aggregate log source agree, and this
+        // surface contributes its own tracker's count only (no double count).
+        assert_eq!(metadata.rejection_breakdown.total(), tracker.skip_count());
+
+        // The starvation classifier reads only the breakdown: the suppressed
+        // candidates now count as upstream (they never reached the gate).
+        let signals = signals_from_breakdown(&metadata.rejection_breakdown, 0);
+        assert_eq!(signals.upstream_rejections, FOLLOWING);
+        assert_eq!(signals.gate_side_rejections, 0);
+    }
+
+    /// A batch with no within-batch failure records nothing — the reason key is
+    /// absent rather than present-and-zero.
+    #[test]
+    fn no_within_batch_failures_records_nothing() {
+        let tracker = WithinBatchFailureTracker::with_threshold(1);
+        let mut metadata = NeuronAnalysisMetadata::default();
+        assert_eq!(
+            fold_within_batch_skips(&tracker, &mut metadata.rejection_breakdown),
+            0
+        );
+        assert!(metadata.rejection_breakdown.is_empty());
+    }
 }
