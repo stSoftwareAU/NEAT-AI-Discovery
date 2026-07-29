@@ -24,7 +24,7 @@ use crate::observability::PhaseTimer;
 use rayon::prelude::*;
 
 use super::remove_neuron_bias_fold::{
-    BIAS_FOLD_GATE_TOLERANCE, evaluate_constant_neuron_bias_fold,
+    BIAS_FOLD_GATE_TOLERANCE, BiasFoldOutcome, evaluate_constant_neuron_bias_fold,
 };
 use super::remove_neuron_compensation::{
     ActivationCovariance, aligned_activations, best_weight_redistribution,
@@ -162,20 +162,36 @@ pub fn apply_honest_remove_neuron_gain(
     overridden
 }
 
-/// `true` when the neuron identified by `uuid` is a constant neuron
-/// (Issue #1689).
+/// The accepted bias fold for `uuid`, or `None` when the neuron is not
+/// **measured** functionally constant over the recorded window (Issue #1779).
 ///
-/// Constant neurons carry no per-sample variance, so a bare removal is
-/// compensated by the mean-only **bias fold** (Issue #1623) rather than by
-/// weight redistribution. Routing by neuron class here keeps the two remedies
-/// from overlapping: [`apply_remove_neuron_compensation`] attaches
-/// redistribution only to variance-carrying neurons and leaves constant neurons
-/// for the bias-fold path.
-fn is_constant_neuron(creature: &CreatureJson, uuid: &str) -> bool {
-    creature
-        .neurons
-        .iter()
-        .any(|n| n.uuid == uuid && n.neuron_type.eq_ignore_ascii_case("constant"))
+/// This is the single routing seam shared by the two remove-neuron remedies, so
+/// they cannot overlap: a neuron with an accepted fold takes the #1623 bias-fold
+/// path ([`apply_constant_neuron_bias_fold`]) and is skipped by the #1559
+/// redistribution path ([`apply_remove_neuron_compensation`]); every other
+/// neuron takes redistribution.
+///
+/// Constancy is **measured**, not declared. The earlier gate (Issue #1689) asked
+/// for `neuron_type == "constant"` — the NEAT-AI input-side bias class — but
+/// every producer of a sole-op `RemoveNeuron` restricts itself to *hidden*
+/// neurons, so the gate never fired in production and a functionally-constant
+/// hidden neuron (the realistic case) was deleted with no fold at all. The fold
+/// already evaluates constancy itself: it derives the constant `c` from the
+/// recorded activations and rejects anything whose per-sample residual
+/// `|w·(a_i − c)|` exceeds [`BIAS_FOLD_GATE_TOLERANCE`], so its own acceptance is
+/// the honest predicate — a neuron that only *looks* constant is still rejected
+/// fail-loud, and one with no records cannot be verified at all.
+///
+/// A neuron with no outgoing synapses has nothing to fold: an empty fold is not
+/// a remedy, so it is not treated as constant here and routes normally.
+fn accepted_constant_bias_fold(
+    creature: &CreatureJson,
+    records: &[DiscoverRecord],
+    uuid: &str,
+) -> Option<BiasFoldOutcome> {
+    let outcome =
+        evaluate_constant_neuron_bias_fold(creature, records, uuid, BIAS_FOLD_GATE_TOLERANCE)?;
+    (outcome.accepted && !outcome.folded_targets.is_empty()).then_some(outcome)
 }
 
 /// Attach variance-aware weight-redistribution compensation to every single-op
@@ -198,9 +214,11 @@ fn is_constant_neuron(creature: &CreatureJson, uuid: &str) -> bool {
 /// `fully_compensable` flag so the applier can redistribute weight rather than
 /// fold the mean.
 ///
-/// Routing is by neuron class, not duplicated logic:
-/// - **Constant** neurons (no per-sample variance) are left untouched — they
-///   route to the #1623 bias-fold remedy.
+/// Routing is by **measured** constancy (Issue #1779), through the single
+/// [`accepted_constant_bias_fold`] seam rather than duplicated logic:
+/// - Neurons whose recorded activations are constant within the fold gate (no
+///   per-sample variance to redistribute) are left untouched — they route to the
+///   #1623 bias-fold remedy.
 /// - **Variance-carrying** neurons with a correlated shared-target survivor get
 ///   the redistribution remedy attached.
 ///
@@ -234,9 +252,10 @@ pub fn apply_remove_neuron_compensation(
             continue;
         };
 
-        // Route by neuron class: constant neurons carry no per-sample signal to
-        // redistribute — they are the #1623 bias-fold path, not this one.
-        if is_constant_neuron(creature, neuron_uuid) {
+        // Route by measured constancy (Issue #1779): a neuron whose recorded
+        // activations are constant within the fold gate carries no per-sample
+        // signal to redistribute — it is the #1623 bias-fold path, not this one.
+        if accepted_constant_bias_fold(creature, records, neuron_uuid).is_some() {
             continue;
         }
 
@@ -300,9 +319,14 @@ pub fn apply_remove_neuron_compensation(
 /// per-sample variance, so a plain bias fold is *fully compensable* and no
 /// survivor redistribution is needed.
 ///
-/// Routing is by neuron class, mirroring — and mutually exclusive with — the
-/// #1559 path:
-/// - **Constant** neurons (`neuron_type == "constant"`) take this bias-fold path.
+/// Routing is by **measured** constancy (Issue #1779), mirroring — and mutually
+/// exclusive with — the #1559 path:
+/// - Neurons whose recorded activations are constant within the gate take this
+///   bias-fold path, whatever their declared `neuron_type`. Gating on the
+///   declared type instead made this path unreachable: every producer of a
+///   sole-op `RemoveNeuron` emits **hidden** neurons, never the `"constant"`
+///   input-side class, so a functionally-constant hidden neuron was deleted with
+///   no fold.
 /// - **Variance-carrying** neurons are left untouched here; they route to
 ///   [`apply_remove_neuron_compensation`].
 ///
@@ -338,28 +362,16 @@ pub fn apply_constant_neuron_bias_fold(
             continue;
         };
 
-        // Route by neuron class: only constant neurons take the #1623 bias fold;
-        // variance-carrying neurons route to the #1559 redistribution remedy.
-        if !is_constant_neuron(creature, neuron_uuid) {
-            continue;
-        }
-
-        // Evaluate the fold behind the evaluate-before-accept gate. `None` means
-        // there are no recorded activations, so constancy cannot be verified; a
-        // rejected outcome means the neuron only *looks* constant (residual over
-        // tolerance). Both are fail-loud: no fold is emitted and the applier
-        // flags the removal rather than folding a mean — never deleted blind.
-        let Some(outcome) = evaluate_constant_neuron_bias_fold(
-            creature,
-            records,
-            neuron_uuid,
-            BIAS_FOLD_GATE_TOLERANCE,
-        ) else {
+        // Route by measured constancy (Issue #1779): evaluate the fold behind
+        // the evaluate-before-accept gate and take it only when the gate accepts.
+        // No records means constancy cannot be verified; a rejected outcome means
+        // the neuron only *looks* constant (residual over tolerance). Both are
+        // fail-loud: no fold is emitted and the applier flags the removal rather
+        // than folding a mean — never deleted blind. Variance-carrying neurons
+        // fall through to the #1559 redistribution remedy.
+        let Some(outcome) = accepted_constant_bias_fold(creature, records, neuron_uuid) else {
             continue;
         };
-        if !outcome.accepted {
-            continue;
-        }
 
         candidate.constant_neuron_bias_fold = Some(ConstantNeuronBiasFoldJson {
             constant_activation: outcome.constant_activation as f32,
