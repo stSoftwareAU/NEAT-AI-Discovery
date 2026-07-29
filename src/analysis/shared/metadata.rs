@@ -325,12 +325,14 @@ pub struct AnalyzeAllResult {
     /// from this run. Callers should persist this and pass it back on subsequent runs.
     pub module_outcome_tracker: crate::analysis::module_weights::ModuleOutcomeTracker,
     /// Rejections recorded at pass level, outside the synapse / neuron metadata
-    /// (Issue #1781).
+    /// (Issue #1781, #1801).
     ///
     /// A pass can be dropped whole *before* either surface produces metadata —
-    /// currently when every focus neuron is skipped by the fingerprint cache.
-    /// Those drops used to be invisible; the counts here are merged into the
-    /// combined breakdown and into `zeroCandidateSummary` by the FFI layer.
+    /// when every focus neuron is skipped by the fingerprint cache — and a pass
+    /// that runs normally can still have *some* focus neurons skipped by that
+    /// cache (Issue #1801). Neither drop belongs to a surface, so both are
+    /// counted here; the counts are merged into the combined breakdown and into
+    /// `zeroCandidateSummary` by the FFI layer.
     pub pass_rejection_breakdown: crate::analysis::diagnostics::RejectionBreakdown,
 }
 
