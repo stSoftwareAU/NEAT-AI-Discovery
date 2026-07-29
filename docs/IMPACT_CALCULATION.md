@@ -462,8 +462,9 @@ redistributed residual variances, and the `fullyCompensable` flag. Routing is by
 **measured** constancy (Issue #1779) — a neuron whose recorded activations are
 constant within the #1623 fold gate carries no per-sample variance to
 redistribute and is left untouched for the bias-fold remedy, not duplicated here.
-Routing on the *declared* `neuron_type == "constant"` class instead (the original
-#1689 gate) made the fold unreachable: every producer of a sole-op `RemoveNeuron`
+Routing on the *declared* `neuron_type == "constant"` class instead (the
+original #1689 gate) made the fold unreachable: every producer of a sole-op
+`RemoveNeuron`
 emits **hidden** neurons, so a functionally-constant hidden neuron — the
 realistic case — was deleted with no fold and picked up a zero-valued
 redistribution remedy carrying no bias information. Consistent with
