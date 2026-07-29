@@ -202,6 +202,14 @@ pub(crate) fn analyze_synapses_with_cache_impl(
         order_map: &ctx.order_map,
         mcmc_summary,
     })?;
+    // Issue #1796: turn the within-batch short-circuit skips into a rejection
+    // reason so the starvation classifier (which reads only the breakdown) can
+    // see them. Folded once, from the aggregate count, so the per-candidate
+    // result-collection loop stays allocation-free.
+    crate::analysis::within_batch_failures::fold_within_batch_skips(
+        &within_batch_failures,
+        &mut result.metadata.rejection_breakdown,
+    );
     // Issue #1791: surface the real cooldown filter return value so the drought
     // diagnostic's `target_cooldown_skipped` metric reflects actual suppression.
     result.metadata.target_cooldown_skipped = cooldown_skipped;
@@ -245,5 +253,81 @@ fn apply_target_cooldown(
             )
         }
         _ => filter_cooldown_targets(focus_order, &tracker_lock, current_epoch),
+    }
+}
+
+#[cfg(test)]
+mod within_batch_rejection_tests {
+    use crate::analysis::diagnostics::rejection_reasons::REJECTION_WITHIN_BATCH_TARGET_SHORT_CIRCUIT;
+    use crate::analysis::shared::SynapseAnalysisMetadata;
+    use crate::analysis::within_batch_failures::{
+        WithinBatchFailureTracker, fold_within_batch_skips,
+    };
+
+    /// Drive a batch of same-target candidates through the tracker exactly as
+    /// `target_analysis::evaluation::collect_and_process_helpful_results` does:
+    /// the first candidate is evaluated and fails (zero improved samples),
+    /// every later candidate for that target is short-circuited.
+    fn drive_same_target_batch(tracker: &WithinBatchFailureTracker, target: &str, following: u32) {
+        assert!(
+            !tracker.should_skip(target),
+            "the first same-target candidate must be evaluated"
+        );
+        tracker.record_failure(target);
+        for _ in 0..following {
+            assert!(
+                tracker.should_skip(target),
+                "later same-target candidates must be short-circuited"
+            );
+            tracker.record_skip();
+        }
+    }
+
+    /// Issue #1796: the short-circuited candidates must surface as
+    /// `within_batch_target_short_circuit` in the synapse metadata breakdown
+    /// rather than being dropped silently.
+    #[test]
+    fn within_batch_skips_recorded_as_rejections() {
+        const FOLLOWING: u32 = 3;
+        let tracker = WithinBatchFailureTracker::with_threshold(1);
+        drive_same_target_batch(&tracker, "target-A", FOLLOWING);
+
+        let mut metadata = SynapseAnalysisMetadata::default();
+        let folded = fold_within_batch_skips(&tracker, &mut metadata.rejection_breakdown);
+
+        assert_eq!(folded, FOLLOWING);
+        assert_eq!(
+            metadata
+                .rejection_breakdown
+                .counts()
+                .get(REJECTION_WITHIN_BATCH_TARGET_SHORT_CIRCUIT),
+            Some(&FOLLOWING),
+            "the surfaced breakdown must report every short-circuited candidate"
+        );
+        // The recorded counter and the aggregate log source agree, and this
+        // surface contributes its own tracker's count only (no double count).
+        assert_eq!(metadata.rejection_breakdown.total(), tracker.skip_count());
+    }
+
+    /// Each surface owns a distinct tracker, so the two fold-ins cannot double
+    /// count: a synapse fold never picks up the neuron surface's skips.
+    #[test]
+    fn per_surface_trackers_do_not_double_count() {
+        let synapse_tracker = WithinBatchFailureTracker::with_threshold(1);
+        let neuron_tracker = WithinBatchFailureTracker::with_threshold(1);
+        drive_same_target_batch(&synapse_tracker, "target-A", 2);
+        drive_same_target_batch(&neuron_tracker, "target-A", 7);
+
+        let mut metadata = SynapseAnalysisMetadata::default();
+        fold_within_batch_skips(&synapse_tracker, &mut metadata.rejection_breakdown);
+
+        assert_eq!(
+            metadata
+                .rejection_breakdown
+                .counts()
+                .get(REJECTION_WITHIN_BATCH_TARGET_SHORT_CIRCUIT),
+            Some(&2),
+            "the synapse breakdown must count only the synapse surface's skips"
+        );
     }
 }

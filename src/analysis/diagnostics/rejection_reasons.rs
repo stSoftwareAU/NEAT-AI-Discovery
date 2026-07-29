@@ -194,6 +194,18 @@ pub const REJECTION_REMOVE_NEURON_DROUGHT_DEPRIORITISED: &str =
 /// path) and surfaces in `zeroCandidateSummary`.
 pub const REJECTION_FINGERPRINT_UNCHANGED: &str = "fingerprint_unchanged";
 
+/// Candidate was short-circuited because an earlier candidate for the *same
+/// target neuron* had already failed within the current batch (Issue #1164,
+/// counted from Issue #1796).
+///
+/// `WITHIN_BATCH_TARGET_FAILURE_LIMIT` defaults to `1`, so a single failing
+/// candidate suppresses *every* remaining same-target candidate in the batch —
+/// the suppressed candidates are never evaluated and never reach the accept
+/// gate. The count is folded in once per surface (neuron / synapse) from that
+/// surface's `WithinBatchFailureTracker::skip_count()`, so it always agrees
+/// with the aggregate skip logs.
+pub const REJECTION_WITHIN_BATCH_TARGET_SHORT_CIRCUIT: &str = "within_batch_target_short_circuit";
+
 /// All documented rejection reason names. Used for assertions and
 /// documentation. Keep this list in sync with the constants above.
 pub const ALL_REJECTION_REASONS: &[&str] = &[
@@ -227,6 +239,7 @@ pub const ALL_REJECTION_REASONS: &[&str] = &[
     REJECTION_REMOVAL_BELOW_NOISE_FLOOR,
     REJECTION_REMOVE_NEURON_DROUGHT_DEPRIORITISED,
     REJECTION_FINGERPRINT_UNCHANGED,
+    REJECTION_WITHIN_BATCH_TARGET_SHORT_CIRCUIT,
 ];
 
 // =============================================================================
@@ -407,6 +420,10 @@ fn friendly_reason(reason: &str) -> String {
         REJECTION_REMOVE_NEURON_DROUGHT_DEPRIORITISED => {
             "remove-neuron deprioritised during search-exhaustion drought".to_string()
         }
+        REJECTION_WITHIN_BATCH_TARGET_SHORT_CIRCUIT => format!(
+            "within-batch same-target short-circuit after {} failure(s) for the target",
+            crate::analysis::constants::WITHIN_BATCH_TARGET_FAILURE_LIMIT
+        ),
         other => other.replace('_', " "),
     }
 }
@@ -481,6 +498,30 @@ mod tests {
             Some(&7)
         );
         assert_eq!(base.counts().get(REJECTION_INTERFERENCE_FILTERED), Some(&2));
+    }
+
+    /// Issue #1796: the within-batch short-circuit reason must stay in the
+    /// documented list — dropping or renaming it without updating
+    /// `ALL_REJECTION_REASONS` would make the silent drop invisible again.
+    #[test]
+    fn within_batch_short_circuit_is_a_documented_reason() {
+        assert!(
+            ALL_REJECTION_REASONS.contains(&REJECTION_WITHIN_BATCH_TARGET_SHORT_CIRCUIT),
+            "REJECTION_WITHIN_BATCH_TARGET_SHORT_CIRCUIT missing from ALL_REJECTION_REASONS"
+        );
+        assert_eq!(
+            REJECTION_WITHIN_BATCH_TARGET_SHORT_CIRCUIT,
+            "within_batch_target_short_circuit"
+        );
+        // The reason renders as prose in the top-level summary, not as the
+        // raw snake-case key.
+        let mut b = RejectionBreakdown::new();
+        b.record_many(REJECTION_WITHIN_BATCH_TARGET_SHORT_CIRCUIT, 7);
+        let summary = top_level_summary(&b, Some(9)).expect("summary");
+        assert!(
+            summary.contains("within-batch same-target short-circuit"),
+            "summary should name the short-circuit, got: {summary}"
+        );
     }
 
     #[test]
