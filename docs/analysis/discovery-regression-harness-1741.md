@@ -106,3 +106,22 @@ regression on the production topology fails the merge rather than surfacing in
 live discovery. The runtime backstops remain in place for regressions that slip
 past the fixture: sustained zero-success batches still trigger the
 `zero_success_batch` counters (#1194) and the creature-drought alarm (#1424).
+
+## Companion guard — suppression wiring (Issue #1795)
+
+This harness measures **acceptance yield** from a committed fixture batch; it
+does not exercise `analyze_all`, so it cannot see a suppression store that is
+read but never written — the #1780 bug class. That gap is covered by the
+companion guard in `tests/suppression_wiring_regression_1795.rs`, which drives
+the **real orchestration entry point** and asserts the process-global
+`TargetFailureTracker` is genuinely populated, its epoch advances once per pass
+(#1790), the cooldown filter drops a target, and the drought reset clears a
+non-zero count. Each failure message names the suppression store that went
+dead.
+
+```bash
+cargo test --test suppression_wiring_regression_1795 < /dev/null
+```
+
+The two are complementary and should stay separate: this one is a fixture
+replay of shipped acceptance logic, the other is a live-pass wiring guard.
