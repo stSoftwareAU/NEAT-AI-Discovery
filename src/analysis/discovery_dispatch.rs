@@ -215,7 +215,7 @@ fn accepted_constant_bias_fold(
 /// fold the mean.
 ///
 /// Routing is by **measured** constancy (Issue #1779), through the single
-/// [`accepted_constant_bias_fold`] seam rather than duplicated logic:
+/// `accepted_constant_bias_fold` seam rather than duplicated logic:
 /// - Neurons whose recorded activations are constant within the fold gate (no
 ///   per-sample variance to redistribute) are left untouched — they route to the
 ///   #1623 bias-fold remedy.

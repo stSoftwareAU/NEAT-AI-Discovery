@@ -9,6 +9,7 @@
 //! `biasDelta`) plus the folded value `w × c`, so a serde rename or a regression
 //! of the gate fails CI rather than passing silently.
 
+use neat_ai_discovery::analysis::GpuAnalyzer;
 use neat_ai_discovery::parquet_format::write_records_to_parquet;
 use neat_ai_discovery::types::DiscoverRecord;
 use neat_ai_discovery::{CreatureJson, analyze_parallel_internal};
@@ -95,6 +96,11 @@ fn is_sole_removal_of(candidate: &Value, uuid: &str) -> bool {
 /// with its bias fold serialised into the FFI JSON.
 #[test]
 fn hidden_constant_neuron_removal_carries_bias_fold_in_ffi_json() {
+    // Discovery is GPU-only. On machines without GPU, we skip.
+    if !GpuAnalyzer::gpu_is_available() {
+        return;
+    }
+
     let creature = creature_with_constant_hidden_neuron();
     let temp_dir = tempfile::tempdir().expect("tempdir");
     let parquet_path = temp_dir.path().join("issue_1779.parquet");
@@ -173,6 +179,11 @@ fn hidden_constant_neuron_removal_carries_bias_fold_in_ffi_json() {
 /// else the pipeline proposes for it.
 #[test]
 fn variance_carrying_neuron_never_carries_a_bias_fold_in_ffi_json() {
+    // Discovery is GPU-only. On machines without GPU, we skip.
+    if !GpuAnalyzer::gpu_is_available() {
+        return;
+    }
+
     let creature = creature_with_constant_hidden_neuron();
     let temp_dir = tempfile::tempdir().expect("tempdir");
     let parquet_path = temp_dir.path().join("issue_1779_variance.parquet");
