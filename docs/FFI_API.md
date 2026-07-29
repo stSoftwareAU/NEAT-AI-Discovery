@@ -723,6 +723,45 @@ the neuron and synapse surfaces cannot double count. Both reasons are
 classified as **upstream** rejections: the candidate never reached the accept
 gate. Drop behaviour itself is unchanged — this is observability only.
 
+#### Quality-Based Module Skipping (Issue #1799)
+
+Once a merge pass has accumulated enough high-quality candidates, quality-based
+module skipping (Issue #1074) discards the remaining discovery modules' results
+wholesale. The drop was previously invisible to the classifier: only
+`modulesSkippedByQuality` was incremented, and the classifier reads the
+`rejectionBreakdown` alone.
+
+The skipped module's candidates are now counted under the stable reason
+`module_skipped_quality_satisfied`. **The unit is candidates, not modules** —
+the value is the sum of the skipped modules' `candidatesProduced`, so it stays
+comparable with every other reason in `signals_from_breakdown`:
+
+```json
+{
+  "synapseMetadata": {
+    "rejectionBreakdown": { "module_skipped_quality_satisfied": 2 },
+    "discoveryModuleStats": [{ "moduleName": "skipped", "candidatesProduced": 2 }]
+  }
+}
+```
+
+```mermaid
+flowchart LR
+    M["module results"] --> Q{"quality skip active?"}
+    Q -->|no| MG["merge candidates"]
+    Q -->|yes| K["discard candidatesProduced"]
+    K --> B["rejectionBreakdown\nmodule_skipped_quality_satisfied: C"]
+    B --> CL["candidate_starvation::classify\n(abundance — proof the pass is NOT starved)"]
+```
+
+Unlike the other silent drops, this one means the *opposite* of starvation: the
+modules were skipped precisely because enough high-quality candidates already
+existed. It is therefore classified as an **abundance** rejection, alongside
+`budget_truncated` and `per_target_cap`, so a quality-skipping pass is never
+classified `CandidateStarved` on the strength of these drops. Existing
+`modulesSkippedByQuality` metadata, the per-module stats, and the skipping
+behaviour itself are unchanged — this is observability only.
+
 ### Zero-Candidate Summary (Issue #1446)
 
 When a discovery pass produces **no candidates of any kind** (no helpful or

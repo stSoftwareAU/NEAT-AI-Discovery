@@ -30,6 +30,23 @@ real data, so the dead layer was removed instead of duplicated.
 
 ### Fixed
 
+#### Quality-skipped candidates count as an abundance rejection (Issue #1799)
+
+Quality-based module skipping (Issue #1074) discarded the remaining discovery
+modules' candidates without incrementing any rejection counter, so the drop was
+invisible to `candidate_starvation::classify`, which reads the
+`RejectionBreakdown` alone.
+
+- New stable reason `module_skipped_quality_satisfied`, recorded with the
+  skipped module's `candidates_produced` (unit: **candidates**, not modules) so
+  `signals_from_breakdown` totals stay meaningful.
+- Classified as an **abundance** rejection alongside `budget_truncated` and
+  `per_target_cap` — the skip fires because the pass already holds enough
+  high-quality candidates, so a quality-skipping pass is never classified
+  `CandidateStarved` on the strength of these drops.
+- Skipping behaviour, `modulesSkippedByQuality` metadata, and the per-module
+  stats are unchanged — observability only.
+
 #### Failure-cache entries expire; fingerprint skip gains an escape hatch (Issue #1781)
 
 Persisted suppression state could hold a creature in drought indefinitely.

@@ -226,6 +226,20 @@ pub const REJECTION_WITHIN_BATCH_TARGET_SHORT_CIRCUIT: &str = "within_batch_targ
 /// number the cooldown filter's aggregate log reports.
 pub const REJECTION_TARGET_COOLDOWN_SKIPPED: &str = "target_cooldown_skipped";
 
+/// Candidates discarded because quality-based module skipping (Issue #1074)
+/// dropped the remaining discovery modules' results wholesale, counted so the
+/// drop is visible in the breakdown (Issue #1799).
+///
+/// **Unit: candidates, not modules.** One count is recorded per *candidate*
+/// discarded — the skipped module's `candidates_produced` — so
+/// `signals_from_breakdown` totals stay comparable with every other reason.
+///
+/// The pass skipped those modules because it had already accumulated enough
+/// high-quality candidates, so this reason is *abundance* evidence: it means
+/// the opposite of starvation and is classified alongside `budget_truncated`
+/// and `per_target_cap`.
+pub const REJECTION_MODULE_SKIPPED_QUALITY_SATISFIED: &str = "module_skipped_quality_satisfied";
+
 /// All documented rejection reason names. Used for assertions and
 /// documentation. Keep this list in sync with the constants above.
 pub const ALL_REJECTION_REASONS: &[&str] = &[
@@ -262,6 +276,7 @@ pub const ALL_REJECTION_REASONS: &[&str] = &[
     REJECTION_FINGERPRINT_UNCHANGED,
     REJECTION_WITHIN_BATCH_TARGET_SHORT_CIRCUIT,
     REJECTION_TARGET_COOLDOWN_SKIPPED,
+    REJECTION_MODULE_SKIPPED_QUALITY_SATISFIED,
 ];
 
 // =============================================================================
@@ -451,6 +466,10 @@ fn friendly_reason(reason: &str) -> String {
         ),
         REJECTION_TARGET_COOLDOWN_SKIPPED => {
             "per-target cooldown after repeated consecutive failures".to_string()
+        }
+        REJECTION_MODULE_SKIPPED_QUALITY_SATISFIED => {
+            "discovery modules skipped because enough high-quality candidates were already found"
+                .to_string()
         }
         other => other.replace('_', " "),
     }
