@@ -129,6 +129,10 @@ pub const ABUNDANCE_REJECTION_REASONS: &[&str] = &[
     reasons::REJECTION_SAME_TARGET_SQUASH_DUPLICATE,
     reasons::REJECTION_COORDINATED_TARGET_CAP_EXCEEDED,
     reasons::REJECTION_COORDINATED_COLLAPSE_BYPASS_WEIGHT_BELOW_FLOOR,
+    // Issue #1799: candidates discarded by quality-based module skipping were
+    // dropped *because* the pass already held enough high-quality candidates —
+    // the strongest possible evidence the generator is not starved.
+    reasons::REJECTION_MODULE_SKIPPED_QUALITY_SATISFIED,
 ];
 
 /// Default minimum number of *formed* proposals below which a run with a
@@ -395,6 +399,29 @@ mod tests {
         assert_eq!(signals.proposals_formed(), 500);
         let class = classify(&signals, &StarvationConfig::default());
         assert_eq!(class, StarvationClass::ProposalRichOverRejected);
+    }
+
+    /// Issue #1799: quality-based module skipping discards candidates *because*
+    /// the pass already held enough high-quality ones. A pass whose only
+    /// rejections are that reason must count as abundance and must never be
+    /// classified `CandidateStarved`.
+    #[test]
+    fn quality_skip_drops_count_as_abundance_not_starvation() {
+        let b = breakdown(&[(reasons::REJECTION_MODULE_SKIPPED_QUALITY_SATISFIED, 12)]);
+        let signals = signals_from_breakdown(&b, 0);
+        assert_eq!(signals.abundance_rejections, 12);
+        assert_eq!(signals.upstream_rejections, 0);
+        assert_eq!(signals.gate_side_rejections, 0);
+        assert_eq!(signals.proposals_formed(), 12);
+
+        let class = classify(&signals, &StarvationConfig::default());
+        assert_ne!(
+            class,
+            StarvationClass::CandidateStarved,
+            "quality-skipping proves abundance, so the pass must not be judged starved"
+        );
+        assert_eq!(class, StarvationClass::ProposalRichOverRejected);
+        assert!(!recommend_widening(class));
     }
 
     #[test]

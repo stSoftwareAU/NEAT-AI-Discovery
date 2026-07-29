@@ -7,6 +7,7 @@ use std::time::{Duration, SystemTime};
 use crate::analysis::shared;
 use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson};
 
+use super::super::diagnostics::rejection_reasons::REJECTION_MODULE_SKIPPED_QUALITY_SATISFIED;
 use super::{
     DiscoveryDetectionResult, DiscoveryModuleSpec, ModuleOutcomeTracker,
     detect_discovery_modules_parallel, run_discovery_modules_parallel,
@@ -40,6 +41,40 @@ fn make_candidate(gain: f32) -> CoordinatedStructuralCandidateJson {
         expected_creature_score_gain: gain,
         comment: Some(format!("test gain={gain}")),
     }
+}
+
+/// Candidate targeting a distinct neuron, so the per-final-target coordinated
+/// cap (Issue #1271, 3 per target) does not silently discard it.
+///
+/// Issue #1799: the quality-skip fixtures need ≥ `QUALITY_SKIP_MIN_CANDIDATES`
+/// candidates to actually *survive* the merge, otherwise skipping never
+/// activates and any assertion about it is vacuous.
+fn make_candidate_to(target: &str, gain: f32) -> CoordinatedStructuralCandidateJson {
+    CoordinatedStructuralCandidateJson {
+        remove_neuron_compensation: None,
+        constant_neuron_bias_fold: None,
+        operations: vec![CoordinatedStructuralOpJson::RemoveSynapse {
+            from_neuron_uuid: "a".to_string(),
+            to_neuron_uuid: target.to_string(),
+        }],
+        expected_creature_score_gain: gain,
+        comment: Some(format!("test target={target} gain={gain}")),
+    }
+}
+
+/// High-quality candidates spread across distinct targets — enough to trigger
+/// quality-based module skipping (Issue #1074).
+fn high_quality_candidates_for_skip() -> Vec<CoordinatedStructuralCandidateJson> {
+    use super::super::constants::{QUALITY_SKIP_GAIN_THRESHOLD, QUALITY_SKIP_MIN_CANDIDATES};
+
+    (0..QUALITY_SKIP_MIN_CANDIDATES + 5)
+        .map(|i| {
+            make_candidate_to(
+                &format!("target_{i}"),
+                QUALITY_SKIP_GAIN_THRESHOLD + 0.1 * (i as f32 + 1.0),
+            )
+        })
+        .collect()
 }
 
 fn make_module(
@@ -551,7 +586,7 @@ fn parallel_detection_preserves_module_metadata_when_skipped() {
 
 #[test]
 fn quality_skip_skips_later_modules_when_enough_high_quality_candidates() {
-    use super::super::constants::{QUALITY_SKIP_GAIN_THRESHOLD, QUALITY_SKIP_MIN_CANDIDATES};
+    use super::super::constants::QUALITY_SKIP_MIN_CANDIDATES;
 
     let _lock = crate::watchdog::lock_for_test_serialisation();
     let _wd = crate::watchdog::Watchdog::start(crate::watchdog::WatchdogConfig {
@@ -562,9 +597,7 @@ fn quality_skip_skips_later_modules_when_enough_high_quality_candidates() {
     let mut syn = empty_synapse_result();
 
     // First module produces enough high-quality candidates to trigger skipping.
-    let high_quality_candidates: Vec<_> = (0..QUALITY_SKIP_MIN_CANDIDATES + 5)
-        .map(|i| make_candidate(QUALITY_SKIP_GAIN_THRESHOLD + 0.1 * (i as f32 + 1.0)))
-        .collect();
+    let high_quality_candidates = high_quality_candidates_for_skip();
 
     let modules = vec![
         make_module("high_yield", Some(high_quality_candidates)),
@@ -586,6 +619,18 @@ fn quality_skip_skips_later_modules_when_enough_high_quality_candidates() {
         total <= QUALITY_SKIP_MIN_CANDIDATES + 5,
         "Expected at most {} candidates (first module only), got {total}",
         QUALITY_SKIP_MIN_CANDIDATES + 5,
+    );
+
+    // Issue #1799: the discarded candidates must be counted — in candidates,
+    // not modules, so the skipped module's 2 candidates give a count of 2.
+    assert_eq!(
+        syn.metadata
+            .rejection_breakdown
+            .counts()
+            .get(REJECTION_MODULE_SKIPPED_QUALITY_SATISFIED)
+            .copied(),
+        Some(2),
+        "Quality-skipped candidates must be counted (candidates, not modules)"
     );
 }
 
@@ -616,6 +661,18 @@ fn quality_skip_does_not_skip_when_insufficient_high_quality_candidates() {
         syn.coordinated_structural_candidates.len(),
         3,
         "All modules should run when quality threshold not met"
+    );
+
+    // Issue #1799: nothing was skipped, so the counter must stay absent/zero.
+    assert_eq!(
+        syn.metadata
+            .rejection_breakdown
+            .counts()
+            .get(REJECTION_MODULE_SKIPPED_QUALITY_SATISFIED)
+            .copied()
+            .unwrap_or(0),
+        0,
+        "No quality skipping occurred, so no candidates should be counted as skipped"
     );
 }
 
@@ -737,8 +794,6 @@ fn parallel_detection_panic_message_includes_module_context() {
 
 #[test]
 fn quality_skip_still_records_stats_for_skipped_modules() {
-    use super::super::constants::{QUALITY_SKIP_GAIN_THRESHOLD, QUALITY_SKIP_MIN_CANDIDATES};
-
     let _lock = crate::watchdog::lock_for_test_serialisation();
     let _wd = crate::watchdog::Watchdog::start(crate::watchdog::WatchdogConfig {
         stall_timeout: Duration::from_secs(60),
@@ -748,9 +803,7 @@ fn quality_skip_still_records_stats_for_skipped_modules() {
     let mut syn = empty_synapse_result();
 
     // Enough high-quality candidates to trigger skipping.
-    let high_quality: Vec<_> = (0..QUALITY_SKIP_MIN_CANDIDATES + 5)
-        .map(|i| make_candidate(QUALITY_SKIP_GAIN_THRESHOLD + 0.5 * (i as f32 + 1.0)))
-        .collect();
+    let high_quality = high_quality_candidates_for_skip();
 
     let modules = vec![
         make_module("producer", Some(high_quality)),
@@ -780,6 +833,75 @@ fn quality_skip_still_records_stats_for_skipped_modules() {
     assert!(
         module_names.contains(&"skipped_module"),
         "Skipped module should still have stats recorded"
+    );
+
+    // Issue #1799: the skipped module held 1 candidate, so the breakdown must
+    // report exactly 1 — the discarded candidate count, not the module count.
+    assert_eq!(
+        syn.metadata
+            .rejection_breakdown
+            .counts()
+            .get(REJECTION_MODULE_SKIPPED_QUALITY_SATISFIED)
+            .copied(),
+        Some(1),
+        "Skipped module's discarded candidates must be counted in the breakdown"
+    );
+
+    // The existing per-module stats are unchanged by the new counter.
+    let skipped_stats = syn
+        .metadata
+        .discovery_module_stats
+        .iter()
+        .find(|s| s.module_name == "skipped_module")
+        .expect("skipped module stats present");
+    assert_eq!(skipped_stats.candidates_produced, 1);
+}
+
+/// Issue #1799: a quality-skipping pass must classify as abundance, never as
+/// `CandidateStarved` — the skip fired *because* candidates were plentiful.
+#[test]
+fn quality_skip_drops_are_classified_as_abundance() {
+    use super::super::candidate_starvation::{
+        StarvationClass, StarvationConfig, classify, signals_from_breakdown,
+    };
+
+    let _lock = crate::watchdog::lock_for_test_serialisation();
+    let _wd = crate::watchdog::Watchdog::start(crate::watchdog::WatchdogConfig {
+        stall_timeout: Duration::from_secs(60),
+        abort_delay: Duration::from_secs(1),
+    });
+
+    let mut syn = empty_synapse_result();
+
+    let high_quality = high_quality_candidates_for_skip();
+
+    let modules = vec![
+        make_module("producer", Some(high_quality)),
+        make_module(
+            "skipped_module",
+            Some(vec![
+                make_candidate(0.1),
+                make_candidate(0.2),
+                make_candidate(0.3),
+                make_candidate(0.4),
+                make_candidate(0.5),
+            ]),
+        ),
+    ];
+
+    let mut tracker = ModuleOutcomeTracker::new();
+    run_discovery_modules_parallel(&mut syn, modules, None, false, &mut tracker);
+
+    let signals = signals_from_breakdown(&syn.metadata.rejection_breakdown, 0);
+    assert_eq!(
+        signals.abundance_rejections, 5,
+        "Quality-skipped candidates must land in the abundance partition"
+    );
+    assert_eq!(signals.upstream_rejections, 0);
+    assert_ne!(
+        classify(&signals, &StarvationConfig::default()),
+        StarvationClass::CandidateStarved,
+        "A quality-skipping pass must never be classified CandidateStarved"
     );
 }
 

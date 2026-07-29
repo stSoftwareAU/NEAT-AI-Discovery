@@ -39,7 +39,7 @@ use super::constants::{
 };
 use super::diagnostics::rejection_reasons::{
     REJECTION_BELOW_EXPECTED_GAIN_FLOOR, REJECTION_BUDGET_TRUNCATED,
-    REJECTION_COORDINATED_TARGET_CAP_EXCEEDED,
+    REJECTION_COORDINATED_TARGET_CAP_EXCEEDED, REJECTION_MODULE_SKIPPED_QUALITY_SATISFIED,
 };
 use super::module_weights::{DiscoveryModuleStatsJson, ModuleOutcomeTracker};
 use super::shared;
@@ -671,7 +671,10 @@ fn count_high_quality_candidates(syn: &shared::AnalyzeSynapsesResult, threshold:
 /// candidates already contain enough high-quality entries (at least
 /// [`QUALITY_SKIP_MIN_CANDIDATES`] candidates with gain above
 /// [`QUALITY_SKIP_GAIN_THRESHOLD`]). If so, remaining modules are skipped
-/// during the merge phase, saving post-processing time.
+/// during the merge phase, saving post-processing time. Each skipped module's
+/// discarded candidates are counted under
+/// [`REJECTION_MODULE_SKIPPED_QUALITY_SATISFIED`] so the drop is visible in the
+/// breakdown and classified as abundance rather than starvation (Issue #1799).
 pub fn merge_discovery_module_results(
     syn: &mut shared::AnalyzeSynapsesResult,
     detection_results: DiscoveryModuleDetectionResults,
@@ -705,6 +708,13 @@ pub fn merge_discovery_module_results(
         // modules. Stats are still recorded for observability.
         if quality_skip_active {
             modules_skipped_by_quality += 1;
+            // Issue #1799: the skipped module's candidates are discarded
+            // wholesale. Count them (candidates, not modules) so the drop is
+            // visible in the breakdown and classified as abundance.
+            syn.metadata.rejection_breakdown.record_many_u32(
+                REJECTION_MODULE_SKIPPED_QUALITY_SATISFIED,
+                u32::try_from(candidates_produced).unwrap_or(u32::MAX),
+            );
             let finished = format!("analysis::analyze_all → {} finished", entry.module_name);
             crate::watchdog::beat(&finished);
             continue;
