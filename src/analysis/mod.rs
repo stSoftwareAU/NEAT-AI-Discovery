@@ -53,6 +53,7 @@ pub mod drought_reset;
 pub mod early_termination;
 pub mod ensemble_scoring;
 pub mod failure_cache_handshake;
+pub mod fingerprint_skip_escape;
 pub mod gpu;
 pub mod insufficient_recording;
 pub mod merge_redundant_neuron;

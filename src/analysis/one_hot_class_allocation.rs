@@ -182,6 +182,7 @@ mod tests {
             target_uuid: Some(target_uuid.to_string()),
             improved_count: None,
             total_count: None,
+            age_epochs: None,
         }
     }
 

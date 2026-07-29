@@ -29,6 +29,25 @@
 use super::novelty_escalation::{EscalationDecision, decide_escalation};
 use super::scoring::calibration_correction::FailureCacheEntry;
 
+/// Age (in discovery passes) at which a failure-cache entry stops suppressing
+/// anything at all (Issue #1781).
+///
+/// The cache is persisted by the host and re-supplied on every call, so without
+/// an expiry a single recorded failure suppresses its identity for the lifetime
+/// of the creature. Entries whose [`FailureCacheEntry::age_epochs`] is at or
+/// beyond this bound are ignored; entries with no reported age never expire
+/// outright but lose their wildcard reach (see [`count_suppressed`]).
+pub const FAILURE_CACHE_MAX_AGE_EPOCHS: u32 = 20;
+
+/// Shorter age bound governing *wildcard* matching (Issue #1781).
+///
+/// A target-agnostic entry stands in for every target of its change type, so a
+/// single coarse `coordinated-structural` failure could suppress every
+/// coordinated candidate indefinitely. Past this age the entry only matches an
+/// equally target-agnostic candidate, until it expires outright at
+/// [`FAILURE_CACHE_MAX_AGE_EPOCHS`].
+pub const WILDCARD_FAILURE_CACHE_MAX_AGE_EPOCHS: u32 = 5;
+
 /// Stable change-type identifier for add-synapse candidates (matches the
 /// NEAT-AI failure-cache `changeType`).
 pub const CHANGE_TYPE_ADD_SYNAPSES: &str = "add-synapses";
@@ -69,29 +88,81 @@ impl CandidateIdentity {
     }
 }
 
+/// Whether `entry` has expired outright (Issue #1781).
+///
+/// Entries with no reported age cannot be expired — the host has not told us
+/// how old they are — so they are kept, but they lose wildcard reach (see
+/// [`wildcard_reach_active`]).
+#[must_use]
+fn is_expired(entry: &FailureCacheEntry) -> bool {
+    entry
+        .age_epochs
+        .is_some_and(|age| age >= FAILURE_CACHE_MAX_AGE_EPOCHS)
+}
+
+/// Whether `entry` may still act as a wildcard against a *more specific*
+/// candidate (Issue #1781).
+///
+/// Only a demonstrably fresh entry may: the age must be reported and below
+/// [`WILDCARD_FAILURE_CACHE_MAX_AGE_EPOCHS`].
+#[must_use]
+fn wildcard_reach_active(entry: &FailureCacheEntry) -> bool {
+    entry
+        .age_epochs
+        .is_some_and(|age| age < WILDCARD_FAILURE_CACHE_MAX_AGE_EPOCHS)
+}
+
 /// Whether `entry` suppresses `candidate`.
 ///
-/// The change type must match exactly. A field present on the failure-cache
-/// entry (`target_uuid`, `target_squash`) must equal the candidate's; a field
-/// absent on the entry acts as a wildcard so a target-agnostic entry still
-/// matches. This mirrors NEAT-AI `isCandidateCached`, which keys on the same
-/// identity tuple and treats missing target metadata as "any".
+/// The change type must match exactly, and the entry must not have expired
+/// ([`FAILURE_CACHE_MAX_AGE_EPOCHS`]). A field present on the failure-cache
+/// entry (`target_uuid`, `target_squash`) must equal the candidate's.
+///
+/// A field *absent* on the entry is coarse. It still matches an equally coarse
+/// candidate exactly, but it only acts as a wildcard over a candidate that
+/// names that field while the entry is fresh (Issue #1781). Before this bound
+/// existed, one target-agnostic `coordinated-structural` entry suppressed every
+/// coordinated candidate for the rest of the creature's life; NEAT-AI
+/// `isCandidateCached` treats missing target metadata as "any", so the Rust
+/// count now deliberately reports fewer suppressions than an unbounded host
+/// filter would drop — the host is expected to prune or age its cache to match.
 #[must_use]
 fn entry_matches(entry: &FailureCacheEntry, candidate: &CandidateIdentity) -> bool {
     if entry.change_type != candidate.change_type {
         return false;
     }
-    if let Some(entry_uuid) = entry.target_uuid.as_deref()
-        && candidate.target_uuid.as_deref() != Some(entry_uuid)
-    {
+    if is_expired(entry) {
         return false;
     }
-    if let Some(entry_squash) = entry.target_squash.as_deref()
-        && candidate.target_squash.as_deref() != Some(entry_squash)
-    {
+    if !field_matches(
+        entry.target_uuid.as_deref(),
+        candidate.target_uuid.as_deref(),
+        entry,
+    ) {
         return false;
     }
-    true
+    field_matches(
+        entry.target_squash.as_deref(),
+        candidate.target_squash.as_deref(),
+        entry,
+    )
+}
+
+/// Match one identity field of `entry` against the candidate's.
+///
+/// Present on the entry: must be equal. Absent on the entry: matches an absent
+/// candidate field, and a present one only while the entry retains wildcard
+/// reach.
+#[must_use]
+fn field_matches(
+    entry_field: Option<&str>,
+    candidate_field: Option<&str>,
+    entry: &FailureCacheEntry,
+) -> bool {
+    match entry_field {
+        Some(value) => candidate_field == Some(value),
+        None => candidate_field.is_none() || wildcard_reach_active(entry),
+    }
 }
 
 /// Count how many `candidates` match at least one failure-cache entry.
@@ -164,13 +235,15 @@ mod tests {
     use crate::analysis::discovery_mode::DEFAULT_LOW_SUCCESS_RATE_THRESHOLD;
     use crate::analysis::novelty_escalation::DEFAULT_SUPPRESSION_RATIO_THRESHOLD;
 
-    /// Build a minimal failure-cache entry for matching tests.
+    /// Build a minimal, **freshly recorded** failure-cache entry for matching
+    /// tests (Issue #1781: age drives expiry and wildcard reach).
     fn entry(
         change_type: &str,
         target_uuid: Option<&str>,
         target_squash: Option<&str>,
     ) -> FailureCacheEntry {
         FailureCacheEntry {
+            age_epochs: Some(0),
             change_type: change_type.to_string(),
             expected_error_reduction: 0.0,
             actual_error_reduction: 0.0,
@@ -214,8 +287,11 @@ mod tests {
 
     #[test]
     fn absent_entry_target_acts_as_wildcard() {
-        // A coordinated-structural entry with no target uuid suppresses any
-        // coordinated-structural candidate regardless of its target.
+        // A *fresh* coordinated-structural entry with no target uuid suppresses
+        // any coordinated-structural candidate regardless of its target. Once
+        // it ages past WILDCARD_FAILURE_CACHE_MAX_AGE_EPOCHS that reach is
+        // withdrawn (Issue #1781) — see
+        // tests/analysis/issue_1781_failure_cache_expiry.rs.
         let cache = vec![entry(CHANGE_TYPE_COORDINATED_STRUCTURAL, None, None)];
         let cands = vec![
             ident(CHANGE_TYPE_COORDINATED_STRUCTURAL, None, None),

@@ -194,6 +194,17 @@ pub const REJECTION_REMOVAL_BELOW_NOISE_FLOOR: &str = "removal_below_noise_floor
 pub const REJECTION_REMOVE_NEURON_DROUGHT_DEPRIORITISED: &str =
     "remove_neuron_drought_deprioritised";
 
+/// Focus neurons were skipped because their structural fingerprint was
+/// unchanged since the previous pass (Issue #490 incremental analysis), counted
+/// so a whole-pass drop is visible (Issue #1781).
+///
+/// One count is recorded per skipped focus neuron when *every* focus neuron was
+/// skipped — the pass then returns no candidates at all, previously with no
+/// rejection breakdown, no drought diagnostic and no alarm. The count travels
+/// on the pass-level breakdown (there is no synapse/neuron metadata on that
+/// path) and surfaces in `zeroCandidateSummary`.
+pub const REJECTION_FINGERPRINT_UNCHANGED: &str = "fingerprint_unchanged";
+
 /// All documented rejection reason names. Used for assertions and
 /// documentation. Keep this list in sync with the constants above.
 pub const ALL_REJECTION_REASONS: &[&str] = &[
@@ -227,6 +238,7 @@ pub const ALL_REJECTION_REASONS: &[&str] = &[
     REJECTION_TARGET_SATURATED,
     REJECTION_REMOVAL_BELOW_NOISE_FLOOR,
     REJECTION_REMOVE_NEURON_DROUGHT_DEPRIORITISED,
+    REJECTION_FINGERPRINT_UNCHANGED,
 ];
 
 // =============================================================================

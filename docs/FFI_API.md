@@ -554,11 +554,63 @@ consumer should **skip its failure-cache filter for the top-K candidates** of
 this pass (mirroring the Issue #1423 novelty-escalation intent) so at least one
 candidate reaches Phase-1 evaluation instead of being suppressed as a known
 failure. When `false`, the failure-cache filter applies as normal. Identity
-matching uses the same tuple NEAT-AI keys on: an entry field left unset
-(`targetUuid`, `targetSquash`) acts as a wildcard, so a target-agnostic
-`coordinated-structural` failure entry still suppresses any coordinated
-candidate. The TypeScript-side filter bypass is tracked as a separate NEAT-AI
-change.
+matching uses the same tuple NEAT-AI keys on (`changeType`, `targetUuid`,
+`targetSquash`), bounded by the entry's age — see below. The TypeScript-side
+filter bypass is tracked as a separate NEAT-AI change.
+
+#### Failure-Cache Entry Expiry (Issue #1781)
+
+The cache is persisted by the host and re-supplied on every call, so without an
+age Rust cannot tell a failure recorded moments ago from one recorded hundreds
+of passes back. Each `failureCache` entry therefore accepts an optional
+`ageEpochs` field (alias `epochsSinceRecorded`) — the entry's age in discovery
+passes:
+
+```json
+{
+  "failureCache": [
+    {
+      "changeType": "coordinated-structural",
+      "expectedErrorReduction": 0.12,
+      "actualErrorReduction": -0.004,
+      "targetUuid": "neuron-17",
+      "ageEpochs": 3
+    }
+  ]
+}
+```
+
+Matching rules, in order:
+
+| Entry age | Behaviour |
+|-----------|-----------|
+| `< 5` passes | Full matching, including wildcard reach: an unset `targetUuid` / `targetSquash` suppresses any candidate of that `changeType`. |
+| `5` – `19` passes | Exact matching only. A coarse entry no longer stands in for every target of its change type; it still suppresses an equally target-agnostic candidate. |
+| `≥ 20` passes | Expired — the entry suppresses nothing. |
+| absent (`ageEpochs` omitted) | Never expires, but cannot demonstrate freshness, so it matches exactly and gets **no** wildcard reach. |
+
+Before this, one target-agnostic `coordinated-structural` entry suppressed every
+coordinated candidate for the lifetime of the creature. Hosts that do not send
+`ageEpochs` should prune their own cache; Rust's suppressed count is now
+deliberately narrower than an unbounded host-side filter would drop.
+
+#### Fingerprint-Skip Escape Hatch (Issue #1781)
+
+`previousNeuronFingerprints` (Issue #490) skips focus neurons whose structural
+fingerprint is unchanged. During a drought the topology by definition does not
+change, so the cache used to skip **every** focus neuron pass after pass —
+returning no candidates, no rejection breakdown and no diagnostic, regardless of
+freshly recorded data.
+
+Two changes make that path safe:
+
+- **Escape hatch** — once `discoveryOutcomeLog` shows 3 consecutive empty
+  passes, `previousNeuronFingerprints` is ignored and the full focus set is
+  re-analysed against the new recordings. A `tracing::warn!` names the bypass.
+- **Visible drop** — when every focus neuron is skipped, the pass records one
+  `fingerprint_unchanged` rejection per skipped neuron. The count reaches the
+  operator through `zeroCandidateSummary.rejectionBreakdown` (there is no
+  synapse / neuron metadata on that path) and feeds the starvation classifier.
 
 ### Zero-Candidate Summary (Issue #1446)
 

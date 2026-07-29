@@ -134,6 +134,7 @@ mod tests {
             target_uuid: None,
             improved_count: improved,
             total_count: total,
+            age_epochs: None,
         }
     }
 

@@ -180,10 +180,16 @@ pub struct EnvironmentalGatesJson {
 /// reflects the whole pass, and prefers the synapse-side drought / alarm
 /// payloads (falling back to the neuron side) since both halves carry the same
 /// creature-level signal.
+///
+/// `pass_breakdown` carries rejections recorded before either surface produced
+/// metadata (Issue #1781) — a pass dropped whole by the fingerprint cache has
+/// no synapse or neuron metadata at all, so this is the only route by which
+/// that drop reaches the operator.
 #[must_use]
 pub fn build_zero_candidate_summary(
     synapse_metadata: Option<&analysis::shared::SynapseAnalysisMetadata>,
     neuron_metadata: Option<&analysis::shared::NeuronAnalysisMetadata>,
+    pass_breakdown: &analysis::diagnostics::RejectionBreakdown,
     environmental_gates: EnvironmentalGatesJson,
 ) -> ZeroCandidateSummary {
     let mut merged = analysis::diagnostics::RejectionBreakdown::new();
@@ -193,6 +199,7 @@ pub fn build_zero_candidate_summary(
     if let Some(n) = neuron_metadata {
         merged.merge_from(n.rejection_breakdown.counts());
     }
+    merged.merge_from(pass_breakdown.counts());
     let dominant_rejection_reason = merged.dominant_reason().map(|(r, _)| r.to_string());
 
     let drought_diagnostic = synapse_metadata

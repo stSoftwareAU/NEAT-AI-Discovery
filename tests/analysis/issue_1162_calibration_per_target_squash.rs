@@ -28,6 +28,7 @@ fn entry_with_squash(
         target_uuid: None,
         improved_count: None,
         total_count: None,
+        age_epochs: None,
     }
 }
 

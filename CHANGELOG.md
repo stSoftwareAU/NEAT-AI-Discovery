@@ -6,6 +6,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+#### Failure-cache entries expire; fingerprint skip gains an escape hatch (Issue #1781)
+
+Persisted suppression state could hold a creature in drought indefinitely.
+
+- `FailureCacheEntry` accepts an optional `ageEpochs` (alias
+  `epochsSinceRecorded`). Entries at or beyond 20 passes suppress nothing; a
+  coarse (target-agnostic) entry keeps its wildcard reach for only 5 passes, so
+  one `coordinated-structural` failure can no longer suppress every coordinated
+  candidate forever. An entry with no reported age matches exactly and gets no
+  wildcard reach.
+- The `previousNeuronFingerprints` skip is bypassed after 3 consecutive empty
+  passes — the structural fingerprint cannot change during a drought, so the
+  cache was skipping every focus neuron regardless of new recorded data.
+- A whole-pass fingerprint drop now records one `fingerprint_unchanged`
+  rejection per skipped neuron, surfaced through
+  `zeroCandidateSummary.rejectionBreakdown` and fed to the starvation
+  classifier as an upstream (starvation) reason.
+
 ### Changed
 
 #### Remove private-repo links and mentions from archived PR summaries (Issue #1726)
