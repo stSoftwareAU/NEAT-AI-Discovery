@@ -644,6 +644,43 @@ cannot be double counted across the neuron and synapse surfaces. It is
 classified as an **upstream** rejection: the suppressed candidates were never
 evaluated, so none reached the accept gate.
 
+#### Target-Cooldown Skips (Issue #1797)
+
+A focus target that has failed on too many consecutive passes is dropped by the
+per-target cooldown filter (Issue #1130) **before** any per-target analysis cost
+is incurred — the whole target leaves the focus order, so none of its candidates
+are generated or evaluated. The count was previously logged only, and the
+drought diagnostic hard-coded `targetCooldownSkipped: 0`.
+
+Each surface now folds its own `apply_target_cooldown` return value into
+`rejectionBreakdown` under the stable reason `target_cooldown_skipped`, and the
+drought diagnostic reports the real per-pass total (synapse + neuron):
+
+```json
+{
+  "synapseMetadata": {
+    "rejectionBreakdown": { "target_cooldown_skipped": 3 },
+    "droughtDiagnostic": { "targetCooldownSkipped": 5 }
+  }
+}
+```
+
+```mermaid
+flowchart LR
+    F["focus targets"] --> CD{"in cooldown?"}
+    CD -->|no| A["per-target analysis"]
+    CD -->|yes| K["dropped — never analysed"]
+    K --> B["rejectionBreakdown\ntarget_cooldown_skipped: K"]
+    K --> D["droughtDiagnostic\ntargetCooldownSkipped: synapse + neuron"]
+    B --> CL["candidate_starvation::classify\n(upstream — never reached the gate)"]
+```
+
+Each surface folds only its own count, so the two surfaces cannot double count,
+and each breakdown value equals the `cooldown_skipped` value in that phase's
+cooldown filter log. It is classified as an **upstream** rejection: the target
+was never analysed, so no proposal could reach the accept gate. Cooldown
+filtering behaviour itself is unchanged — this is observability only.
+
 ### Zero-Candidate Summary (Issue #1446)
 
 When a discovery pass produces **no candidates of any kind** (no helpful or

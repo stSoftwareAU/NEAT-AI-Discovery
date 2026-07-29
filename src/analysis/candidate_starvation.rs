@@ -108,6 +108,10 @@ pub const UPSTREAM_REJECTION_REASONS: &[&str] = &[
     // Issue #1796: same-target candidates short-circuited after an earlier
     // within-batch failure were never evaluated, so none reached the gate.
     reasons::REJECTION_WITHIN_BATCH_TARGET_SHORT_CIRCUIT,
+    // Issue #1797: targets dropped by the per-target cooldown filter are
+    // removed from the focus order before analysis, so no proposal for them
+    // could ever reach the gate.
+    reasons::REJECTION_TARGET_COOLDOWN_SKIPPED,
 ];
 
 /// Rejection reasons recorded when a candidate *was* generated but was capped or

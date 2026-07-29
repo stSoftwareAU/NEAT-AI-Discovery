@@ -90,6 +90,22 @@ fn aggregate_neuron_rejection_breakdown(neu: &mut AnalyzeNeuronsResult) {
         top_level_summary(&neu.metadata.rejection_breakdown, Some(denom));
 }
 
+/// Total focus targets dropped by the per-target cooldown filter across the
+/// whole pass (Issue #1797).
+///
+/// Each surface filters its own focus order, so the pass total is the sum of
+/// the two phase counts; a surface that did not run contributes nothing. This
+/// is what feeds the drought diagnostic's `target_cooldown_skipped` field,
+/// replacing the hard-coded `0` the diagnostic used to report.
+fn pass_target_cooldown_skipped(
+    synapse: Option<&super::shared::SynapseAnalysisMetadata>,
+    neuron: Option<&super::shared::NeuronAnalysisMetadata>,
+) -> u32 {
+    let synapse_skipped = synapse.map_or(0, |m| m.target_cooldown_skipped);
+    let neuron_skipped = neuron.map_or(0, |m| m.target_cooldown_skipped);
+    synapse_skipped.saturating_add(neuron_skipped)
+}
+
 /// Extract a human-readable message from a panic payload (Issue #1087).
 fn format_panic_payload(payload: &Box<dyn std::any::Any + Send>) -> String {
     if let Some(s) = payload.downcast_ref::<&str>() {
@@ -1344,20 +1360,19 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
     // pass (Issue #1790), so recording each module separately would grow a
     // target's streak twice as fast as the cooldown window can expire it.
     let mut pass_target_outcomes: Vec<super::target_pass_outcomes::TargetPassOutcome> = Vec::new();
-    let mut target_cooldown_skipped = 0u32;
     let mut pass_candidates = 0usize;
     if let Some(syn) = synapse_result.as_ref() {
         pass_target_outcomes.extend(syn.metadata.target_pass_outcomes.iter().cloned());
-        target_cooldown_skipped =
-            target_cooldown_skipped.saturating_add(syn.metadata.target_cooldown_skipped);
         pass_candidates = pass_candidates.saturating_add(syn.metadata.candidates_returned);
     }
     if let Some(neu) = neuron_result.as_ref() {
         pass_target_outcomes.extend(neu.metadata.target_pass_outcomes.iter().cloned());
-        target_cooldown_skipped =
-            target_cooldown_skipped.saturating_add(neu.metadata.target_cooldown_skipped);
         pass_candidates = pass_candidates.saturating_add(neu.metadata.candidates_returned);
     }
+    let target_cooldown_skipped = pass_target_cooldown_skipped(
+        synapse_result.as_ref().map(|syn| &syn.metadata),
+        neuron_result.as_ref().map(|neu| &neu.metadata),
+    );
     let pass_analysis_outcome = super::AnalysisOutcome::from_pass_flags(
         memory_budget_exceeded,
         crate::cancellation::is_memory_pressure_cancelled(),
@@ -1548,4 +1563,111 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
         module_outcome_tracker: tracker,
         pass_rejection_breakdown: RejectionBreakdown::new(),
     })
+}
+
+#[cfg(test)]
+mod target_cooldown_tests {
+    use super::pass_target_cooldown_skipped;
+    use crate::analysis::candidate_starvation::signals_from_breakdown;
+    use crate::analysis::diagnostics::rejection_reasons::REJECTION_TARGET_COOLDOWN_SKIPPED;
+    use crate::analysis::shared::{NeuronAnalysisMetadata, SynapseAnalysisMetadata};
+    use crate::analysis::target_failure_tracker::fold_target_cooldown_skips;
+
+    /// Build a phase metadata surface exactly as the orchestration layers do:
+    /// the filter return value is stored on the metadata *and* folded into that
+    /// surface's rejection breakdown.
+    fn synapse_surface(skipped: u32) -> SynapseAnalysisMetadata {
+        let mut metadata = SynapseAnalysisMetadata {
+            target_cooldown_skipped: skipped,
+            ..Default::default()
+        };
+        fold_target_cooldown_skips(skipped, &mut metadata.rejection_breakdown);
+        metadata
+    }
+
+    fn neuron_surface(skipped: u32) -> NeuronAnalysisMetadata {
+        let mut metadata = NeuronAnalysisMetadata {
+            target_cooldown_skipped: skipped,
+            ..Default::default()
+        };
+        fold_target_cooldown_skips(skipped, &mut metadata.rejection_breakdown);
+        metadata
+    }
+
+    fn breakdown_count(counts: &crate::analysis::diagnostics::RejectionBreakdown) -> u32 {
+        counts
+            .counts()
+            .get(REJECTION_TARGET_COOLDOWN_SKIPPED)
+            .copied()
+            .unwrap_or(0)
+    }
+
+    /// Issue #1797: a synapse-only pass with K cooldown-skipped targets reports
+    /// K in the surfaced breakdown and K as the pass total.
+    #[test]
+    fn cooldown_skipped_counts_synapse_only() {
+        const K: u32 = 3;
+        let synapse = synapse_surface(K);
+
+        assert_eq!(breakdown_count(&synapse.rejection_breakdown), K);
+        assert_eq!(pass_target_cooldown_skipped(Some(&synapse), None), K);
+
+        // The starvation classifier reads only the breakdown: skipped targets
+        // were never analysed, so they are upstream evidence.
+        let signals = signals_from_breakdown(&synapse.rejection_breakdown, 0);
+        assert_eq!(signals.upstream_rejections, K);
+        assert_eq!(signals.gate_side_rejections, 0);
+    }
+
+    /// A neuron-only pass reports its own count and nothing from the absent
+    /// synapse surface.
+    #[test]
+    fn cooldown_skipped_counts_neuron_only() {
+        const K: u32 = 4;
+        let neuron = neuron_surface(K);
+
+        assert_eq!(breakdown_count(&neuron.rejection_breakdown), K);
+        assert_eq!(pass_target_cooldown_skipped(None, Some(&neuron)), K);
+
+        let signals = signals_from_breakdown(&neuron.rejection_breakdown, 0);
+        assert_eq!(signals.upstream_rejections, K);
+    }
+
+    /// Both surfaces filter their own focus order, so the pass total is the sum
+    /// — and each surface's breakdown carries only its own skips.
+    #[test]
+    fn cooldown_skipped_counts_both_no_double_count() {
+        const SYNAPSE_SKIPPED: u32 = 3;
+        const NEURON_SKIPPED: u32 = 2;
+        let synapse = synapse_surface(SYNAPSE_SKIPPED);
+        let neuron = neuron_surface(NEURON_SKIPPED);
+
+        assert_eq!(
+            breakdown_count(&synapse.rejection_breakdown),
+            SYNAPSE_SKIPPED
+        );
+        assert_eq!(breakdown_count(&neuron.rejection_breakdown), NEURON_SKIPPED);
+        assert_eq!(
+            pass_target_cooldown_skipped(Some(&synapse), Some(&neuron)),
+            SYNAPSE_SKIPPED + NEURON_SKIPPED
+        );
+        // Neither surface absorbed the other's skips.
+        assert_eq!(synapse.rejection_breakdown.total(), SYNAPSE_SKIPPED);
+        assert_eq!(neuron.rejection_breakdown.total(), NEURON_SKIPPED);
+    }
+
+    /// A pass with no cooldown skips leaves the reason key absent rather than
+    /// present-and-zero, and totals zero.
+    #[test]
+    fn cooldown_skipped_absent_when_no_targets_dropped() {
+        let synapse = synapse_surface(0);
+        let neuron = neuron_surface(0);
+        assert!(synapse.rejection_breakdown.is_empty());
+        assert!(neuron.rejection_breakdown.is_empty());
+        assert_eq!(
+            pass_target_cooldown_skipped(Some(&synapse), Some(&neuron)),
+            0
+        );
+        assert_eq!(pass_target_cooldown_skipped(None, None), 0);
+    }
 }

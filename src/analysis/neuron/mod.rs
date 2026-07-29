@@ -483,6 +483,13 @@ pub fn analyze_neurons_with_cache_and_gpu_queue(
     // diagnostic's `target_cooldown_skipped` metric stops reporting a constant
     // `0` and the suppression becomes observable in production pass logs.
     result.metadata.target_cooldown_skipped = cooldown_skipped;
+    // Issue #1797: also record it as a rejection reason — the starvation
+    // classifier reads only the breakdown, so a dropped target is otherwise
+    // invisible to the decision that un-suppresses it.
+    crate::analysis::target_failure_tracker::fold_target_cooldown_skips(
+        cooldown_skipped,
+        &mut result.metadata.rejection_breakdown,
+    );
     Ok(result)
 }
 
