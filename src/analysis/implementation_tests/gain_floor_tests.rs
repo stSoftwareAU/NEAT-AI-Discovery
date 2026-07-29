@@ -5,11 +5,20 @@
 //!   only those at or above the floor survive.
 //! - Asserts the `candidates_below_gain_floor` counter increments by the
 //!   correct amount.
+//!
+//! **Issue #1778 — scale change.** The gains reaching these filters are
+//! post-calibration, whereas `MIN_EXPECTED_CREATURE_SCORE_GAIN` is denominated
+//! in the pre-calibration prediction scale. The filters now convert the screen
+//! into the calibrated scale before comparing, so the *effective* floor is
+//! `MIN_EXPECTED_CREATURE_SCORE_GAIN × <per-type calibration>`. The fixtures
+//! below were re-pinned to that effective floor — the behaviour under test
+//! (below-floor drops, at-floor keeps, counter increments) is unchanged.
 
 use crate::CandidateNeuronJson;
 use crate::CandidateSynapseJson;
 use crate::analysis::constants::{
-    MIN_EXPECTED_CREATURE_SCORE_GAIN, min_expected_creature_score_gain,
+    min_expected_creature_score_gain, min_expected_gain_floor_for_neurons,
+    min_expected_gain_floor_for_synapses,
 };
 use crate::analysis::neuron::post_processing::apply_min_expected_gain_floor_for_neurons;
 use crate::analysis::synapse::post_processing::apply_min_expected_gain_floor_for_synapses;
@@ -65,15 +74,16 @@ fn synapse_candidate(gain: f32) -> CandidateSynapseJson {
 
 #[test]
 fn neuron_floor_drops_only_below_threshold_candidates() {
-    // Mixed gain magnitudes: some well below 1e-5, some at the floor, some
-    // comfortably above.
+    // Mixed gain magnitudes on the calibrated scale: some well below the
+    // effective floor (3e-8), some at it, some comfortably above.
+    let floor = min_expected_gain_floor_for_neurons();
     let mut candidates = vec![
-        neuron_candidate(6.6e-7),                           // noise — drop
-        neuron_candidate(6.8e-7),                           // noise — drop
-        neuron_candidate(3.1e-6),                           // below floor — drop
-        neuron_candidate(MIN_EXPECTED_CREATURE_SCORE_GAIN), // exactly at floor — keep
-        neuron_candidate(5e-4),                             // well above — keep
-        neuron_candidate(1e-2),                             // well above — keep
+        neuron_candidate(4.17e-10), // production noise estimate — drop
+        neuron_candidate(1.0e-9),   // noise — drop
+        neuron_candidate(9.9e-9),   // below floor — drop
+        neuron_candidate(floor),    // exactly at floor — keep
+        neuron_candidate(5e-4),     // well above — keep
+        neuron_candidate(1e-2),     // well above — keep
     ];
 
     let dropped = apply_min_expected_gain_floor_for_neurons(&mut candidates);
@@ -82,20 +92,20 @@ fn neuron_floor_drops_only_below_threshold_candidates() {
     assert_eq!(candidates.len(), 3, "three candidates must survive");
     for c in &candidates {
         assert!(
-            c.expected_creature_score_gain >= MIN_EXPECTED_CREATURE_SCORE_GAIN,
-            "surviving candidate gain {} must be >= floor {}",
+            c.expected_creature_score_gain >= floor,
+            "surviving candidate gain {} must be >= floor {floor}",
             c.expected_creature_score_gain,
-            MIN_EXPECTED_CREATURE_SCORE_GAIN
         );
     }
 }
 
 #[test]
 fn synapse_floor_drops_only_below_threshold_candidates() {
+    let floor = min_expected_gain_floor_for_synapses();
     let mut candidates = vec![
-        synapse_candidate(1e-8),
-        synapse_candidate(9.9e-6), // just below floor — drop
-        synapse_candidate(MIN_EXPECTED_CREATURE_SCORE_GAIN), // at floor — keep
+        synapse_candidate(1e-11),
+        synapse_candidate(2.9e-9), // just below floor — drop
+        synapse_candidate(floor),  // at floor — keep
         synapse_candidate(2e-3),
     ];
 
@@ -104,7 +114,7 @@ fn synapse_floor_drops_only_below_threshold_candidates() {
     assert_eq!(dropped, 2);
     assert_eq!(candidates.len(), 2);
     for c in &candidates {
-        assert!(c.expected_creature_score_gain >= MIN_EXPECTED_CREATURE_SCORE_GAIN);
+        assert!(c.expected_creature_score_gain >= floor);
     }
 }
 
@@ -138,8 +148,8 @@ fn counter_increments_on_floor_drops() {
     let start = metrics.candidates_below_gain_floor_total();
 
     let mut candidates = vec![
-        neuron_candidate(1e-8),
-        neuron_candidate(2e-7),
+        neuron_candidate(1e-10),
+        neuron_candidate(2e-9),
         neuron_candidate(0.5),
     ];
     let dropped = apply_min_expected_gain_floor_for_neurons(&mut candidates);

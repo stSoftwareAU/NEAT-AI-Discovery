@@ -235,7 +235,8 @@ the fixed `0.003` / `0.0003` base constants that sit in front of it. That is the
 gap between "the floor is correctly scaled" and "the floor is reachable".
 
 → follow-up: **#1778 — re-derive the gain floor against the post-calibration
-scale**
+scale** (**resolved** — see
+[`gain-floor-rescale-1778.md`](gain-floor-rescale-1778.md))
 (and confirm whether the calibration constants belong upstream or downstream of
 the floor at all). Note that the fix is *not* simply to lower the floor — the
 false-positive guard test from #1740 is right that lowering it against a
