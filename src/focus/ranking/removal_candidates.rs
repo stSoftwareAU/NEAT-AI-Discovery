@@ -4,6 +4,7 @@
 //! and detection of constant-value neurons for coordinated structural removal.
 
 #![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
+use super::DEFAULT_COST_OF_GROWTH;
 use super::record_providers::get_records_or_error;
 use super::score_calculation::activation_mean_and_variance_from_records;
 use crate::analysis::constants::{
@@ -303,6 +304,118 @@ pub(super) fn identify_removal_candidates(
     }
 }
 
+/// Resolve the effective cost-of-growth, rejecting values that would produce
+/// nonsense savings. A non-finite or non-positive input is a caller bug, so it
+/// is logged at WARN (never silently accepted) and the default substituted.
+///
+/// Issue #1783: this validation used to live only on the
+/// [`triage_removal_candidates`](super::triage_removal_candidates) adapter, so
+/// the shipped FFI path took `costOfGrowth` raw. It now guards the single
+/// criterion, which is what makes the two entry points provably identical.
+fn effective_cost_of_growth(cost_of_growth: Option<f32>) -> f32 {
+    match cost_of_growth {
+        Some(value) if value.is_finite() && value > 0.0 => value,
+        Some(invalid) => {
+            tracing::warn!(
+                target: "neat_ai_discovery::focus::removal_candidates",
+                invalid_cost_of_growth = invalid,
+                default_cost_of_growth = DEFAULT_COST_OF_GROWTH,
+                "removal triage received a non-finite or non-positive costOfGrowth; using the default",
+            );
+            DEFAULT_COST_OF_GROWTH
+        }
+        None => DEFAULT_COST_OF_GROWTH,
+    }
+}
+
+/// One hidden neuron's verdict under the structural removal criterion.
+#[derive(Debug)]
+enum StructuralEmit {
+    Candidate(Box<RemovalCandidate>),
+    NoiseFloorReject,
+}
+
+/// The **single** structural removal criterion (Issue #1783).
+///
+/// Savings-vs-contribution, the [`REMOVAL_CANDIDATE_BOOST`] application point,
+/// the non-finite-impact policy (#1804) and the noise-floor gate (#1142) exist
+/// here and nowhere else. Both entry points —
+/// [`identify_structural_removal_candidates`] and the
+/// [`triage_removal_candidates`](super::triage_removal_candidates) adapter —
+/// run this function, so they cannot drift apart again.
+///
+/// Returns `None` when the neuron is not worth pruning (savings do not exceed
+/// its structural contribution), so the caller emits nothing at all.
+fn structural_removal_verdict(
+    neuron: &NeuronJson,
+    impacts: &HashMap<String, f32>,
+    synapse_counts: &SynapseCounts,
+    growth_cost: f32,
+    noise_floor: f32,
+) -> Option<StructuralEmit> {
+    let (incoming, outgoing) = synapse_counts.get(&neuron.uuid);
+    let savings = calculate_removal_savings(incoming, outgoing, growth_cost);
+
+    // Issue #892: boost applied to raw savings BEFORE the savings-vs-
+    // contribution comparison (mirrors the record-derived path), re-gated
+    // by the noise floor below (Issue #1142).
+    let boosted_savings = savings * REMOVAL_CANDIDATE_BOOST;
+
+    // Structural contribution = the neuron's path-weight impact on the outputs.
+    //
+    // Issue #1804: a **non-finite** impact cannot be reasoned about (a NaN
+    // synapse weight propagates NaN through `(|weight| / total) * child_impact`),
+    // so it maps to `f32::INFINITY` — the neuron is never pruned. Bad numbers
+    // must not license a destructive edit; mapping them to `0.0` made them the
+    // *strongest* removal candidate.
+    //
+    // A genuine `0.0` impact stays prunable. A **negative** impact is
+    // unreachable by construction — every term is an `abs()` times a
+    // non-negative child impact — so the `> 0.0` arm is defensive only and is
+    // deliberately not folded in with the non-finite case.
+    let raw_impact = impacts.get(&neuron.uuid).copied().unwrap_or(0.0);
+    let contribution = if !raw_impact.is_finite() {
+        f32::INFINITY
+    } else if raw_impact > 0.0 {
+        raw_impact
+    } else {
+        0.0
+    };
+
+    // Removal only improves the score when the complexity savings exceed the
+    // structural contribution — the near-opposite of the high-impact focus draw.
+    if boosted_savings <= contribution {
+        return None;
+    }
+
+    let net_improvement = boosted_savings - contribution;
+
+    // Issue #1142: drop boost-inflated candidates whose net improvement is
+    // indistinguishable from numerical noise.
+    if net_improvement < noise_floor {
+        return Some(StructuralEmit::NoiseFloorReject);
+    }
+
+    Some(StructuralEmit::Candidate(Box::new(RemovalCandidate {
+        neuron_uuid: neuron.uuid.clone(),
+        // Record-derived fields are not measured on the focus path.
+        total_error: 0.0,
+        impact: contribution,
+        mean_activation: 0.0,
+        activation_weighted_impact: 0.0,
+        incoming_synapses: incoming,
+        outgoing_synapses: outgoing,
+        removal_savings: boosted_savings,
+        // Structural first-pass estimate; the activation-weighted value is
+        // refined in the analysis phase.
+        expected_error_reduction: contribution,
+        reason: format!(
+            "Structural removal (Issue #1767): saves {savings:.2e} (boosted {REMOVAL_CANDIDATE_BOOST:.1}×) > structural impact {contribution:.2e} (net +{net_improvement:.2e}), {} synapses, costOfGrowth={growth_cost:.2e}; activation-weighted gate deferred to analysis",
+            incoming + outgoing,
+        ),
+    })))
+}
+
 /// Identify removal candidates from creature **structure alone** — the
 /// near-opposite axis to focus selection (Issue #1767).
 ///
@@ -339,89 +452,28 @@ pub(super) fn identify_removal_candidates(
 /// mapping to `0.0` made a NaN-impact neuron the *strongest* candidate. A
 /// genuine `0.0` impact remains prunable (a zero-contribution neuron *should*
 /// be removable). This matches [`triage_removal_candidates`](super::triage_removal_candidates).
+///
+/// # Cost of growth
+///
+/// `cost_of_growth` is validated by [`effective_cost_of_growth`]: `None`, a
+/// non-finite value, or a non-positive value falls back to
+/// [`DEFAULT_COST_OF_GROWTH`] with a WARN, never producing nonsense savings
+/// (Issue #1783 — the shipped path previously took the value raw).
 pub(crate) fn identify_structural_removal_candidates(
     creature: &CreatureJson,
-    cost_of_growth_threshold: f32,
+    cost_of_growth: Option<f32>,
 ) -> RemovalCandidateOutcome {
+    let growth_cost = effective_cost_of_growth(cost_of_growth);
     let impacts = crate::focus::impact::compute_impacts_public(creature);
     let synapse_counts = SynapseCounts::new(creature);
     let noise_floor = remove_low_impact_noise_floor();
 
-    #[derive(Debug)]
-    enum Emit {
-        Candidate(Box<RemovalCandidate>),
-        NoiseFloorReject,
-    }
-
-    let emitted: Vec<Emit> = creature
+    let emitted: Vec<StructuralEmit> = creature
         .neurons
         .par_iter()
         .filter(|n| n.neuron_type == "hidden")
         .filter_map(|n| {
-            let (incoming, outgoing) = synapse_counts.get(&n.uuid);
-            let savings = calculate_removal_savings(incoming, outgoing, cost_of_growth_threshold);
-
-            // Issue #892: boost applied to raw savings BEFORE the savings-vs-
-            // contribution comparison (mirrors the record-derived path), re-gated
-            // by the noise floor below (Issue #1142).
-            let boosted_savings = savings * REMOVAL_CANDIDATE_BOOST;
-
-            // Structural contribution = the neuron's path-weight impact on the
-            // outputs.
-            //
-            // Issue #1804: a **non-finite** impact cannot be reasoned about (a
-            // NaN synapse weight propagates NaN through
-            // `(|weight| / total) * child_impact`), so it maps to
-            // `f32::INFINITY` — the neuron is never pruned. Bad numbers must
-            // not license a destructive edit; mapping them to `0.0` made them
-            // the *strongest* removal candidate.
-            //
-            // A genuine `0.0` impact stays prunable. A **negative** impact is
-            // unreachable by construction — every term is an `abs()` times a
-            // non-negative child impact — so the `> 0.0` arm is defensive only
-            // and is deliberately not folded in with the non-finite case.
-            let raw_impact = impacts.get(&n.uuid).copied().unwrap_or(0.0);
-            let contribution = if !raw_impact.is_finite() {
-                f32::INFINITY
-            } else if raw_impact > 0.0 {
-                raw_impact
-            } else {
-                0.0
-            };
-
-            // Removal only improves the score when the complexity savings exceed
-            // the structural contribution — the near-opposite of the high-impact
-            // focus draw.
-            if boosted_savings <= contribution {
-                return None;
-            }
-
-            let net_improvement = boosted_savings - contribution;
-
-            // Issue #1142: drop boost-inflated candidates whose net improvement is
-            // indistinguishable from numerical noise.
-            if net_improvement < noise_floor {
-                return Some(Emit::NoiseFloorReject);
-            }
-
-            Some(Emit::Candidate(Box::new(RemovalCandidate {
-                neuron_uuid: n.uuid.clone(),
-                // Record-derived fields are not measured on the focus path.
-                total_error: 0.0,
-                impact: contribution,
-                mean_activation: 0.0,
-                activation_weighted_impact: 0.0,
-                incoming_synapses: incoming,
-                outgoing_synapses: outgoing,
-                removal_savings: boosted_savings,
-                // Structural first-pass estimate; the activation-weighted value is
-                // refined in the analysis phase.
-                expected_error_reduction: contribution,
-                reason: format!(
-                    "Structural removal (Issue #1767): saves {savings:.2e} (boosted {REMOVAL_CANDIDATE_BOOST:.1}×) > structural impact {contribution:.2e} (net +{net_improvement:.2e}), {} synapses, costOfGrowth={cost_of_growth_threshold:.2e}; activation-weighted gate deferred to analysis",
-                    incoming + outgoing,
-                ),
-            })))
+            structural_removal_verdict(n, &impacts, &synapse_counts, growth_cost, noise_floor)
         })
         .collect();
 
@@ -429,8 +481,8 @@ pub(crate) fn identify_structural_removal_candidates(
     let mut noise_floor_rejections: u32 = 0;
     for emit in emitted {
         match emit {
-            Emit::Candidate(c) => candidates.push(*c),
-            Emit::NoiseFloorReject => {
+            StructuralEmit::Candidate(c) => candidates.push(*c),
+            StructuralEmit::NoiseFloorReject => {
                 noise_floor_rejections = noise_floor_rejections.saturating_add(1);
             }
         }
@@ -446,6 +498,16 @@ pub(crate) fn identify_structural_removal_candidates(
             .then_with(|| a.impact.total_cmp(&b.impact))
             .then_with(|| a.neuron_uuid.cmp(&b.neuron_uuid))
     });
+
+    if noise_floor_rejections > 0 {
+        tracing::debug!(
+            target: "neat_ai_discovery::focus::removal_candidates",
+            noise_floor_rejections,
+            noise_floor,
+            surviving = candidates.len(),
+            "structural removal triage dropped candidates below the noise floor",
+        );
+    }
 
     RemovalCandidateOutcome {
         candidates,
@@ -618,7 +680,7 @@ pub(super) fn detect_constant_neuron_removals(
 /// (#1142) and structure-only (#1767) removal tests share it, so a test that
 /// mutates the env-var never races one that depends on the default floor.
 #[cfg(test)]
-fn env_lock() -> std::sync::MutexGuard<'static, ()> {
+pub(super) fn env_lock() -> std::sync::MutexGuard<'static, ()> {
     use std::sync::{Mutex, OnceLock};
     static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
     ENV_LOCK.get_or_init(|| Mutex::new(())).lock().unwrap()
@@ -879,7 +941,7 @@ mod structural_removal_tests {
         let _guard = env_lock();
         let creature = outputless_chain();
         // growth 1e-4 → h1 boosted savings 1.8e-4, h2 1.65e-4; both net > 1e-5.
-        let outcome = identify_structural_removal_candidates(&creature, 1e-4);
+        let outcome = identify_structural_removal_candidates(&creature, Some(1e-4));
 
         assert_eq!(outcome.candidates.len(), 2, "both hidden neurons qualify");
         // h1 has more synapses (higher savings) so it sorts first.
@@ -911,7 +973,7 @@ mod structural_removal_tests {
             output: 1,
         };
         // Even with a large costOfGrowth, boosted savings ≪ the ~1.0 impact.
-        let outcome = identify_structural_removal_candidates(&creature, 1e-3);
+        let outcome = identify_structural_removal_candidates(&creature, Some(1e-3));
         assert!(
             outcome.candidates.is_empty(),
             "high-impact neuron must not be a removal candidate, got {:?}",
@@ -934,7 +996,7 @@ mod structural_removal_tests {
             input: 1,
             output: 1,
         };
-        let outcome = identify_structural_removal_candidates(&creature, 1e-3);
+        let outcome = identify_structural_removal_candidates(&creature, Some(1e-3));
         assert!(
             outcome.candidates.iter().all(|c| c.neuron_uuid != "o0"),
             "output neuron must never appear as a removal candidate"
@@ -952,7 +1014,7 @@ mod structural_removal_tests {
             std::env::remove_var("NEAT_AI_DISCOVERY_REMOVE_LOW_IMPACT_NOISE_FLOOR");
         }
         let creature = outputless_chain();
-        let outcome = identify_structural_removal_candidates(&creature, 1e-7);
+        let outcome = identify_structural_removal_candidates(&creature, Some(1e-7));
         assert!(
             outcome.candidates.is_empty(),
             "sub-noise-floor structural savings must be dropped"
@@ -1015,7 +1077,7 @@ mod structural_removal_tests {
             "fixture must yield a non-finite impact for h-nan, or the test proves nothing"
         );
 
-        let outcome = identify_structural_removal_candidates(&creature, 1e-4);
+        let outcome = identify_structural_removal_candidates(&creature, Some(1e-4));
         assert!(
             outcome.candidates.iter().all(|c| c.neuron_uuid != "h-nan"),
             "a neuron with a non-finite structural impact must never be a removal candidate, got {:?}",
@@ -1034,7 +1096,7 @@ mod structural_removal_tests {
     fn zero_impact_neuron_still_candidate() {
         let _guard = env_lock();
         let creature = creature_with_nan_weight();
-        let outcome = identify_structural_removal_candidates(&creature, 1e-4);
+        let outcome = identify_structural_removal_candidates(&creature, Some(1e-4));
 
         assert!(
             outcome.candidates.iter().any(|c| c.neuron_uuid == "h-zero"),
@@ -1052,7 +1114,7 @@ mod structural_removal_tests {
     fn no_candidate_has_nonfinite_raw_impact() {
         let _guard = env_lock();
         let creature = creature_with_nan_weight();
-        let outcome = identify_structural_removal_candidates(&creature, 1e-4);
+        let outcome = identify_structural_removal_candidates(&creature, Some(1e-4));
 
         for candidate in &outcome.candidates {
             assert!(
@@ -1075,8 +1137,8 @@ mod structural_removal_tests {
     fn triage_is_deterministic_and_record_free() {
         let _guard = env_lock();
         let creature = outputless_chain();
-        let a = identify_structural_removal_candidates(&creature, 1e-4);
-        let b = identify_structural_removal_candidates(&creature, 1e-4);
+        let a = identify_structural_removal_candidates(&creature, Some(1e-4));
+        let b = identify_structural_removal_candidates(&creature, Some(1e-4));
         let ids_a: Vec<&str> = a
             .candidates
             .iter()
