@@ -136,6 +136,7 @@ default rather than aborting.
 | `NEAT_AI_DISCOVERY_PROFILE` | off | Emit a structured profile to stderr. The only recognised value is `json` (case-insensitive); anything else disables profiling. |
 | `NEAT_AI_DISCOVERY_GPU_METRICS` | off | Print GPU metrics to stderr when set to any value (convention `=1`). |
 | `NEAT_AI_DISCOVERY_CALIBRATION_MISS_THRESHOLD` | 10.0 | `actual/expected` ratio above which prediction-vs-actual calibration mismatches are logged via `tracing::warn!`. Must be finite and `> 1.0`; invalid values fall back to the default so the log channel cannot be silenced by a malformed value. |
+| `NEAT_AI_DISCOVERY_STRICT_CANDIDATE_RECONCILIATION` | on for debug builds, off for release builds | Trip a `debug_assert!` when a discovery pass cannot account for every considered candidate (Issue #1802), so a newly-added silent drop path fails CI. Set to `0` to force warn-only. The `unaccounted_drop` rejection-breakdown entry and the `tracing::warn!` naming the surface and delta are emitted regardless, so a mismatch is never silent. See [docs/analysis/candidate-reconciliation-1802.md](analysis/candidate-reconciliation-1802.md). |
 | `NEAT_AI_DISCOVERY_SAMPLE_PROGRAM` | `sample` | Path override for the macOS `sample` binary used for thread-dump diagnostics. Diagnostics/tooling only — not a discovery-tuning knob. |
 
 ## Related guides
@@ -144,3 +145,4 @@ default rather than aborting.
 - [docs/GPU_GUIDE.md](GPU_GUIDE.md) — GPU performance tuning and debugging
 - [docs/DROUGHT_PLAYBOOK.md](DROUGHT_PLAYBOOK.md) — diagnosing "no successful candidates" droughts
 - [docs/FOCUS_SELECTION.md](FOCUS_SELECTION.md) — focus-selection design and env knobs
+- [docs/analysis/candidate-reconciliation-1802.md](analysis/candidate-reconciliation-1802.md) — the fail-loud candidate-reconciliation invariant

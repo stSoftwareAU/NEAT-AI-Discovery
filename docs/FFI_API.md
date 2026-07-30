@@ -807,6 +807,56 @@ classified `CandidateStarved` on the strength of these drops. Existing
 `modulesSkippedByQuality` metadata, the per-module stats, and the skipping
 behaviour itself are unchanged — this is observability only.
 
+#### Candidate Reconciliation — the fail-loud invariant (Issue #1802)
+
+Wiring each individual drop path into `rejectionBreakdown` did not stop the
+**next** one being added silently. Each surface therefore keeps a per-pass ledger
+and, where its breakdown is finalised, asserts that every candidate which entered
+disposition has a recorded verdict:
+
+```text
+considered == accounted            (accounted = accepted + counted rejections)
+```
+
+A balanced pass emits nothing. On a mismatch the unaccounted residual is recorded
+under the stable reason `unaccounted_drop`, so the loss is visible in the payload
+even on a release build where assertions are compiled out:
+
+```json
+{
+  "neuronMetadata": {
+    "rejectionBreakdown": { "unaccounted_drop": 4 }
+  }
+}
+```
+
+```mermaid
+flowchart LR
+    F["batch formed\nconsidered += n"] --> D{"disposition recorded?"}
+    D -->|"accept / counted rejection"| A["accounted += 1"]
+    D -->|"bare `continue`"| X["no verdict"]
+    A --> R{"considered == accounted?"}
+    X --> R
+    R -->|yes| OK["clean pass — no log, no entry"]
+    R -->|no| W["warn! naming surface + delta"]
+    W --> U["rejectionBreakdown\nunaccounted_drop: delta"]
+```
+
+Alongside the payload entry, a single `tracing::warn!` names the surface
+(`neuron` / `synapse`) and the unaccounted delta, and a `debug_assert!` fires
+under strict mode (on by default for debug builds — see
+`NEAT_AI_DISCOVERY_STRICT_CANDIDATE_RECONCILIATION` in
+[docs/CONFIGURATION.md](CONFIGURATION.md)). `unaccounted_drop` is classified as an
+**upstream** rejection: a candidate with no recorded gate verdict cannot be
+counted as evidence the gate over-rejected.
+
+Wiring the ledger surfaced six further silent drops, now counted under
+`below_improved_ratio`, `target_saturated`, `cpu_pre_reject_no_signal`,
+`zero_improvement`, and the new stable reason `degenerate_weight_update` (a
+weight-update candidate whose clamped delta collapsed to a no-op). Drop behaviour
+is unchanged throughout — this is observability only. Full design notes:
+[docs/analysis/candidate-reconciliation-1802.md](analysis/candidate-reconciliation-1802.md).
+
 ### Zero-Candidate Summary (Issue #1446)
 
 When a discovery pass produces **no candidates of any kind** (no helpful or

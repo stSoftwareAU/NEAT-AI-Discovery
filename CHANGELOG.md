@@ -28,6 +28,33 @@ real data, so the dead layer was removed instead of duplicated.
   and `NEAT_AI_DISCOVERY_MODULE_STARVATION_COOLDOWN_EPOCHS` are removed; they
   configured a tracker that no longer exists.
 
+### Added
+
+#### Fail-loud candidate reconciliation on every pass (Issue #1802)
+
+Issues #1796–#1801 wired the six silent drop paths the #1782 diagnosis found into
+`RejectionBreakdown`, but nothing stopped the seventh being added the same way.
+Each surface now owns a per-pass `CandidateLedger` and asserts
+`considered == accounted` where its breakdown is finalised. See
+[`docs/analysis/candidate-reconciliation-1802.md`](docs/analysis/candidate-reconciliation-1802.md).
+
+- On a mismatch the residual is recorded under the new stable reason
+  `unaccounted_drop`, one `tracing::warn!` names the surface and the delta, and a
+  `debug_assert!` fires under strict mode — on by default for debug builds, so a
+  new silent drop path fails CI. Override with
+  `NEAT_AI_DISCOVERY_STRICT_CANDIDATE_RECONCILIATION`.
+- `synapseMetadata` / `neuronMetadata` carry a `candidate_reconciliation` payload
+  so callers can confirm the invariant positively rather than by the absence of a
+  failure marker.
+- Wiring the ledger exposed six further bare `continue`s, all now counted:
+  `below_improved_ratio` (three sites), `target_saturated` (candidate squash
+  compounding a near-saturated target), `cpu_pre_reject_no_signal` (no usable
+  weight could be fitted), `zero_improvement` (non-positive post-evaluation
+  improvement), and the new reason `degenerate_weight_update` (two sites where a
+  clamped weight-update delta collapsed to a no-op).
+- A balanced pass logs nothing, records nothing, and costs two relaxed atomic
+  loads per surface.
+
 ### Fixed
 
 #### Quality-skipped candidates count as an abundance rejection (Issue #1799)

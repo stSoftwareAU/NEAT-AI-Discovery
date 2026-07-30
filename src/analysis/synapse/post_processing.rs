@@ -743,6 +743,8 @@ pub(crate) fn build_metadata(
         // Issue #1791: set by `finalise_synapse_results` from the per-target
         // diagnostics.
         target_pass_outcomes: Vec::new(),
+        // Issue #1802: set by the orchestrator once the breakdown is final.
+        candidate_reconciliation: None,
     }
 }
 

@@ -20,6 +20,7 @@ use std::collections::HashMap;
 
 use neat_ai_discovery::analysis::analyze_all;
 use neat_ai_discovery::analysis::diagnostics::rejection_reasons::REJECTION_FINGERPRINT_UNCHANGED;
+use neat_ai_discovery::analysis::gpu::GpuAnalyzer;
 use neat_ai_discovery::analysis::neuron_fingerprint::{
     NeuronFingerprint, compute_neuron_fingerprints,
 };
@@ -179,10 +180,23 @@ fn fingerprint_unchanged_count(result: &AnalyzeAllResult) -> Option<u32> {
         .copied()
 }
 
+/// Skip on GPU-less hosts: any pass that is not a whole-pass early return
+/// needs the GPU analyser, so `analyze_all` fails before the breakdown exists.
+fn gpu_or_skip(test: &str) -> bool {
+    if GpuAnalyzer::gpu_is_available() {
+        return true;
+    }
+    eprintln!("Skipping {test}: no GPU available");
+    false
+}
+
 /// A pass with one unchanged and one changed focus neuron must report the
 /// unchanged one, not stay silent.
 #[test]
 fn partial_cache_hits_recorded_as_fingerprint_unchanged() {
+    if !gpu_or_skip("partial_cache_hits_recorded_as_fingerprint_unchanged") {
+        return;
+    }
     let (_temp_dir, parquet_file) = write_fixture_parquet();
     let input = make_input(parquet_file, Some(fingerprints_for(&[HIDDEN])));
 
@@ -242,6 +256,9 @@ fn whole_pass_skip_counts_hits_exactly_once() {
 /// shift the ratios `candidate_starvation::classify` reads.
 #[test]
 fn zero_cache_hits_yields_no_fingerprint_entry() {
+    if !gpu_or_skip("zero_cache_hits_yields_no_fingerprint_entry") {
+        return;
+    }
     let (_temp_dir, parquet_file) = write_fixture_parquet();
     let input = make_input(parquet_file, None);
 

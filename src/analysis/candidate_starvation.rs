@@ -81,6 +81,9 @@ pub const GATE_SIDE_REJECTION_REASONS: &[&str] = &[
     reasons::REJECTION_BELOW_THRESHOLD,
     reasons::REJECTION_REMOVAL_BELOW_NOISE_FLOOR,
     reasons::REJECTION_REMOVE_NEURON_DROUGHT_DEPRIORITISED,
+    // Issue #1802: the candidate was evaluated and then dropped because its
+    // clamped weight delta was a no-op — a verdict reached at the gate.
+    reasons::REJECTION_DEGENERATE_WEIGHT_UPDATE,
 ];
 
 /// Rejection reasons recorded when a candidate never reached the gate: too
@@ -116,6 +119,10 @@ pub const UPSTREAM_REJECTION_REASONS: &[&str] = &[
     // removed from the focus order before analysis, so no proposal for them
     // could ever reach the gate.
     reasons::REJECTION_TARGET_COOLDOWN_SKIPPED,
+    // Issue #1802: an unaccounted drop has, by definition, no recorded gate
+    // verdict, so it cannot be counted as evidence the gate over-rejected. It
+    // is only ever non-zero when a drop path went unaccounted for.
+    reasons::REJECTION_UNACCOUNTED_DROP,
 ];
 
 /// Rejection reasons recorded when a candidate *was* generated but was capped or

@@ -34,7 +34,9 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 use crate::analysis::diagnostics::RejectionBreakdown;
 use crate::analysis::diagnostics::rejection_reasons::{
-    REJECTION_NO_SAMPLES, REJECTION_ZERO_SOURCE_VARIANCE,
+    REJECTION_BELOW_IMPROVED_RATIO, REJECTION_CPU_PRE_REJECT_NO_SIGNAL,
+    REJECTION_DEGENERATE_WEIGHT_UPDATE, REJECTION_NO_SAMPLES, REJECTION_ZERO_IMPROVEMENT,
+    REJECTION_ZERO_SOURCE_VARIANCE,
 };
 use crate::analysis::samples::EPSILON;
 
@@ -42,10 +44,19 @@ use crate::analysis::samples::EPSILON;
 ///
 /// Shared across rayon workers via `Arc`. Each orchestration call creates a
 /// fresh instance; it does not persist across batches.
+///
+/// Issue #1802 added the four counters below `zero_source_variance` for the
+/// remaining bare-`continue` sites the candidate-reconciliation invariant
+/// exposed. They are plain increments rather than guard predicates because each
+/// condition is computed inline from values the surrounding loop already holds.
 #[derive(Debug, Default)]
 pub struct EvaluationDropCounters {
     no_samples: AtomicU32,
     zero_source_variance: AtomicU32,
+    below_improved_ratio: AtomicU32,
+    zero_improvement: AtomicU32,
+    no_usable_weight: AtomicU32,
+    degenerate_weight_update: AtomicU32,
 }
 
 impl EvaluationDropCounters {
@@ -95,6 +106,61 @@ impl EvaluationDropCounters {
     pub fn zero_source_variance(&self) -> u32 {
         self.zero_source_variance.load(Ordering::Relaxed)
     }
+
+    /// Count a candidate dropped because too few of its samples improved
+    /// (Issue #1802), recorded as [`REJECTION_BELOW_IMPROVED_RATIO`].
+    #[inline]
+    pub fn drop_below_improved_ratio(&self) {
+        self.below_improved_ratio.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Candidates dropped by the improved-sample-ratio floor.
+    #[must_use]
+    pub fn below_improved_ratio(&self) -> u32 {
+        self.below_improved_ratio.load(Ordering::Relaxed)
+    }
+
+    /// Count a candidate dropped because post-evaluation improvement was
+    /// non-positive (Issue #1802), recorded as [`REJECTION_ZERO_IMPROVEMENT`].
+    #[inline]
+    pub fn drop_zero_improvement(&self) {
+        self.zero_improvement.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Candidates dropped for zero post-evaluation improvement.
+    #[must_use]
+    pub fn zero_improvement(&self) -> u32 {
+        self.zero_improvement.load(Ordering::Relaxed)
+    }
+
+    /// Count a candidate dropped because no usable outgoing weight could be
+    /// fitted from the GPU sufficient statistics (Issue #1802), recorded as
+    /// [`REJECTION_CPU_PRE_REJECT_NO_SIGNAL`] — the same predicate and reason
+    /// the CPU pre-reject screen uses for this condition.
+    #[inline]
+    pub fn drop_no_usable_weight(&self) {
+        self.no_usable_weight.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Candidates dropped because no usable weight could be fitted.
+    #[must_use]
+    pub fn no_usable_weight(&self) -> u32 {
+        self.no_usable_weight.load(Ordering::Relaxed)
+    }
+
+    /// Count a weight-update candidate whose clamped delta collapsed to a no-op
+    /// (Issue #1802), recorded as [`REJECTION_DEGENERATE_WEIGHT_UPDATE`].
+    #[inline]
+    pub fn drop_degenerate_weight_update(&self) {
+        self.degenerate_weight_update
+            .fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Weight-update candidates dropped for a degenerate clamped delta.
+    #[must_use]
+    pub fn degenerate_weight_update(&self) -> u32 {
+        self.degenerate_weight_update.load(Ordering::Relaxed)
+    }
 }
 
 /// Fold this batch's evaluation-loop drops into `breakdown` (Issue #1798).
@@ -107,11 +173,32 @@ pub fn fold_evaluation_drops(
     counters: &EvaluationDropCounters,
     breakdown: &mut RejectionBreakdown,
 ) -> u32 {
-    let no_samples = counters.no_samples();
-    let zero_variance = counters.zero_source_variance();
-    breakdown.record_many_u32(REJECTION_NO_SAMPLES, no_samples);
-    breakdown.record_many_u32(REJECTION_ZERO_SOURCE_VARIANCE, zero_variance);
-    no_samples.saturating_add(zero_variance)
+    let entries = [
+        (REJECTION_NO_SAMPLES, counters.no_samples()),
+        (
+            REJECTION_ZERO_SOURCE_VARIANCE,
+            counters.zero_source_variance(),
+        ),
+        (
+            REJECTION_BELOW_IMPROVED_RATIO,
+            counters.below_improved_ratio(),
+        ),
+        (REJECTION_ZERO_IMPROVEMENT, counters.zero_improvement()),
+        (
+            REJECTION_CPU_PRE_REJECT_NO_SIGNAL,
+            counters.no_usable_weight(),
+        ),
+        (
+            REJECTION_DEGENERATE_WEIGHT_UPDATE,
+            counters.degenerate_weight_update(),
+        ),
+    ];
+    let mut total = 0u32;
+    for (reason, count) in entries {
+        breakdown.record_many_u32(reason, count);
+        total = total.saturating_add(count);
+    }
+    total
 }
 
 #[cfg(test)]
@@ -133,6 +220,66 @@ mod tests {
         let counters = EvaluationDropCounters::new();
         assert_eq!(counters.no_samples(), 0);
         assert_eq!(counters.zero_source_variance(), 0);
+        assert_eq!(counters.below_improved_ratio(), 0);
+        assert_eq!(counters.zero_improvement(), 0);
+        assert_eq!(counters.no_usable_weight(), 0);
+        assert_eq!(counters.degenerate_weight_update(), 0);
+    }
+
+    /// Issue #1802: each newly-accounted site increments its own counter, so
+    /// the four causes stay distinguishable in the breakdown.
+    #[test]
+    fn issue_1802_counters_are_independent() {
+        let counters = EvaluationDropCounters::new();
+        for _ in 0..4 {
+            counters.drop_below_improved_ratio();
+        }
+        for _ in 0..3 {
+            counters.drop_zero_improvement();
+        }
+        counters.drop_no_usable_weight();
+        for _ in 0..2 {
+            counters.drop_degenerate_weight_update();
+        }
+
+        assert_eq!(counters.below_improved_ratio(), 4);
+        assert_eq!(counters.zero_improvement(), 3);
+        assert_eq!(counters.no_usable_weight(), 1);
+        assert_eq!(counters.degenerate_weight_update(), 2);
+        // The #1798 counters are untouched by the #1802 sites.
+        assert_eq!(counters.no_samples(), 0);
+        assert_eq!(counters.zero_source_variance(), 0);
+    }
+
+    /// The widened fold must record every reason under its own stable name and
+    /// return the true total, so the reconciliation and the breakdown agree.
+    #[test]
+    fn issue_1802_fold_records_every_reason() {
+        let counters = EvaluationDropCounters::new();
+        counters.drop_below_improved_ratio();
+        counters.drop_zero_improvement();
+        counters.drop_zero_improvement();
+        counters.drop_no_usable_weight();
+        counters.drop_degenerate_weight_update();
+
+        let mut breakdown = RejectionBreakdown::new();
+        let folded = fold_evaluation_drops(&counters, &mut breakdown);
+
+        assert_eq!(folded, 5);
+        assert_eq!(breakdown.total(), 5);
+        assert_eq!(
+            breakdown.counts().get(REJECTION_BELOW_IMPROVED_RATIO),
+            Some(&1)
+        );
+        assert_eq!(breakdown.counts().get(REJECTION_ZERO_IMPROVEMENT), Some(&2));
+        assert_eq!(
+            breakdown.counts().get(REJECTION_CPU_PRE_REJECT_NO_SIGNAL),
+            Some(&1)
+        );
+        assert_eq!(
+            breakdown.counts().get(REJECTION_DEGENERATE_WEIGHT_UPDATE),
+            Some(&1)
+        );
     }
 
     #[test]
