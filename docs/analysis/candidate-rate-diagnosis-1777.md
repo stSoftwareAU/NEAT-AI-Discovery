@@ -318,6 +318,14 @@ consecutive failures, which clears `tiering_escalation_active`
 creatures over 1000 hidden neurons — **the module set narrows exactly when the
 drought is worst.**
 
+**Fixed by #1803.** The revert was only ever a cooldown on the *risk bias*
+(Issue #1132: "exit conservative mode … after a max cooldown of
+`CONSERVATIVE_MODE_MAX_EPOCHS`"); Issue #1547 later reused `mode == Conservative`
+as the module-tiering escalation signal, coupling module **breadth** to the bias
+cooldown. `decide_mode_with_escalation` now separates the two: the mode still
+reverts, while `module_escalation_active` follows the collapsed rolling rate
+alone, so Extended Drought keeps the full module set.
+
 → follow-ups: **#1780** (dead suppression trackers make the drought reset a
 no-op), **#1781** (failure-cache entries never expire; fingerprint skip has no
 escape hatch), **#1782** (silent candidate drops bias the starvation

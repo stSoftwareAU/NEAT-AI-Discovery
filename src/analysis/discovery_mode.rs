@@ -33,6 +33,25 @@
 //!    to Normal mode — the bias wasn't helping, so falling back to full
 //!    exploration is the least-bad option.
 //!
+//! ## The cooldown is a bias cooldown, not a breadth cooldown (Issue #1803)
+//!
+//! The `conservative_mode_max_epochs` revert above was specified by Issue #1132
+//! purely as a cooldown on the **risk bias** — stop paying the high-risk penalty
+//! and the 10× coordinated gain floor once they have demonstrably not helped.
+//! Issue #1547 later reused `mode == Conservative` as the creature-scale
+//! *module tiering* escalation signal, which accidentally coupled module
+//! **breadth** to that bias cooldown: crossing the cooldown tiered the seven
+//! expensive discovery modules out of the dispatch set on creatures above
+//! [`crate::analysis::module_tiering::DEFAULT_MODULE_TIERING_HIDDEN_THRESHOLD`]
+//! hidden neurons — narrowing the module set exactly when the drought was worst.
+//!
+//! [`decide_mode_with_escalation`] separates the two signals. The mode (risk
+//! bias) still reverts on the cooldown; `module_escalation_active` tracks only
+//! the collapsed-rolling-rate condition, so the expensive modules are retained
+//! for as long as the creature is struggling. The
+//! mode-`Normal`-but-still-escalated state is the **Extended Drought** regime
+//! ([`ModeDecision::is_extended_drought`]).
+//!
 //! ## Thresholds and env vars
 //!
 //! - `NEAT_AI_DISCOVERY_LOW_SUCCESS_RATE_THRESHOLD` (f32, default
@@ -286,16 +305,80 @@ pub fn decide_mode(
     low_success_threshold: f32,
     max_conservative_epochs: u32,
 ) -> DiscoveryMode {
-    if log.is_empty() {
-        return DiscoveryMode::Normal;
+    decide_mode_with_escalation(log, low_success_threshold, max_conservative_epochs).mode
+}
+
+/// The per-pass drought decision: risk bias and module breadth, separately
+/// (Issue #1803).
+///
+/// The two used to be the same flag, so the [`decide_mode`] cooldown revert also
+/// dropped the expensive discovery modules on large creatures. They are now
+/// decided independently — see the module-level "bias cooldown, not a breadth
+/// cooldown" note.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ModeDecision {
+    /// The risk-biasing mode. Reverts to [`DiscoveryMode::Normal`] once the
+    /// trailing-failure streak exceeds `max_conservative_epochs`.
+    pub mode: DiscoveryMode,
+    /// Whether the full (expensive-tier included) discovery module set stays
+    /// dispatched for this pass. True for as long as the rolling success rate is
+    /// below the threshold — including after the risk bias has reverted.
+    pub module_escalation_active: bool,
+    /// Length of the trailing consecutive-failure streak that produced this
+    /// decision. Logged so the transition is diagnosable.
+    pub trailing_failure_streak: u32,
+    /// Rolling success rate over the last [`ROLLING_WINDOW`] outcomes.
+    pub rolling_success_rate: f32,
+}
+
+impl ModeDecision {
+    /// Whether this pass is in the **Extended Drought** regime: the risk bias
+    /// has reverted to Normal but the module set is still escalated.
+    #[must_use]
+    pub fn is_extended_drought(&self) -> bool {
+        self.mode == DiscoveryMode::Normal && self.module_escalation_active
     }
-    if log.consecutive_trailing_failures() > max_conservative_epochs {
-        return DiscoveryMode::Normal;
-    }
-    if log.rolling_success_rate() < low_success_threshold {
+}
+
+/// Decide the risk-biasing mode **and** whether module escalation stays active.
+///
+/// [`ModeDecision::mode`] is [`DiscoveryMode::Conservative`] when **all** of the
+/// following hold (unchanged from [`decide_mode`]):
+///
+/// 1. The rolling success rate (last [`ROLLING_WINDOW`] entries) is strictly
+///    below `low_success_threshold`.
+/// 2. The trailing consecutive-failure streak is at or below
+///    `max_conservative_epochs` — beyond that the bias is abandoned.
+/// 3. The log contains at least one outcome (empty logs default to Normal).
+///
+/// [`ModeDecision::module_escalation_active`] drops condition 2: the expensive
+/// discovery modules are the creature's best chance of escaping a deep drought,
+/// so they are retained for as long as the rolling rate stays collapsed (Issue
+/// #1803).
+#[must_use]
+pub fn decide_mode_with_escalation(
+    log: &DiscoveryOutcomeLog,
+    low_success_threshold: f32,
+    max_conservative_epochs: u32,
+) -> ModeDecision {
+    let rolling_success_rate = log.rolling_success_rate();
+    let trailing_failure_streak = log.consecutive_trailing_failures();
+
+    // An empty log knows nothing — neither signal engages.
+    let low_success = !log.is_empty() && rolling_success_rate < low_success_threshold;
+    let within_bias_cooldown = trailing_failure_streak <= max_conservative_epochs;
+
+    let mode = if low_success && within_bias_cooldown {
         DiscoveryMode::Conservative
     } else {
         DiscoveryMode::Normal
+    };
+
+    ModeDecision {
+        mode,
+        module_escalation_active: low_success,
+        trailing_failure_streak,
+        rolling_success_rate,
     }
 }
 
@@ -621,6 +704,63 @@ mod tests {
             DEFAULT_CONSERVATIVE_MODE_MAX_EPOCHS,
         );
         assert_eq!(mode, DiscoveryMode::Conservative);
+    }
+
+    #[test]
+    fn extended_drought_keeps_module_escalation_after_bias_reverts() {
+        // Issue #1803: 25 consecutive failures — past the bias cooldown, so the
+        // mode reverts, but the module set must stay escalated.
+        let log = DiscoveryOutcomeLog::from_outcomes(failures(25));
+        let decision = decide_mode_with_escalation(
+            &log,
+            DEFAULT_LOW_SUCCESS_RATE_THRESHOLD,
+            DEFAULT_CONSERVATIVE_MODE_MAX_EPOCHS,
+        );
+        assert_eq!(decision.mode, DiscoveryMode::Normal);
+        assert!(decision.module_escalation_active);
+        assert!(decision.is_extended_drought());
+        assert_eq!(decision.trailing_failure_streak, 25);
+        assert!((decision.rolling_success_rate - 0.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn conservative_regime_is_not_extended_drought() {
+        let log = DiscoveryOutcomeLog::from_outcomes(failures(10));
+        let decision = decide_mode_with_escalation(
+            &log,
+            DEFAULT_LOW_SUCCESS_RATE_THRESHOLD,
+            DEFAULT_CONSERVATIVE_MODE_MAX_EPOCHS,
+        );
+        assert_eq!(decision.mode, DiscoveryMode::Conservative);
+        assert!(decision.module_escalation_active);
+        assert!(!decision.is_extended_drought());
+    }
+
+    #[test]
+    fn healthy_rate_never_escalates_modules() {
+        let mut outcomes = failures(2);
+        outcomes.extend(successes(8));
+        let log = DiscoveryOutcomeLog::from_outcomes(outcomes);
+        let decision = decide_mode_with_escalation(
+            &log,
+            DEFAULT_LOW_SUCCESS_RATE_THRESHOLD,
+            DEFAULT_CONSERVATIVE_MODE_MAX_EPOCHS,
+        );
+        assert_eq!(decision.mode, DiscoveryMode::Normal);
+        assert!(!decision.module_escalation_active);
+        assert!(!decision.is_extended_drought());
+    }
+
+    #[test]
+    fn empty_log_escalates_nothing() {
+        let decision = decide_mode_with_escalation(
+            &DiscoveryOutcomeLog::default(),
+            DEFAULT_LOW_SUCCESS_RATE_THRESHOLD,
+            DEFAULT_CONSERVATIVE_MODE_MAX_EPOCHS,
+        );
+        assert_eq!(decision.mode, DiscoveryMode::Normal);
+        assert!(!decision.module_escalation_active);
+        assert_eq!(decision.trailing_failure_streak, 0);
     }
 
     #[test]
