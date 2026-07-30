@@ -196,3 +196,55 @@ For a remove-neuron candidate to reach NEAT-AI, **both** gates must yield:
 Both are out of scope for #1810, which only measures and pins. They belong to
 the other sub-issues of #1785, and each should re-run the command at the top of this
 document and update this table as part of its closing checklist.
+
+## The standing end-to-end guard (Issue #1815)
+
+Everything above is a **pin**: it records today's numbers and is meant to break
+when a gate is recalibrated. The composition itself needs a guard that does
+**not** move, because #1785's failure mode was precisely that every unit passed
+while the composition yielded nothing:
+
+```bash
+cargo test --test issue_1785_remove_neuron_end_to_end -- --nocapture --test-threads=1
+```
+
+Two invariants, both asserted on the **FFI response shape** so no
+intermediate-vector refactor can keep them green while the candidate is deleted
+downstream:
+
+```mermaid
+flowchart LR
+    F1["Reachability fixture<br/>h-prunable: 0 influence, floor-clearing degree<br/>h-hot: sole output path"]
+    F2["Non-silence fixture<br/>h-quiet-dominant: proposed, then must be rejected"]
+    F1 --> AP["analyze_parallel<br/>coordinatedStructuralCandidates"]
+    F1 --> RF["rank_focus_neurons<br/>removalCandidates"]
+    AP --> R1["contains removeNeuron h-prunable<br/>never h-hot"]
+    RF --> R1
+    F2 --> AP2["analyze_parallel<br/>synapseMetadata.rejectionBreakdown"]
+    F2 --> RF2["rank_focus_neurons<br/>rejectionBreakdown"]
+    AP2 --> R2["non-empty, names a removal reason KEY"]
+    RF2 --> R2
+```
+
+- **Reachability.** A `removeNeuron` candidate for a neuron that is genuinely
+  worth pruning must appear in both responses; the high-influence neuron in the
+  same creature must not, so the guard cannot be satisfied by loosening a gate
+  into accepting everything.
+- **Non-silence.** A zero-yield removal pass must return a rejection breakdown
+  naming one of `removal_savings_below_impact`, `removal_below_noise_floor`,
+  `removal_active_neuron` or `removal_loss_exceeds_saving`. The assertion checks
+  the **key**, so a mis-keyed or renamed reason is caught — this is the direct
+  guard on the `rejectionBreakdown: null` #1785 observed.
+
+The fixtures are built in code, and the prunable neuron's synapse degree is
+**derived** from `remove_low_impact_noise_floor()` and
+`calculate_removal_savings` rather than hard-coded. When #1814 lowers Gate 2's
+absolute floor, the fixture shrinks with it and the invariant still holds — the
+guard tracks the calibration instead of pinning it.
+
+Verified against `Develop` at `06403d7` (the commit #1785 was written against):
+three of the four cases fail there, including `rejectionBreakdown: null` on the
+focus path and an empty `coordinatedStructuralCandidates` on the analysis path.
+The focus-path reachability case already passed at `06403d7` — an extreme-degree
+orphan could always clear the `1e-5` floor; what that commit lacked was the
+*reason* (#1808) and survival through Gate 1 (#1812).
