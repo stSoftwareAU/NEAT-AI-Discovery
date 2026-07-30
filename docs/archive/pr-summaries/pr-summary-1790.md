@@ -51,7 +51,7 @@ sequenceDiagram
     N->>T: current_epoch() → E + 1
     AA->>S: synapse analysis
     S->>T: current_epoch() → E + 1
-    Note over N,S: both filters see the same epoch;<br/>cooldowns expire at failure_epoch + cooldown_epochs
+    Note over N,S: both filters see the same epoch,<br/>cooldowns expire at failure_epoch + cooldown_epochs
 ```
 
 TDD proof: with the `advance_global_epoch()` call replaced by a constant `0`,
