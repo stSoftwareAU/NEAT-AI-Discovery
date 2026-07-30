@@ -246,7 +246,8 @@ fn assert_fixture_preconditions(creature: &CreatureJson) {
     );
     assert!(
         functionally_constant_neuron_uuids(creature).is_empty(),
-        "the structural constant-neuron detector is unwired on Develop; a non-empty set means \
+        "the structural constant-neuron detector (#1813) flags nothing on this fixture — every \
+         hidden neuron here has a non-zero-weight path from a live input; a non-empty set means \
          the promotion escape hatch changed — {PIN_HINT}"
     );
 }
@@ -440,10 +441,11 @@ fn gate_1_rejects_a_synthetic_high_influence_neuron() {
 /// **Block 2 — the promotion escape hatch.**
 ///
 /// The only route past Gate 1 is #1622 promotion. Its structural flag source
-/// (`functionally_constant_neuron_uuids`) is an unwired seam returning an empty
-/// set, and its live source (#1779 `bias_folded_constant_neuron_uuids`) needs a
-/// candidate carrying an accepted bias fold — which the structure-only path
-/// never attaches. So nothing is promoted, and the escape hatch yields zero.
+/// (`functionally_constant_neuron_uuids`, wired by #1813) flags nothing on this
+/// fixture — every hidden neuron carries variance from a live input — and its
+/// measured source (#1779 `bias_folded_constant_neuron_uuids`) needs a candidate
+/// carrying an accepted bias fold, which the structure-only path never attaches.
+/// So nothing is promoted for *this* creature, and the escape hatch yields zero.
 #[test]
 #[serial]
 fn gate_1_promotion_escape_hatch_promotes_nothing() {
@@ -475,7 +477,7 @@ fn gate_1_promotion_escape_hatch_promotes_nothing() {
 
     assert!(
         structural_flags.is_empty(),
-        "the structural detector seam is unwired on Develop — {PIN_HINT}"
+        "no hidden neuron in this fixture is structurally constant (#1813) — {PIN_HINT}"
     );
     assert_eq!(
         fold_carrying, 0,

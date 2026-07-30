@@ -5,9 +5,11 @@
 //!
 //! A branch feeding a MAXIMUM/MINIMUM aggregate can be *dominated* — provably
 //! never the branch the aggregate selects — yet vary across the observation
-//! window, so it is not *functionally constant* and the #1620/#1623 bias-fold
-//! (`functionally_constant_neuron_uuids`) flags nothing. Before this module the
-//! extent of automatic collapse for selection aggregates was **zero**.
+//! window, so it is not *functionally constant*: neither the #1620/#1623
+//! bias-fold nor the structural detector (`functionally_constant_neuron_uuids`,
+//! wired by #1813, which only flags neurons whose output cannot vary at all)
+//! flags it. Before this module the extent of automatic collapse for selection
+//! aggregates was **zero**.
 //!
 //! ## Analytical dominance proof
 //!
@@ -226,9 +228,9 @@ pub fn detect_dominated_branches(creature: &CreatureJson) -> Vec<DominatedBranch
 /// UUIDs of every analytically-dominated branch neuron — the seam mirroring
 /// [`super::functionally_constant_neuron_uuids`] (Issue #1711).
 ///
-/// Unlike that seam, this one is *not* a stub: it returns the real dominated set
-/// so the orchestrator (and characterisation suites) can consume analytical
-/// dominance directly.
+/// The two are complementary judgements over the same topology: that seam flags
+/// neurons whose output cannot *vary* (structural constancy, #1813), this one
+/// flags branches that vary but can never *win* their aggregate's selection.
 #[must_use]
 pub fn analytically_dominated_branch_uuids(creature: &CreatureJson) -> HashSet<String> {
     detect_dominated_branches(creature)

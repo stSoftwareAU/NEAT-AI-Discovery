@@ -17,11 +17,16 @@
 //! candidate ranks ahead of the normal gain-ranked stream instead of being ranked
 //! ≈0 and dropped.
 //!
-//! Flags come from two seams. The structural detector (a sibling sub-issue of the
-//! #1620 milestone) owns [`functionally_constant_neuron_uuids`] and is still
-//! unwired. The live source is [`bias_folded_constant_neuron_uuids`] (Issue
-//! #1779): the neurons whose removal candidate carries an **accepted** #1623 bias
-//! fold, measured against the recorded activations.
+//! Flags come from two live seams, unioned by the orchestrator:
+//!
+//! - **Structural** ([`functionally_constant_neuron_uuids`], wired by Issue
+//!   #1813): hidden neurons whose output cannot vary given the topology alone —
+//!   no incoming synapses, all incoming weights zero, or every source itself
+//!   constant. This needs no recorded activations, so it reaches the case the
+//!   measured seam structurally cannot.
+//! - **Measured** ([`bias_folded_constant_neuron_uuids`], Issue #1779): the
+//!   neurons whose removal candidate carries an **accepted** #1623 bias fold,
+//!   verified against the recorded activations.
 //!
 //! ## Where it hooks in
 //!
@@ -45,7 +50,7 @@
 //! downstream gain-descending sort (`total_cmp`, NaN-safe) yields an identical
 //! interleaving for identical inputs.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson, CreatureJson};
 
@@ -104,18 +109,94 @@ pub fn promote_constant_remove_neuron_candidates(
     promoted
 }
 
-/// Collect the UUIDs of hidden neurons flagged functionally-constant for this
-/// analysis pass — the orchestrator's consumption seam for the flag set
-/// (Issue #1622).
+/// A neuron whose value is fixed by the topology alone — the seed set the
+/// structural fixpoint grows from (Issue #1813).
 ///
-/// The functionally-constant detector (a sibling sub-issue of the #1620
-/// milestone) owns flag production. Until it is wired in, no neuron is flagged
-/// and the set is empty, so the downstream promotion promotes nothing. This is
-/// a documented dependency gate, not a masked fault: an empty set means "no
-/// constant neuron was detected this pass", which is the correct behaviour.
+/// Input neurons vary by definition; the NEAT-AI input-side `"constant"` class
+/// does not, so it seeds the propagation without ever being flagged itself
+/// (only hidden neurons are removal candidates).
+fn is_declared_constant(neuron: &crate::NeuronJson) -> bool {
+    neuron.neuron_type == "constant"
+}
+
+/// Collect the UUIDs of hidden neurons flagged **structurally**
+/// functionally-constant for this analysis pass — the orchestrator's
+/// consumption seam for the flag set (Issue #1622, wired by Issue #1813).
+///
+/// A hidden neuron is structurally constant when its output cannot vary given
+/// the network topology alone, i.e. every incoming synapse either
+///
+/// - carries a zero weight (its contribution is `0 × anything = 0`), or
+/// - originates at a neuron that is itself constant (a declared `"constant"`
+///   neuron, or another structurally-constant hidden neuron);
+///
+/// a hidden neuron with **no** incoming synapses satisfies this vacuously — its
+/// value is `squash(bias)` on every observation. Because the pre-activation is
+/// fixed, the squash output is fixed too, for scalar and aggregate squashes
+/// alike.
+///
+/// Constancy propagates to a fixpoint, so a chain of constant sources is flagged
+/// end to end. Nothing else is: one varying source, or one source not present in
+/// the creature (which cannot be proven constant), leaves the neuron unflagged.
+///
+/// This is deliberately a *structural* judgement and complements — rather than
+/// replaces — the *measured* one made by [`bias_folded_constant_neuron_uuids`].
+/// A neuron that merely *looks* constant over the recorded window is not flagged
+/// here; that case belongs to the #1623 bias fold, which verifies it against the
+/// activations.
 #[must_use]
-pub fn functionally_constant_neuron_uuids(_creature: &CreatureJson) -> HashSet<String> {
-    HashSet::new()
+pub fn functionally_constant_neuron_uuids(creature: &CreatureJson) -> HashSet<String> {
+    let mut constant: HashSet<&str> = creature
+        .neurons
+        .iter()
+        .filter(|n| is_declared_constant(n))
+        .map(|n| n.uuid.as_str())
+        .collect();
+
+    // Incoming synapses per target, so each fixpoint pass is a linear scan.
+    let mut incoming: HashMap<&str, Vec<&crate::SynapseJson>> = HashMap::new();
+    for synapse in &creature.synapses {
+        incoming
+            .entry(synapse.to_uuid.as_str())
+            .or_default()
+            .push(synapse);
+    }
+
+    let hidden: Vec<&str> = creature
+        .neurons
+        .iter()
+        .filter(|n| n.neuron_type == "hidden")
+        .map(|n| n.uuid.as_str())
+        .collect();
+
+    // Monotone fixpoint: each pass can only add to `constant`, so at most one
+    // pass per hidden neuron is ever needed.
+    for _ in 0..=hidden.len() {
+        let mut changed = false;
+        for uuid in &hidden {
+            if constant.contains(uuid) {
+                continue;
+            }
+            let sources_fixed = incoming.get(uuid).is_none_or(|synapses| {
+                synapses
+                    .iter()
+                    .all(|s| s.weight == 0.0 || constant.contains(s.from_uuid.as_str()))
+            });
+            if sources_fixed {
+                constant.insert(uuid);
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+
+    hidden
+        .into_iter()
+        .filter(|uuid| constant.contains(uuid))
+        .map(ToString::to_string)
+        .collect()
 }
 
 /// Collect the UUIDs of neurons **measured** functionally constant this pass —
@@ -245,8 +326,14 @@ mod tests {
         assert_eq!(candidates[1].expected_creature_score_gain, 0.0);
     }
 
+    /// Only *hidden* neurons are removal candidates, so a creature with none
+    /// flags nothing even though its input-side neuron is a declared constant.
+    ///
+    /// Renamed from `seam_returns_empty_until_detector_is_wired` by Issue #1813:
+    /// the assertion is unchanged, but the seam is now wired, so what it pins is
+    /// the hidden-only scope rather than an unconditional empty set.
     #[test]
-    fn seam_returns_empty_until_detector_is_wired() {
+    fn seam_flags_nothing_without_hidden_neurons() {
         let creature: CreatureJson = serde_json::from_str(
             r#"{"input":1,"output":1,
                 "neurons":[{"uuid":"input-0","type":"constant"},
@@ -254,6 +341,35 @@ mod tests {
                 "synapses":[{"fromUUID":"input-0","toUUID":"out-0","weight":1.0}]}"#,
         )
         .expect("valid creature JSON");
+        assert!(functionally_constant_neuron_uuids(&creature).is_empty());
+    }
+
+    /// The structural detector flags a topology-constant hidden neuron and
+    /// leaves a variance-carrying one alone (Issue #1813).
+    #[test]
+    fn structural_detector_flags_only_topology_constant_neurons() {
+        let creature: CreatureJson = serde_json::from_str(
+            r#"{"input":1,"output":1,
+                "neurons":[{"uuid":"in-0","type":"input","squash":"IDENTITY"},
+                           {"uuid":"h-const","type":"hidden","squash":"TANH","bias":0.25},
+                           {"uuid":"h-live","type":"hidden","squash":"RELU"},
+                           {"uuid":"out-0","type":"output","squash":"IDENTITY"}],
+                "synapses":[{"fromUUID":"in-0","toUUID":"h-live","weight":0.7},
+                            {"fromUUID":"h-const","toUUID":"out-0","weight":0.5},
+                            {"fromUUID":"h-live","toUUID":"out-0","weight":0.5}]}"#,
+        )
+        .expect("valid creature JSON");
+        let flagged = functionally_constant_neuron_uuids(&creature);
+        assert_eq!(flagged.len(), 1, "one constant neuron, got {flagged:?}");
+        assert!(flagged.contains("h-const"));
+    }
+
+    /// An empty creature is handled without panicking and flags nothing.
+    #[test]
+    fn empty_creature_flags_nothing() {
+        let creature: CreatureJson =
+            serde_json::from_str(r#"{"input":0,"output":0,"neurons":[],"synapses":[]}"#)
+                .expect("valid creature JSON");
         assert!(functionally_constant_neuron_uuids(&creature).is_empty());
     }
 
