@@ -345,7 +345,13 @@ struct LoadingMeta {
     projected_mb: u64,
 }
 
-const DEFAULT_COST_OF_GROWTH: f32 = 1e-7;
+/// Cost per hidden neuron when the caller supplies none — matches NEAT-AI's
+/// `Score.ts` formula.
+///
+/// The **single** definition of the default (Issue #1807): every caller,
+/// including the FFI entry point, resolves through this constant rather than
+/// repeating the literal, so the two can never drift apart.
+pub const DEFAULT_COST_OF_GROWTH: f32 = 1e-7;
 const IMPACT_EPSILON: f32 = 0.0001;
 const IMPACT_GAMMA: f32 = 0.8;
 
@@ -1412,7 +1418,8 @@ fn build_rejection_breakdown(
 /// * `parquet_file` - Path to the parquet file containing discovery records
 /// * `creature` - The creature to rank neurons for
 /// * `max_results` - Optional maximum number of neurons to return
-/// * `cost_of_growth` - Optional cost of growth threshold (default: 1e-7)
+/// * `cost_of_growth` - Optional cost of growth threshold (default:
+///   [`DEFAULT_COST_OF_GROWTH`])
 /// * `history` - Optional discovery history for historical success data
 ///
 /// # Returns

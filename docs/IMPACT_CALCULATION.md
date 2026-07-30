@@ -373,6 +373,12 @@ matches NEAT-AI's `Score.ts` complexity penalty per neuron.
 | `1e-9` or lower | Encourages creature expansion for evolution on new neurons |
 | Higher values | More aggressive pruning (use with caution) |
 
+A non-finite or non-positive `costOfGrowth` is a caller bug: every entry point,
+including the `rank_focus_neurons` FFI request, rejects it with a WARN naming
+both the offending value and the substituted default, then proceeds on the
+default (Issue #1807). Note that a JSON number outside `f32` range reaches the
+criterion as `±∞` (`1e39`) or `0.0` (`1e-60`), so it is rejected the same way.
+
 Removal candidates are sorted by `activation_weighted_impact` ascending (lowest
 first = safest to remove). Each candidate also includes `removalSavings`
 calculated from NEAT-AI's complexity formula:
