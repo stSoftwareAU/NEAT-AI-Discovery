@@ -57,6 +57,25 @@ Each surface now owns a per-pass `CandidateLedger` and asserts
 
 ### Fixed
 
+#### Structural removal triage collapsed into one implementation (Issue #1805)
+
+Two near-identical copies of the least-impact removal criterion existed side by
+side and had already drifted once. The criterion — savings-vs-impact, the
+`REMOVAL_CANDIDATE_BOOST` application point, the non-finite-impact policy
+(#1804), the noise-floor re-gate (#1142), the hidden-only filter and the
+net-improvement-descending sort — now lives only in
+`identify_structural_removal_candidates`.
+
+- `focus::triage_removal_candidates` is retained as a documented thin **adapter**
+  over that single implementation (no public items removed, so no breaking
+  change). Its per-candidate `reason` string now carries the shipped path's
+  wording, and its pass is `rayon`-parallel rather than serial.
+- **Fixed:** the shipped FFI path (`rank_focus_neurons`) took `costOfGrowth` raw,
+  so a non-positive value silently produced zero candidates and a NaN value
+  emitted every hidden neuron — including high-impact ones — with NaN savings.
+  It now shares the adapter's validation: non-finite or non-positive falls back
+  to the `1e-7` default with a WARN.
+
 #### Quality-skipped candidates count as an abundance rejection (Issue #1799)
 
 Quality-based module skipping (Issue #1074) discarded the remaining discovery

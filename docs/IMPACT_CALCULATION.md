@@ -399,8 +399,12 @@ Removal is therefore split across two phases over the **same** impact map:
 | **Triage** (focus time) | `boostedSavings > \|structural_impact\|` | none — topology only |
 | **Gating** (analysis, after focus is fixed) | `boostedSavings > activation_weighted_impact`, plus the mean-activation and constant-variance gates | required |
 
-The triage phase is `focus::triage_removal_candidates`; the activation-weighted
-phase remains `identify_removal_candidates` inside the ranking pipeline. See
+The triage criterion lives in exactly one function,
+`identify_structural_removal_candidates` (the path the FFI ships); the public
+`focus::triage_removal_candidates` is a thin adapter over it that reshapes the
+result into the record-free `StructuralRemovalCandidate` (Issue #1805). The
+activation-weighted phase remains `identify_removal_candidates` inside the
+ranking pipeline. See
 [docs/FOCUS_SELECTION.md § 9](FOCUS_SELECTION.md#9-removal-triage--the-opposite-axis-issue-1767)
 for the opposite-axes rule that governs both.
 
