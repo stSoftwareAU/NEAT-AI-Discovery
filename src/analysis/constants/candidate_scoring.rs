@@ -1607,3 +1607,84 @@ pub const LOGISTIC_CALIBRATION_STEEPNESS: f32 = 8.0;
 /// Must be in (0.2, 0.9). Values below 0.3 do not sufficiently discount
 /// moderate ratios. Values above 0.8 discount too aggressively.
 pub const LOGISTIC_CALIBRATION_MIDPOINT: f32 = 0.6;
+
+// =============================================================================
+// Sole-op remove-neuron net-gain screen (Issue #1812, decided by Issue #1811)
+// =============================================================================
+
+/// Converts a neuron's unitless propagation-aware influence fraction into a
+/// creature-score delta, for the sole-op `RemoveNeuron` net-gain rule
+/// (Issue #1812).
+///
+/// `estimate_remove_neuron_gain` emits `−influence`, a dimensionless fraction of
+/// output sensitivity in `[0, 1]` — not a creature-score quantity. This constant
+/// is the missing unit conversion, mirroring what
+/// [`NEURON_PREDICTION_CALIBRATION`] does for the add-neuron path, and it is set
+/// to the same value: it is the only measured neuron-level → creature-level
+/// conversion in the repository, derived from the same production population
+/// (#891/#1056), and it is the larger of the two measured calibrations, which
+/// makes the removal screen *stricter* — the conservative default while removal
+/// outcomes remain unmeasured.
+///
+/// **Interim value.** No removal has ever survived either gate (#1810), so this
+/// cannot yet be fitted from realised removal outcomes; #1815's end-to-end guard
+/// supplies the first ones. The fixture verdicts are invariant to it for every
+/// value above `1.03e-6`, so no verdict rests on the exact number — see
+/// `docs/analysis/remove-neuron-gain-scale-1785.md`.
+///
+/// **Applied bare.** Unlike the add path, the per-creature
+/// `calibration_correction` is deliberately *not* applied on top. That
+/// correction is clamped to `[0.001, 1.0]` so it only ever discounts, and the
+/// calibrated quantity here is a **cost**: discounting it would shrink the
+/// penalty and make removals easier to accept, inverting the correction's safety
+/// direction.
+///
+/// ## Valid Range
+/// Must be in (0.0, 1.0]. Values below `1.03e-6` start admitting neurons that
+/// carry real downstream influence.
+pub const REMOVE_INFLUENCE_CALIBRATION: f32 = NEURON_PREDICTION_CALIBRATION;
+
+/// Acceptance margin for a sole-op `RemoveNeuron`, in units of `costOfGrowth`
+/// (Issue #1812).
+///
+/// `0.5` is half of one hidden neuron's complexity cost, bracketed rather than
+/// picked:
+///
+/// - **Below `1.0`**, because a zero-influence orphan nets exactly
+///   `1.0 × costOfGrowth` — the smallest unambiguously free removal that exists.
+///   A floor at or above one neuron's cost rejects it, and a rule that cannot
+///   prune a dead neuron has failed at its only certain case.
+/// - **Above `0.0`**, because at zero a removal whose estimated loss exactly
+///   cancels its saving is accepted, spending the host's ablation budget on a
+///   break-even change with no margin for estimator error.
+///
+/// ## Valid Range
+/// Must be in (0.0, 1.0). At `1.0` the orphan case becomes an exact-equality
+/// comparison in `f32`.
+pub const REMOVAL_NET_GAIN_FLOOR_UNITS: f32 = 0.5;
+
+/// The acceptance floor for a sole-op `RemoveNeuron` candidate's
+/// **net** `expected_creature_score_gain` (Issue #1812).
+///
+/// Sole-op removals are screened here instead of against
+/// [`coordinated_post_discount_noise_floor`]: their gain is
+/// `saving − calibrated influence loss`, denominated in units of
+/// `cost_of_growth` rather than on the add-path prediction scale, so the shared
+/// floor is not a comparison between like quantities. The shared floor keeps its
+/// value and still governs every other candidate type and every multi-op group
+/// — this replaces it for one candidate type, it does not drop it.
+///
+/// Returns `max(REMOVAL_NET_GAIN_FLOOR_UNITS × cost_of_growth,
+/// GAIN_FLOOR_NOISE_BACKSTOP)`. The backstop stops a host sending a tiny
+/// `cost_of_growth` from opening the screen into the band where the estimate is
+/// uncorrelated with the outcome; it binds only below `cost_of_growth = 2e-9`.
+/// A non-finite or non-positive `cost_of_growth` is a caller bug and cannot
+/// produce a meaningful saving, so the backstop alone is returned rather than a
+/// silently widened (or `NaN`) floor.
+#[must_use]
+pub fn removal_net_gain_floor(cost_of_growth: f32) -> f32 {
+    if !cost_of_growth.is_finite() || cost_of_growth <= 0.0 {
+        return GAIN_FLOOR_NOISE_BACKSTOP;
+    }
+    (REMOVAL_NET_GAIN_FLOOR_UNITS * cost_of_growth).max(GAIN_FLOOR_NOISE_BACKSTOP)
+}

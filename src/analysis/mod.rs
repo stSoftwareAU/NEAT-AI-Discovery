@@ -71,6 +71,7 @@ pub mod remove_neuron_compensation;
 pub mod remove_neuron_constant_promotion;
 pub mod remove_neuron_drought;
 pub mod remove_neuron_gain;
+pub mod remove_neuron_net_gain;
 #[cfg(test)]
 mod remove_neuron_regression_test;
 pub mod samples;
@@ -118,6 +119,14 @@ pub use analysis_outcome::{AnalysisOutcome, EnvironmentalDisableReason, PassOutc
 // Issue #1518: propagation-aware remove-neuron gain estimator (replaces the
 // fabricated floor-at-0.1 placeholder).
 pub use remove_neuron_gain::estimate_remove_neuron_gain;
+
+// Issue #1812: the sole-op remove-neuron net-gain rule — the estimator's
+// unitless cost converted onto the creature-score scale and netted against the
+// exact complexity saving, plus the floor that screens it.
+pub use remove_neuron_net_gain::{
+    analysis_cost_of_growth, estimate_remove_neuron_net_gain, removal_influence_loss,
+    removal_net_gain, removal_net_gain_accepted,
+};
 
 // Issue #1532: propagation-aware change-squash gain estimator (extends the
 // #1518 approach to the change-squash estimate path).

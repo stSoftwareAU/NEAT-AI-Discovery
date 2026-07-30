@@ -86,6 +86,10 @@ pub const GATE_SIDE_REJECTION_REASONS: &[&str] = &[
     reasons::REJECTION_REMOVAL_SAVINGS_BELOW_IMPACT,
     reasons::REJECTION_REMOVAL_ACTIVE_NEURON,
     reasons::REJECTION_REMOVE_NEURON_DROUGHT_DEPRIORITISED,
+    // Issue #1812: the sole-op removal reached the acceptance floor and its net
+    // gain lost to the influence it would cost — over-rejection evidence, the
+    // analysis-path twin of REJECTION_REMOVAL_SAVINGS_BELOW_IMPACT.
+    reasons::REJECTION_REMOVAL_LOSS_EXCEEDS_SAVING,
     // Issue #1802: the candidate was evaluated and then dropped because its
     // clamped weight delta was a no-op — a verdict reached at the gate.
     reasons::REJECTION_DEGENERATE_WEIGHT_UPDATE,

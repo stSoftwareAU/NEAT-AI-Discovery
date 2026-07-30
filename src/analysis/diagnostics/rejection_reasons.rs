@@ -214,6 +214,24 @@ pub const REJECTION_REMOVAL_ACTIVE_NEURON: &str = "removal_active_neuron";
 pub const REJECTION_REMOVE_NEURON_DROUGHT_DEPRIORITISED: &str =
     "remove_neuron_drought_deprioritised";
 
+/// Sole-op `RemoveNeuron` coordinated candidate whose calibrated influence loss
+/// outweighed the complexity saving from pruning it (Issue #1812).
+///
+/// This is the analysis-path (Gate 1) removal screen, and it is deliberately
+/// **not** [`REJECTION_BELOW_EXPECTED_GAIN_FLOOR`]: that reason describes a
+/// candidate whose gain was screened against
+/// `coordinated_post_discount_noise_floor`, a threshold on the add-path
+/// prediction scale. A sole-op removal's gain is
+/// `saving − calibrated influence loss` and is screened against
+/// `removal_net_gain_floor(costOfGrowth)` instead, so the fact to report is a
+/// different one: the neuron still carried enough downstream influence that
+/// removing it would cost more score than the complexity it saves.
+///
+/// Distinct from [`REJECTION_REMOVAL_SAVINGS_BELOW_IMPACT`], which is the same
+/// shape of verdict on the *focus* triage path (Gate 2) against boosted savings
+/// and a structural contribution.
+pub const REJECTION_REMOVAL_LOSS_EXCEEDS_SAVING: &str = "removal_loss_exceeds_saving";
+
 /// Focus neurons were skipped because their structural fingerprint was
 /// unchanged since the previous pass (Issue #490 incremental analysis), counted
 /// so a whole-pass drop is visible (Issue #1781).
@@ -324,6 +342,7 @@ pub const ALL_REJECTION_REASONS: &[&str] = &[
     REJECTION_REMOVAL_SAVINGS_BELOW_IMPACT,
     REJECTION_REMOVAL_ACTIVE_NEURON,
     REJECTION_REMOVE_NEURON_DROUGHT_DEPRIORITISED,
+    REJECTION_REMOVAL_LOSS_EXCEEDS_SAVING,
     REJECTION_FINGERPRINT_UNCHANGED,
     REJECTION_WITHIN_BATCH_TARGET_SHORT_CIRCUIT,
     REJECTION_TARGET_COOLDOWN_SKIPPED,
@@ -521,6 +540,12 @@ fn friendly_reason(reason: &str) -> String {
         REJECTION_REMOVE_NEURON_DROUGHT_DEPRIORITISED => {
             "remove-neuron deprioritised during search-exhaustion drought".to_string()
         }
+        REJECTION_REMOVAL_LOSS_EXCEEDS_SAVING => format!(
+            "removing the neuron would cost more score than it saves (net gain below the {:e} removal floor)",
+            crate::analysis::constants::removal_net_gain_floor(
+                crate::analysis::remove_neuron_net_gain::analysis_cost_of_growth()
+            )
+        ),
         REJECTION_WITHIN_BATCH_TARGET_SHORT_CIRCUIT => format!(
             "within-batch same-target short-circuit after {} failure(s) for the target",
             crate::analysis::constants::WITHIN_BATCH_TARGET_FAILURE_LIMIT

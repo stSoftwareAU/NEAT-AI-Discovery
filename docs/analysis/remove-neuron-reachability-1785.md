@@ -37,11 +37,11 @@ degree **12**, all weights `1.0`, all squashes `IDENTITY`, `costOfGrowth = 1e-7`
 flowchart TD
     C["Fixture creature<br/>36 hidden neurons"] --> G1
     C --> G2
-    subgraph G1["Gate 1 — analysis path"]
-        A1["36 sole-op RemoveNeuron candidates"] --> A2["apply_honest_remove_neuron_gain (#1530)<br/>honest gain = −impact ≤ 0"]
-        A2 --> A3["coordinated_post_discount_noise_floor(1) = 5e-7"]
-        A3 --> A4["0 candidates clear the floor"]
-        A4 --> A5["Escape hatch: #1622 promotion<br/>0 flags, 0 promoted"]
+    subgraph G1["Gate 1 — analysis path (post-#1812)"]
+        A1["36 sole-op RemoveNeuron candidates"] --> A2["apply_honest_remove_neuron_gain (#1530, #1812)<br/>net gain = saving − calibrated influence loss"]
+        A2 --> A3["removal_net_gain_floor(1e-7) = 5e-8"]
+        A3 --> A4["3 candidates clear the floor<br/>33 counted: removal_loss_exceeds_saving"]
+        A4 --> A5["Escape hatch: #1622 promotion<br/>0 flags, 0 promoted — no longer load-bearing"]
     end
     subgraph G2["Gate 2 — focus / FFI path"]
         B1["identify_structural_removal_candidates(creature, 1e-7)"] --> B2["boosted_savings ≤ contribution<br/>33 silent, uncounted drops"]
@@ -49,30 +49,47 @@ flowchart TD
         B2 --> B4["0 surviving candidates"]
         B3 --> B4
     end
-    A5 --> Z["End-to-end yield: 0 remove-neuron candidates"]
+    A5 --> Z["End-to-end yield: 3 from Gate 1,<br/>still 0 through Gate 2 (#1814)"]
     B4 --> Z
 ```
 
 ## Block 1 — Gate 1, analysis path
 
-`apply_honest_remove_neuron_gain` (`src/analysis/discovery_dispatch.rs:141`) over
-one sole-op `RemoveNeuron` candidate per hidden neuron.
+`apply_honest_remove_neuron_gain` (`src/analysis/discovery_dispatch.rs`) over one
+sole-op `RemoveNeuron` candidate per hidden neuron, then the FFI-facing
+`apply_final_coordinated_gain_floor`.
 
-| Measurement | Value |
-|---|---|
-| Removable neurons (candidate set size) | **36** |
-| Neurons whose gain the #1530 override replaced | 36 |
-| Honest gain — min | `−1.000000e0` |
-| Honest gain — median | `−1.666667e-1` |
-| Honest gain — max (best) | `−0e0` |
-| `coordinated_post_discount_noise_floor(1)` | `5e-7` |
-| Neurons clearing the floor | **0** |
+**Updated by #1812** — this block previously pinned a zero yield. The gain was
+`−impact` (`estimate_remove_neuron_gain`), non-positive by construction, screened
+against a strictly-positive `coordinated_post_discount_noise_floor(1) = 5e-7`, so
+no candidate could clear Gate 1 on this fixture or any other. #1812 implemented
+the rule decided in
+[`remove-neuron-gain-scale-1785.md`](remove-neuron-gain-scale-1785.md): the
+emitted gain gained its missing benefit term and unit conversion
+(`saving − |influence| × REMOVE_INFLUENCE_CALIBRATION`), and sole-op removals are
+screened against `removal_net_gain_floor(costOfGrowth)` instead. The estimator's
+sign is unchanged and the floor is replaced for one candidate type, not dropped.
 
-The honest gain is `−impact` (`estimate_remove_neuron_gain`,
-`src/analysis/remove_neuron_gain.rs:131`), so it is non-positive by construction
-while the floor is strictly positive: **no** remove-neuron candidate can clear
-Gate 1, on this fixture or any other. That is stronger than #1785's quoted
-"0 neurons clearing the floor" — it is structural, not incidental.
+| Measurement | Before #1812 | After #1812 |
+|---|---|---|
+| Removable neurons (candidate set size) | 36 | **36** |
+| Neurons whose gain the override replaced | 36 | 36 |
+| Emitted gain — min | `−1.000000e0` | `−2.999860e-3` |
+| Emitted gain — median | `−1.666667e-1` | `−4.998600e-4` |
+| Emitted gain — max (best) | `−0e0` | **`+1.200000e-7`** |
+| Floor applied to a sole-op removal | `5e-7` (shared) | `5e-8` (`removal_net_gain_floor`) |
+| Candidates reaching the FFI response | **0** | **3** (`h-x-0`, `h-x-1`, `h-x-2`) |
+| Rejections counted under `removal_loss_exceeds_saving` | n/a | **33** |
+| Rejections counted under `below_expected_gain_floor` | 36 | **0** |
+
+The three survivors are exactly the fixture's zero-influence orphans, and they
+survive **without** promotion — Block 2 still measures zero promotions, so the
+#1622 escape hatch is no longer the only route past Gate 1. Every one of the 33
+rejections is counted under its own reason: nothing leaves the pass silently.
+
+A synthetic hidden neuron wired straight into `out-1` with a dominant weight
+(influence `−9.99e-1`, net gain `−2.997e-3`) is still rejected and counted, which
+is the direct check that the fix did not become "accept everything".
 
 ## Block 2 — the promotion escape hatch
 
@@ -136,8 +153,8 @@ reporting. Confirmed.
 | #1785 quotes | Status here | Value on `Develop` (`a36e9ba`) |
 |---|---|---|
 | 36 removable neurons | Reproduced (fixture sized to match) | 36 |
-| Best honest gain `−1.84e-2` | **Not reproducible** — it is a property of the unavailable production creature, not of the pipeline. The signed, non-positive shape is reproduced. | best `−0e0`, median `−1.67e-1` on this fixture |
-| 0 neurons clearing the floor | Reproduced, and shown to be structural | 0 |
+| Best honest gain `−1.84e-2` | **Not reproducible** — it is a property of the unavailable production creature, not of the pipeline. The signed, non-positive shape is reproduced. | best `−0e0`, median `−1.67e-1` on this fixture (pre-#1812) |
+| 0 neurons clearing the floor | Reproduced, and shown to be structural — **fixed by #1812** | 0 before, **3** after |
 | 0 promotion entries | Reproduced | 0 |
 | Best boosted savings `3.30e-7` | Reproduced (degree-12 hub) | `3.3e-7` |
 | 657 synapses needed | Reproduced by construction | 657 |
@@ -163,9 +180,10 @@ references; treat the numbers as a snapshot of `a36e9ba`.
 
 For a remove-neuron candidate to reach NEAT-AI, **both** gates must yield:
 
-- **Gate 1** needs the floor comparison to admit a non-positive honest gain (or
-  the promotion seam to be wired), otherwise the 5e-7 floor rejects everything
-  by construction.
+- **Gate 1** — **done (#1812).** The emitted gain now carries the complexity
+  saving and the unit conversion the estimator's cost term was missing, and
+  sole-op removals are screened against `removal_net_gain_floor(costOfGrowth)`
+  rather than the add-path floor. Yield on this fixture: 3 of 36.
 - **Gate 2** needs the savings scale to reach the `1e-5` floor — today that takes
   657 synapses on one neuron — and needs the `boosted_savings <= contribution`
   drop to be counted, since 33 of 36 neurons currently vanish there with no

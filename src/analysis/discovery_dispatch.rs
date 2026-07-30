@@ -29,7 +29,6 @@ use super::remove_neuron_bias_fold::{
 use super::remove_neuron_compensation::{
     ActivationCovariance, aligned_activations, best_weight_redistribution,
 };
-use super::remove_neuron_gain::estimate_remove_neuron_gain;
 use crate::types::DiscoverRecord;
 use crate::{ConstantNeuronBiasFoldJson, FoldedBiasDeltaJson, RemoveNeuronCompensationJson};
 
@@ -116,17 +115,45 @@ fn apply_coordinated_per_target_cap(
 }
 
 /// Override the reported gain of every single-op `RemoveNeuron` coordinated
-/// candidate with the honest, propagation-aware estimate (Issue #1530).
+/// candidate with the honest **net** creature-score benefit of the removal
+/// (Issue #1530, re-denominated by Issue #1812).
 ///
-/// Milestone #1516 merged [`estimate_remove_neuron_gain`] (PR #1523) but nothing
+/// Milestone #1516 merged
+/// [`estimate_remove_neuron_gain`](super::remove_neuron_gain::estimate_remove_neuron_gain)
+/// (PR #1523) but nothing
 /// in the live pipeline invoked it, so the emitted remove-neuron gain stayed the
 /// fabricated NEAT-AI `#2483` placeholder (`+0.17879` on creature `45a04ef1`,
-/// versus a measured `−0.00032`). This makes Discovery the source of truth: for
-/// each candidate whose **sole** operation is a `RemoveNeuron`, the reported
-/// `expected_creature_score_gain` is replaced with the propagation-aware
-/// estimate for that neuron, which attenuates a deep neuron's influence all the
-/// way to the output(s) and is signed (non-positive) — no fabricated large
-/// positive gain survives to crowd out realistic candidates.
+/// versus a measured `−0.00032`). Issue #1530 made Discovery the source of truth
+/// by writing the estimator's output here directly — but that output is a
+/// **unitless influence fraction, negated**, and the field is consumed as a
+/// creature-score *benefit* by the gain-descending ranking sort and by the
+/// downstream floor. That comparison was across two different quantities, so
+/// every sole-op removal was dropped by construction (Issue #1785 / #1810).
+///
+/// ## The sign/scale contract this function honours (Issue #1812)
+///
+/// The written value is
+/// [`removal_net_gain`](super::remove_neuron_net_gain::removal_net_gain):
+///
+/// ```text
+/// saving(u) = cost_of_growth × (1 + degree(u) / 10)   — exact, score units
+/// loss(u)   = |estimate_remove_neuron_gain(u)| × REMOVE_INFLUENCE_CALIBRATION
+/// written   = saving(u) − loss(u)                     — a net benefit, signable
+/// ```
+///
+/// The estimator keeps its sign and value; it is no longer the gain, it is the
+/// gain's cost term. `saving(u)` reuses
+/// [`calculate_removal_savings`](crate::focus::calculate_removal_savings) — the
+/// host's own `Score.ts` complexity penalty — so it is already exact in
+/// creature-score units and needs no calibration. The result is **positive only
+/// when the removal genuinely pays for itself**: a neuron carrying real
+/// downstream influence still yields a negative gain and is still rejected by
+/// the floor.
+///
+/// `cost_of_growth` is resolved through
+/// [`analysis_cost_of_growth`](super::remove_neuron_net_gain::analysis_cost_of_growth),
+/// the single-definition seam shared with the focus triage, because
+/// `AnalyzeParallelInput` carries no host value.
 ///
 /// Multi-operation coordinated candidates are left untouched: their gain
 /// reflects the combined effect of the whole atomic group, not a bare neuron
@@ -134,14 +161,12 @@ fn apply_coordinated_per_target_cap(
 /// returns `None`) are also left untouched.
 ///
 /// Returns the number of candidates whose gain was overridden, for diagnostics.
-// The estimator works in f64; the candidate carries f32. The gain is a small
-// value in `[-1, 0]`, well within f32 range, so the narrowing is intentional
-// precision loss, not overflow (Issue #873).
-#[allow(clippy::cast_possible_truncation)]
 pub fn apply_honest_remove_neuron_gain(
     creature: &CreatureJson,
     candidates: &mut [CoordinatedStructuralCandidateJson],
 ) -> usize {
+    let cost_of_growth = super::remove_neuron_net_gain::analysis_cost_of_growth();
+    let counts = crate::focus::SynapseCounts::new(creature);
     let mut overridden = 0;
     for candidate in candidates.iter_mut() {
         // A lone RemoveNeuron op is the only bare neuron removal; anything else
@@ -153,8 +178,13 @@ pub fn apply_honest_remove_neuron_gain(
             continue;
         };
 
-        if let Some(gain) = estimate_remove_neuron_gain(creature, neuron_uuid) {
-            candidate.expected_creature_score_gain = gain as f32;
+        if let Some(net_gain) = super::remove_neuron_net_gain::estimate_remove_neuron_net_gain(
+            creature,
+            &counts,
+            neuron_uuid,
+            cost_of_growth,
+        ) {
+            candidate.expected_creature_score_gain = net_gain;
             overridden += 1;
         }
     }

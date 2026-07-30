@@ -677,8 +677,13 @@ fn remove_neuron_candidate(uuid: &str, gain: f32) -> CoordinatedStructuralCandid
 }
 
 /// The core wiring: a single-op `RemoveNeuron` candidate carrying a fabricated
-/// placeholder gain is overwritten with the honest, propagation-aware estimate
-/// (which is non-positive), not left echoing the supplied value.
+/// placeholder gain is overwritten with the honest **net** benefit of the
+/// removal, not left echoing the supplied value.
+///
+/// Issue #1812 changed what this seam writes — the estimator's unitless cost is
+/// now the gain's cost term rather than the gain itself, so the reported value
+/// is `saving − calibrated loss`. The estimator's own sign and value are
+/// unchanged and are asserted here directly.
 #[test]
 fn honest_gain_overrides_fabricated_remove_neuron_gain() {
     let creature = creature_with_deep_neuron();
@@ -691,16 +696,24 @@ fn honest_gain_overrides_fabricated_remove_neuron_gain() {
         "the single RemoveNeuron candidate is overridden"
     );
 
-    let honest = crate::analysis::estimate_remove_neuron_gain(&creature, "deep")
+    let influence = crate::analysis::estimate_remove_neuron_gain(&creature, "deep")
         .expect("estimator gain for the hidden neuron");
+    assert!(
+        influence < 0.0,
+        "the estimator keeps its non-positive sign, got {influence}"
+    );
+
+    let cost_of_growth = crate::analysis::analysis_cost_of_growth();
+    let saving = crate::focus::calculate_removal_savings(1, 1, cost_of_growth);
+    let expected = f64::from(crate::analysis::removal_net_gain(saving, influence));
     let reported = f64::from(candidates[0].expected_creature_score_gain);
     assert!(
-        (reported - honest).abs() < 1e-6,
-        "reported gain {reported} must equal the honest estimate {honest}, not the placeholder"
+        (reported - expected).abs() < 1e-12,
+        "reported gain {reported} must equal the net benefit {expected}, not the placeholder"
     );
     assert!(
-        reported <= 0.0,
-        "honest remove-neuron gain must be non-positive, got {reported}"
+        reported < 0.0,
+        "a neuron carrying real influence must net a negative benefit, got {reported}"
     );
     assert!(
         !(0.1..=0.5).contains(&reported.abs()),
