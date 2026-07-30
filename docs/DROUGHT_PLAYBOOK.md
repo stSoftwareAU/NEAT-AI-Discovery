@@ -361,8 +361,8 @@ to protect the post-processing budget, because their cost grows super-linearly
 with the hidden-neuron count.
 
 **Escalation re-enables the full set.** The moment the rolling success rate falls
-below `LOW_SUCCESS_RATE_THRESHOLD` (the same signal that drives Conservative mode
-#1132, novelty escalation #1423 and the drought escape hatch #1422), tiering is
+below `LOW_SUCCESS_RATE_THRESHOLD` (the same signal that drives Conservative
+mode #1132, novelty escalation #1423 and the drought escape hatch #1422), tiering is
 suppressed and every module runs again so the escalation pass can try everything.
 That re-enable is logged, carrying the streak length, the rolling rate and the
 resulting module count (Issue #1803):
