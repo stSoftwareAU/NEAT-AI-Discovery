@@ -107,6 +107,8 @@ pub(crate) fn analyze_synapses_with_cache_impl(
     // lifetime and sharing model as the within-batch tracker above.
     let evaluation_drops =
         Arc::new(crate::analysis::evaluation_drops::EvaluationDropCounters::new());
+    // Issue #1802: per-pass candidate reconciliation ledger for this surface.
+    let ledger = Arc::new(crate::analysis::candidate_reconciliation::CandidateLedger::new());
     let ctx = Arc::new(target_analysis::TargetAnalysisContext {
         ordered_neurons: Arc::new(lookups.ordered_neurons),
         order_map: Arc::new(lookups.order_map),
@@ -129,6 +131,7 @@ pub(crate) fn analyze_synapses_with_cache_impl(
         mcmc_tracker: mcmc_tracker.clone(),
         within_batch_failures: within_batch_failures.clone(),
         evaluation_drops: evaluation_drops.clone(),
+        ledger: ledger.clone(),
     });
 
     // Phase 6: Process each focus neuron in parallel — thread-local collection (Issue #744)
@@ -233,6 +236,16 @@ pub(crate) fn analyze_synapses_with_cache_impl(
         cooldown_skipped,
         &mut result.metadata.rejection_breakdown,
     );
+    // Issue #1802: the breakdown is now final for this surface, so reconcile it
+    // against the ledger. Every helpful work item that entered result collection
+    // must have a recorded verdict; an unaccounted residual is warned about,
+    // surfaced as `unaccounted_drop`, and fails CI under strict mode.
+    result.metadata.candidate_reconciliation =
+        Some(crate::analysis::candidate_reconciliation::reconcile(
+            crate::analysis::candidate_reconciliation::SURFACE_SYNAPSE,
+            &ledger,
+            &mut result.metadata.rejection_breakdown,
+        ));
     Ok(result)
 }
 

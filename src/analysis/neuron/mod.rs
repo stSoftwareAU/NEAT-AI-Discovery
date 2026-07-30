@@ -235,6 +235,10 @@ pub fn analyze_neurons_with_cache_and_gpu_queue(
     let evaluation_drops =
         Arc::new(crate::analysis::evaluation_drops::EvaluationDropCounters::new());
 
+    // Issue #1802: per-pass candidate reconciliation ledger for this surface.
+    // Same lifetime and sharing model as the counters above.
+    let ledger = Arc::new(crate::analysis::candidate_reconciliation::CandidateLedger::new());
+
     let focus_order_arc = Arc::new(focus_order);
     let ordered_neurons_arc = Arc::new(ordered_neurons);
     let order_map_arc = Arc::new(prep.order_map);
@@ -422,6 +426,7 @@ pub fn analyze_neurons_with_cache_and_gpu_queue(
                     target_saturation,
                     within_batch_failures: &within_batch_failures,
                     evaluation_drops: &evaluation_drops,
+                    ledger: &ledger,
                 };
                 evaluation::evaluate_neuron_candidates(
                     &work_results,
@@ -504,6 +509,16 @@ pub fn analyze_neurons_with_cache_and_gpu_queue(
         cooldown_skipped,
         &mut result.metadata.rejection_breakdown,
     );
+    // Issue #1802: the breakdown is now final for this surface, so reconcile it
+    // against the ledger. Every candidate the evaluators formed must have a
+    // recorded verdict; an unaccounted residual is warned about, surfaced as
+    // `unaccounted_drop`, and fails CI under strict mode.
+    result.metadata.candidate_reconciliation =
+        Some(crate::analysis::candidate_reconciliation::reconcile(
+            crate::analysis::candidate_reconciliation::SURFACE_NEURON,
+            &ledger,
+            &mut result.metadata.rejection_breakdown,
+        ));
     Ok(result)
 }
 

@@ -36,6 +36,7 @@ pub mod cache;
 pub mod candidate_clustering;
 pub mod candidate_compression;
 pub mod candidate_diversity;
+pub mod candidate_reconciliation;
 pub mod candidate_starvation;
 pub mod change_squash_gain;
 pub mod constants;

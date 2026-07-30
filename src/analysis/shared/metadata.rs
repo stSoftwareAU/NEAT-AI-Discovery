@@ -174,6 +174,14 @@ pub struct SynapseAnalysisMetadata {
     /// flushed — merged with the neuron phase's list — to the global
     /// target-failure tracker exactly once per pass by `analyze_all`.
     pub target_pass_outcomes: Vec<crate::analysis::target_pass_outcomes::TargetPassOutcome>,
+
+    /// Candidate-reconciliation outcome for this surface (Issue #1802).
+    ///
+    /// `Some` on every pass that reached breakdown finalisation, carrying the
+    /// considered / accounted counts and the unaccounted delta. Lets callers
+    /// *positively* confirm the invariant held rather than inferring it from the
+    /// absence of an `unaccounted_drop` breakdown entry.
+    pub candidate_reconciliation: Option<crate::analysis::candidate_reconciliation::Reconciliation>,
 }
 
 /// Metadata about neuron analysis for diagnostics and observability.
@@ -262,6 +270,11 @@ pub struct NeuronAnalysisMetadata {
     ///
     /// See `SynapseAnalysisMetadata::target_pass_outcomes` for full docs.
     pub target_pass_outcomes: Vec<crate::analysis::target_pass_outcomes::TargetPassOutcome>,
+
+    /// Candidate-reconciliation outcome for this surface (Issue #1802).
+    ///
+    /// See `SynapseAnalysisMetadata::candidate_reconciliation` for full docs.
+    pub candidate_reconciliation: Option<crate::analysis::candidate_reconciliation::Reconciliation>,
 }
 
 /// Result of synapse analysis

@@ -240,6 +240,33 @@ pub const REJECTION_TARGET_COOLDOWN_SKIPPED: &str = "target_cooldown_skipped";
 /// and `per_target_cap`.
 pub const REJECTION_MODULE_SKIPPED_QUALITY_SATISFIED: &str = "module_skipped_quality_satisfied";
 
+/// Weight-update candidate whose clamped delta collapsed to nothing usable, so
+/// applying it would be a no-op (Issue #1802).
+///
+/// `clamp_weight_update_delta` returns `None` when the proposed new weight is
+/// indistinguishable from the existing one after clamping. Two sites in the
+/// synapse result-collection loop dropped the candidate on that `None` with a
+/// bare `continue`; the candidate had already been evaluated, so the drop is a
+/// gate-side verdict and must be visible rather than silent.
+pub const REJECTION_DEGENERATE_WEIGHT_UPDATE: &str = "degenerate_weight_update";
+
+/// A candidate entered disposition but no drop path or accept path recorded a
+/// verdict for it (Issue #1802).
+///
+/// This reason is **not** raised by any individual filter — it is the residual
+/// computed by
+/// [`crate::analysis::candidate_reconciliation::reconcile`] when a surface's
+/// [`CandidateLedger`](crate::analysis::candidate_reconciliation::CandidateLedger)
+/// counted more candidates entering disposition than it counted dispositions.
+/// A non-zero count means a new drop path was added without accounting for it,
+/// so the candidate would otherwise have vanished invisibly — the exact failure
+/// mode the #1782 diagnosis found six times over.
+///
+/// A clean pass never records this reason. Any non-zero count is a defect
+/// signal, and the reconciliation emits a `tracing::warn!` naming the surface
+/// and the delta alongside it.
+pub const REJECTION_UNACCOUNTED_DROP: &str = "unaccounted_drop";
+
 /// All documented rejection reason names. Used for assertions and
 /// documentation. Keep this list in sync with the constants above.
 pub const ALL_REJECTION_REASONS: &[&str] = &[
@@ -277,6 +304,8 @@ pub const ALL_REJECTION_REASONS: &[&str] = &[
     REJECTION_WITHIN_BATCH_TARGET_SHORT_CIRCUIT,
     REJECTION_TARGET_COOLDOWN_SKIPPED,
     REJECTION_MODULE_SKIPPED_QUALITY_SATISFIED,
+    REJECTION_DEGENERATE_WEIGHT_UPDATE,
+    REJECTION_UNACCOUNTED_DROP,
 ];
 
 // =============================================================================
@@ -469,6 +498,13 @@ fn friendly_reason(reason: &str) -> String {
         }
         REJECTION_MODULE_SKIPPED_QUALITY_SATISFIED => {
             "discovery modules skipped because enough high-quality candidates were already found"
+                .to_string()
+        }
+        REJECTION_DEGENERATE_WEIGHT_UPDATE => {
+            "weight-update delta collapsed to a no-op after clamping".to_string()
+        }
+        REJECTION_UNACCOUNTED_DROP => {
+            "unaccounted drop — a candidate left the pass with no recorded verdict (Issue #1802)"
                 .to_string()
         }
         other => other.replace('_', " "),

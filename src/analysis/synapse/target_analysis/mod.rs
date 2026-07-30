@@ -77,6 +77,12 @@ pub(crate) struct TargetAnalysisContext<'a> {
     /// across rayon workers and folded into the metadata rejection breakdown
     /// once for this surface.
     pub evaluation_drops: Arc<crate::analysis::evaluation_drops::EvaluationDropCounters>,
+    /// Issue #1802: per-pass reconciliation ledger for this surface.
+    ///
+    /// One helpful work item entering result collection counts as one considered
+    /// candidate; every disposition in that loop — accept or counted rejection —
+    /// counts once on the accounted side.
+    pub ledger: Arc<crate::analysis::candidate_reconciliation::CandidateLedger>,
 }
 
 /// Results from analysing a single target neuron.

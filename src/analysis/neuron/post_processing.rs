@@ -236,6 +236,8 @@ pub(crate) fn build_neuron_results(
             // Issue #1791: one verdict per target, flushed to the global
             // cooldown tracker once per pass by `analyze_all`.
             target_pass_outcomes: params.diagnostics.pass_outcomes(),
+            // Issue #1802: set by the orchestrator once the breakdown is final.
+            candidate_reconciliation: None,
         },
     })
 }

@@ -573,6 +573,8 @@ fn build_empty_result(
             // no cooldown skips and no per-target verdicts.
             target_cooldown_skipped: 0,
             target_pass_outcomes: Vec::new(),
+            // Issue #1802: this early return never formed a candidate.
+            candidate_reconciliation: None,
         },
     }
 }
