@@ -29,7 +29,9 @@
 //! `unification_parity_tests::entry_points_agree_on_an_invalid_cost_of_growth`
 //! in `src/focus/ranking/removal_triage.rs`.
 
-use neat_ai_discovery::analysis::diagnostics::rejection_reasons::REJECTION_REMOVAL_BELOW_NOISE_FLOOR;
+use neat_ai_discovery::analysis::diagnostics::rejection_reasons::{
+    REJECTION_REMOVAL_BELOW_NOISE_FLOOR, REJECTION_REMOVAL_SAVINGS_BELOW_IMPACT,
+};
 use neat_ai_discovery::focus::rank_focus_neurons;
 use neat_ai_discovery::rank_focus_neurons_internal;
 use neat_ai_discovery::{CreatureJson, NeuronJson, SynapseJson};
@@ -207,11 +209,21 @@ fn net_improvement(candidate: &Value) -> f64 {
     field(candidate, "removalSavings") - field(candidate, "impact")
 }
 
+/// Rejections reported under a stable FFI reason key.
+fn rejections(response: &Value, reason: &str) -> u64 {
+    response["rejectionBreakdown"][reason].as_u64().unwrap_or(0)
+}
+
 /// Noise-floor rejections reported under the stable FFI reason key.
 fn noise_floor_rejections(response: &Value) -> u64 {
-    response["rejectionBreakdown"][REJECTION_REMOVAL_BELOW_NOISE_FLOOR]
-        .as_u64()
-        .unwrap_or(0)
+    rejections(response, REJECTION_REMOVAL_BELOW_NOISE_FLOOR)
+}
+
+/// Every rejection the FFI reported, summed across reasons.
+fn total_rejections(response: &Value) -> u64 {
+    response["rejectionBreakdown"]
+        .as_object()
+        .map_or(0, |m| m.values().filter_map(Value::as_u64).sum())
 }
 
 /// Acceptance: triaging removal candidates on the shipped path does not require
@@ -345,6 +357,54 @@ fn noise_floor_rejections_are_reported_not_silently_dropped() {
         noise_floor_rejections(&response),
         3,
         "each dropped candidate must be counted under {REJECTION_REMOVAL_BELOW_NOISE_FLOOR}, not silently discarded: {response:?}"
+    );
+}
+
+/// Acceptance (Issue #1808): the savings-vs-impact rejections reach
+/// `metadata.rejection_breakdown` through the shipped FFI merge, alongside the
+/// existing noise-floor count — and together with the emitted candidates they
+/// account for every hidden neuron the triage considered.
+///
+/// `h-high` carries ~all of the output's inbound weight, so its contribution
+/// dwarfs the complexity savings at either cost-of-growth; the three `h-low-*`
+/// neurons flip between candidates and noise-floor rejections with the cost.
+#[test]
+#[serial]
+fn savings_vs_impact_rejections_reach_the_ffi_breakdown() {
+    let _floor = EnvVarGuard::unset(NOISE_FLOOR_ENV);
+    let creature = make_creature();
+    let hidden = creature
+        .neurons
+        .iter()
+        .filter(|n| n.neuron_type == "hidden")
+        .count() as u64;
+
+    // Cost high enough that the three low-impact neurons survive as candidates.
+    let response = ffi_focus_response(&creature, Some(TEST_COST_OF_GROWTH));
+    assert_eq!(
+        rejections(&response, REJECTION_REMOVAL_SAVINGS_BELOW_IMPACT),
+        1,
+        "h-high's contribution beats its savings and must be counted, not silently dropped: {response:?}"
+    );
+    assert_eq!(
+        removal_candidates(&response).len() as u64 + total_rejections(&response),
+        hidden,
+        "candidates + rejections must account for every hidden neuron: {response:?}"
+    );
+
+    // Production default cost: the same neuron is still rejected on the savings
+    // gate, while the other three now fall through the noise floor.
+    let defaulted = ffi_focus_response(&creature, None);
+    assert_eq!(
+        rejections(&defaulted, REJECTION_REMOVAL_SAVINGS_BELOW_IMPACT),
+        1,
+        "{defaulted:?}"
+    );
+    assert_eq!(noise_floor_rejections(&defaulted), 3, "{defaulted:?}");
+    assert_eq!(
+        removal_candidates(&defaulted).len() as u64 + total_rejections(&defaulted),
+        hidden,
+        "the two rejection classes must remain distinguishable and complete: {defaulted:?}"
     );
 }
 

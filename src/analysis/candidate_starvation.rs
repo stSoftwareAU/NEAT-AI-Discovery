@@ -80,6 +80,11 @@ pub const GATE_SIDE_REJECTION_REASONS: &[&str] = &[
     reasons::REJECTION_ZERO_IMPROVEMENT,
     reasons::REJECTION_BELOW_THRESHOLD,
     reasons::REJECTION_REMOVAL_BELOW_NOISE_FLOOR,
+    // Issue #1808: the hidden neuron was measured against the removal
+    // criterion and the savings lost — a verdict reached at the gate, exactly
+    // like the noise-floor re-gate that follows it.
+    reasons::REJECTION_REMOVAL_SAVINGS_BELOW_IMPACT,
+    reasons::REJECTION_REMOVAL_ACTIVE_NEURON,
     reasons::REJECTION_REMOVE_NEURON_DROUGHT_DEPRIORITISED,
     // Issue #1802: the candidate was evaluated and then dropped because its
     // clamped weight delta was a no-op — a verdict reached at the gate.

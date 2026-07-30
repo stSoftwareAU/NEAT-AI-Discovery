@@ -45,6 +45,7 @@
 
 use super::removal_candidates::identify_structural_removal_candidates;
 use crate::CreatureJson;
+use std::collections::HashMap;
 
 /// A hidden neuron whose complexity savings outweigh its **structural**
 /// contribution — safe to prune on topology evidence alone (Issue #1767).
@@ -74,8 +75,16 @@ pub struct StructuralRemovalCandidate {
     pub reason: String,
 }
 
-/// Outcome of [`triage_removal_candidates`] — surviving candidates plus the
-/// noise-floor rejection count, surfaced rather than silently dropped.
+/// Outcome of [`triage_removal_candidates`] — surviving candidates plus every
+/// rejection class, surfaced rather than silently dropped.
+///
+/// # Conservation invariant (Issue #1808)
+///
+/// `candidates.len() + rejection_breakdown().values().sum() ==
+/// hidden_neurons_considered`. Every hidden neuron entering triage is either
+/// emitted as a candidate or counted under a named rejection reason, so a
+/// future gate that drops one without a counter fails
+/// `removal_triage_accounts_for_every_hidden_neuron` rather than vanishing.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct StructuralRemovalTriage {
     /// Candidates that cleared both the savings-vs-impact test and the
@@ -85,6 +94,49 @@ pub struct StructuralRemovalTriage {
     /// [`remove_low_impact_noise_floor`](crate::analysis::constants::remove_low_impact_noise_floor)
     /// (Issue #1142).
     pub noise_floor_rejections: u32,
+    /// Hidden neurons dropped because the boosted savings never exceeded their
+    /// structural contribution — the first gate, and the dominant rejection
+    /// class at shipped defaults (Issue #1808).
+    pub savings_below_impact_rejections: u32,
+    /// Hidden neurons that entered triage, whatever their verdict (Issue #1808).
+    pub hidden_neurons_considered: u32,
+}
+
+impl StructuralRemovalTriage {
+    /// Stable-keyed rejection breakdown, the same shape the shipped FFI path
+    /// merges into `metadata.rejection_breakdown` (Issue #1808).
+    ///
+    /// Callers no longer have to hard-code a reason constant to report why
+    /// hidden neurons were dropped.
+    #[must_use]
+    pub fn rejection_breakdown(&self) -> HashMap<String, u32> {
+        use crate::analysis::diagnostics::rejection_reasons::{
+            REJECTION_REMOVAL_BELOW_NOISE_FLOOR, REJECTION_REMOVAL_SAVINGS_BELOW_IMPACT,
+        };
+        let mut map = HashMap::new();
+        for (reason, count) in [
+            (
+                REJECTION_REMOVAL_BELOW_NOISE_FLOOR,
+                self.noise_floor_rejections,
+            ),
+            (
+                REJECTION_REMOVAL_SAVINGS_BELOW_IMPACT,
+                self.savings_below_impact_rejections,
+            ),
+        ] {
+            if count > 0 {
+                map.insert(reason.to_string(), count);
+            }
+        }
+        map
+    }
+
+    /// Total hidden neurons rejected across every named reason.
+    #[must_use]
+    pub fn total_rejections(&self) -> u32 {
+        self.noise_floor_rejections
+            .saturating_add(self.savings_below_impact_rejections)
+    }
 }
 
 /// Triage removal candidates from the creature **topology alone** (Issue #1767).
@@ -142,6 +194,8 @@ pub fn triage_removal_candidates(
     StructuralRemovalTriage {
         candidates,
         noise_floor_rejections: outcome.noise_floor_rejections,
+        savings_below_impact_rejections: outcome.savings_below_impact_rejections,
+        hidden_neurons_considered: outcome.considered,
     }
 }
 
@@ -264,6 +318,21 @@ mod unification_parity_tests {
             adapted.noise_floor_rejections, shipped.noise_floor_rejections,
             "[{label}] noise-floor rejection counts must match"
         );
+        // Issue #1808: the two paths must also agree on the newer counters, or
+        // they have re-diverged on rejection accounting.
+        assert_eq!(
+            adapted.savings_below_impact_rejections, shipped.savings_below_impact_rejections,
+            "[{label}] savings-vs-impact rejection counts must match"
+        );
+        assert_eq!(
+            adapted.hidden_neurons_considered, shipped.considered,
+            "[{label}] hidden-neurons-considered must match"
+        );
+        assert_eq!(
+            adapted.rejection_breakdown(),
+            shipped.rejection_breakdown(),
+            "[{label}] both paths must report the same rejection breakdown"
+        );
 
         for (a, s) in adapted.candidates.iter().zip(&shipped.candidates) {
             assert_eq!(a.impact.to_bits(), s.impact.to_bits(), "[{label}] impact");
@@ -375,6 +444,125 @@ mod unification_parity_tests {
                 "costOfGrowth {invalid} must produce the default rejection count"
             );
         }
+    }
+
+    /// A creature that trips **both** removal gates plus the accept path, so
+    /// the conservation assertion below has all three verdicts to balance.
+    ///
+    /// Each hidden neuron has one inbound and one outbound synapse, so its
+    /// boosted savings are `costOfGrowth × 1.2 × 1.5`. Structural impact is the
+    /// neuron's share of the output's total inbound weight, which is what the
+    /// outbound weights below dial in:
+    ///
+    /// * `h-dominant` — impact ≈ 1.0, far above the savings ⇒ savings-vs-impact
+    ///   rejection.
+    /// * `h-marginal` — impact just under the savings but within the noise
+    ///   floor ⇒ noise-floor rejection.
+    /// * `h-idle-a` / `h-idle-b` — negligible impact ⇒ candidates.
+    fn creature_tripping_both_gates() -> CreatureJson {
+        let hidden = [
+            ("h-dominant", 1.0_f32),
+            ("h-marginal", 1.75e-4),
+            ("h-idle-a", 1e-9),
+            ("h-idle-b", 1e-9),
+        ];
+        let mut neurons = vec![neuron("in-0", "input")];
+        let mut synapses = vec![];
+        for (uuid, _) in hidden {
+            neurons.push(neuron(uuid, "hidden"));
+        }
+        neurons.push(neuron("out", "output"));
+        for (uuid, weight) in hidden {
+            synapses.push(synapse("in-0", uuid, 0.5));
+            synapses.push(synapse(uuid, "out", weight));
+        }
+        CreatureJson {
+            neurons,
+            synapses,
+            input: 1,
+            output: 1,
+        }
+    }
+
+    /// Acceptance (Issue #1808): every hidden neuron entering triage is either
+    /// emitted as a candidate or counted under a named rejection reason.
+    ///
+    /// A future gate that drops a neuron with a bare `continue` breaks this
+    /// equality, so the silent-drop class the issue describes cannot come back.
+    #[test]
+    fn removal_triage_accounts_for_every_hidden_neuron() {
+        let _guard = env_lock();
+        // SAFETY: env access is serialised via `env_lock()` for this test.
+        unsafe {
+            std::env::remove_var("NEAT_AI_DISCOVERY_REMOVE_LOW_IMPACT_NOISE_FLOOR");
+        }
+        let creature = creature_tripping_both_gates();
+        let triage = triage_removal_candidates(&creature, Some(1e-4));
+
+        let hidden = creature
+            .neurons
+            .iter()
+            .filter(|n| n.neuron_type == "hidden")
+            .count();
+        assert_eq!(
+            triage.hidden_neurons_considered as usize, hidden,
+            "every hidden neuron must be reported as considered"
+        );
+
+        // The fixture must exercise both gates, or the conservation assertion
+        // proves nothing about the newly-counted class.
+        assert!(
+            triage.savings_below_impact_rejections > 0,
+            "fixture must trip the savings-vs-impact gate, got {triage:?}"
+        );
+        assert!(
+            triage.noise_floor_rejections > 0,
+            "fixture must trip the noise floor, got {triage:?}"
+        );
+        assert!(
+            !triage.candidates.is_empty(),
+            "fixture must also emit candidates, got {triage:?}"
+        );
+
+        let counted: u32 = triage.rejection_breakdown().values().sum();
+        assert_eq!(
+            counted,
+            triage.total_rejections(),
+            "the breakdown must report every rejection the counters hold"
+        );
+        assert_eq!(
+            triage.candidates.len() as u32 + counted,
+            triage.hidden_neurons_considered,
+            "candidates + rejections must equal the hidden neurons considered: {triage:?}"
+        );
+    }
+
+    /// The rejection breakdown is keyed by the shared reason vocabulary, so a
+    /// caller can merge it into `metadata.rejection_breakdown` without
+    /// hard-coding a reason constant (Issue #1808).
+    #[test]
+    fn triage_reports_rejections_under_named_reasons() {
+        use crate::analysis::diagnostics::rejection_reasons::{
+            REJECTION_REMOVAL_BELOW_NOISE_FLOOR, REJECTION_REMOVAL_SAVINGS_BELOW_IMPACT,
+        };
+        let _guard = env_lock();
+        // SAFETY: env access is serialised via `env_lock()` for this test.
+        unsafe {
+            std::env::remove_var("NEAT_AI_DISCOVERY_REMOVE_LOW_IMPACT_NOISE_FLOOR");
+        }
+        let triage = triage_removal_candidates(&creature_tripping_both_gates(), Some(1e-4));
+        let breakdown = triage.rejection_breakdown();
+
+        assert_eq!(
+            breakdown
+                .get(REJECTION_REMOVAL_SAVINGS_BELOW_IMPACT)
+                .copied(),
+            Some(triage.savings_below_impact_rejections)
+        );
+        assert_eq!(
+            breakdown.get(REJECTION_REMOVAL_BELOW_NOISE_FLOOR).copied(),
+            Some(triage.noise_floor_rejections)
+        );
     }
 
     /// Sub-noise-floor savings are rejected — and counted — identically on both
