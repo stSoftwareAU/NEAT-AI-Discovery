@@ -241,7 +241,7 @@ the table below adds the **operator lever to investigate** for each field.
 |-------|----------------------|
 | `consecutiveFailures` | If unexpectedly large, also check `DROUGHT_RESET_AFTER_EPOCHS`. |
 | `rollingSuccessRate` | If at or near 0.0, every suppression layer is operating at full strength — look for the dominant rejection reason. |
-| `discoveryMode` | If `conservative` and the rate is still falling, conservative mode is not helping — tune `CONSERVATIVE_GAIN_MULTIPLIER` or wait for the `CONSERVATIVE_MODE_MAX_EPOCHS` cooldown exit. |
+| `discoveryMode` | If `conservative` and the rate is still falling, conservative mode is not helping — tune `CONSERVATIVE_GAIN_MULTIPLIER` or wait for the `CONSERVATIVE_MODE_MAX_EPOCHS` cooldown exit. A flip back to `normal` while the rate stays collapsed is Extended Drought, not recovery: the risk bias has reverted but the full module set is retained (Issue #1803). |
 | `targetCooldownActiveCount` | Compare to total focus targets. If most targets are in cooldown, lowering `TARGET_COOLDOWN_FAILURES` is unsafe — raise `LOW_SUCCESS_RATE_THRESHOLD` instead so Conservative mode triggers earlier. |
 | `targetCooldownSkipped` | If 0 with a large `targetCooldownActiveCount`, the focus set never included those targets — pre-screening is filtering before cooldown. |
 | `dominantRejectionReason` | Each reason maps to a different mechanism: see the table below. |
@@ -276,20 +276,28 @@ action is required.
 stateDiagram-v2
     [*] --> Normal
     Normal --> Conservative: rolling rate below LOW_SUCCESS_RATE_THRESHOLD (default 0.2)
-    Conservative --> ExtendedDrought: streak meets CONSERVATIVE_MODE_MAX_EPOCHS (default 20)
+    Conservative --> ExtendedDrought: streak exceeds CONSERVATIVE_MODE_MAX_EPOCHS (default 20) — risk bias reverts, module set stays escalated
     Conservative --> Normal: rolling rate climbs back above threshold
     ExtendedDrought --> Normal: any successful pass
     Normal --> [*]
 ```
 
-| Regime | Trigger | Cache effective window | Module bias | Coordinated gain floor |
-|--------|---------|------------------------|-------------|------------------------|
-| **Normal** | Default | `staleness_window` (default 100 epochs) | unchanged | 1× |
-| **Conservative** | Rolling success rate &lt; `LOW_SUCCESS_RATE_THRESHOLD` and streak ≤ `CONSERVATIVE_MODE_MAX_EPOCHS` | `staleness_window / STALENESS_CONSERVATIVE_DIVISOR` (default 100 / 2 = 50), floor 5 | low-risk modules boosted 1.5×, high-risk penalised 1/1.5× | `CONSERVATIVE_GAIN_MULTIPLIER`× (default 10×) |
-| **Extended Drought** | Streak ≥ `CONSERVATIVE_MODE_MAX_EPOCHS` | `staleness_window / STALENESS_EXTENDED_DROUGHT_DIVISOR` (default 100 / 4 = 25), floor 5 | reverts to Normal — the bias did not help | reverts to 1× |
+| Regime | Trigger | Cache effective window | Module bias | Coordinated gain floor | Expensive modules on a large creature |
+|--------|---------|------------------------|-------------|------------------------|----------------------------------------|
+| **Normal** | Default | `staleness_window` (default 100 epochs) | unchanged | 1× | tiered out (Issue #1547) |
+| **Conservative** | Rolling success rate &lt; `LOW_SUCCESS_RATE_THRESHOLD` and streak ≤ `CONSERVATIVE_MODE_MAX_EPOCHS` | `staleness_window / STALENESS_CONSERVATIVE_DIVISOR` (default 100 / 2 = 50), floor 5 | low-risk modules boosted 1.5×, high-risk penalised 1/1.5× | `CONSERVATIVE_GAIN_MULTIPLIER`× (default 10×) | retained — escalation re-enables the full set |
+| **Extended Drought** | Streak &gt; `CONSERVATIVE_MODE_MAX_EPOCHS`, rolling rate still &lt; `LOW_SUCCESS_RATE_THRESHOLD` | `staleness_window / STALENESS_EXTENDED_DROUGHT_DIVISOR` (default 100 / 4 = 25), floor 5 | reverts to Normal — the bias did not help | reverts to 1× | **still retained** (Issue #1803) — breadth outlives the bias |
 
 Notes:
 
+- **The `CONSERVATIVE_MODE_MAX_EPOCHS` revert is a *bias* cooldown, not a
+  *breadth* cooldown (Issue #1803).** It was specified by Issue #1132 to stop
+  paying the Conservative penalties (high-risk modules down-weighted, gain floor
+  ×10) once they had demonstrably not helped. Until #1803 the module-tiering
+  escalation flag was derived from `mode == conservative`, so crossing the
+  cooldown also tiered the expensive modules out — the module set narrowed exactly
+  when the drought was worst. Escalation is now driven by the collapsed rolling
+  rate alone, so Extended Drought keeps the full module set.
 - The Cache effective window is recomputed on every `is_suppressed` call. A
   transition emits a single `tracing::info!` event so the operator sees the
   window change without re-running under debug logging.
@@ -336,12 +344,12 @@ operator's "when to change" guidance so the two cannot drift apart.
 | `NEAT_AI_DISCOVERY_STALENESS_EXTENDED_DROUGHT_DIVISOR` | Larger value (e.g. 8) shrinks the Extended-Drought cache window further. Effective window has a hard floor of 5 epochs regardless of divisor. |
 | `NEAT_AI_DISCOVERY_DROUGHT_RESET_AFTER_EPOCHS` | The operator escape hatch is **armed by default** (Issue #1422) so the one-shot cache + cooldown reset fires without operator action during a sustained drought. Lower (e.g. 30) to intervene sooner, or set to `0` to deliberately disable and intervene manually. |
 | `NEAT_AI_DISCOVERY_LOW_SUCCESS_RATE_THRESHOLD` | Raise to enter Conservative mode earlier (e.g. 0.3 if 30 % success is too low for this workload). Values outside the range are ignored. |
-| `NEAT_AI_DISCOVERY_CONSERVATIVE_MODE_MAX_EPOCHS` | Lower to revert to Normal sooner when bias is not helping; raise to give Conservative mode more time before it gives up. |
+| `NEAT_AI_DISCOVERY_CONSERVATIVE_MODE_MAX_EPOCHS` | Lower to revert to Normal sooner when bias is not helping; raise to give Conservative mode more time before it gives up. This governs the **risk bias only** — the discovery module set stays escalated for the whole drought (Issue #1803). |
 | `NEAT_AI_DISCOVERY_CONSERVATIVE_GAIN_MULTIPLIER` | Lower (e.g. 3.0) when 10× is starving the pipeline of coordinated-structural candidates. The floor never relaxes below the base constant. |
 | `NEAT_AI_DISCOVERY_TARGET_COOLDOWN_FAILURES` | Raise to make the cooldown less aggressive when many targets are in cooldown simultaneously. |
 | `NEAT_AI_DISCOVERY_TARGET_COOLDOWN_EPOCHS` | Lower to free targets faster after a failure streak. |
 | `NEAT_AI_DISCOVERY_MH_TEMPERATURE` | Raise to accept lower-gain candidates during a drought, lower to be stricter. Values outside the range are ignored with a warn log. |
-| `NEAT_AI_DISCOVERY_MODULE_TIERING_HIDDEN_THRESHOLD` | Hidden-neuron count above which **expensive**-tier discovery modules are skipped at dispatch on non-escalation passes (Issue #1547). Lower it to tier out sooner on mid-size creatures; set `0` to always run every module. Skipping is suppressed whenever the creature is in Conservative discovery mode, so the full set is re-enabled during a drought. |
+| `NEAT_AI_DISCOVERY_MODULE_TIERING_HIDDEN_THRESHOLD` | Hidden-neuron count above which **expensive**-tier discovery modules are skipped at dispatch on non-escalation passes (Issue #1547). Lower it to tier out sooner on mid-size creatures; set `0` to always run every module. Skipping is suppressed whenever the rolling success rate is below `LOW_SUCCESS_RATE_THRESHOLD`, so the full set is re-enabled for the whole drought — including Extended Drought, after the Conservative bias has reverted (Issue #1803). |
 
 ## Module tiering during drought (Issue #1547)
 
@@ -352,14 +360,33 @@ co-adaptation, weight-coherence, skip-connection scans — are skipped at dispat
 to protect the post-processing budget, because their cost grows super-linearly
 with the hidden-neuron count.
 
-**Escalation re-enables the full set.** The moment the creature enters
-Conservative discovery mode (`discoveryMode="conservative"`, the same
-low-rolling-success-rate signal that drives novelty escalation #1423 and the
-drought escape hatch #1422), tiering is suppressed and every module runs again so
-the escalation pass can try everything. That re-enable is logged:
+**Escalation re-enables the full set.** The moment the rolling success rate falls
+below `LOW_SUCCESS_RATE_THRESHOLD` (the same signal that drives Conservative
+mode #1132, novelty escalation #1423 and the drought escape hatch #1422), tiering is
+suppressed and every module runs again so the escalation pass can try everything.
+That re-enable is logged, carrying the streak length, the rolling rate and the
+resulting module count (Issue #1803):
 
 ```text
 Issue #1547: drought/novelty escalation active — full discovery module set re-enabled on large creature
+  hidden_neuron_count=1662 threshold=1000 module_count=48
+  trailing_failure_streak=25 rolling_success_rate=0.0
+  discovery_mode="normal" extended_drought=true
+```
+
+**Escalation outlives the risk bias (Issue #1803).** `extended_drought=true` with
+`discovery_mode="normal"` is the Extended Drought regime: the streak has passed
+`CONSERVATIVE_MODE_MAX_EPOCHS` so the Conservative bias has reverted, but the
+expensive modules are still dispatched. Before #1803 this state tiered them out,
+so a creature in the deepest part of a drought lost the very modules most likely
+to find a candidate.
+
+```mermaid
+flowchart TD
+    A[Rolling rate &lt; LOW_SUCCESS_RATE_THRESHOLD?] -- no --> B[Normal: expensive modules tiered out]
+    A -- yes --> C{Streak &gt; CONSERVATIVE_MODE_MAX_EPOCHS?}
+    C -- no --> D["Conservative<br/>risk bias ON<br/>full module set"]
+    C -- yes --> E["Extended Drought<br/>risk bias OFF<br/>full module set (#1803)"]
 ```
 
 **Diagnostic signal:** during a drought pass on a large creature, the absence of
@@ -385,7 +412,7 @@ rate, then starts producing empty passes. This example uses the defaults.
 | 55 | 5 | 0.1 | Normal | Streak hits the log threshold. `tracing::warn!` fires once, `droughtDiagnostic` populated. Rolling rate (0.1) is below `LOW_SUCCESS_RATE_THRESHOLD` (0.2) → mode flips. | `dominantRejectionReason` — likely `below_threshold` or `no_eligible_sources`. |
 | 56 | 6 | 0.0 | **Conservative** | `discoveryMode="conservative"` in FFI metadata. High-risk modules penalised, coordinated gain floor × 10. The target-cooldown window also relaxes (Issue #1204). | `discoveryMode` in the FFI metadata. |
 | 57–69 | 7–19 | 0.0 | Conservative | Conservative mode persists. `targetCooldownActiveCount` declines as the relaxed cooldown window re-enables targets. | Watch `targetCooldownActiveCount` ramp down. |
-| 70 | 20 | 0.0 | Conservative→**Extended Drought** | Streak crosses `CONSERVATIVE_MODE_MAX_EPOCHS`. Conservative bias drops. | Mode in metadata flips back to `"normal"`; the drought diagnostic still fires every pass. |
+| 70 | 20 | 0.0 | Conservative→**Extended Drought** | Streak crosses `CONSERVATIVE_MODE_MAX_EPOCHS`. Conservative bias drops; the expensive discovery modules stay escalated (Issue #1803). | Mode in metadata flips back to `"normal"`; the drought diagnostic still fires every pass. The re-enable line still logs, now with `extended_drought=true`. |
 | 71–79 | 21–29 | 0.0 | Extended Drought | If the streak crosses `DROUGHT_RESET_AFTER_EPOCHS` (default 50, Issue #1422), the one-shot operator reset fires here. | Look for the one-shot `warn!`: `drought escape hatch fired — cleared N active target cooldowns`. An `error!` reading `drought escape hatch fired as a NO-OP` instead means the reset had nothing to flush (Issue #1794). |
 | 80 | 30 | 0.0 | Extended Drought | A new candidate finally succeeds. Streak collapses to 0 and the reset tombstone clears, re-arming the lever. | Mode resumes Normal on the next pass. |
 

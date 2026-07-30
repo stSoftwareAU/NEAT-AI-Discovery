@@ -840,12 +840,13 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
     // configured threshold, bias the module tracker toward low-risk change types
     // before it is consumed by downstream allocation and boost passes.
     let outcome_log = input.discovery_outcome_log.clone().unwrap_or_default();
-    let rolling_success_rate = outcome_log.rolling_success_rate();
-    let discovery_mode = super::discovery_mode::decide_mode(
+    let mode_decision = super::discovery_mode::decide_mode_with_escalation(
         &outcome_log,
         crate::config::low_success_rate_threshold(),
         crate::config::conservative_mode_max_epochs(),
     );
+    let rolling_success_rate = mode_decision.rolling_success_rate;
+    let discovery_mode = mode_decision.mode;
     if discovery_mode == super::discovery_mode::DiscoveryMode::Conservative
         && utils::verbose_enabled()
     {
@@ -853,6 +854,15 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
             rolling_success_rate,
             "Issue #1132: conservative discovery mode engaged — biasing module weights \
              toward low-risk change types"
+        );
+    }
+    if mode_decision.is_extended_drought() {
+        tracing::info!(
+            rolling_success_rate,
+            trailing_failure_streak = mode_decision.trailing_failure_streak,
+            max_conservative_epochs = crate::config::conservative_mode_max_epochs(),
+            "Issue #1803: extended drought — conservative risk bias reverted to normal, \
+             expensive discovery modules kept escalated"
         );
     }
     let mut tracker = match discovery_mode {
@@ -864,12 +874,15 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
 
     // Issue #1547: Creature-scale module tiering re-enables the full discovery
     // module set whenever the creature is in a drought / novelty-escalation pass.
-    // Conservative discovery mode (#1132) engages on the same low rolling
-    // success-rate condition that drives novelty escalation (#1423) and drought
-    // escape (#1422), so it is the signal — available before dispatch — used to
+    // The low rolling success rate that drives novelty escalation (#1423) and
+    // drought escape (#1422) is the signal — available before dispatch — used to
     // keep every expensive module running while the creature is struggling.
-    let tiering_escalation_active =
-        discovery_mode == super::discovery_mode::DiscoveryMode::Conservative;
+    //
+    // Issue #1803: this used to read `discovery_mode == Conservative`, so the
+    // #1132 risk-bias cooldown also tiered out the expensive modules once the
+    // failure streak passed `conservative_mode_max_epochs` — narrowing the module
+    // set exactly when the drought was worst. `module_escalation_active` tracks
+    // only the collapsed-rate condition, so breadth now outlives the bias.
 
     // Issue #1057: Gate add-synapse candidates based on historical success rate
     // and synapse density. When the ModuleOutcomeTracker shows consistent failure
@@ -1006,7 +1019,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
                             discovery_deadline,
                             cost_hint,
                             task_descriptor,
-                            tiering_escalation_active,
+                            &mode_decision,
                         )
                     }))
                     .unwrap_or_else(|panic_payload| {
