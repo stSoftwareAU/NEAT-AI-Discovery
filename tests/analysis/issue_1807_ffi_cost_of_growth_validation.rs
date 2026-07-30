@@ -428,7 +428,7 @@ fn nan_and_infinite_cost_of_growth_fall_back_on_the_shipped_criterion() {
 /// Drift guard for the second half of Issue #1807: the default must exist in
 /// exactly one place. A re-introduced literal (`unwrap_or(1e-7)`) agrees with
 /// [`DEFAULT_COST_OF_GROWTH`] today and silently disagrees the moment the
-/// constant is retuned — which is how the FFI path drifted in the first place.
+/// constant is returned — which is how the FFI path drifted in the first place.
 #[test]
 fn no_cost_of_growth_default_literal_survives_outside_the_constant() {
     let mut offenders = Vec::new();
