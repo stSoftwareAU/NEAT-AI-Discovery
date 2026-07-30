@@ -328,6 +328,17 @@ pub(super) fn identify_removal_candidates(
 ///
 /// Only **hidden** neurons are considered: outputs (seeded at impact `1.0`) and
 /// inputs / constants are never removal targets.
+///
+/// # Non-finite impact policy (Issue #1804)
+///
+/// A **non-finite** structural impact (NaN or infinite — a NaN synapse weight
+/// propagates NaN through the impact product) means the neuron's contribution
+/// **cannot be reasoned about**, so it is treated as `f32::INFINITY`: the
+/// savings can never exceed it and the neuron is **never** emitted as a removal
+/// candidate. Bad numbers must not license a destructive edit — the previous
+/// mapping to `0.0` made a NaN-impact neuron the *strongest* candidate. A
+/// genuine `0.0` impact remains prunable (a zero-contribution neuron *should*
+/// be removable). This matches [`triage_removal_candidates`](super::triage_removal_candidates).
 pub(crate) fn identify_structural_removal_candidates(
     creature: &CreatureJson,
     cost_of_growth_threshold: f32,
@@ -356,9 +367,23 @@ pub(crate) fn identify_structural_removal_candidates(
             let boosted_savings = savings * REMOVAL_CANDIDATE_BOOST;
 
             // Structural contribution = the neuron's path-weight impact on the
-            // outputs. Non-finite / negative impact carries no usable signal → 0.
+            // outputs.
+            //
+            // Issue #1804: a **non-finite** impact cannot be reasoned about (a
+            // NaN synapse weight propagates NaN through
+            // `(|weight| / total) * child_impact`), so it maps to
+            // `f32::INFINITY` — the neuron is never pruned. Bad numbers must
+            // not license a destructive edit; mapping them to `0.0` made them
+            // the *strongest* removal candidate.
+            //
+            // A genuine `0.0` impact stays prunable. A **negative** impact is
+            // unreachable by construction — every term is an `abs()` times a
+            // non-negative child impact — so the `> 0.0` arm is defensive only
+            // and is deliberately not folded in with the non-finite case.
             let raw_impact = impacts.get(&n.uuid).copied().unwrap_or(0.0);
-            let contribution = if raw_impact.is_finite() && raw_impact > 0.0 {
+            let contribution = if !raw_impact.is_finite() {
+                f32::INFINITY
+            } else if raw_impact > 0.0 {
                 raw_impact
             } else {
                 0.0
@@ -940,6 +965,108 @@ mod structural_removal_tests {
         let breakdown = outcome.rejection_breakdown();
         use crate::analysis::diagnostics::rejection_reasons::REJECTION_REMOVAL_BELOW_NOISE_FLOOR;
         assert_eq!(breakdown.get(REJECTION_REMOVAL_BELOW_NOISE_FLOOR), Some(&2));
+    }
+
+    /// Issue #1804: a creature whose `h-nan` hidden neuron carries a NaN
+    /// structural impact, alongside the two non-regression cases.
+    ///
+    /// * `h-nan` — NaN weight into `o0`, so `compute_impacts_public` evaluates
+    ///   `(NaN / NaN) * 1.0` = NaN for it.
+    /// * `h-zero` — weight `0.0` into `o1` ⇒ a genuine `0.0` impact.
+    /// * `h-keep` — weight `1.0` into `o1` ⇒ impact `1.0`, far above savings.
+    ///
+    /// A NaN weight cannot cross the JSON FFI boundary (serde rejects it), so
+    /// this policy is only reachable — and therefore only testable — here.
+    fn creature_with_nan_weight() -> CreatureJson {
+        CreatureJson {
+            neurons: vec![
+                neuron("i0", "input"),
+                neuron("h-nan", "hidden"),
+                neuron("h-zero", "hidden"),
+                neuron("h-keep", "hidden"),
+                neuron("o0", "output"),
+                neuron("o1", "output"),
+            ],
+            synapses: vec![
+                synapse("i0", "h-nan", 0.5),
+                synapse("i0", "h-zero", 0.5),
+                synapse("i0", "h-keep", 0.5),
+                synapse("h-nan", "o0", f32::NAN),
+                synapse("h-zero", "o1", 0.0),
+                synapse("h-keep", "o1", 1.0),
+            ],
+            input: 1,
+            output: 2,
+        }
+    }
+
+    /// Issue #1804 acceptance 2: a neuron whose structural impact is NaN is
+    /// never offered for removal — bad numbers must not license a destructive
+    /// edit. Before the fix, NaN mapped to a `0.0` contribution and made this
+    /// neuron the *strongest* candidate.
+    #[test]
+    fn nan_impact_neuron_absent_from_candidates() {
+        let _guard = env_lock();
+        let creature = creature_with_nan_weight();
+        // Sanity: the fixture really does produce a non-finite impact.
+        let impacts = crate::focus::impact::compute_impacts_public(&creature);
+        assert!(
+            !impacts.get("h-nan").copied().unwrap_or(0.0).is_finite(),
+            "fixture must yield a non-finite impact for h-nan, or the test proves nothing"
+        );
+
+        let outcome = identify_structural_removal_candidates(&creature, 1e-4);
+        assert!(
+            outcome.candidates.iter().all(|c| c.neuron_uuid != "h-nan"),
+            "a neuron with a non-finite structural impact must never be a removal candidate, got {:?}",
+            outcome
+                .candidates
+                .iter()
+                .map(|c| c.neuron_uuid.as_str())
+                .collect::<Vec<_>>()
+        );
+    }
+
+    /// Issue #1804 acceptance 3: the fix must not over-correct — a genuinely
+    /// zero-contribution neuron is still prunable, and a high-impact one is
+    /// still safe.
+    #[test]
+    fn zero_impact_neuron_still_candidate() {
+        let _guard = env_lock();
+        let creature = creature_with_nan_weight();
+        let outcome = identify_structural_removal_candidates(&creature, 1e-4);
+
+        assert!(
+            outcome.candidates.iter().any(|c| c.neuron_uuid == "h-zero"),
+            "a genuine 0.0-impact neuron must remain a removal candidate"
+        );
+        assert!(
+            outcome.candidates.iter().all(|c| c.neuron_uuid != "h-keep"),
+            "a high-impact neuron must never be a removal candidate"
+        );
+    }
+
+    /// Issue #1804 acceptance 1: the invariant asserted directly over the
+    /// returned list — no emitted candidate carries a non-finite impact.
+    #[test]
+    fn no_candidate_has_nonfinite_raw_impact() {
+        let _guard = env_lock();
+        let creature = creature_with_nan_weight();
+        let outcome = identify_structural_removal_candidates(&creature, 1e-4);
+
+        for candidate in &outcome.candidates {
+            assert!(
+                candidate.impact.is_finite(),
+                "candidate {} has a non-finite impact {}",
+                candidate.neuron_uuid,
+                candidate.impact
+            );
+            assert!(
+                candidate.expected_error_reduction.is_finite(),
+                "candidate {} has a non-finite expected error reduction",
+                candidate.neuron_uuid
+            );
+        }
     }
 
     /// The triage is a pure function of structure — identical creature in,
