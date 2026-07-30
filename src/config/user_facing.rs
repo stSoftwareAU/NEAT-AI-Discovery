@@ -1319,8 +1319,8 @@ pub fn min_available_memory_gb() -> f64 {
 /// Chosen as `2.5 ×` the conservative-mode cap
 /// ([`crate::analysis::discovery_mode::DEFAULT_CONSERVATIVE_MODE_MAX_EPOCHS`],
 /// 20) so the gentler adaptive levers — conservative-gain multiplier
-/// (#1132) and the adaptive staleness window (#1203) — have ample time to
-/// recover before the heavier one-shot cache flush fires. Previously the
+/// (#1132) and the adaptive target cooldown (#1204) — have ample time to
+/// recover before the heavier one-shot reset fires. Previously the
 /// escape hatch was opt-in and stayed disarmed in production through the
 /// weeks-long drought it was built for (Issue #1205, #1418); arming it by
 /// default closes that gap.

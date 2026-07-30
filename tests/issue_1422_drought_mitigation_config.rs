@@ -11,7 +11,6 @@
 //!   both defaults and env overrides.
 
 use neat_ai_discovery::analysis::constants::{
-    STALENESS_CONSERVATIVE_DIVISOR, STALENESS_EXTENDED_DROUGHT_DIVISOR,
     TARGET_COOLDOWN_CONSECUTIVE_FAILURES, TARGET_COOLDOWN_EPOCHS,
 };
 use neat_ai_discovery::analysis::creature_drought_alarm::DEFAULT_DROUGHT_ALARM_EPOCHS;
@@ -129,8 +128,6 @@ fn from_env_reports_compiled_defaults_when_unset() {
         EnvGuard::unset("NEAT_AI_DISCOVERY_CONSERVATIVE_GAIN_MULTIPLIER"),
         EnvGuard::unset("NEAT_AI_DISCOVERY_TARGET_COOLDOWN_FAILURES"),
         EnvGuard::unset("NEAT_AI_DISCOVERY_TARGET_COOLDOWN_EPOCHS"),
-        EnvGuard::unset("NEAT_AI_DISCOVERY_STALENESS_CONSERVATIVE_DIVISOR"),
-        EnvGuard::unset("NEAT_AI_DISCOVERY_STALENESS_EXTENDED_DROUGHT_DIVISOR"),
         EnvGuard::unset("NEAT_AI_DISCOVERY_DROUGHT_ALARM_EPOCHS"),
     ];
 
@@ -163,14 +160,6 @@ fn from_env_reports_compiled_defaults_when_unset() {
         TARGET_COOLDOWN_CONSECUTIVE_FAILURES
     );
     assert_eq!(cfg.target_cooldown_epochs, TARGET_COOLDOWN_EPOCHS);
-    assert_eq!(
-        cfg.staleness_conservative_divisor,
-        STALENESS_CONSERVATIVE_DIVISOR
-    );
-    assert_eq!(
-        cfg.staleness_extended_drought_divisor,
-        STALENESS_EXTENDED_DROUGHT_DIVISOR
-    );
 
     // Default lever renders as its numeric threshold, not "disabled".
     assert_eq!(

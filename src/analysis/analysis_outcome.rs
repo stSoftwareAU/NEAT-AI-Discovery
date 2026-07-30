@@ -10,8 +10,8 @@
 //! as *"the creature has no improving move"* — corrupting every downstream
 //! mitigation decision.
 //!
-//! [`AnalysisOutcome`] makes the two cases distinct. Drought / staleness /
-//! cooldown / starvation accounting MUST ignore
+//! [`AnalysisOutcome`] makes the two cases distinct. Drought / cooldown /
+//! starvation accounting MUST ignore
 //! [`AnalysisOutcome::EnvironmentallyDisabled`] passes; they are not evidence
 //! of search exhaustion.
 
