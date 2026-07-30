@@ -104,7 +104,7 @@ with
 
 | Symbol | Value | Provenance |
 |---|---|---|
-| `REMOVE_INFLUENCE_CALIBRATION` | `3e-3` (= `NEURON_PREDICTION_CALIBRATION`) | Interim. See [The calibration](#the-calibration-and-why-the-decision-does-not-rest-on-it). |
+| `REMOVE_INFLUENCE_CALIBRATION` | `3e-3` (= `NEURON_PREDICTION_CALIBRATION`) | Interim, and applied **bare** — see [The calibration](#the-calibration-and-why-the-decision-does-not-rest-on-it) and [Do not apply the per-creature correction](#do-not-apply-the-per-creature-calibration-correction). |
 | `REMOVAL_NET_GAIN_FLOOR_UNITS` | `0.5` | Dimensionless, in units of `costOfGrowth`. See [The tolerance](#the-tolerance-and-where-it-comes-from). |
 | `GAIN_FLOOR_NOISE_BACKSTOP` | `1e-9` | Unchanged from #1778 (`candidate_scoring.rs:962`); reused, not redefined. |
 | `costOfGrowth` | host value, else `DEFAULT_COST_OF_GROWTH = 1e-7` | Resolved through the #1807 single-definition seam. |
@@ -200,6 +200,30 @@ shape — `neuron-1802938338`, empirically measured effect `−1.94e-4` — and 
 refitted constant must reproduce it as `influence × calibration ≈ 1.94e-4`; that
 neuron's topology is not in this repository, so it is a check to apply at
 refit time, not evidence available now.
+
+### Do not apply the per-creature calibration correction
+
+`REMOVE_INFLUENCE_CALIBRATION` is applied **bare**. This needs saying explicitly,
+because on the add path `NEURON_PREDICTION_CALIBRATION` is *never* used bare —
+`neuron/post_processing.rs:324` always multiplies it by
+`calibration_correction.correction_for(...)`, so an implementer reusing the
+constant "by symmetry with the add path" would carry the correction across too.
+
+That would invert the correction's safety direction. The correction is clamped to
+`[0.001, 1.0]` (`calibration_correction.rs:64`), so it **only ever discounts**.
+Issue #1778 keeps it on the candidate side for the add paths precisely because it
+is evidence that this creature's *gains* over-shoot, and discounting a gain
+tightens acceptance. Here the calibrated quantity is a **cost**: discounting it *shrinks
+the penalty* and makes removals **easier** to accept — by up to 1000× at the
+clamp.
+
+This is not hypothetical. A degree-4 neuron at the `~1e-4` influence
+`remove_neuron_gain.rs` describes for deep neurons is correctly **rejected** bare
+(`loss 3e-7` vs `saving 1.4e-7`), but would be **accepted** with the correction at
+its clamp (`loss 3e-10`, net `≈ +1.4e-7`). The verdict flips for every neuron in
+the `3.3e-5`–`3.3e-2` influence band — which is exactly the band #1785 is trying
+to protect. The asymmetry argument above therefore applies to the correction as
+well as to the constant: leave it out.
 
 ## Worked example — one accepted, one rejected
 
