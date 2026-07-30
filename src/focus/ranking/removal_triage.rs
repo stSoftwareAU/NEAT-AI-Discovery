@@ -567,22 +567,39 @@ mod unification_parity_tests {
 
     /// Sub-noise-floor savings are rejected — and counted — identically on both
     /// paths (Issue #1142 contract preserved through the merge).
+    ///
+    /// **Issue #1814 changed this test's setup, not its contract.** At the
+    /// production [`DEFAULT_COST_OF_GROWTH`](crate::focus::DEFAULT_COST_OF_GROWTH)
+    /// these ~2e-7 net improvements are no longer noise: the floor is now
+    /// `REMOVE_LOW_IMPACT_NOISE_FLOOR_UNITS × costOfGrowth`, so they are
+    /// correctly emitted as candidates — that is the defect #1814 fixes. The
+    /// absolute env override pins the historical `1e-5` so both entry points are
+    /// still checked for agreement on a *rejecting* floor, and parity at the
+    /// shipped default is asserted first.
     #[test]
     fn entry_points_agree_on_noise_floor_rejections() {
         let _guard = env_lock();
         let creature = mixed_creature();
-        // Production default growth cost: every candidate's net improvement lands
-        // far below the 1e-5 floor.
         // SAFETY: env access is serialised via `env_lock()` for this test.
         unsafe {
             std::env::remove_var("NEAT_AI_DISCOVERY_REMOVE_LOW_IMPACT_NOISE_FLOOR");
         }
         assert_parity("default growth", &creature, Some(1e-7));
 
+        // SAFETY: env access is serialised via `env_lock()` for this test.
+        unsafe {
+            std::env::set_var("NEAT_AI_DISCOVERY_REMOVE_LOW_IMPACT_NOISE_FLOOR", "1e-5");
+        }
+        assert_parity("pinned absolute floor", &creature, Some(1e-7));
         let triage = triage_removal_candidates(&creature, Some(1e-7));
+        // SAFETY: env access is serialised via `env_lock()` for this test.
+        unsafe {
+            std::env::remove_var("NEAT_AI_DISCOVERY_REMOVE_LOW_IMPACT_NOISE_FLOOR");
+        }
+
         assert!(
             triage.candidates.is_empty(),
-            "1.8e-7 net improvements are noise and must be dropped, got {:?}",
+            "1.8e-7 net improvements are below a pinned 1e-5 floor and must be dropped, got {:?}",
             triage.candidates
         );
         assert!(

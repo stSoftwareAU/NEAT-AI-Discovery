@@ -43,13 +43,13 @@ flowchart TD
         A3 --> A4["3 candidates clear the floor<br/>33 counted: removal_loss_exceeds_saving"]
         A4 --> A5["Escape hatch: #1622 promotion<br/>0 flags, 0 promoted — no longer load-bearing"]
     end
-    subgraph G2["Gate 2 — focus / FFI path"]
-        B1["identify_structural_removal_candidates(creature, 1e-7)"] --> B2["boosted_savings ≤ contribution<br/>33 silent, uncounted drops"]
-        B1 --> B3["net &lt; REMOVE_LOW_IMPACT_NOISE_FLOOR (1e-5)<br/>3 reported rejections"]
-        B2 --> B4["0 surviving candidates"]
+    subgraph G2["Gate 2 — focus / FFI path (post-#1814)"]
+        B1["identify_structural_removal_candidates(creature, 1e-7)"] --> B2["boosted_savings ≤ contribution<br/>33 counted: removal_savings_below_impact"]
+        B1 --> B3["net &lt; remove_low_impact_noise_floor(1e-7) = 1e-7<br/>0 rejections"]
+        B2 --> B4["3 surviving candidates<br/>(the zero-contribution orphans)"]
         B3 --> B4
     end
-    A5 --> Z["End-to-end yield: 3 from Gate 1,<br/>still 0 through Gate 2 (#1814)"]
+    A5 --> Z["End-to-end yield: 3 from Gate 1,<br/>3 through Gate 2 (#1814)"]
     B4 --> Z
 ```
 
@@ -117,40 +117,54 @@ promotes it.
 entry point `rank_focus_neurons_internal` (`src/ffi_internal/analysis.rs:707`)
 because the function is `pub(crate)` (the Issue #1806 convention).
 
-| Measurement | Value |
-|---|---|
-| Hidden neurons considered | 36 |
-| Surviving candidates | **0** |
-| `noise_floor_rejections` (reported under `rejectionBreakdown`) | **3** |
-| Silent `boosted_savings <= contribution` drops (uncounted) | **33** |
-| Best boosted savings across the fixture | **`3.3e-7`** |
-| `REMOVE_LOW_IMPACT_NOISE_FLOOR` | `1e-5` |
+**Updated by #1814** — this block previously pinned a zero yield. The noise
+floor was an absolute `1e-5` screening `boostedSavings − contribution`, a term
+**linear in `costOfGrowth`**, so at the production `1e-7` the best boosted
+savings anywhere in the fixture (`3.3e-7`) sat 30× below it. #1814 re-denominated
+the floor in units of `costOfGrowth` — `REMOVE_LOW_IMPACT_NOISE_FLOOR_UNITS ×
+costOfGrowth`, `1.0` unit by default — the same denomination
+[`remove-neuron-gain-scale-1785.md`](remove-neuron-gain-scale-1785.md) decided
+for Gate 1.
+
+| Measurement | Before #1814 | After #1814 |
+|---|---|---|
+| Hidden neurons considered | 36 | 36 |
+| Surviving candidates | **0** | **3** |
+| `noise_floor_rejections` (reported under `rejectionBreakdown`) | 3 | **0** |
+| `boosted_savings <= contribution` drops (counted since #1808) | 33 | **33** |
+| Best boosted savings across the fixture | `3.3e-7` | `3.3e-7` |
+| Effective noise floor at `costOfGrowth = 1e-7` | `1e-5` | **`1e-7`** |
 
 The two drop paths split cleanly by structure: the 33 connected hidden neurons
 carry a structural contribution orders of magnitude above their boosted savings,
-so they hit the bare `return None` at
-`src/focus/ranking/removal_candidates.rs:387` — counted **nowhere**, which is why
-the test measures it as the residue. The 3 orphans have contribution `0.0`, so
-they reach the noise-floor gate and are reported. Even they fall short by a
-factor of ~30 (`3.3e-7` at best, against `1e-5`).
+so they are counted under `removal_savings_below_impact` (#1808). The 3 orphans
+have contribution `0.0`, so they reach the noise-floor gate — and now clear it,
+`1.5e-7` against `1e-7`. The noise floor has stopped being the universal
+rejector; the only remaining drops are genuine savings-vs-contribution verdicts.
 
-## Block 4 — the 657-synapse break-even
+## Block 4 — the break-even degree (was 657 synapses)
 
 Searched over the shipped `calculate_removal_savings`
 (`src/focus/ranking/removal_candidates.rs:73`) rather than quoted.
 
-| Measurement | Value |
-|---|---|
-| `costOfGrowth` | `1e-7` |
-| `REMOVAL_CANDIDATE_BOOST` | `1.5` |
-| `REMOVE_LOW_IMPACT_NOISE_FLOOR` | `1e-5` |
-| Smallest synapse count clearing the floor | **657** |
-| Boosted savings at 657 synapses | `1.0005e-5` |
-| Boosted savings at 656 synapses | `9.99e-6` |
+| Measurement | Before #1814 | After #1814 |
+|---|---|---|
+| `costOfGrowth` | `1e-7` | `1e-7` |
+| `REMOVAL_CANDIDATE_BOOST` | `1.5` | `1.5` |
+| Noise floor at that `costOfGrowth` | `1e-5` (absolute) | `1e-7` (`1.0 ×` `costOfGrowth`) |
+| Smallest synapse count clearing the floor | **657** | **0** |
+| Boosted savings at the break-even | `1.0005e-5` | `1.5e-7` |
 
-A zero-contribution neuron needs `1.5 × 1e-7 × (1 + n/10) >= 1e-5`, i.e.
-`n >= 656.7` — **657 synapses** on a single neuron before pruning it is worth
-reporting. Confirmed.
+Before: a zero-contribution neuron needed `1.5 × 1e-7 × (1 + n/10) >= 1e-5`, i.e.
+`n >= 656.7` — **657 synapses** on a single neuron, a degree the production
+population never reaches.
+
+After: both sides are linear in `costOfGrowth`, so it cancels —
+`1.5 × (1 + n/10) >= 1.0` holds at **n = 0**. Every zero-contribution hidden
+neuron clears the floor at any degree and any `costOfGrowth`, and the test
+re-searches the break-even at `1e-8`, `1e-7`, `1e-6` and `1e-4` to pin that
+invariance. What the floor now bounds is the *contribution* a neuron may carry:
+it survives while `contribution <= costOfGrowth × (0.5 + 0.15 × degree)`.
 
 ## Reconciliation with the numbers quoted in #1785
 
@@ -161,7 +175,7 @@ reporting. Confirmed.
 | 0 neurons clearing the floor | Reproduced, and shown to be structural — **fixed by #1812** | 0 before, **3** after |
 | 0 promotion entries | Reproduced | 0 |
 | Best boosted savings `3.30e-7` | Reproduced (degree-12 hub) | `3.3e-7` |
-| 657 synapses needed | Reproduced by construction | 657 |
+| 657 synapses needed | Reproduced by construction, then **removed by #1814** | 657 before, **0** after |
 
 ### Corrected source references
 
@@ -172,7 +186,7 @@ code.
 | #1785 says | Correct on `a36e9ba` |
 |---|---|
 | `remove_neuron_constant_promotion.rs:112-114` | `functionally_constant_neuron_uuids` returned an empty `HashSet` unconditionally; Issue #1813 replaced it with the structural detector |
-| `candidate_scoring.rs:1470` (`REMOVE_LOW_IMPACT_NOISE_FLOOR`) | `candidate_scoring.rs:1469`; `REMOVAL_CANDIDATE_BOOST` at `candidate_scoring.rs:1440` |
+| `candidate_scoring.rs:1470` (`REMOVE_LOW_IMPACT_NOISE_FLOOR`) | replaced by `REMOVE_LOW_IMPACT_NOISE_FLOOR_UNITS` and `remove_low_impact_noise_floor(cost_of_growth)` (#1814); `REMOVAL_CANDIDATE_BOOST` at `candidate_scoring.rs:1440` |
 | `removal_candidates.rs:160-170` (silent drop site) | that range is `RemovalCandidateOutcome::rejection_breakdown` (`:161-171`); the silent `boosted_savings <= contribution` drop is at `removal_candidates.rs:387-389` |
 | triage lives in `removal_triage.rs` | the shipped copy is `removal_candidates.rs::identify_structural_removal_candidates` (`:462`), called from `ffi_internal/analysis.rs:707`. `removal_triage.rs` retains only the thin `triage_removal_candidates` adapter over the same criterion (#1805) |
 | `discovery_dispatch.rs:142` (honest-gain override) | `discovery_dispatch.rs:141` |
@@ -188,12 +202,14 @@ For a remove-neuron candidate to reach NEAT-AI, **both** gates must yield:
   saving and the unit conversion the estimator's cost term was missing, and
   sole-op removals are screened against `removal_net_gain_floor(costOfGrowth)`
   rather than the add-path floor. Yield on this fixture: 3 of 36.
-- **Gate 2** needs the savings scale to reach the `1e-5` floor — today that takes
-  657 synapses on one neuron — and needs the `boosted_savings <= contribution`
-  drop to be counted, since 33 of 36 neurons currently vanish there with no
-  diagnostic at all.
+- **Gate 2** — **done (#1814).** The floor is now denominated in units of
+  `costOfGrowth`, the scale the savings term actually lives on, so the
+  657-synapse break-even is gone and the fixture's three zero-contribution
+  orphans reach the FFI response. The `boosted_savings <= contribution` drops
+  are counted under `removal_savings_below_impact` (#1808), so the 33 rejected
+  neurons no longer vanish without a diagnostic. Yield on this fixture: 3 of 36.
 
-Both are out of scope for #1810, which only measures and pins. They belong to
+Both were out of scope for #1810, which only measures and pins. They belong to
 the other sub-issues of #1785, and each should re-run the command at the top of this
 document and update this table as part of its closing checklist.
 
@@ -237,10 +253,10 @@ flowchart LR
   guard on the `rejectionBreakdown: null` #1785 observed.
 
 The fixtures are built in code, and the prunable neuron's synapse degree is
-**derived** from `remove_low_impact_noise_floor()` and
-`calculate_removal_savings` rather than hard-coded. When #1814 lowers Gate 2's
-absolute floor, the fixture shrinks with it and the invariant still holds — the
-guard tracks the calibration instead of pinning it.
+**derived** from `remove_low_impact_noise_floor(costOfGrowth)` and
+`calculate_removal_savings` rather than hard-coded. #1814 re-denominated Gate 2's
+floor and the fixture shrank with it — the guard tracks the calibration instead
+of pinning it, exactly as intended.
 
 Verified against `Develop` at `06403d7` (the commit #1785 was written against):
 three of the four cases fail there, including `rejectionBreakdown: null` on the

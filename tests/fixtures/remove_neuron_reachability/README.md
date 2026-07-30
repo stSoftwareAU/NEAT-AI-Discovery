@@ -51,9 +51,12 @@ vacuously:
 
 - 36 hidden neurons ⇒ 36 sole-op `RemoveNeuron` candidates on the analysis path.
 - 33 connected hidden neurons carry a structural impact far above their boosted
-  savings, so they hit the **uncounted** `boosted_savings <= contribution` drop.
-- 3 orphans carry impact `0.0`, so they reach — and are rejected by — the
-  `REMOVE_LOW_IMPACT_NOISE_FLOOR` gate, which is the counted path.
+  savings, so they hit the `boosted_savings <= contribution` drop (counted under
+  `removal_savings_below_impact` since #1808).
+- 3 orphans carry impact `0.0`, so they reach the noise-floor gate. Since #1814
+  re-denominated that floor in units of `costOfGrowth` they **clear** it
+  (`1.5e-7` against `1.0 × 1e-7`) and are the fixture's surviving candidates;
+  before #1814 the absolute `1e-5` floor rejected them.
 
 The measured reference table lives in
 [`docs/analysis/remove-neuron-reachability-1785.md`](../../../docs/analysis/remove-neuron-reachability-1785.md).
