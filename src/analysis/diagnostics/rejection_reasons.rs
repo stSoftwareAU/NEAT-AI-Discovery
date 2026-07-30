@@ -170,13 +170,18 @@ pub const REJECTION_TARGET_SATURATED: &str = "target_saturated";
 
 /// Remove-low-impact: the net improvement
 /// (`boosted_savings - activation_weighted_impact`) fell below
-/// `REMOVE_LOW_IMPACT_NOISE_FLOOR` (Issue #1142).
+/// `remove_low_impact_noise_floor(costOfGrowth)` (Issues #1142, #1814).
 ///
 /// The `REMOVAL_CANDIDATE_BOOST` (1.5×) is applied to raw complexity savings
 /// before the savings-vs-impact comparison. Boost-inflated net improvements in
 /// the 1e-8 range are indistinguishable from numerical noise — production
 /// discovery-cache analysis showed such a candidate causing a `-2.39e-7`
 /// actual error reduction.
+///
+/// Issue #1814: the floor is `REMOVE_LOW_IMPACT_NOISE_FLOOR_UNITS ×
+/// costOfGrowth`, not an absolute constant, because the screened quantity is
+/// linear in `costOfGrowth`. The description below therefore reports the
+/// `costOfGrowth` the threshold was evaluated at alongside the threshold.
 pub const REJECTION_REMOVAL_BELOW_NOISE_FLOOR: &str = "removal_below_noise_floor";
 
 /// Remove-low-impact: the boosted complexity savings did **not** exceed the
@@ -525,9 +530,16 @@ fn friendly_reason(reason: &str) -> String {
             "target neuron already saturated (observed activation covers the full bounded range)"
                 .to_string()
         }
+        // Issue #1814: the floor is a multiple of `costOfGrowth`, so the
+        // operator string names the `costOfGrowth` it was evaluated at as well
+        // as the resulting threshold — the number alone is meaningless without
+        // its basis.
         REJECTION_REMOVAL_BELOW_NOISE_FLOOR => format!(
-            "remove-low-impact noise floor of {:e}",
-            crate::analysis::constants::remove_low_impact_noise_floor()
+            "remove-low-impact noise floor of {:e} at costOfGrowth {:e}",
+            crate::analysis::constants::remove_low_impact_noise_floor(
+                crate::analysis::remove_neuron_net_gain::analysis_cost_of_growth()
+            ),
+            crate::analysis::remove_neuron_net_gain::analysis_cost_of_growth(),
         ),
         REJECTION_REMOVAL_SAVINGS_BELOW_IMPACT => format!(
             "complexity savings did not exceed the neuron's contribution ({:.1}× removal boost applied)",
@@ -571,6 +583,46 @@ fn friendly_reason(reason: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Issue #1814: the operator-facing description must name the threshold
+    /// **actually applied**, which is now a multiple of `costOfGrowth` rather
+    /// than a compile-time constant. A description quoting a stale absolute
+    /// value would silently mislead anyone reading rejection diagnostics.
+    #[test]
+    fn removal_noise_floor_description_names_the_applied_threshold() {
+        let _guard = crate::analysis::constants::noise_floor_env_lock();
+        // SAFETY: env access is serialised via `noise_floor_env_lock()`.
+        unsafe {
+            std::env::remove_var("NEAT_AI_DISCOVERY_REMOVE_LOW_IMPACT_NOISE_FLOOR");
+            std::env::remove_var("NEAT_AI_DISCOVERY_REMOVE_LOW_IMPACT_NOISE_FLOOR_UNITS");
+        }
+        let cost_of_growth = crate::analysis::remove_neuron_net_gain::analysis_cost_of_growth();
+        let applied = crate::analysis::constants::remove_low_impact_noise_floor(cost_of_growth);
+        let default_text = friendly_reason(REJECTION_REMOVAL_BELOW_NOISE_FLOOR);
+        assert!(
+            default_text.contains(&format!("{applied:e}")),
+            "description must quote the applied threshold {applied:e}, got: {default_text}"
+        );
+        assert!(
+            default_text.contains(&format!("{cost_of_growth:e}")),
+            "description must name the costOfGrowth basis, got: {default_text}"
+        );
+
+        // An operator override must move the quoted number with it.
+        // SAFETY: env access is serialised via `noise_floor_env_lock()`.
+        unsafe {
+            std::env::set_var("NEAT_AI_DISCOVERY_REMOVE_LOW_IMPACT_NOISE_FLOOR", "7e-6");
+        }
+        let overridden_text = friendly_reason(REJECTION_REMOVAL_BELOW_NOISE_FLOOR);
+        // SAFETY: env access is serialised via `noise_floor_env_lock()`.
+        unsafe {
+            std::env::remove_var("NEAT_AI_DISCOVERY_REMOVE_LOW_IMPACT_NOISE_FLOOR");
+        }
+        assert!(
+            overridden_text.contains(&format!("{:e}", 7e-6_f32)),
+            "description must follow the env override, got: {overridden_text}"
+        );
+    }
 
     #[test]
     fn record_increments_counter() {

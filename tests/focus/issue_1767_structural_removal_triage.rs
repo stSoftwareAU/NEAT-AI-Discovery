@@ -39,11 +39,17 @@ use serde_json::{Value, json};
 use serial_test::serial;
 use std::time::Instant;
 
-/// Cost-of-growth large enough that the complexity savings clear the
-/// `REMOVE_LOW_IMPACT_NOISE_FLOOR` (1e-5) for the low-impact neurons. The
-/// production default (1e-7) is exercised separately by
+/// Cost-of-growth large enough that the complexity savings clear the noise
+/// floor for the low-impact neurons at any denomination. The production default
+/// is exercised separately by
 /// [`noise_floor_rejections_are_reported_not_silently_dropped`].
 const TEST_COST_OF_GROWTH: f32 = 1e-4;
+
+/// The historical absolute noise floor (Issue #1142), pinned by the tests that
+/// exercise the *rejecting* branch of the gate. Issue #1814 re-denominated the
+/// default in units of `costOfGrowth`, so at the production cost-of-growth these
+/// fixtures now — correctly — produce candidates rather than rejections.
+const PINNED_ABSOLUTE_FLOOR: &str = "1e-5";
 
 /// The noise-floor env var, unset in tests that depend on the default.
 const NOISE_FLOOR_ENV: &str = "NEAT_AI_DISCOVERY_REMOVE_LOW_IMPACT_NOISE_FLOOR";
@@ -61,13 +67,23 @@ impl EnvVarGuard {
         unsafe { std::env::remove_var(key) };
         Self { key, previous }
     }
+
+    /// Pin an env var for a single test and restore it after (Issue #1814).
+    fn set(key: &'static str, value: &str) -> Self {
+        let previous = std::env::var(key).ok();
+        // SAFETY: Serialised via #[serial] — no concurrent env access.
+        unsafe { std::env::set_var(key, value) };
+        Self { key, previous }
+    }
 }
 
 impl Drop for EnvVarGuard {
     fn drop(&mut self) {
-        if let Some(v) = &self.previous {
+        match &self.previous {
             // SAFETY: Serialised via #[serial] — no concurrent env access.
-            unsafe { std::env::set_var(self.key, v) };
+            Some(v) => unsafe { std::env::set_var(self.key, v) },
+            // SAFETY: Serialised via #[serial] — no concurrent env access.
+            None => unsafe { std::env::remove_var(self.key) },
         }
     }
 }
@@ -341,11 +357,14 @@ fn inputs_and_outputs_are_never_triaged_for_removal() {
 #[test]
 #[serial]
 fn noise_floor_rejections_are_reported_not_silently_dropped() {
-    let _floor = EnvVarGuard::unset(NOISE_FLOOR_ENV);
+    // Issue #1814 changed this test's setup, not its contract: the default floor
+    // now scales with `costOfGrowth`, so the absolute floor is pinned here to
+    // keep the *rejecting* branch — and its reporting — under test.
+    let _floor = EnvVarGuard::set(NOISE_FLOOR_ENV, PINNED_ABSOLUTE_FLOOR);
     let creature = make_creature();
 
-    // Production default cost-of-growth: savings ≈ 1.8e-7, far below the 1e-5
-    // noise floor, so all three low-impact neurons are rejected.
+    // Production default cost-of-growth: savings ≈ 1.8e-7, far below the pinned
+    // 1e-5 noise floor, so all three low-impact neurons are rejected.
     let response = ffi_focus_response(&creature, None);
 
     assert!(
@@ -392,8 +411,11 @@ fn savings_vs_impact_rejections_reach_the_ffi_breakdown() {
         "candidates + rejections must account for every hidden neuron: {response:?}"
     );
 
-    // Production default cost: the same neuron is still rejected on the savings
-    // gate, while the other three now fall through the noise floor.
+    // Production default cost with the historical absolute floor pinned: the
+    // same neuron is still rejected on the savings gate, while the other three
+    // fall through the noise floor. (Issue #1814: at the *denominated* default
+    // floor all three survive, which the noise-floor denomination tests cover.)
+    let _pinned = EnvVarGuard::set(NOISE_FLOOR_ENV, PINNED_ABSOLUTE_FLOOR);
     let defaulted = ffi_focus_response(&creature, None);
     assert_eq!(
         rejections(&defaulted, REJECTION_REMOVAL_SAVINGS_BELOW_IMPACT),

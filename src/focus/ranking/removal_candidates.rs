@@ -245,7 +245,10 @@ pub(super) fn identify_removal_candidates(
     synapse_counts: &SynapseCounts,
     cost_of_growth_threshold: f32,
 ) -> RemovalCandidateOutcome {
-    let noise_floor = remove_low_impact_noise_floor();
+    // Issue #1814: the floor is denominated in units of `costOfGrowth`, the
+    // same scale the savings term lives on, so the screen cannot drift out of
+    // reach when the host changes `costOfGrowth`.
+    let noise_floor = remove_low_impact_noise_floor(cost_of_growth_threshold);
 
     // Issue #1808: every neuron maps to exactly one verdict, so surviving
     // candidates and each rejection class are collected in a single parallel
@@ -537,7 +540,9 @@ pub(crate) fn identify_structural_removal_candidates(
     let growth_cost = effective_cost_of_growth(cost_of_growth);
     let impacts = crate::focus::impact::compute_impacts_public(creature);
     let synapse_counts = SynapseCounts::new(creature);
-    let noise_floor = remove_low_impact_noise_floor();
+    // Issue #1814: denominated in units of the *validated* `costOfGrowth`, so
+    // the screen scales with the savings term it screens.
+    let noise_floor = remove_low_impact_noise_floor(growth_cost);
 
     let emitted: Vec<StructuralEmit> = creature
         .neurons
@@ -764,11 +769,12 @@ pub(super) fn detect_constant_neuron_removals(
 /// `NEAT_AI_DISCOVERY_REMOVE_LOW_IMPACT_NOISE_FLOOR`. Both the record-derived
 /// (#1142) and structure-only (#1767) removal tests share it, so a test that
 /// mutates the env-var never races one that depends on the default floor.
+///
+/// Issue #1814: the lock itself now lives beside the constant so the
+/// constants-module tests share it too.
 #[cfg(test)]
 pub(super) fn env_lock() -> std::sync::MutexGuard<'static, ()> {
-    use std::sync::{Mutex, OnceLock};
-    static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    ENV_LOCK.get_or_init(|| Mutex::new(())).lock().unwrap()
+    crate::analysis::constants::noise_floor_env_lock()
 }
 
 // =============================================================================
@@ -1138,18 +1144,30 @@ mod structural_removal_tests {
         );
     }
 
-    /// Tiny savings (default `costOfGrowth`) fall below the noise floor and are
-    /// counted as rejections rather than emitted (Issue #1142 gate, reused).
+    /// Savings below the noise floor are counted as rejections rather than
+    /// emitted (Issue #1142 gate, reused).
+    ///
+    /// **Issue #1814 changed this test's setup, not its contract.** It used to
+    /// rely on the default floor being an absolute `1e-5` that `costOfGrowth =
+    /// 1e-7` could never reach — the very defect #1814 fixes, so at the default
+    /// these neurons are now (correctly) candidates. The absolute env override
+    /// pins the historical `1e-5` so the *counting* behaviour this test exists
+    /// for is still exercised; reachability at the default is covered by
+    /// `noise_floor_denomination_tests`.
     #[test]
     fn below_noise_floor_savings_are_rejected_and_counted() {
         let _guard = env_lock();
-        // Default floor 1e-5; growth 1e-7 → boosted savings ~1.8e-7 ≪ floor.
+        // Absolute floor pinned at 1e-5; growth 1e-7 → boosted savings ~1.8e-7 ≪ floor.
+        // SAFETY: env access is serialised via `env_lock()` for this test.
+        unsafe {
+            std::env::set_var("NEAT_AI_DISCOVERY_REMOVE_LOW_IMPACT_NOISE_FLOOR", "1e-5");
+        }
+        let creature = outputless_chain();
+        let outcome = identify_structural_removal_candidates(&creature, Some(1e-7));
         // SAFETY: env access is serialised via `env_lock()` for this test.
         unsafe {
             std::env::remove_var("NEAT_AI_DISCOVERY_REMOVE_LOW_IMPACT_NOISE_FLOOR");
         }
-        let creature = outputless_chain();
-        let outcome = identify_structural_removal_candidates(&creature, Some(1e-7));
         assert!(
             outcome.candidates.is_empty(),
             "sub-noise-floor structural savings must be dropped"
@@ -1285,5 +1303,231 @@ mod structural_removal_tests {
             .map(|c| c.neuron_uuid.as_str())
             .collect();
         assert_eq!(ids_a, ids_b);
+    }
+}
+
+// =============================================================================
+// Unit tests for Issue #1814 — noise floor denominated in costOfGrowth
+// =============================================================================
+
+#[cfg(test)]
+mod noise_floor_denomination_tests {
+    //! Issue #1814: `REMOVE_LOW_IMPACT_NOISE_FLOOR` was an absolute `1e-5`
+    //! screening `boostedSavings − contribution`, a term **linear in the
+    //! host-supplied `costOfGrowth`**. At the shipped
+    //! [`DEFAULT_COST_OF_GROWTH`] a
+    //! zero-contribution neuron needed 657 synapses to clear it, so the gate
+    //! rejected every neuron the production population contains.
+    //!
+    //! These tests pin the three properties of the re-denominated screen: a
+    //! realistic neuron survives, the #1142 numerical-noise class is still
+    //! rejected, and the verdict no longer moves when `costOfGrowth` does.
+
+    use super::*;
+    use crate::{CreatureJson, NeuronJson, SynapseJson};
+
+    /// NEAT-AI's shipped default — the value the host actually sends. Resolved
+    /// through the single definition (Issue #1807), never restated as a literal.
+    const HOST_COST_OF_GROWTH: f32 = crate::focus::DEFAULT_COST_OF_GROWTH;
+
+    fn neuron(uuid: &str, ntype: &str) -> NeuronJson {
+        NeuronJson {
+            uuid: uuid.to_string(),
+            neuron_type: ntype.to_string(),
+            squash: "IDENTITY".to_string(),
+            bias: 0.0,
+        }
+    }
+
+    fn synapse(from: &str, to: &str, weight: f32) -> SynapseJson {
+        SynapseJson {
+            from_uuid: from.to_string(),
+            to_uuid: to.to_string(),
+            weight,
+            synapse_type: None,
+        }
+    }
+
+    /// A creature whose `h-low` hidden neuron is *attenuated* rather than
+    /// disconnected: it reaches the single output through a weight of
+    /// `out_weight` while `h-dom` reaches it through `1.0`, so under the linear
+    /// (IDENTITY) impact rule
+    /// `impact(h-low) = out_weight / (out_weight + 1) ≈ out_weight`.
+    ///
+    /// `incoming` inputs feed `h-low`, giving it a degree of `incoming + 1` —
+    /// the realistic-degree dial the acceptance criteria ask for.
+    fn attenuated_hidden(incoming: usize, out_weight: f32) -> CreatureJson {
+        let mut neurons = vec![
+            neuron("h-low", "hidden"),
+            neuron("h-dom", "hidden"),
+            neuron("o0", "output"),
+        ];
+        let mut synapses = vec![
+            synapse("h-low", "o0", out_weight),
+            synapse("h-dom", "o0", 1.0),
+        ];
+        for i in 0..incoming {
+            let source = format!("i-{i}");
+            neurons.push(neuron(&source, "input"));
+            synapses.push(synapse(&source, "h-low", 0.5));
+        }
+        neurons.push(neuron("i-dom", "input"));
+        synapses.push(synapse("i-dom", "h-dom", 0.5));
+
+        let input = neurons.iter().filter(|n| n.neuron_type == "input").count();
+        CreatureJson {
+            neurons,
+            synapses,
+            input,
+            output: 1,
+        }
+    }
+
+    /// Clear both overrides so the shipped default governs.
+    fn use_shipped_defaults() {
+        // SAFETY: every caller holds `env_lock()`, so no other test touches the
+        // environment concurrently.
+        unsafe {
+            std::env::remove_var("NEAT_AI_DISCOVERY_REMOVE_LOW_IMPACT_NOISE_FLOOR");
+            std::env::remove_var("NEAT_AI_DISCOVERY_REMOVE_LOW_IMPACT_NOISE_FLOOR_UNITS");
+        }
+    }
+
+    /// Acceptance 1: a low-contribution hidden neuron with a **realistic**
+    /// degree (≤ 20 synapses) at the host's [`DEFAULT_COST_OF_GROWTH`] survives
+    /// the screen.
+    ///
+    /// 12 synapses (11 in + 1 out) gives boosted savings
+    /// `1.5 × 1e-7 × 2.2 = 3.3e-7` against a `1e-8` contribution — a net of
+    /// `3.2e-7`, comfortably over the `1e-7` floor. Against the old absolute
+    /// `1e-5` floor this net was **30× short**, so this test also proves the
+    /// fix landed.
+    #[test]
+    fn realistic_neuron_survives_noise_floor_at_default_cost_of_growth() {
+        let _guard = env_lock();
+        use_shipped_defaults();
+
+        let creature = attenuated_hidden(11, 1e-8);
+        let outcome = identify_structural_removal_candidates(&creature, Some(HOST_COST_OF_GROWTH));
+
+        assert!(
+            outcome.candidates.iter().any(|c| c.neuron_uuid == "h-low"),
+            "a 12-synapse, 1e-8-contribution hidden neuron must survive at \
+             the default cost-of-growth; got candidates {:?} with {} noise-floor rejections",
+            outcome
+                .candidates
+                .iter()
+                .map(|c| c.neuron_uuid.as_str())
+                .collect::<Vec<_>>(),
+            outcome.noise_floor_rejections,
+        );
+        assert_eq!(
+            outcome.noise_floor_rejections, 0,
+            "nothing in this fixture is numerical noise: {outcome:?}"
+        );
+
+        // Every realistic degree in the population clears the floor, not just 12.
+        for degree in [0_usize, 1, 4, 19] {
+            let creature = attenuated_hidden(degree, 1e-8);
+            let outcome =
+                identify_structural_removal_candidates(&creature, Some(HOST_COST_OF_GROWTH));
+            assert!(
+                outcome.candidates.iter().any(|c| c.neuron_uuid == "h-low"),
+                "degree {} must clear the floor at the default cost-of-growth",
+                degree + 1
+            );
+        }
+    }
+
+    /// Acceptance 2: the #1142 numerical-noise class is still rejected.
+    ///
+    /// Reproduces production discovery-cache entry
+    /// `v2_remove-low-impact_0ce92a87…`: a 2-synapse neuron at
+    /// the default cost-of-growth has boosted savings `1.8e-7`, and an attenuation of
+    /// `1.136e-7` puts its contribution at the cached `1.14e-7`, leaving the
+    /// cached `+6.64e-8` net improvement. That is `0.664` units of
+    /// `costOfGrowth`, below the `1.0`-unit floor, so it is dropped — and
+    /// counted, never silently swallowed.
+    #[test]
+    fn numerical_noise_class_still_rejected() {
+        let _guard = env_lock();
+        use_shipped_defaults();
+
+        let creature = attenuated_hidden(1, 1.136e-7);
+        let impacts = crate::focus::impact::compute_impacts_public(&creature);
+        let contribution = impacts.get("h-low").copied().unwrap_or(0.0);
+        let boosted =
+            calculate_removal_savings(1, 1, HOST_COST_OF_GROWTH) * REMOVAL_CANDIDATE_BOOST;
+        let net = boosted - contribution;
+        assert!(
+            (5e-8..8e-8).contains(&net),
+            "fixture must reproduce the 6.64e-8-class net improvement, got {net:e}"
+        );
+
+        let outcome = identify_structural_removal_candidates(&creature, Some(HOST_COST_OF_GROWTH));
+        assert!(
+            outcome.candidates.iter().all(|c| c.neuron_uuid != "h-low"),
+            "a {net:e} net improvement is numerical noise and must be rejected (#1142)"
+        );
+        assert_eq!(
+            outcome.noise_floor_rejections, 1,
+            "the drop must be counted under the noise-floor gate: {outcome:?}"
+        );
+    }
+
+    /// Acceptance 3: the screen's strictness scales with `costOfGrowth`.
+    ///
+    /// Both terms of a zero-contribution neuron's net improvement are linear in
+    /// `costOfGrowth`, so its verdict must be **invariant** across the whole
+    /// ladder. Under the old absolute `1e-5` floor it was not: the same neuron
+    /// was rejected at `1e-7` and accepted at `1e-4`.
+    #[test]
+    fn screen_strictness_scales_with_cost_of_growth() {
+        let _guard = env_lock();
+        use_shipped_defaults();
+
+        let creature = attenuated_hidden(11, 0.0);
+        let verdicts: Vec<(f32, bool, u32)> = [1e-7_f32, 1e-6, 1e-5, 1e-4]
+            .into_iter()
+            .map(|cost_of_growth| {
+                let outcome =
+                    identify_structural_removal_candidates(&creature, Some(cost_of_growth));
+                (
+                    cost_of_growth,
+                    outcome.candidates.iter().any(|c| c.neuron_uuid == "h-low"),
+                    outcome.noise_floor_rejections,
+                )
+            })
+            .collect();
+
+        for (cost_of_growth, accepted, rejections) in &verdicts {
+            assert!(
+                *accepted && *rejections == 0,
+                "verdict must not depend on costOfGrowth; at {cost_of_growth:e} the \
+                 neuron was accepted={accepted} with {rejections} noise-floor rejections \
+                 (full ladder: {verdicts:?})"
+            );
+        }
+    }
+
+    /// The `costOfGrowth` coupling holds for the **rejection** verdict too: the
+    /// noise-class neuron of acceptance 2 scaled up by 10× — contribution and
+    /// all — is still rejected at 10× `costOfGrowth`.
+    #[test]
+    fn noise_class_rejection_also_scales_with_cost_of_growth() {
+        let _guard = env_lock();
+        use_shipped_defaults();
+
+        for (cost_of_growth, out_weight) in [
+            (HOST_COST_OF_GROWTH, 1.136e-7_f32),
+            (HOST_COST_OF_GROWTH * 10.0, 1.136e-6),
+        ] {
+            let creature = attenuated_hidden(1, out_weight);
+            let outcome = identify_structural_removal_candidates(&creature, Some(cost_of_growth));
+            assert_eq!(
+                outcome.noise_floor_rejections, 1,
+                "the noise class must stay rejected at costOfGrowth {cost_of_growth:e}: {outcome:?}"
+            );
+        }
     }
 }

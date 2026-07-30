@@ -43,13 +43,23 @@ impl EnvVarGuard {
         unsafe { std::env::remove_var(key) };
         Self { key, previous }
     }
+
+    /// Pin an env var for a single test and restore it after (Issue #1814).
+    fn set(key: &'static str, value: &str) -> Self {
+        let previous = std::env::var(key).ok();
+        // SAFETY: Serialised via #[serial] — no concurrent env access.
+        unsafe { std::env::set_var(key, value) };
+        Self { key, previous }
+    }
 }
 
 impl Drop for EnvVarGuard {
     fn drop(&mut self) {
-        if let Some(v) = &self.previous {
+        match &self.previous {
             // SAFETY: Serialised via #[serial] — no concurrent env access.
-            unsafe { std::env::set_var(self.key, v) };
+            Some(v) => unsafe { std::env::set_var(self.key, v) },
+            // SAFETY: Serialised via #[serial] — no concurrent env access.
+            None => unsafe { std::env::remove_var(self.key) },
         }
     }
 }
@@ -208,14 +218,20 @@ fn both_entry_points_agree_on_impact_and_boosted_savings() {
 /// Sub-noise-floor candidates are dropped on both paths, and the shipped path
 /// reports the drop under the stable rejection key while the adapter reports the
 /// same count (Issue #1142 contract preserved through the merge).
+///
+/// **Issue #1814 changed this test's setup, not its contract.** The default
+/// floor is now `REMOVE_LOW_IMPACT_NOISE_FLOOR_UNITS × costOfGrowth`, so at the
+/// production cost-of-growth these ~2e-7 net improvements correctly survive.
+/// The historical absolute floor is pinned so both entry points are still
+/// checked for agreement on a *rejecting* floor.
 #[test]
 #[serial]
 fn both_entry_points_agree_on_noise_floor_rejections() {
-    let _floor = EnvVarGuard::unset(NOISE_FLOOR_ENV);
+    let _floor = EnvVarGuard::set(NOISE_FLOOR_ENV, "1e-5");
     let creature = mixed_creature();
 
-    // Production default growth cost: every net improvement lands far below the
-    // 1e-5 floor.
+    // Production default growth cost against the pinned 1e-5 absolute floor:
+    // every net improvement lands far below it.
     let shipped = ffi_removal_candidates(&creature, 1e-7);
     let adapted = triage_removal_candidates(&creature, Some(1e-7));
 

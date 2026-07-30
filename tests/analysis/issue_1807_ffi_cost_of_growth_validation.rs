@@ -416,10 +416,31 @@ fn nan_and_infinite_cost_of_growth_fall_back_on_the_shipped_criterion() {
         );
     }
 
-    // The guard is what stops NaN from nominating every hidden neuron.
+    // The guard is what stops NaN from nominating every hidden neuron: without
+    // it `savings <= contribution` is false for all of them, including the
+    // high-impact one that must never be pruned.
+    //
+    // Issue #1814 changed the shape of this check, not its contract: with the
+    // noise floor denominated in units of `costOfGrowth`, the three
+    // low-contribution neurons *legitimately* survive at the default, so the
+    // old "fewer than 3 candidates" proxy no longer distinguishes the guard
+    // working from the guard missing. The high-impact neuron does.
     let (nan_triage, _) = capture_warnings(|| triage_removal_candidates(&creature, Some(f32::NAN)));
     assert!(
-        nan_triage.candidates.len() < 3,
+        nan_triage
+            .candidates
+            .iter()
+            .all(|c| c.neuron_uuid != "h-high"),
+        "a NaN cost must not nominate the high-impact neuron: {:?}",
+        nan_triage.candidates
+    );
+    assert!(
+        nan_triage.candidates.len()
+            < creature
+                .neurons
+                .iter()
+                .filter(|n| n.neuron_type == "hidden")
+                .count(),
         "a NaN cost must not nominate the whole hidden layer: {:?}",
         nan_triage.candidates
     );

@@ -29,14 +29,16 @@
 //!   `rank_focus_neurons_internal` (Issue #1806) — and the boosted savings from
 //!   pruning a neuron are compared against its structural contribution.
 //!
-//! Plus the promotion escape hatch (#1622/#1779) and the 657-synapse break-even
-//! that #1785 quotes, checked by construction rather than quoted.
+//! Plus the promotion escape hatch (#1622/#1779) and the break-even degree
+//! #1785 quotes as 657 synapses — checked by construction rather than quoted,
+//! and now `0` since #1814 re-denominated Gate 2's floor in units of
+//! `costOfGrowth`.
 //!
 //! # This is a characterisation pin, not an invariant
 //!
 //! Every measurement below records **today's** behaviour. A fix to either gate —
 //! a change to `coordinated_post_discount_noise_floor`,
-//! `REMOVE_LOW_IMPACT_NOISE_FLOOR`, `REMOVAL_CANDIDATE_BOOST`,
+//! `REMOVE_LOW_IMPACT_NOISE_FLOOR_UNITS`, `REMOVAL_CANDIDATE_BOOST`,
 //! `calculate_removal_savings`, or the silent `boosted_savings <= contribution`
 //! drop — is *expected* to break these assertions. That is the point: the fix
 //! shows up as a test diff. When it does, update the pin **and**
@@ -49,8 +51,8 @@ use std::path::{Path, PathBuf};
 
 use neat_ai_discovery::analysis::candidate_aggregation::apply_final_coordinated_gain_floor;
 use neat_ai_discovery::analysis::constants::{
-    REMOVAL_CANDIDATE_BOOST, coordinated_post_discount_noise_floor, removal_net_gain_floor,
-    remove_low_impact_noise_floor,
+    REMOVAL_CANDIDATE_BOOST, REMOVE_LOW_IMPACT_NOISE_FLOOR_UNITS,
+    coordinated_post_discount_noise_floor, removal_net_gain_floor, remove_low_impact_noise_floor,
 };
 use neat_ai_discovery::analysis::diagnostics::rejection_reasons::{
     REJECTION_BELOW_EXPECTED_GAIN_FLOOR, REJECTION_REMOVAL_BELOW_NOISE_FLOOR,
@@ -490,16 +492,25 @@ fn gate_1_promotion_escape_hatch_promotes_nothing() {
     );
 }
 
-/// **Block 3 — Gate 2, the focus / FFI path.**
+/// **Block 3 — Gate 2, the focus / FFI path (post-#1814).**
 ///
 /// `identify_structural_removal_candidates(&creature, 1e-7)` reached through the
 /// shipped FFI entry point. Measured: surviving candidates,
-/// `noise_floor_rejections`, the hidden neurons that hit the **uncounted**
+/// `noise_floor_rejections`, the hidden neurons dropped at the
 /// `boosted_savings <= contribution` return, and the best boosted savings
 /// available anywhere in the fixture.
+///
+/// **Updated by Issue #1814.** The original pin recorded a zero yield: the noise
+/// floor was an absolute `1e-5` screening `boostedSavings − contribution`, a
+/// term linear in `costOfGrowth`, so at `1e-7` the best boosted savings in the
+/// whole fixture (`3.3e-7`) sat 30× below it and every neuron was rejected
+/// regardless of contribution. The floor is now
+/// `REMOVE_LOW_IMPACT_NOISE_FLOOR_UNITS × costOfGrowth`, so the fixture's
+/// zero-contribution orphans reach the response and the noise floor stops being
+/// the universal rejector.
 #[test]
 #[serial]
-fn gate_2_focus_path_yields_no_surviving_removal_candidate() {
+fn gate_2_focus_path_emits_the_zero_contribution_orphans() {
     let _gates = default_gates();
     let creature = fixture_creature();
     assert_fixture_preconditions(&creature);
@@ -526,50 +537,60 @@ fn gate_2_focus_path_yields_no_surviving_removal_candidate() {
             calculate_removal_savings(incoming, outgoing, COST_OF_GROWTH) * REMOVAL_CANDIDATE_BOOST
         })
         .fold(f32::NEG_INFINITY, f32::max);
-    let floor = remove_low_impact_noise_floor();
+    let floor = remove_low_impact_noise_floor(COST_OF_GROWTH);
 
     println!("=== Block 3 — Gate 2 (focus / FFI structural removal triage) ===");
     println!("hidden neurons considered: {}", hidden.len());
     println!("surviving candidates: {surviving}");
     println!("noise_floor_rejections (reported): {rejections}");
-    println!("silent `boosted_savings <= contribution` drops (uncounted): {silent_drops}");
+    println!("`boosted_savings <= contribution` drops: {silent_drops}");
     println!("best boosted savings across the fixture: {best_boosted:e}");
-    println!("REMOVE_LOW_IMPACT_NOISE_FLOOR: {floor:e}");
+    println!("remove_low_impact_noise_floor({COST_OF_GROWTH:e}): {floor:e}");
 
     assert_eq!(
-        surviving, 0,
-        "no hidden neuron survives the structural triage at costOfGrowth={COST_OF_GROWTH:e} — \
-         {PIN_HINT}"
+        surviving, 3,
+        "the three zero-contribution orphans must survive the structural triage at \
+         costOfGrowth={COST_OF_GROWTH:e} (Issue #1814) — {PIN_HINT}"
     );
     assert!(
-        best_boosted < floor,
-        "the best boosted savings in the fixture ({best_boosted:e}) still sit below the \
-         {floor:e} noise floor, so even a zero-contribution neuron is rejected — {PIN_HINT}"
+        best_boosted >= floor,
+        "the best boosted savings in the fixture ({best_boosted:e}) must now clear the \
+         {floor:e} noise floor — the floor scales with costOfGrowth (Issue #1814) — {PIN_HINT}"
+    );
+    assert_eq!(
+        rejections, 0,
+        "the noise floor must no longer be the universal rejector: every remaining drop is a \
+         genuine `boosted_savings <= contribution` verdict (Issue #1814) — {PIN_HINT}"
     );
     assert_eq!(
         silent_drops + rejections,
-        hidden.len(),
+        hidden.len() - surviving,
         "every hidden neuron must be accounted for as a survivor, a reported rejection, or a \
-         silent drop — otherwise this block is measuring the wrong residue"
+         savings-below-impact drop — otherwise this block is measuring the wrong residue"
     );
     assert!(
         silent_drops > 0,
-        "the uncounted drop at the `boosted_savings <= contribution` return must still be \
-         exercised, or the fixture no longer reaches it — {PIN_HINT}"
+        "the `boosted_savings <= contribution` drop must still be exercised, or the fixture no \
+         longer reaches it — {PIN_HINT}"
     );
 }
 
-/// **Block 4 — the 657-synapse break-even, by construction.**
+/// **Block 4 — the 657-synapse break-even is gone, by construction.**
 ///
-/// #1785 quotes 657 synapses as the point where a zero-contribution neuron's
-/// boosted savings finally reach `REMOVE_LOW_IMPACT_NOISE_FLOOR`. Rather than
-/// quote it, this searches the shipped `calculate_removal_savings` for the
-/// smallest degree that clears the floor, so the number is checked.
+/// #1785 quoted 657 synapses as the point where a zero-contribution neuron's
+/// boosted savings finally reached the old absolute `REMOVE_LOW_IMPACT_NOISE_FLOOR`.
+/// Issue #1814 re-denominated the floor in units of `costOfGrowth`, so both
+/// sides of the comparison are now linear in `costOfGrowth` and the degree
+/// requirement disappears: `REMOVAL_CANDIDATE_BOOST` (1.5) already exceeds
+/// `REMOVE_LOW_IMPACT_NOISE_FLOOR_UNITS` (1.0) at degree 0.
+///
+/// This searches the shipped `calculate_removal_savings` for the smallest degree
+/// that clears the floor rather than quoting it, so the number stays checked.
 #[test]
 #[serial]
-fn gate_2_break_even_needs_657_synapses_on_a_zero_contribution_neuron() {
+fn gate_2_break_even_needs_no_synapses_on_a_zero_contribution_neuron() {
     let _gates = default_gates();
-    let floor = remove_low_impact_noise_floor();
+    let floor = remove_low_impact_noise_floor(COST_OF_GROWTH);
 
     let boosted = |synapses: usize| {
         calculate_removal_savings(synapses, 0, COST_OF_GROWTH) * REMOVAL_CANDIDATE_BOOST
@@ -581,24 +602,37 @@ fn gate_2_break_even_needs_657_synapses_on_a_zero_contribution_neuron() {
     println!("=== Block 4 — noise-floor break-even (zero-contribution neuron) ===");
     println!("costOfGrowth: {COST_OF_GROWTH:e}");
     println!("REMOVAL_CANDIDATE_BOOST: {REMOVAL_CANDIDATE_BOOST}");
-    println!("REMOVE_LOW_IMPACT_NOISE_FLOOR: {floor:e}");
+    println!("REMOVE_LOW_IMPACT_NOISE_FLOOR_UNITS: {REMOVE_LOW_IMPACT_NOISE_FLOOR_UNITS}");
+    println!("remove_low_impact_noise_floor({COST_OF_GROWTH:e}): {floor:e}");
     println!("break-even synapse count: {break_even}");
     println!("boosted savings at {break_even}: {:e}", boosted(break_even));
-    println!(
-        "boosted savings at {}: {:e}",
-        break_even - 1,
-        boosted(break_even - 1)
-    );
 
     assert_eq!(
-        break_even, 657,
-        "the shipped constants put the break-even at 657 synapses — {PIN_HINT}"
+        break_even, 0,
+        "a zero-contribution neuron must clear the floor at any degree once the floor is \
+         denominated in costOfGrowth (Issue #1814) — {PIN_HINT}"
     );
     assert!(
-        boosted(656) < floor,
-        "656 synapses must still fall short ({:e} < {floor:e}) — {PIN_HINT}",
-        boosted(656)
+        boosted(0) >= floor,
+        "an orphan's boosted savings ({:e}) must clear the {floor:e} floor — {PIN_HINT}",
+        boosted(0)
     );
+
+    // The break-even is now invariant to costOfGrowth, which is the whole point:
+    // the old absolute floor made it move by the same factor the host changed.
+    for cost_of_growth in [1e-8_f32, 1e-7, 1e-6, 1e-4] {
+        let floor = remove_low_impact_noise_floor(cost_of_growth);
+        let boosted_at =
+            |n: usize| calculate_removal_savings(n, 0, cost_of_growth) * REMOVAL_CANDIDATE_BOOST;
+        let break_even_at = (0..2_000)
+            .find(|n| boosted_at(*n) >= floor)
+            .expect("a break-even degree must exist below 2000 synapses");
+        assert_eq!(
+            break_even_at, 0,
+            "the break-even degree must not move with costOfGrowth {cost_of_growth:e} — {PIN_HINT}"
+        );
+    }
+
     assert_eq!(
         COST_OF_GROWTH, DEFAULT_COST_OF_GROWTH,
         "the break-even is quoted at the production default cost-of-growth"
