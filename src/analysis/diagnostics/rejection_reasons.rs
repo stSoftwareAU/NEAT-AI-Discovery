@@ -179,6 +179,28 @@ pub const REJECTION_TARGET_SATURATED: &str = "target_saturated";
 /// actual error reduction.
 pub const REJECTION_REMOVAL_BELOW_NOISE_FLOOR: &str = "removal_below_noise_floor";
 
+/// Remove-low-impact: the boosted complexity savings did **not** exceed the
+/// neuron's contribution, so pruning it would not improve the score (Issue
+/// #1808).
+///
+/// This is the *first* removal gate — `boosted_savings <= impact` — and at
+/// shipped defaults it is the one that drops most hidden neurons. Both triage
+/// paths previously returned a bare `None` here and counted the drop nowhere,
+/// so "how many hidden neurons were considered, and why did each fail?" was
+/// unanswerable from the return value. It is distinct from
+/// [`REJECTION_REMOVAL_BELOW_NOISE_FLOOR`], which fires *after* savings already
+/// beat the contribution but the margin was numerical noise.
+pub const REJECTION_REMOVAL_SAVINGS_BELOW_IMPACT: &str = "removal_savings_below_impact";
+
+/// Remove-low-impact: the neuron's recorded mean activation exceeded
+/// `REMOVAL_MEAN_ACTIVATION_THRESHOLD` while it still carried meaningful
+/// structural impact, so it is actively contributing (Issue #892, counted from
+/// Issue #1808).
+///
+/// Only reachable on the record-derived path — the structure-only focus triage
+/// has no activations to measure, and defers this gate to the analysis phase.
+pub const REJECTION_REMOVAL_ACTIVE_NEURON: &str = "removal_active_neuron";
+
 /// Single-op remove-neuron coordinated candidate had its expected gain demoted
 /// because the creature is in a search-exhaustion drought (Issue #1448).
 ///
@@ -299,6 +321,8 @@ pub const ALL_REJECTION_REASONS: &[&str] = &[
     REJECTION_NO_DIAGNOSTICS,
     REJECTION_TARGET_SATURATED,
     REJECTION_REMOVAL_BELOW_NOISE_FLOOR,
+    REJECTION_REMOVAL_SAVINGS_BELOW_IMPACT,
+    REJECTION_REMOVAL_ACTIVE_NEURON,
     REJECTION_REMOVE_NEURON_DROUGHT_DEPRIORITISED,
     REJECTION_FINGERPRINT_UNCHANGED,
     REJECTION_WITHIN_BATCH_TARGET_SHORT_CIRCUIT,
@@ -485,6 +509,14 @@ fn friendly_reason(reason: &str) -> String {
         REJECTION_REMOVAL_BELOW_NOISE_FLOOR => format!(
             "remove-low-impact noise floor of {:e}",
             crate::analysis::constants::remove_low_impact_noise_floor()
+        ),
+        REJECTION_REMOVAL_SAVINGS_BELOW_IMPACT => format!(
+            "complexity savings did not exceed the neuron's contribution ({:.1}× removal boost applied)",
+            crate::analysis::constants::REMOVAL_CANDIDATE_BOOST
+        ),
+        REJECTION_REMOVAL_ACTIVE_NEURON => format!(
+            "neuron still actively contributing (mean activation above {})",
+            crate::analysis::constants::REMOVAL_MEAN_ACTIVATION_THRESHOLD
         ),
         REJECTION_REMOVE_NEURON_DROUGHT_DEPRIORITISED => {
             "remove-neuron deprioritised during search-exhaustion drought".to_string()

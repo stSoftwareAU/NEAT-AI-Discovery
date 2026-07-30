@@ -142,6 +142,13 @@ impl<'a> SynapseCounts<'a> {
 
 /// Outcome of [`identify_removal_candidates`] — the surviving removal
 /// candidates plus rejection counts for diagnostic surfacing (Issue #1142).
+///
+/// # Conservation invariant (Issue #1808)
+///
+/// `candidates.len() + total_rejections() == considered`. Every neuron entering
+/// triage is either emitted as a candidate or counted under a named rejection
+/// reason; a future gate that drops one with a bare `continue` breaks the
+/// equality and fails the conservation tests rather than vanishing silently.
 #[derive(Debug, Default)]
 pub(crate) struct RemovalCandidateOutcome {
     /// Removal candidates that passed every filter.
@@ -149,23 +156,68 @@ pub(crate) struct RemovalCandidateOutcome {
     /// Number of candidates dropped because `boosted_savings - impact` fell
     /// below [`remove_low_impact_noise_floor`] (Issue #1142).
     pub noise_floor_rejections: u32,
+    /// Number of neurons dropped because the boosted savings did not exceed
+    /// their contribution at all (Issue #1808) — the dominant rejection class
+    /// at shipped defaults, previously counted nowhere.
+    pub savings_below_impact_rejections: u32,
+    /// Number of neurons dropped because they were still actively contributing
+    /// (mean activation above [`REMOVAL_MEAN_ACTIVATION_THRESHOLD`] with
+    /// meaningful impact — Issue #892, counted from Issue #1808). Always `0` on
+    /// the structure-only path, which has no activations to measure.
+    pub active_neuron_rejections: u32,
+    /// Number of neurons that entered triage, whatever their verdict.
+    pub considered: u32,
 }
 
 impl RemovalCandidateOutcome {
+    /// Total neurons rejected across every named reason.
+    pub(crate) fn total_rejections(&self) -> u32 {
+        self.noise_floor_rejections
+            .saturating_add(self.savings_below_impact_rejections)
+            .saturating_add(self.active_neuron_rejections)
+    }
+
+    /// Enforce the conservation invariant at every construction site, so a new
+    /// drop path that forgets its counter trips immediately in dev and test
+    /// rather than under-reporting to consumers (Issue #1808).
+    fn assert_conserved(&self) {
+        debug_assert_eq!(
+            u32::try_from(self.candidates.len()).unwrap_or(u32::MAX) + self.total_rejections(),
+            self.considered,
+            "removal triage dropped a neuron without counting it: {self:?}"
+        );
+    }
+
     /// Build a stable-keyed rejection breakdown for this outcome (Issue #1142,
-    /// reused by the structure-only focus path in #1767).
+    /// reused by the structure-only focus path in #1767, extended to every
+    /// rejection class in #1808).
     ///
     /// Reuses the Issue #1129 rejection-reason vocabulary so downstream tooling
     /// (FFI consumers, dashboards) can merge these counts into the existing
     /// `metadata.rejection_breakdown` map without special-casing.
     pub(crate) fn rejection_breakdown(&self) -> HashMap<String, u32> {
-        use crate::analysis::diagnostics::rejection_reasons::REJECTION_REMOVAL_BELOW_NOISE_FLOOR;
+        use crate::analysis::diagnostics::rejection_reasons::{
+            REJECTION_REMOVAL_ACTIVE_NEURON, REJECTION_REMOVAL_BELOW_NOISE_FLOOR,
+            REJECTION_REMOVAL_SAVINGS_BELOW_IMPACT,
+        };
         let mut map = HashMap::new();
-        if self.noise_floor_rejections > 0 {
-            map.insert(
-                REJECTION_REMOVAL_BELOW_NOISE_FLOOR.to_string(),
+        for (reason, count) in [
+            (
+                REJECTION_REMOVAL_BELOW_NOISE_FLOOR,
                 self.noise_floor_rejections,
-            );
+            ),
+            (
+                REJECTION_REMOVAL_SAVINGS_BELOW_IMPACT,
+                self.savings_below_impact_rejections,
+            ),
+            (
+                REJECTION_REMOVAL_ACTIVE_NEURON,
+                self.active_neuron_rejections,
+            ),
+        ] {
+            if count > 0 {
+                map.insert(reason.to_string(), count);
+            }
         }
         map
     }
@@ -195,18 +247,20 @@ pub(super) fn identify_removal_candidates(
 ) -> RemovalCandidateOutcome {
     let noise_floor = remove_low_impact_noise_floor();
 
-    // Each neuron maps to `Option<Result<RemovalCandidate, NoiseFloorReject>>`
-    // so we can collect both surviving candidates and rejection counts in a
-    // single parallel pass.
+    // Issue #1808: every neuron maps to exactly one verdict, so surviving
+    // candidates and each rejection class are collected in a single parallel
+    // pass and none can be dropped silently.
     #[derive(Debug)]
     enum Emit {
         Candidate(Box<RemovalCandidate>),
         NoiseFloorReject,
+        SavingsBelowImpactReject,
+        ActiveNeuronReject,
     }
 
     let emitted: Vec<Emit> = neurons
         .par_iter()
-        .filter_map(|n| {
+        .map(|n| {
             // Issue #208: Use pre-computed synapse counts for O(1) lookup
             let (incoming, outgoing) = synapse_counts.get(&n.neuron_uuid);
             let savings = calculate_removal_savings(incoming, outgoing, cost_of_growth_threshold);
@@ -219,7 +273,7 @@ pub(super) fn identify_removal_candidates(
             // Issue #235: Filter on boosted savings > impact (removal improves score)
             // instead of impact < threshold (may miss valid candidates).
             if boosted_savings <= n.activation_weighted_impact {
-                return None;
+                return Emit::SavingsBelowImpactReject;
             }
 
             // Issue #892: Filter out neurons with high mean activation when they
@@ -229,10 +283,8 @@ pub(super) fn identify_removal_candidates(
             // Disconnected neurons (impact ≈ 0) are always safe to remove regardless
             // of activation level.
             let has_meaningful_impact = n.impact > f32::EPSILON;
-            if has_meaningful_impact
-                && n.mean_activation > REMOVAL_MEAN_ACTIVATION_THRESHOLD
-            {
-                return None;
+            if has_meaningful_impact && n.mean_activation > REMOVAL_MEAN_ACTIVATION_THRESHOLD {
+                return Emit::ActiveNeuronReject;
             }
 
             // Net score improvement = boosted_savings - impact
@@ -242,14 +294,14 @@ pub(super) fn identify_removal_candidates(
             // whose net improvement is indistinguishable from numerical noise
             // (e.g. 6.64e-8 in production discovery-cache analysis).
             if net_improvement < noise_floor {
-                return Some(Emit::NoiseFloorReject);
+                return Emit::NoiseFloorReject;
             }
 
             // Issue #117: expected_error_reduction should be based on activation_weighted_impact,
             // NOT total_error.
             let expected_error_reduction = n.activation_weighted_impact;
 
-            Some(Emit::Candidate(Box::new(RemovalCandidate {
+            Emit::Candidate(Box::new(RemovalCandidate {
                 neuron_uuid: n.neuron_uuid.clone(),
                 total_error: n.total_error,
                 impact: n.impact,
@@ -268,17 +320,26 @@ pub(super) fn identify_removal_candidates(
                     incoming + outgoing,
                     cost_of_growth_threshold,
                 ),
-            })))
+            }))
         })
         .collect();
 
+    let considered = u32::try_from(emitted.len()).unwrap_or(u32::MAX);
     let mut removal_candidates: Vec<RemovalCandidate> = Vec::with_capacity(emitted.len());
     let mut noise_floor_rejections: u32 = 0;
+    let mut savings_below_impact_rejections: u32 = 0;
+    let mut active_neuron_rejections: u32 = 0;
     for emit in emitted {
         match emit {
             Emit::Candidate(c) => removal_candidates.push(*c),
             Emit::NoiseFloorReject => {
                 noise_floor_rejections = noise_floor_rejections.saturating_add(1);
+            }
+            Emit::SavingsBelowImpactReject => {
+                savings_below_impact_rejections = savings_below_impact_rejections.saturating_add(1);
+            }
+            Emit::ActiveNeuronReject => {
+                active_neuron_rejections = active_neuron_rejections.saturating_add(1);
             }
         }
     }
@@ -298,10 +359,15 @@ pub(super) fn identify_removal_candidates(
             .then_with(|| a.neuron_uuid.cmp(&b.neuron_uuid))
     });
 
-    RemovalCandidateOutcome {
+    let outcome = RemovalCandidateOutcome {
         candidates: removal_candidates,
         noise_floor_rejections,
-    }
+        savings_below_impact_rejections,
+        active_neuron_rejections,
+        considered,
+    };
+    outcome.assert_conserved();
+    outcome
 }
 
 /// Resolve the effective cost-of-growth, rejecting values that would produce
@@ -329,10 +395,14 @@ fn effective_cost_of_growth(cost_of_growth: Option<f32>) -> f32 {
 }
 
 /// One hidden neuron's verdict under the structural removal criterion.
+///
+/// Issue #1808: every hidden neuron yields exactly one variant, so the triage
+/// cannot drop one without accounting for it.
 #[derive(Debug)]
 enum StructuralEmit {
     Candidate(Box<RemovalCandidate>),
     NoiseFloorReject,
+    SavingsBelowImpactReject,
 }
 
 /// The **single** structural removal criterion (Issue #1783).
@@ -344,15 +414,16 @@ enum StructuralEmit {
 /// [`triage_removal_candidates`](super::triage_removal_candidates) adapter —
 /// run this function, so they cannot drift apart again.
 ///
-/// Returns `None` when the neuron is not worth pruning (savings do not exceed
-/// its structural contribution), so the caller emits nothing at all.
+/// Returns [`StructuralEmit::SavingsBelowImpactReject`] when the neuron is not
+/// worth pruning (savings do not exceed its structural contribution) — a
+/// counted verdict, not a silent drop (Issue #1808).
 fn structural_removal_verdict(
     neuron: &NeuronJson,
     impacts: &HashMap<String, f32>,
     synapse_counts: &SynapseCounts,
     growth_cost: f32,
     noise_floor: f32,
-) -> Option<StructuralEmit> {
+) -> StructuralEmit {
     let (incoming, outgoing) = synapse_counts.get(&neuron.uuid);
     let savings = calculate_removal_savings(incoming, outgoing, growth_cost);
 
@@ -385,7 +456,7 @@ fn structural_removal_verdict(
     // Removal only improves the score when the complexity savings exceed the
     // structural contribution — the near-opposite of the high-impact focus draw.
     if boosted_savings <= contribution {
-        return None;
+        return StructuralEmit::SavingsBelowImpactReject;
     }
 
     let net_improvement = boosted_savings - contribution;
@@ -393,10 +464,10 @@ fn structural_removal_verdict(
     // Issue #1142: drop boost-inflated candidates whose net improvement is
     // indistinguishable from numerical noise.
     if net_improvement < noise_floor {
-        return Some(StructuralEmit::NoiseFloorReject);
+        return StructuralEmit::NoiseFloorReject;
     }
 
-    Some(StructuralEmit::Candidate(Box::new(RemovalCandidate {
+    StructuralEmit::Candidate(Box::new(RemovalCandidate {
         neuron_uuid: neuron.uuid.clone(),
         // Record-derived fields are not measured on the focus path.
         total_error: 0.0,
@@ -413,7 +484,7 @@ fn structural_removal_verdict(
             "Structural removal (Issue #1767): saves {savings:.2e} (boosted {REMOVAL_CANDIDATE_BOOST:.1}×) > structural impact {contribution:.2e} (net +{net_improvement:.2e}), {} synapses, costOfGrowth={growth_cost:.2e}; activation-weighted gate deferred to analysis",
             incoming + outgoing,
         ),
-    })))
+    }))
 }
 
 /// Identify removal candidates from creature **structure alone** — the
@@ -472,18 +543,23 @@ pub(crate) fn identify_structural_removal_candidates(
         .neurons
         .par_iter()
         .filter(|n| n.neuron_type == "hidden")
-        .filter_map(|n| {
-            structural_removal_verdict(n, &impacts, &synapse_counts, growth_cost, noise_floor)
-        })
+        .map(|n| structural_removal_verdict(n, &impacts, &synapse_counts, growth_cost, noise_floor))
         .collect();
 
+    // Issue #1808: one verdict per hidden neuron, so this *is* the number of
+    // hidden neurons considered.
+    let considered = u32::try_from(emitted.len()).unwrap_or(u32::MAX);
     let mut candidates: Vec<RemovalCandidate> = Vec::with_capacity(emitted.len());
     let mut noise_floor_rejections: u32 = 0;
+    let mut savings_below_impact_rejections: u32 = 0;
     for emit in emitted {
         match emit {
             StructuralEmit::Candidate(c) => candidates.push(*c),
             StructuralEmit::NoiseFloorReject => {
                 noise_floor_rejections = noise_floor_rejections.saturating_add(1);
+            }
+            StructuralEmit::SavingsBelowImpactReject => {
+                savings_below_impact_rejections = savings_below_impact_rejections.saturating_add(1);
             }
         }
     }
@@ -499,20 +575,29 @@ pub(crate) fn identify_structural_removal_candidates(
             .then_with(|| a.neuron_uuid.cmp(&b.neuron_uuid))
     });
 
-    if noise_floor_rejections > 0 {
+    if noise_floor_rejections > 0 || savings_below_impact_rejections > 0 {
         tracing::debug!(
             target: "neat_ai_discovery::focus::removal_candidates",
             noise_floor_rejections,
+            savings_below_impact_rejections,
             noise_floor,
+            considered,
             surviving = candidates.len(),
-            "structural removal triage dropped candidates below the noise floor",
+            "structural removal triage rejected hidden neurons",
         );
     }
 
-    RemovalCandidateOutcome {
+    let outcome = RemovalCandidateOutcome {
         candidates,
         noise_floor_rejections,
-    }
+        savings_below_impact_rejections,
+        // Never measured on the structure-only path — the mean-activation gate
+        // needs records and stays in the analysis phase.
+        active_neuron_rejections: 0,
+        considered,
+    };
+    outcome.assert_conserved();
+    outcome
 }
 
 /// Threshold for considering a neuron as "constant" (near-zero variance).
@@ -883,6 +968,56 @@ mod noise_floor_tests {
             "candidate should survive when the env-var lowers the noise floor"
         );
         assert_eq!(kept.noise_floor_rejections, 0);
+    }
+
+    /// Issue #1808: the record-derived path must also account for every neuron
+    /// it triages — one verdict each, across all three gates.
+    ///
+    /// With `growth = 2e-5 / 1.8` and 1 in + 1 out synapse per neuron the
+    /// boosted savings are `2e-5`, which places each fixture neuron in exactly
+    /// one class.
+    #[test]
+    fn every_triaged_neuron_lands_in_exactly_one_class() {
+        let _guard = env_lock();
+        // SAFETY: env access is serialised via `env_lock()` for this test.
+        unsafe {
+            std::env::remove_var("NEAT_AI_DISCOVERY_REMOVE_LOW_IMPACT_NOISE_FLOOR");
+        }
+
+        let growth = 2e-5_f32 / 1.8;
+        let creature = creature_with_synapse_counts("h-keep", 1, 1);
+        let synapse_counts = SynapseCounts::new(&creature);
+
+        let neurons = [
+            // Contribution above the 2e-5 boosted savings ⇒ savings-vs-impact.
+            ranked_neuron("h-contributing", 0.0, 1e-3),
+            // Tiny-but-real impact with mean activation 0.05 > the 0.04
+            // threshold ⇒ still actively contributing.
+            ranked_neuron("h-active", 2e-7, 1e-8),
+            // Net improvement 5e-6, under the default 1e-5 floor ⇒ noise.
+            ranked_neuron("h-noise", 0.0, 1.5e-5),
+            // Net improvement 1.5e-5 ⇒ survives as a candidate.
+            ranked_neuron("h-keep", 0.0, 5e-6),
+        ];
+        let outcome = identify_removal_candidates(&neurons, &synapse_counts, growth);
+
+        assert_eq!(outcome.considered, 4);
+        assert_eq!(outcome.savings_below_impact_rejections, 1, "{outcome:?}");
+        assert_eq!(outcome.active_neuron_rejections, 1, "{outcome:?}");
+        assert_eq!(outcome.noise_floor_rejections, 1, "{outcome:?}");
+        assert_eq!(outcome.candidates.len(), 1, "{outcome:?}");
+        assert_eq!(
+            outcome.candidates.len() as u32 + outcome.total_rejections(),
+            outcome.considered,
+            "candidates + rejections must equal the neurons considered: {outcome:?}"
+        );
+
+        let breakdown = outcome.rejection_breakdown();
+        assert_eq!(
+            breakdown.values().sum::<u32>(),
+            outcome.total_rejections(),
+            "every rejection must be named in the breakdown: {breakdown:?}"
+        );
     }
 }
 

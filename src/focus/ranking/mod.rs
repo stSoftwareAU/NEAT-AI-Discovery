@@ -1345,7 +1345,9 @@ fn rank_selectable(
         cost_of_growth_threshold,
     );
 
-    let rejection_breakdown = build_rejection_breakdown(&removal_outcome);
+    // Issue #1808: one breakdown builder, shared with the structure-only path,
+    // so the two triage copies cannot report different reason sets.
+    let rejection_breakdown = removal_outcome.rejection_breakdown();
     let duration_ms = start.elapsed().as_millis();
     log_focus_ranking_summary(
         meta.mode,
@@ -1372,26 +1374,6 @@ fn rank_selectable(
         focus_ineligible_constant,
         focus_ineligible_low_impact,
     })
-}
-
-/// Build a stable-keyed rejection breakdown from a [`RemovalCandidateOutcome`]
-/// (Issue #1142).
-///
-/// Reuses the Issue #1129 rejection-reason vocabulary so downstream tooling
-/// (FFI consumers, observability dashboards) can merge these counts into the
-/// existing `metadata.rejection_breakdown` map without any special-casing.
-fn build_rejection_breakdown(
-    outcome: &removal_candidates::RemovalCandidateOutcome,
-) -> std::collections::HashMap<String, u32> {
-    use crate::analysis::diagnostics::rejection_reasons::REJECTION_REMOVAL_BELOW_NOISE_FLOOR;
-    let mut map = std::collections::HashMap::new();
-    if outcome.noise_floor_rejections > 0 {
-        map.insert(
-            REJECTION_REMOVAL_BELOW_NOISE_FLOOR.to_string(),
-            outcome.noise_floor_rejections,
-        );
-    }
-    map
 }
 
 /// Rank focus neurons with optional historical discovery success data.
