@@ -80,7 +80,19 @@ pub const GATE_SIDE_REJECTION_REASONS: &[&str] = &[
     reasons::REJECTION_ZERO_IMPROVEMENT,
     reasons::REJECTION_BELOW_THRESHOLD,
     reasons::REJECTION_REMOVAL_BELOW_NOISE_FLOOR,
+    // Issue #1808: the hidden neuron was measured against the removal
+    // criterion and the savings lost — a verdict reached at the gate, exactly
+    // like the noise-floor re-gate that follows it.
+    reasons::REJECTION_REMOVAL_SAVINGS_BELOW_IMPACT,
+    reasons::REJECTION_REMOVAL_ACTIVE_NEURON,
     reasons::REJECTION_REMOVE_NEURON_DROUGHT_DEPRIORITISED,
+    // Issue #1812: the sole-op removal reached the acceptance floor and its net
+    // gain lost to the influence it would cost — over-rejection evidence, the
+    // analysis-path twin of REJECTION_REMOVAL_SAVINGS_BELOW_IMPACT.
+    reasons::REJECTION_REMOVAL_LOSS_EXCEEDS_SAVING,
+    // Issue #1802: the candidate was evaluated and then dropped because its
+    // clamped weight delta was a no-op — a verdict reached at the gate.
+    reasons::REJECTION_DEGENERATE_WEIGHT_UPDATE,
 ];
 
 /// Rejection reasons recorded when a candidate never reached the gate: too
@@ -92,9 +104,12 @@ pub const GATE_SIDE_REJECTION_REASONS: &[&str] = &[
 pub const UPSTREAM_REJECTION_REASONS: &[&str] = &[
     reasons::REJECTION_DUPLICATE_OF_FAILURE_CACHE,
     reasons::REJECTION_ADD_SYNAPSE_GATED,
-    reasons::REJECTION_MODULE_STARVED,
     reasons::REJECTION_CPU_PRE_REJECT_NO_SIGNAL,
     reasons::REJECTION_NO_SAMPLES,
+    // Issue #1798: a constant source is dropped before evaluation, so the
+    // candidate never reached the gate — generation-side evidence, not
+    // over-rejection.
+    reasons::REJECTION_ZERO_SOURCE_VARIANCE,
     reasons::REJECTION_NO_TARGET_RECORDS,
     reasons::REJECTION_INSUFFICIENT_RECORDING,
     reasons::REJECTION_NO_ELIGIBLE_SOURCES,
@@ -103,6 +118,20 @@ pub const UPSTREAM_REJECTION_REASONS: &[&str] = &[
     reasons::REJECTION_CONSTANT_NEURON_FILTERED,
     reasons::REJECTION_NO_DIAGNOSTICS,
     reasons::REJECTION_TARGET_SATURATED,
+    // Issue #1781: focus neurons skipped by the structural fingerprint cache
+    // were never analysed at all, so no proposal could reach the gate.
+    reasons::REJECTION_FINGERPRINT_UNCHANGED,
+    // Issue #1796: same-target candidates short-circuited after an earlier
+    // within-batch failure were never evaluated, so none reached the gate.
+    reasons::REJECTION_WITHIN_BATCH_TARGET_SHORT_CIRCUIT,
+    // Issue #1797: targets dropped by the per-target cooldown filter are
+    // removed from the focus order before analysis, so no proposal for them
+    // could ever reach the gate.
+    reasons::REJECTION_TARGET_COOLDOWN_SKIPPED,
+    // Issue #1802: an unaccounted drop has, by definition, no recorded gate
+    // verdict, so it cannot be counted as evidence the gate over-rejected. It
+    // is only ever non-zero when a drop path went unaccounted for.
+    reasons::REJECTION_UNACCOUNTED_DROP,
 ];
 
 /// Rejection reasons recorded when a candidate *was* generated but was capped or
@@ -116,6 +145,10 @@ pub const ABUNDANCE_REJECTION_REASONS: &[&str] = &[
     reasons::REJECTION_SAME_TARGET_SQUASH_DUPLICATE,
     reasons::REJECTION_COORDINATED_TARGET_CAP_EXCEEDED,
     reasons::REJECTION_COORDINATED_COLLAPSE_BYPASS_WEIGHT_BELOW_FLOOR,
+    // Issue #1799: candidates discarded by quality-based module skipping were
+    // dropped *because* the pass already held enough high-quality candidates —
+    // the strongest possible evidence the generator is not starved.
+    reasons::REJECTION_MODULE_SKIPPED_QUALITY_SATISFIED,
 ];
 
 /// Default minimum number of *formed* proposals below which a run with a
@@ -226,9 +259,14 @@ pub enum StarvationClass {
 /// 1. If the pass is accepting candidates at or above
 ///    [`StarvationConfig::healthy_accept_rate`], it is [`Healthy`].
 /// 2. Otherwise, with the accept rate collapsed, the run is
-///    [`ProposalRichOverRejected`] when the generator provably formed at least
-///    [`StarvationConfig::min_formed_proposals`] proposals, and
-///    [`CandidateStarved`] when it did not.
+///    [`CandidateStarved`] when the pre-gate drops
+///    ([`UPSTREAM_REJECTION_REASONS`]) outnumber the proposals the generator
+///    provably formed — most candidates died before ever being scored, so
+///    generation is the bottleneck however many reached the gate (Issue
+///    #1800).
+/// 3. Otherwise the run is [`ProposalRichOverRejected`] when the generator
+///    provably formed at least [`StarvationConfig::min_formed_proposals`]
+///    proposals, and [`CandidateStarved`] when it did not.
 ///
 /// [`Healthy`]: StarvationClass::Healthy
 /// [`ProposalRichOverRejected`]: StarvationClass::ProposalRichOverRejected
@@ -241,6 +279,16 @@ pub fn classify(signals: &GenerationSignals, cfg: &StarvationConfig) -> Starvati
         if rate >= f64::from(cfg.healthy_accept_rate) {
             return StarvationClass::Healthy;
         }
+    }
+
+    // Issue #1800: without this branch the upstream partition could never
+    // change a verdict — the converged-profile floor below decides on formed
+    // proposals alone, so a pass drowning in failure-cache suppression still
+    // read as over-rejected and the widening bypass stayed disabled. Strict
+    // majority keeps the #1737 profile (thousands gate-side, ~no upstream)
+    // firmly over-rejected.
+    if signals.upstream_rejections > signals.proposals_formed() {
+        return StarvationClass::CandidateStarved;
     }
 
     if signals.proposals_formed() >= cfg.min_formed_proposals {
@@ -343,7 +391,7 @@ mod tests {
         // Almost nothing reaches the gate; upstream filters dominate.
         let b = breakdown(&[
             (reasons::REJECTION_NO_ELIGIBLE_SOURCES, 120),
-            (reasons::REJECTION_MODULE_STARVED, 30),
+            (reasons::REJECTION_NO_TARGET_RECORDS, 30),
             (reasons::REJECTION_TARGET_SATURATED, 45),
         ]);
         let signals = signals_from_breakdown(&b, 0);
@@ -382,6 +430,91 @@ mod tests {
         assert_eq!(signals.proposals_formed(), 500);
         let class = classify(&signals, &StarvationConfig::default());
         assert_eq!(class, StarvationClass::ProposalRichOverRejected);
+    }
+
+    /// Issue #1799: quality-based module skipping discards candidates *because*
+    /// the pass already held enough high-quality ones. A pass whose only
+    /// rejections are that reason must count as abundance and must never be
+    /// classified `CandidateStarved`.
+    #[test]
+    fn quality_skip_drops_count_as_abundance_not_starvation() {
+        let b = breakdown(&[(reasons::REJECTION_MODULE_SKIPPED_QUALITY_SATISFIED, 12)]);
+        let signals = signals_from_breakdown(&b, 0);
+        assert_eq!(signals.abundance_rejections, 12);
+        assert_eq!(signals.upstream_rejections, 0);
+        assert_eq!(signals.gate_side_rejections, 0);
+        assert_eq!(signals.proposals_formed(), 12);
+
+        let class = classify(&signals, &StarvationConfig::default());
+        assert_ne!(
+            class,
+            StarvationClass::CandidateStarved,
+            "quality-skipping proves abundance, so the pass must not be judged starved"
+        );
+        assert_eq!(class, StarvationClass::ProposalRichOverRejected);
+        assert!(!recommend_widening(class));
+    }
+
+    /// Issue #1800: once failure-cache suppression is folded into the
+    /// breakdown, upstream evidence outweighing the formed proposals must flip
+    /// the verdict to starved — otherwise the fold could never change a
+    /// decision.
+    #[test]
+    fn dominant_upstream_evidence_overrides_the_formed_proposal_floor() {
+        let b = breakdown(&[
+            (reasons::REJECTION_BELOW_EXPECTED_GAIN_FLOOR, 4),
+            (reasons::REJECTION_DUPLICATE_OF_FAILURE_CACHE, 9),
+        ]);
+        let signals = signals_from_breakdown(&b, 0);
+        assert_eq!(signals.proposals_formed(), 4);
+        assert_eq!(signals.upstream_rejections, 9);
+
+        let class = classify(&signals, &StarvationConfig::default());
+        assert_eq!(class, StarvationClass::CandidateStarved);
+        assert!(recommend_widening(class));
+    }
+
+    /// Issue #1801: focus neurons dropped by a *partial* fingerprint skip were
+    /// never analysed, so they must land in the upstream (starvation-evidence)
+    /// bucket and never be mistaken for gate rejections.
+    #[test]
+    fn partial_fingerprint_skip_counts_as_upstream_not_gate_rejection() {
+        let b = breakdown(&[
+            (reasons::REJECTION_FINGERPRINT_UNCHANGED, 7),
+            (reasons::REJECTION_BELOW_EXPECTED_GAIN_FLOOR, 2),
+        ]);
+        let signals = signals_from_breakdown(&b, 0);
+        assert_eq!(
+            signals.upstream_rejections, 7,
+            "a partial fingerprint skip is pre-gate evidence"
+        );
+        assert_eq!(
+            signals.gate_side_rejections, 2,
+            "only the gain-floor rejections reached the gate"
+        );
+
+        let class = classify(&signals, &StarvationConfig::default());
+        assert_eq!(
+            class,
+            StarvationClass::CandidateStarved,
+            "unanalysed focus neurons outnumbering the formed proposals is starvation evidence"
+        );
+        assert!(recommend_widening(class));
+    }
+
+    /// A tie is not a majority: equal upstream and formed counts leave the
+    /// formed-proposal floor in charge.
+    #[test]
+    fn balanced_upstream_evidence_stays_over_rejected() {
+        let b = breakdown(&[
+            (reasons::REJECTION_BELOW_EXPECTED_GAIN_FLOOR, 9),
+            (reasons::REJECTION_DUPLICATE_OF_FAILURE_CACHE, 9),
+        ]);
+        let signals = signals_from_breakdown(&b, 0);
+        assert_eq!(
+            classify(&signals, &StarvationConfig::default()),
+            StarvationClass::ProposalRichOverRejected
+        );
     }
 
     #[test]

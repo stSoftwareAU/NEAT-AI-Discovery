@@ -62,7 +62,7 @@ pub(crate) fn analyze_synapses_with_cache_impl(
     // before we incur any per-target analysis cost.
     // Issue #1204: thread the discovery outcome log so cooldown relaxes during
     // a drought when mode/drought signals are available.
-    let _cooldown_skipped =
+    let cooldown_skipped =
         apply_target_cooldown(&mut focus_order, input.discovery_outcome_log.as_ref());
 
     log_analysis_start(
@@ -103,6 +103,12 @@ pub(crate) fn analyze_synapses_with_cache_impl(
     // duration of this orchestration call only.
     let within_batch_failures =
         Arc::new(crate::analysis::within_batch_failures::WithinBatchFailureTracker::new());
+    // Issue #1798: per-batch counters for the evaluation drop sites. Same
+    // lifetime and sharing model as the within-batch tracker above.
+    let evaluation_drops =
+        Arc::new(crate::analysis::evaluation_drops::EvaluationDropCounters::new());
+    // Issue #1802: per-pass candidate reconciliation ledger for this surface.
+    let ledger = Arc::new(crate::analysis::candidate_reconciliation::CandidateLedger::new());
     let ctx = Arc::new(target_analysis::TargetAnalysisContext {
         ordered_neurons: Arc::new(lookups.ordered_neurons),
         order_map: Arc::new(lookups.order_map),
@@ -124,6 +130,8 @@ pub(crate) fn analyze_synapses_with_cache_impl(
         temperature: input.temperature,
         mcmc_tracker: mcmc_tracker.clone(),
         within_batch_failures: within_batch_failures.clone(),
+        evaluation_drops: evaluation_drops.clone(),
+        ledger: ledger.clone(),
     });
 
     // Phase 6: Process each focus neuron in parallel — thread-local collection (Issue #744)
@@ -191,7 +199,7 @@ pub(crate) fn analyze_synapses_with_cache_impl(
         );
     }
     let mcmc_summary = mcmc_tracker.build_summary();
-    finalise_synapse_results(FinaliseParams {
+    let mut result = finalise_synapse_results(FinaliseParams {
         collectors,
         completed_count,
         total_focus_count,
@@ -201,7 +209,44 @@ pub(crate) fn analyze_synapses_with_cache_impl(
         cache,
         order_map: &ctx.order_map,
         mcmc_summary,
-    })
+    })?;
+    // Issue #1796: turn the within-batch short-circuit skips into a rejection
+    // reason so the starvation classifier (which reads only the breakdown) can
+    // see them. Folded once, from the aggregate count, so the per-candidate
+    // result-collection loop stays allocation-free.
+    crate::analysis::within_batch_failures::fold_within_batch_skips(
+        &within_batch_failures,
+        &mut result.metadata.rejection_breakdown,
+    );
+    // Issue #1798: same treatment for the evaluation drop site — a work item
+    // whose samples were all filtered out never reaches the accept gate.
+    // Folded once from the aggregate counter, so the per-candidate
+    // result-collection loop stays plain integer increments.
+    crate::analysis::evaluation_drops::fold_evaluation_drops(
+        &evaluation_drops,
+        &mut result.metadata.rejection_breakdown,
+    );
+    // Issue #1791: surface the real cooldown filter return value so the drought
+    // diagnostic's `target_cooldown_skipped` metric reflects actual suppression.
+    result.metadata.target_cooldown_skipped = cooldown_skipped;
+    // Issue #1797: also record it as a rejection reason — the starvation
+    // classifier reads only the breakdown, so a dropped target is otherwise
+    // invisible to the decision that un-suppresses it.
+    crate::analysis::target_failure_tracker::fold_target_cooldown_skips(
+        cooldown_skipped,
+        &mut result.metadata.rejection_breakdown,
+    );
+    // Issue #1802: the breakdown is now final for this surface, so reconcile it
+    // against the ledger. Every helpful work item that entered result collection
+    // must have a recorded verdict; an unaccounted residual is warned about,
+    // surfaced as `unaccounted_drop`, and fails CI under strict mode.
+    result.metadata.candidate_reconciliation =
+        Some(crate::analysis::candidate_reconciliation::reconcile(
+            crate::analysis::candidate_reconciliation::SURFACE_SYNAPSE,
+            &ledger,
+            &mut result.metadata.rejection_breakdown,
+        ));
+    Ok(result)
 }
 
 /// Drop focus targets in cooldown via the global target-failure tracker
@@ -241,5 +286,81 @@ fn apply_target_cooldown(
             )
         }
         _ => filter_cooldown_targets(focus_order, &tracker_lock, current_epoch),
+    }
+}
+
+#[cfg(test)]
+mod within_batch_rejection_tests {
+    use crate::analysis::diagnostics::rejection_reasons::REJECTION_WITHIN_BATCH_TARGET_SHORT_CIRCUIT;
+    use crate::analysis::shared::SynapseAnalysisMetadata;
+    use crate::analysis::within_batch_failures::{
+        WithinBatchFailureTracker, fold_within_batch_skips,
+    };
+
+    /// Drive a batch of same-target candidates through the tracker exactly as
+    /// `target_analysis::evaluation::collect_and_process_helpful_results` does:
+    /// the first candidate is evaluated and fails (zero improved samples),
+    /// every later candidate for that target is short-circuited.
+    fn drive_same_target_batch(tracker: &WithinBatchFailureTracker, target: &str, following: u32) {
+        assert!(
+            !tracker.should_skip(target),
+            "the first same-target candidate must be evaluated"
+        );
+        tracker.record_failure(target);
+        for _ in 0..following {
+            assert!(
+                tracker.should_skip(target),
+                "later same-target candidates must be short-circuited"
+            );
+            tracker.record_skip();
+        }
+    }
+
+    /// Issue #1796: the short-circuited candidates must surface as
+    /// `within_batch_target_short_circuit` in the synapse metadata breakdown
+    /// rather than being dropped silently.
+    #[test]
+    fn within_batch_skips_recorded_as_rejections() {
+        const FOLLOWING: u32 = 3;
+        let tracker = WithinBatchFailureTracker::with_threshold(1);
+        drive_same_target_batch(&tracker, "target-A", FOLLOWING);
+
+        let mut metadata = SynapseAnalysisMetadata::default();
+        let folded = fold_within_batch_skips(&tracker, &mut metadata.rejection_breakdown);
+
+        assert_eq!(folded, FOLLOWING);
+        assert_eq!(
+            metadata
+                .rejection_breakdown
+                .counts()
+                .get(REJECTION_WITHIN_BATCH_TARGET_SHORT_CIRCUIT),
+            Some(&FOLLOWING),
+            "the surfaced breakdown must report every short-circuited candidate"
+        );
+        // The recorded counter and the aggregate log source agree, and this
+        // surface contributes its own tracker's count only (no double count).
+        assert_eq!(metadata.rejection_breakdown.total(), tracker.skip_count());
+    }
+
+    /// Each surface owns a distinct tracker, so the two fold-ins cannot double
+    /// count: a synapse fold never picks up the neuron surface's skips.
+    #[test]
+    fn per_surface_trackers_do_not_double_count() {
+        let synapse_tracker = WithinBatchFailureTracker::with_threshold(1);
+        let neuron_tracker = WithinBatchFailureTracker::with_threshold(1);
+        drive_same_target_batch(&synapse_tracker, "target-A", 2);
+        drive_same_target_batch(&neuron_tracker, "target-A", 7);
+
+        let mut metadata = SynapseAnalysisMetadata::default();
+        fold_within_batch_skips(&synapse_tracker, &mut metadata.rejection_breakdown);
+
+        assert_eq!(
+            metadata
+                .rejection_breakdown
+                .counts()
+                .get(REJECTION_WITHIN_BATCH_TARGET_SHORT_CIRCUIT),
+            Some(&2),
+            "the synapse breakdown must count only the synapse surface's skips"
+        );
     }
 }

@@ -159,6 +159,29 @@ pub struct SynapseAnalysisMetadata {
     /// recording failure from genuine search exhaustion.
     pub insufficient_recording:
         Option<crate::analysis::insufficient_recording::InsufficientRecordingDiagnostic>,
+
+    /// Number of focus targets this phase dropped because they were in
+    /// cooldown (Issue #1791).
+    ///
+    /// The real return value of `apply_target_cooldown`, surfaced so
+    /// `analyze_all` can feed the drought diagnostic's
+    /// `target_cooldown_skipped` metric instead of a hard-coded `0`.
+    pub target_cooldown_skipped: u32,
+
+    /// One verdict per focus target for this pass (Issue #1791).
+    ///
+    /// Snapshotted from the per-target diagnostics at result finalisation and
+    /// flushed — merged with the neuron phase's list — to the global
+    /// target-failure tracker exactly once per pass by `analyze_all`.
+    pub target_pass_outcomes: Vec<crate::analysis::target_pass_outcomes::TargetPassOutcome>,
+
+    /// Candidate-reconciliation outcome for this surface (Issue #1802).
+    ///
+    /// `Some` on every pass that reached breakdown finalisation, carrying the
+    /// considered / accounted counts and the unaccounted delta. Lets callers
+    /// *positively* confirm the invariant held rather than inferring it from the
+    /// absence of an `unaccounted_drop` breakdown entry.
+    pub candidate_reconciliation: Option<crate::analysis::candidate_reconciliation::Reconciliation>,
 }
 
 /// Metadata about neuron analysis for diagnostics and observability.
@@ -237,6 +260,21 @@ pub struct NeuronAnalysisMetadata {
     /// See `SynapseAnalysisMetadata::insufficient_recording` for full docs.
     pub insufficient_recording:
         Option<crate::analysis::insufficient_recording::InsufficientRecordingDiagnostic>,
+
+    /// Focus targets dropped for cooldown by this phase (Issue #1791).
+    ///
+    /// See `SynapseAnalysisMetadata::target_cooldown_skipped` for full docs.
+    pub target_cooldown_skipped: u32,
+
+    /// Per-target verdicts for this pass (Issue #1791).
+    ///
+    /// See `SynapseAnalysisMetadata::target_pass_outcomes` for full docs.
+    pub target_pass_outcomes: Vec<crate::analysis::target_pass_outcomes::TargetPassOutcome>,
+
+    /// Candidate-reconciliation outcome for this surface (Issue #1802).
+    ///
+    /// See `SynapseAnalysisMetadata::candidate_reconciliation` for full docs.
+    pub candidate_reconciliation: Option<crate::analysis::candidate_reconciliation::Reconciliation>,
 }
 
 /// Result of synapse analysis
@@ -299,6 +337,16 @@ pub struct AnalyzeAllResult {
     /// Contains the tracker passed in (or a default), updated with candidate counts
     /// from this run. Callers should persist this and pass it back on subsequent runs.
     pub module_outcome_tracker: crate::analysis::module_weights::ModuleOutcomeTracker,
+    /// Rejections recorded at pass level, outside the synapse / neuron metadata
+    /// (Issue #1781, #1801).
+    ///
+    /// A pass can be dropped whole *before* either surface produces metadata —
+    /// when every focus neuron is skipped by the fingerprint cache — and a pass
+    /// that runs normally can still have *some* focus neurons skipped by that
+    /// cache (Issue #1801). Neither drop belongs to a surface, so both are
+    /// counted here; the counts are merged into the combined breakdown and into
+    /// `zeroCandidateSummary` by the FFI layer.
+    pub pass_rejection_breakdown: crate::analysis::diagnostics::RejectionBreakdown,
 }
 
 /// Reason why no synapse candidate was found for a target neuron

@@ -64,6 +64,7 @@
 //! | `NEAT_AI_DISCOVERY_PROFILE` | `json`/empty | disabled | Output structured profile as JSON |
 //! | `NEAT_AI_DISCOVERY_GPU_METRICS` | bool | `false` | Print GPU metrics to stderr |
 //! | `NEAT_AI_DISCOVERY_CALIBRATION_MISS_THRESHOLD` | f32 | `10.0` | Ratio above which prediction-vs-actual mismatches are logged (Issue #1165) |
+//! | `NEAT_AI_DISCOVERY_STRICT_CANDIDATE_RECONCILIATION` | bool | debug builds: `true`, release builds: `false` | Trip a `debug_assert!` when a discovery pass cannot account for every considered candidate (Issue #1802), so a new silent drop path fails CI. Set to `0` to force warn-only. The `unaccounted_drop` rejection-breakdown entry and the `tracing::warn!` are emitted regardless. |
 //!
 //! ## Detection Tuning Variables
 //!

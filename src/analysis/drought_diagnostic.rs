@@ -3,10 +3,22 @@
 //! When the rolling outcome log shows N consecutive trailing failures, the
 //! orchestrator emits a single structured `tracing::warn!` event and attaches
 //! a [`DroughtDiagnostic`] payload to the FFI metadata. The diagnostic
-//! consolidates suppression signals from the candidate cache, the per-target
-//! cooldown tracker, the rejection breakdown, and the discovery mode so
-//! operators can root-cause "no successful candidates for a while" without
-//! re-running analysis under elevated logging.
+//! consolidates suppression signals from the per-target cooldown tracker, the
+//! rejection breakdown, and the discovery mode so operators can root-cause "no
+//! successful candidates for a while" without re-running analysis under
+//! elevated logging.
+//!
+//! Issue #1792: the payload also reported `candidateCacheSize` and
+//! `candidateCacheSuppressedCount`, but the cache behind them was never
+//! constructed outside tests, so both counters were structurally always `0` —
+//! reading as "the cache is empty" rather than "there is no cache". They have
+//! been removed along with the cache.
+//!
+//! Issue #1793: `starvedModuleCount` went the same way. Its
+//! `ModuleStarvationTracker` was never populated in production — the
+//! orchestrator always passed `starvation_tracker: None` — so the counter was
+//! structurally always `0`, reading as "no module is starved" rather than
+//! "module starvation is not tracked".
 //!
 //! # Diagnostic shape
 //!
@@ -22,10 +34,8 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::candidate_cache::CandidateOutcomeCache;
 use super::diagnostics::RejectionBreakdown;
 use super::discovery_mode::DiscoveryMode;
-use super::module_starvation_tracker::ModuleStarvationTracker;
 use super::target_failure_tracker::TargetFailureTracker;
 use super::task_descriptor::{TargetTopology, TaskDescriptor};
 
@@ -72,11 +82,6 @@ pub struct DroughtDiagnostic {
     pub rolling_success_rate: f32,
     /// Current creature-level discovery mode (`"normal"` / `"conservative"`).
     pub discovery_mode: DiscoveryMode,
-    /// Total entries in the candidate outcome cache (success and failure).
-    pub candidate_cache_size: usize,
-    /// Failed candidate cache entries still inside the staleness window —
-    /// these are actively suppressing candidate generation.
-    pub candidate_cache_suppressed_count: usize,
     /// Number of target neurons currently in cooldown via
     /// [`TargetFailureTracker`].
     pub target_cooldown_active_count: usize,
@@ -93,13 +98,6 @@ pub struct DroughtDiagnostic {
     pub total_candidates_considered: u32,
     /// Total candidates rejected across all reasons.
     pub total_candidates_rejected: u32,
-    /// Number of discovery modules currently in per-creature starvation
-    /// cooldown (Issue #1273). Reports how many modules are disabled for the
-    /// active creature after `MODULE_STARVATION_FAILURE_STREAK` consecutive
-    /// failures. `0` when the orchestrator does not supply a starvation
-    /// tracker.
-    #[serde(default)]
-    pub starved_module_count: u32,
 }
 
 /// Inputs gathered by the orchestrator before drought emission.
@@ -111,16 +109,11 @@ pub struct DroughtInputs<'a> {
     pub consecutive_failures: u32,
     pub rolling_success_rate: f32,
     pub discovery_mode: DiscoveryMode,
-    pub candidate_cache: Option<&'a CandidateOutcomeCache>,
     pub target_tracker: Option<&'a TargetFailureTracker>,
     pub current_epoch: u64,
     pub target_cooldown_skipped: u32,
     pub rejection_breakdown: &'a RejectionBreakdown,
     pub candidates_returned: u32,
-    /// Per-creature, per-module starvation tracker (Issue #1273). The
-    /// diagnostic reports the count of modules currently disabled. `None`
-    /// when the orchestrator does not maintain a starvation tracker.
-    pub starvation_tracker: Option<&'a ModuleStarvationTracker>,
 }
 
 /// Build a [`DroughtDiagnostic`] when the trailing-failure streak has crossed
@@ -138,17 +131,9 @@ pub fn emit_drought_diagnostic(
         return None;
     }
 
-    let candidate_cache_size = inputs.candidate_cache.map_or(0, CandidateOutcomeCache::len);
-    let candidate_cache_suppressed_count = inputs
-        .candidate_cache
-        .map_or(0, |c| c.suppressed_count(inputs.current_epoch));
     let target_cooldown_active_count = inputs
         .target_tracker
         .map_or(0, |t| t.active_cooldown_count(inputs.current_epoch));
-    let starved_module_count = inputs.starvation_tracker.map_or(0_u32, |s| {
-        u32::try_from(s.starved_module_count(inputs.current_epoch)).unwrap_or(u32::MAX)
-    });
-
     let (dominant_rejection_reason, dominant_rejection_count) =
         match inputs.rejection_breakdown.dominant_reason() {
             Some((reason, count)) => (Some(reason.to_string()), count),
@@ -162,23 +147,18 @@ pub fn emit_drought_diagnostic(
         consecutive_failures: inputs.consecutive_failures,
         rolling_success_rate: inputs.rolling_success_rate,
         discovery_mode: inputs.discovery_mode,
-        candidate_cache_size,
-        candidate_cache_suppressed_count,
         target_cooldown_active_count,
         target_cooldown_skipped: inputs.target_cooldown_skipped,
         dominant_rejection_reason,
         dominant_rejection_count,
         total_candidates_considered,
         total_candidates_rejected,
-        starved_module_count,
     };
 
     tracing::warn!(
         consecutive_failures = diagnostic.consecutive_failures,
         rolling_success_rate = diagnostic.rolling_success_rate,
         discovery_mode = inputs.discovery_mode.as_str(),
-        candidate_cache_size = diagnostic.candidate_cache_size,
-        candidate_cache_suppressed_count = diagnostic.candidate_cache_suppressed_count,
         target_cooldown_active_count = diagnostic.target_cooldown_active_count,
         target_cooldown_skipped = diagnostic.target_cooldown_skipped,
         dominant_rejection_reason = diagnostic
@@ -188,7 +168,6 @@ pub fn emit_drought_diagnostic(
         dominant_rejection_count = diagnostic.dominant_rejection_count,
         total_candidates_considered = diagnostic.total_candidates_considered,
         total_candidates_rejected = diagnostic.total_candidates_rejected,
-        starved_module_count = diagnostic.starved_module_count,
         drought_threshold,
         "Issue #1202: discovery drought — no successful candidates for {} consecutive passes",
         diagnostic.consecutive_failures
@@ -214,13 +193,11 @@ mod tests {
             consecutive_failures: 4,
             rolling_success_rate: 0.0,
             discovery_mode: DiscoveryMode::Normal,
-            candidate_cache: None,
             target_tracker: None,
             current_epoch: 0,
             target_cooldown_skipped: 0,
             rejection_breakdown: &breakdown,
             candidates_returned: 0,
-            starvation_tracker: None,
         };
         assert!(emit_drought_diagnostic(&inputs, 5).is_none());
     }
@@ -232,13 +209,11 @@ mod tests {
             consecutive_failures: 5,
             rolling_success_rate: 0.0,
             discovery_mode: DiscoveryMode::Conservative,
-            candidate_cache: None,
             target_tracker: None,
             current_epoch: 0,
             target_cooldown_skipped: 2,
             rejection_breakdown: &breakdown,
             candidates_returned: 0,
-            starvation_tracker: None,
         };
         let diag = emit_drought_diagnostic(&inputs, 5).expect("at threshold");
         assert_eq!(diag.consecutive_failures, 5);
@@ -254,12 +229,7 @@ mod tests {
     }
 
     #[test]
-    fn diagnostic_aggregates_cache_and_tracker_counts() {
-        let mut cache = CandidateOutcomeCache::new();
-        cache.record("src1", "tgt1", "addSynapse", false, 0);
-        cache.record("src2", "tgt2", "addSynapse", false, 0);
-        cache.record("src3", "tgt3", "addSynapse", true, 0);
-
+    fn diagnostic_aggregates_tracker_counts() {
         let mut tracker = TargetFailureTracker::with_thresholds(2, 100);
         tracker.record_failure("tgt-x", 0);
         tracker.record_failure("tgt-x", 1);
@@ -269,48 +239,49 @@ mod tests {
             consecutive_failures: 6,
             rolling_success_rate: 0.0,
             discovery_mode: DiscoveryMode::Normal,
-            candidate_cache: Some(&cache),
             target_tracker: Some(&tracker),
             current_epoch: 1,
             target_cooldown_skipped: 0,
             rejection_breakdown: &breakdown,
             candidates_returned: 1,
-            starvation_tracker: None,
         };
 
         let diag = emit_drought_diagnostic(&inputs, 5).expect("emits");
-        assert_eq!(diag.candidate_cache_size, 3);
-        assert_eq!(diag.candidate_cache_suppressed_count, 2);
         assert_eq!(diag.target_cooldown_active_count, 1);
         assert_eq!(diag.total_candidates_considered, 4); // 3 rejected + 1 returned.
-        assert_eq!(diag.starved_module_count, 0);
     }
 
+    /// Issue #1797: a pass with K cooldown-skipped targets reports K in the
+    /// diagnostic payload *and* under the documented reason name in the
+    /// breakdown it was built from — no fabricated zero.
     #[test]
-    fn diagnostic_reports_starved_module_count() {
-        let mut starvation = ModuleStarvationTracker::with_thresholds(2, 100);
-        starvation.record_failure("coordinated-structural", 0);
-        starvation.record_failure("coordinated-structural", 1);
-        starvation.record_failure("remove-neuron", 0);
-        starvation.record_failure("remove-neuron", 1);
-        // change-squash below threshold -> not starved.
-        starvation.record_failure("change-squash", 0);
+    fn cooldown_skipped_surfaces_in_diagnostic_and_breakdown() {
+        use crate::analysis::diagnostics::rejection_reasons::REJECTION_TARGET_COOLDOWN_SKIPPED;
+        use crate::analysis::target_failure_tracker::fold_target_cooldown_skips;
 
-        let breakdown = breakdown_with("below_threshold", 1);
+        const K: u32 = 6;
+        let mut breakdown = RejectionBreakdown::new();
+        fold_target_cooldown_skips(K, &mut breakdown);
+
         let inputs = DroughtInputs {
-            consecutive_failures: 6,
+            consecutive_failures: 5,
             rolling_success_rate: 0.0,
-            discovery_mode: DiscoveryMode::Conservative,
-            candidate_cache: None,
+            discovery_mode: DiscoveryMode::Normal,
             target_tracker: None,
-            current_epoch: 1,
-            target_cooldown_skipped: 0,
+            current_epoch: 0,
+            target_cooldown_skipped: K,
             rejection_breakdown: &breakdown,
             candidates_returned: 0,
-            starvation_tracker: Some(&starvation),
         };
 
         let diag = emit_drought_diagnostic(&inputs, 5).expect("emits");
-        assert_eq!(diag.starved_module_count, 2);
+        assert_eq!(diag.target_cooldown_skipped, K);
+        assert_eq!(
+            diag.dominant_rejection_reason.as_deref(),
+            Some(REJECTION_TARGET_COOLDOWN_SKIPPED),
+            "the cooldown skips must surface under the documented reason name"
+        );
+        assert_eq!(diag.dominant_rejection_count, K);
+        assert_eq!(diag.total_candidates_rejected, K);
     }
 }

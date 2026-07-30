@@ -24,12 +24,11 @@ use crate::observability::PhaseTimer;
 use rayon::prelude::*;
 
 use super::remove_neuron_bias_fold::{
-    BIAS_FOLD_GATE_TOLERANCE, evaluate_constant_neuron_bias_fold,
+    BIAS_FOLD_GATE_TOLERANCE, BiasFoldOutcome, evaluate_constant_neuron_bias_fold,
 };
 use super::remove_neuron_compensation::{
     ActivationCovariance, aligned_activations, best_weight_redistribution,
 };
-use super::remove_neuron_gain::estimate_remove_neuron_gain;
 use crate::types::DiscoverRecord;
 use crate::{ConstantNeuronBiasFoldJson, FoldedBiasDeltaJson, RemoveNeuronCompensationJson};
 
@@ -39,9 +38,8 @@ use super::constants::{
 };
 use super::diagnostics::rejection_reasons::{
     REJECTION_BELOW_EXPECTED_GAIN_FLOOR, REJECTION_BUDGET_TRUNCATED,
-    REJECTION_COORDINATED_TARGET_CAP_EXCEEDED, REJECTION_MODULE_STARVED,
+    REJECTION_COORDINATED_TARGET_CAP_EXCEEDED, REJECTION_MODULE_SKIPPED_QUALITY_SATISFIED,
 };
-use super::module_starvation_tracker::ModuleStarvationTracker;
 use super::module_weights::{DiscoveryModuleStatsJson, ModuleOutcomeTracker};
 use super::shared;
 use super::utils;
@@ -117,17 +115,45 @@ fn apply_coordinated_per_target_cap(
 }
 
 /// Override the reported gain of every single-op `RemoveNeuron` coordinated
-/// candidate with the honest, propagation-aware estimate (Issue #1530).
+/// candidate with the honest **net** creature-score benefit of the removal
+/// (Issue #1530, re-denominated by Issue #1812).
 ///
-/// Milestone #1516 merged [`estimate_remove_neuron_gain`] (PR #1523) but nothing
+/// Milestone #1516 merged
+/// [`estimate_remove_neuron_gain`](super::remove_neuron_gain::estimate_remove_neuron_gain)
+/// (PR #1523) but nothing
 /// in the live pipeline invoked it, so the emitted remove-neuron gain stayed the
 /// fabricated NEAT-AI `#2483` placeholder (`+0.17879` on creature `45a04ef1`,
-/// versus a measured `−0.00032`). This makes Discovery the source of truth: for
-/// each candidate whose **sole** operation is a `RemoveNeuron`, the reported
-/// `expected_creature_score_gain` is replaced with the propagation-aware
-/// estimate for that neuron, which attenuates a deep neuron's influence all the
-/// way to the output(s) and is signed (non-positive) — no fabricated large
-/// positive gain survives to crowd out realistic candidates.
+/// versus a measured `−0.00032`). Issue #1530 made Discovery the source of truth
+/// by writing the estimator's output here directly — but that output is a
+/// **unitless influence fraction, negated**, and the field is consumed as a
+/// creature-score *benefit* by the gain-descending ranking sort and by the
+/// downstream floor. That comparison was across two different quantities, so
+/// every sole-op removal was dropped by construction (Issue #1785 / #1810).
+///
+/// ## The sign/scale contract this function honours (Issue #1812)
+///
+/// The written value is
+/// [`removal_net_gain`](super::remove_neuron_net_gain::removal_net_gain):
+///
+/// ```text
+/// saving(u) = cost_of_growth × (1 + degree(u) / 10)   — exact, score units
+/// loss(u)   = |estimate_remove_neuron_gain(u)| × REMOVE_INFLUENCE_CALIBRATION
+/// written   = saving(u) − loss(u)                     — a net benefit, signable
+/// ```
+///
+/// The estimator keeps its sign and value; it is no longer the gain, it is the
+/// gain's cost term. `saving(u)` reuses
+/// [`calculate_removal_savings`](crate::focus::calculate_removal_savings) — the
+/// host's own `Score.ts` complexity penalty — so it is already exact in
+/// creature-score units and needs no calibration. The result is **positive only
+/// when the removal genuinely pays for itself**: a neuron carrying real
+/// downstream influence still yields a negative gain and is still rejected by
+/// the floor.
+///
+/// `cost_of_growth` is resolved through
+/// [`analysis_cost_of_growth`](super::remove_neuron_net_gain::analysis_cost_of_growth),
+/// the single-definition seam shared with the focus triage, because
+/// `AnalyzeParallelInput` carries no host value.
 ///
 /// Multi-operation coordinated candidates are left untouched: their gain
 /// reflects the combined effect of the whole atomic group, not a bare neuron
@@ -135,14 +161,12 @@ fn apply_coordinated_per_target_cap(
 /// returns `None`) are also left untouched.
 ///
 /// Returns the number of candidates whose gain was overridden, for diagnostics.
-// The estimator works in f64; the candidate carries f32. The gain is a small
-// value in `[-1, 0]`, well within f32 range, so the narrowing is intentional
-// precision loss, not overflow (Issue #873).
-#[allow(clippy::cast_possible_truncation)]
 pub fn apply_honest_remove_neuron_gain(
     creature: &CreatureJson,
     candidates: &mut [CoordinatedStructuralCandidateJson],
 ) -> usize {
+    let cost_of_growth = super::remove_neuron_net_gain::analysis_cost_of_growth();
+    let counts = crate::focus::SynapseCounts::new(creature);
     let mut overridden = 0;
     for candidate in candidates.iter_mut() {
         // A lone RemoveNeuron op is the only bare neuron removal; anything else
@@ -154,28 +178,49 @@ pub fn apply_honest_remove_neuron_gain(
             continue;
         };
 
-        if let Some(gain) = estimate_remove_neuron_gain(creature, neuron_uuid) {
-            candidate.expected_creature_score_gain = gain as f32;
+        if let Some(net_gain) = super::remove_neuron_net_gain::estimate_remove_neuron_net_gain(
+            creature,
+            &counts,
+            neuron_uuid,
+            cost_of_growth,
+        ) {
+            candidate.expected_creature_score_gain = net_gain;
             overridden += 1;
         }
     }
     overridden
 }
 
-/// `true` when the neuron identified by `uuid` is a constant neuron
-/// (Issue #1689).
+/// The accepted bias fold for `uuid`, or `None` when the neuron is not
+/// **measured** functionally constant over the recorded window (Issue #1779).
 ///
-/// Constant neurons carry no per-sample variance, so a bare removal is
-/// compensated by the mean-only **bias fold** (Issue #1623) rather than by
-/// weight redistribution. Routing by neuron class here keeps the two remedies
-/// from overlapping: [`apply_remove_neuron_compensation`] attaches
-/// redistribution only to variance-carrying neurons and leaves constant neurons
-/// for the bias-fold path.
-fn is_constant_neuron(creature: &CreatureJson, uuid: &str) -> bool {
-    creature
-        .neurons
-        .iter()
-        .any(|n| n.uuid == uuid && n.neuron_type.eq_ignore_ascii_case("constant"))
+/// This is the single routing seam shared by the two remove-neuron remedies, so
+/// they cannot overlap: a neuron with an accepted fold takes the #1623 bias-fold
+/// path ([`apply_constant_neuron_bias_fold`]) and is skipped by the #1559
+/// redistribution path ([`apply_remove_neuron_compensation`]); every other
+/// neuron takes redistribution.
+///
+/// Constancy is **measured**, not declared. The earlier gate (Issue #1689) asked
+/// for `neuron_type == "constant"` — the NEAT-AI input-side bias class — but
+/// every producer of a sole-op `RemoveNeuron` restricts itself to *hidden*
+/// neurons, so the gate never fired in production and a functionally-constant
+/// hidden neuron (the realistic case) was deleted with no fold at all. The fold
+/// already evaluates constancy itself: it derives the constant `c` from the
+/// recorded activations and rejects anything whose per-sample residual
+/// `|w·(a_i − c)|` exceeds [`BIAS_FOLD_GATE_TOLERANCE`], so its own acceptance is
+/// the honest predicate — a neuron that only *looks* constant is still rejected
+/// fail-loud, and one with no records cannot be verified at all.
+///
+/// A neuron with no outgoing synapses has nothing to fold: an empty fold is not
+/// a remedy, so it is not treated as constant here and routes normally.
+fn accepted_constant_bias_fold(
+    creature: &CreatureJson,
+    records: &[DiscoverRecord],
+    uuid: &str,
+) -> Option<BiasFoldOutcome> {
+    let outcome =
+        evaluate_constant_neuron_bias_fold(creature, records, uuid, BIAS_FOLD_GATE_TOLERANCE)?;
+    (outcome.accepted && !outcome.folded_targets.is_empty()).then_some(outcome)
 }
 
 /// Attach variance-aware weight-redistribution compensation to every single-op
@@ -198,9 +243,11 @@ fn is_constant_neuron(creature: &CreatureJson, uuid: &str) -> bool {
 /// `fully_compensable` flag so the applier can redistribute weight rather than
 /// fold the mean.
 ///
-/// Routing is by neuron class, not duplicated logic:
-/// - **Constant** neurons (no per-sample variance) are left untouched — they
-///   route to the #1623 bias-fold remedy.
+/// Routing is by **measured** constancy (Issue #1779), through the single
+/// `accepted_constant_bias_fold` seam rather than duplicated logic:
+/// - Neurons whose recorded activations are constant within the fold gate (no
+///   per-sample variance to redistribute) are left untouched — they route to the
+///   #1623 bias-fold remedy.
 /// - **Variance-carrying** neurons with a correlated shared-target survivor get
 ///   the redistribution remedy attached.
 ///
@@ -234,9 +281,10 @@ pub fn apply_remove_neuron_compensation(
             continue;
         };
 
-        // Route by neuron class: constant neurons carry no per-sample signal to
-        // redistribute — they are the #1623 bias-fold path, not this one.
-        if is_constant_neuron(creature, neuron_uuid) {
+        // Route by measured constancy (Issue #1779): a neuron whose recorded
+        // activations are constant within the fold gate carries no per-sample
+        // signal to redistribute — it is the #1623 bias-fold path, not this one.
+        if accepted_constant_bias_fold(creature, records, neuron_uuid).is_some() {
             continue;
         }
 
@@ -300,9 +348,14 @@ pub fn apply_remove_neuron_compensation(
 /// per-sample variance, so a plain bias fold is *fully compensable* and no
 /// survivor redistribution is needed.
 ///
-/// Routing is by neuron class, mirroring — and mutually exclusive with — the
-/// #1559 path:
-/// - **Constant** neurons (`neuron_type == "constant"`) take this bias-fold path.
+/// Routing is by **measured** constancy (Issue #1779), mirroring — and mutually
+/// exclusive with — the #1559 path:
+/// - Neurons whose recorded activations are constant within the gate take this
+///   bias-fold path, whatever their declared `neuron_type`. Gating on the
+///   declared type instead made this path unreachable: every producer of a
+///   sole-op `RemoveNeuron` emits **hidden** neurons, never the `"constant"`
+///   input-side class, so a functionally-constant hidden neuron was deleted with
+///   no fold.
 /// - **Variance-carrying** neurons are left untouched here; they route to
 ///   [`apply_remove_neuron_compensation`].
 ///
@@ -338,28 +391,16 @@ pub fn apply_constant_neuron_bias_fold(
             continue;
         };
 
-        // Route by neuron class: only constant neurons take the #1623 bias fold;
-        // variance-carrying neurons route to the #1559 redistribution remedy.
-        if !is_constant_neuron(creature, neuron_uuid) {
-            continue;
-        }
-
-        // Evaluate the fold behind the evaluate-before-accept gate. `None` means
-        // there are no recorded activations, so constancy cannot be verified; a
-        // rejected outcome means the neuron only *looks* constant (residual over
-        // tolerance). Both are fail-loud: no fold is emitted and the applier
-        // flags the removal rather than folding a mean — never deleted blind.
-        let Some(outcome) = evaluate_constant_neuron_bias_fold(
-            creature,
-            records,
-            neuron_uuid,
-            BIAS_FOLD_GATE_TOLERANCE,
-        ) else {
+        // Route by measured constancy (Issue #1779): evaluate the fold behind
+        // the evaluate-before-accept gate and take it only when the gate accepts.
+        // No records means constancy cannot be verified; a rejected outcome means
+        // the neuron only *looks* constant (residual over tolerance). Both are
+        // fail-loud: no fold is emitted and the applier flags the removal rather
+        // than folding a mean — never deleted blind. Variance-carrying neurons
+        // fall through to the #1559 redistribution remedy.
+        let Some(outcome) = accepted_constant_bias_fold(creature, records, neuron_uuid) else {
             continue;
         };
-        if !outcome.accepted {
-            continue;
-        }
 
         candidate.constant_neuron_bias_fold = Some(ConstantNeuronBiasFoldJson {
             constant_activation: outcome.constant_activation as f32,
@@ -481,10 +522,6 @@ pub struct DiscoveryModuleDetectionEntry {
     pub phase_name: &'static str,
     pub max_candidates: usize,
     pub result: Option<DiscoveryDetectionResult>,
-    /// `true` when this module was skipped because the per-(creature, module)
-    /// starvation tracker has it in active cooldown (Issue #1273). The merge
-    /// phase uses this flag to record a `module_starved` rejection.
-    pub starved: bool,
 }
 
 /// Collected detection results from all discovery modules (Issue #1004).
@@ -517,31 +554,20 @@ pub struct DiscoveryModuleDetectionResults {
 /// running indefinitely when the analysis time budget is exhausted.
 ///
 /// Call [`merge_discovery_module_results`] afterwards to merge into `syn`.
+///
+/// ## Removed: per-creature starvation cooldown (Issue #1793)
+///
+/// A `_with_starvation` variant used to take a `ModuleStarvationTracker` and a
+/// `current_epoch`. Its only production caller passed `None` / `0`, so the gate
+/// never fired; the tracker had no producer and could not have one at its
+/// documented per-`analyze_all` scope. Both parameters were removed with the
+/// tracker so the hard-coded pair cannot return — the population-wide module
+/// gate below is the surviving per-module suppressor.
 #[tracing::instrument(skip_all, fields(module_count = modules.len()))]
 pub fn detect_discovery_modules_parallel(
     modules: Vec<DiscoveryModuleSpec>,
     deadline: Option<SystemTime>,
     tracker: Option<&ModuleOutcomeTracker>,
-) -> DiscoveryModuleDetectionResults {
-    detect_discovery_modules_parallel_with_starvation(modules, deadline, tracker, None, 0)
-}
-
-/// Run all discovery module detection phases in parallel, applying both the
-/// population-wide module gate (Issue #1060) and the per-(creature, module)
-/// starvation cooldown (Issue #1273).
-///
-/// Identical contract to [`detect_discovery_modules_parallel`] except modules
-/// whose per-creature streak has tripped
-/// [`ModuleStarvationTracker::is_starved`] for `current_epoch` are skipped and
-/// flagged with `starved = true` on the returned entry so the merge phase
-/// records a `module_starved` rejection.
-#[tracing::instrument(skip_all, fields(module_count = modules.len()))]
-pub fn detect_discovery_modules_parallel_with_starvation(
-    modules: Vec<DiscoveryModuleSpec>,
-    deadline: Option<SystemTime>,
-    tracker: Option<&ModuleOutcomeTracker>,
-    starvation_tracker: Option<&ModuleStarvationTracker>,
-    current_epoch: u64,
 ) -> DiscoveryModuleDetectionResults {
     if modules.is_empty() {
         return DiscoveryModuleDetectionResults {
@@ -561,27 +587,6 @@ pub fn detect_discovery_modules_parallel_with_starvation(
     let entries: Vec<DiscoveryModuleDetectionEntry> = modules
         .into_par_iter()
         .map(|spec| {
-            // Issue #1273: Skip detection if the per-(creature, module) starvation
-            // tracker has the module in active cooldown.
-            if let Some(s) = starvation_tracker
-                && s.is_starved(&spec.module_name, current_epoch)
-            {
-                tracing::debug!(
-                    module = %spec.module_name,
-                    streak_threshold = s.failure_streak_threshold(),
-                    cooldown_epochs = s.cooldown_epochs(),
-                    "Skipping discovery module — per-creature starvation cooldown active \
-                     (Issue #1273)"
-                );
-                return DiscoveryModuleDetectionEntry {
-                    module_name: spec.module_name,
-                    phase_name: spec.phase_name,
-                    max_candidates: spec.max_candidates,
-                    result: None,
-                    starved: true,
-                };
-            }
-
             // Issue #1060: Skip detection if the module is gated (low success rate).
             if let Some(t) = tracker
                 && t.is_gated(&spec.module_name, MODULE_GATE_THRESHOLD)
@@ -596,7 +601,6 @@ pub fn detect_discovery_modules_parallel_with_starvation(
                     phase_name: spec.phase_name,
                     max_candidates: spec.max_candidates,
                     result: None,
-                    starved: false,
                 };
             }
 
@@ -612,7 +616,6 @@ pub fn detect_discovery_modules_parallel_with_starvation(
                     phase_name: spec.phase_name,
                     max_candidates: spec.max_candidates,
                     result: None,
-                    starved: false,
                 };
             }
 
@@ -642,7 +645,6 @@ pub fn detect_discovery_modules_parallel_with_starvation(
                 phase_name: spec.phase_name,
                 max_candidates: spec.max_candidates,
                 result,
-                starved: false,
             }
         })
         .collect();
@@ -673,18 +675,6 @@ pub fn detect_discovery_modules_parallel_with_starvation(
         }
     }
 
-    // Issue #1273: Log starved modules for observability.
-    let starved_count = entries.iter().filter(|e| e.starved).count();
-    if starved_count > 0 {
-        tracing::info!(
-            starved_count,
-            total = entries.len(),
-            current_epoch,
-            "Discovery detection: module(s) skipped by per-creature starvation cooldown \
-             (Issue #1273)"
-        );
-    }
-
     crate::watchdog::beat("analysis::analyze_all → parallel discovery detection finished");
 
     DiscoveryModuleDetectionResults { entries }
@@ -711,7 +701,10 @@ fn count_high_quality_candidates(syn: &shared::AnalyzeSynapsesResult, threshold:
 /// candidates already contain enough high-quality entries (at least
 /// [`QUALITY_SKIP_MIN_CANDIDATES`] candidates with gain above
 /// [`QUALITY_SKIP_GAIN_THRESHOLD`]). If so, remaining modules are skipped
-/// during the merge phase, saving post-processing time.
+/// during the merge phase, saving post-processing time. Each skipped module's
+/// discarded candidates are counted under
+/// [`REJECTION_MODULE_SKIPPED_QUALITY_SATISFIED`] so the drop is visible in the
+/// breakdown and classified as abundance rather than starvation (Issue #1799).
 pub fn merge_discovery_module_results(
     syn: &mut shared::AnalyzeSynapsesResult,
     detection_results: DiscoveryModuleDetectionResults,
@@ -724,14 +717,6 @@ pub fn merge_discovery_module_results(
 
     for entry in detection_results.entries {
         let candidates_produced = entry.result.as_ref().map_or(0, |r| r.candidates.len());
-
-        // Issue #1273: Record skip in the rejection breakdown when the module
-        // was gated out by the per-creature starvation cooldown.
-        if entry.starved {
-            syn.metadata
-                .rejection_breakdown
-                .record(REJECTION_MODULE_STARVED);
-        }
 
         // Record per-module stats in metadata from historical tracker (Issue #792).
         let historical = tracker.stats(&entry.module_name);
@@ -753,6 +738,13 @@ pub fn merge_discovery_module_results(
         // modules. Stats are still recorded for observability.
         if quality_skip_active {
             modules_skipped_by_quality += 1;
+            // Issue #1799: the skipped module's candidates are discarded
+            // wholesale. Count them (candidates, not modules) so the drop is
+            // visible in the breakdown and classified as abundance.
+            syn.metadata.rejection_breakdown.record_many_u32(
+                REJECTION_MODULE_SKIPPED_QUALITY_SATISFIED,
+                u32::try_from(candidates_produced).unwrap_or(u32::MAX),
+            );
             let finished = format!("analysis::analyze_all → {} finished", entry.module_name);
             crate::watchdog::beat(&finished);
             continue;

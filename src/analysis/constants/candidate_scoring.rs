@@ -219,87 +219,6 @@ pub const HIDDEN_SOURCE_INTERLEAVE_INTERVAL: usize = 3;
 pub const MIN_BOOST_SAMPLES: usize = 10;
 
 // =============================================================================
-// Adaptive Candidate-Cache Staleness Window (Issue #1203)
-// =============================================================================
-
-/// Divisor applied to the candidate-cache staleness window while the discovery
-/// pipeline is in [`crate::analysis::discovery_mode::DiscoveryMode::Conservative`]
-/// mode (Issue #1203).
-///
-/// Halving the window during a drought lets previously-failed candidates be
-/// re-evaluated twice as fast, instead of staying suppressed for the full
-/// 100-epoch default while the pipeline struggles to find any improvement.
-///
-/// Overridable via `NEAT_AI_DISCOVERY_STALENESS_CONSERVATIVE_DIVISOR`.
-///
-/// ## Valid Range
-/// Must be >= 1. Values above 8 reduce the effective window below the floor
-/// of 5 for any realistic base window.
-pub const STALENESS_CONSERVATIVE_DIVISOR: u64 = 2;
-
-/// Divisor applied to the candidate-cache staleness window during an extended
-/// drought — i.e. once `drought_failures` has met or exceeded
-/// `conservative_mode_max_epochs` and the pipeline has reverted to Normal mode
-/// without finding any improvement (Issue #1203).
-///
-/// Quartering the window is a last-ditch escape hatch before the
-/// operator-controlled reset path. The effective window never drops below 5
-/// epochs.
-///
-/// Overridable via `NEAT_AI_DISCOVERY_STALENESS_EXTENDED_DROUGHT_DIVISOR`.
-///
-/// ## Valid Range
-/// Must be >= 1. Values above 32 collapse the window to the 5-epoch floor for
-/// any realistic base window.
-pub const STALENESS_EXTENDED_DROUGHT_DIVISOR: u64 = 4;
-
-/// Floor applied to the effective staleness window after a divisor is applied
-/// (Issue #1203).
-///
-/// Prevents the window from collapsing so far that recently-failed candidates
-/// are re-tried within a single batch.
-pub const STALENESS_WINDOW_FLOOR: u64 = 5;
-
-/// Lower clamp for env-var overrides of the adaptive divisors.
-pub const STALENESS_DIVISOR_FLOOR: u64 = 1;
-
-/// Upper clamp for env-var overrides of the adaptive divisors. Values above
-/// this would collapse the window to the floor for any sensible base window.
-pub const STALENESS_DIVISOR_CEILING: u64 = 64;
-
-/// Returns the effective conservative-mode staleness divisor (Issue #1203).
-///
-/// Reads `NEAT_AI_DISCOVERY_STALENESS_CONSERVATIVE_DIVISOR` at call time so
-/// tests and operators can override the default without recompiling. Values
-/// outside `[STALENESS_DIVISOR_FLOOR, STALENESS_DIVISOR_CEILING]` are clamped.
-/// Unparsable or missing values fall back to
-/// [`STALENESS_CONSERVATIVE_DIVISOR`].
-#[must_use]
-pub fn staleness_conservative_divisor() -> u64 {
-    std::env::var("NEAT_AI_DISCOVERY_STALENESS_CONSERVATIVE_DIVISOR")
-        .ok()
-        .and_then(|v| v.trim().parse::<u64>().ok())
-        .unwrap_or(STALENESS_CONSERVATIVE_DIVISOR)
-        .clamp(STALENESS_DIVISOR_FLOOR, STALENESS_DIVISOR_CEILING)
-}
-
-/// Returns the effective extended-drought staleness divisor (Issue #1203).
-///
-/// Reads `NEAT_AI_DISCOVERY_STALENESS_EXTENDED_DROUGHT_DIVISOR` at call time
-/// so tests and operators can override the default without recompiling.
-/// Values outside `[STALENESS_DIVISOR_FLOOR, STALENESS_DIVISOR_CEILING]` are
-/// clamped. Unparsable or missing values fall back to
-/// [`STALENESS_EXTENDED_DROUGHT_DIVISOR`].
-#[must_use]
-pub fn staleness_extended_drought_divisor() -> u64 {
-    std::env::var("NEAT_AI_DISCOVERY_STALENESS_EXTENDED_DROUGHT_DIVISOR")
-        .ok()
-        .and_then(|v| v.trim().parse::<u64>().ok())
-        .unwrap_or(STALENESS_EXTENDED_DROUGHT_DIVISOR)
-        .clamp(STALENESS_DIVISOR_FLOOR, STALENESS_DIVISOR_CEILING)
-}
-
-// =============================================================================
 // Module Gating (Issue #1060)
 // =============================================================================
 
@@ -324,101 +243,6 @@ pub const MODULE_GATE_THRESHOLD: f64 = 0.005;
 /// Must be in (0.0, 1.0]. Values close to 1.0 make pre-filtering failures
 /// nearly as impactful as real ablation failures.
 pub const SOFT_FAILURE_WEIGHT: f64 = 0.5;
-
-// =============================================================================
-// Per-Creature, Per-Module Starvation Tracker (Issue #1273)
-// =============================================================================
-
-/// Consecutive per-(creature, module) failure count at which the module is
-/// temporarily disabled for that creature (Issue #1273).
-///
-/// Production discovery-cache analysis showed the failure cache
-/// contained 41 consecutive `coordinated-structural` failures and zero
-/// successes — that module monopolised ~91% of the candidate budget for the
-/// creature while producing nothing. The cross-population module gate
-/// (`MODULE_GATE_THRESHOLD`, Issue #1060) operates on aggregated success rates
-/// and cannot disable a single module for a single creature, and the
-/// creature-level Conservative mode (Issue #1132) biases module weights rather
-/// than fully skipping a module. This per-(creature, module) cooldown closes
-/// that gap.
-///
-/// Overridable via `NEAT_AI_DISCOVERY_MODULE_STARVATION_FAILURE_STREAK`.
-///
-/// ## Valid Range
-/// Must be >= 1. Values above 100 effectively disable starvation skipping.
-pub const MODULE_STARVATION_FAILURE_STREAK: u32 = 15;
-
-/// Minimum permitted failure-streak threshold after env-var override clamping
-/// (Issue #1273).
-pub const MODULE_STARVATION_FAILURE_STREAK_FLOOR: u32 = 1;
-
-/// Maximum permitted failure-streak threshold after env-var override clamping
-/// (Issue #1273).
-pub const MODULE_STARVATION_FAILURE_STREAK_CEILING: u32 = 1000;
-
-/// Number of epochs a starved module remains disabled for the affected
-/// creature before being re-armed (Issue #1273).
-///
-/// Once a module has hit
-/// [`MODULE_STARVATION_FAILURE_STREAK`] consecutive failures for a creature,
-/// its `detect_fn` is skipped for this many epochs. After the cooldown elapses
-/// (or a success is recorded for the same module from any source) the module
-/// is re-armed so the creature can probe it again.
-///
-/// Overridable via `NEAT_AI_DISCOVERY_MODULE_STARVATION_COOLDOWN_EPOCHS`.
-///
-/// ## Valid Range
-/// Must be >= 1. Values above `10_000` keep modules disabled longer than any
-/// realistic discovery session.
-pub const MODULE_STARVATION_COOLDOWN_EPOCHS: u64 = 10;
-
-/// Minimum permitted cooldown duration after env-var override clamping
-/// (Issue #1273).
-pub const MODULE_STARVATION_COOLDOWN_EPOCHS_FLOOR: u64 = 1;
-
-/// Maximum permitted cooldown duration after env-var override clamping
-/// (Issue #1273).
-pub const MODULE_STARVATION_COOLDOWN_EPOCHS_CEILING: u64 = 10_000;
-
-/// Returns the effective per-creature, per-module starvation failure-streak
-/// threshold (Issue #1273).
-///
-/// Reads `NEAT_AI_DISCOVERY_MODULE_STARVATION_FAILURE_STREAK` at call time so
-/// tests and operators can override the default without recompiling. Values
-/// outside `[MODULE_STARVATION_FAILURE_STREAK_FLOOR,
-/// MODULE_STARVATION_FAILURE_STREAK_CEILING]` are clamped. Unparsable or
-/// missing values fall back to [`MODULE_STARVATION_FAILURE_STREAK`].
-#[must_use]
-pub fn module_starvation_failure_streak() -> u32 {
-    std::env::var("NEAT_AI_DISCOVERY_MODULE_STARVATION_FAILURE_STREAK")
-        .ok()
-        .and_then(|v| v.trim().parse::<u32>().ok())
-        .unwrap_or(MODULE_STARVATION_FAILURE_STREAK)
-        .clamp(
-            MODULE_STARVATION_FAILURE_STREAK_FLOOR,
-            MODULE_STARVATION_FAILURE_STREAK_CEILING,
-        )
-}
-
-/// Returns the effective per-creature, per-module starvation cooldown
-/// duration in epochs (Issue #1273).
-///
-/// Reads `NEAT_AI_DISCOVERY_MODULE_STARVATION_COOLDOWN_EPOCHS` at call time
-/// so tests and operators can override the default without recompiling.
-/// Values outside `[MODULE_STARVATION_COOLDOWN_EPOCHS_FLOOR,
-/// MODULE_STARVATION_COOLDOWN_EPOCHS_CEILING]` are clamped. Unparsable or
-/// missing values fall back to [`MODULE_STARVATION_COOLDOWN_EPOCHS`].
-#[must_use]
-pub fn module_starvation_cooldown_epochs() -> u64 {
-    std::env::var("NEAT_AI_DISCOVERY_MODULE_STARVATION_COOLDOWN_EPOCHS")
-        .ok()
-        .and_then(|v| v.trim().parse::<u64>().ok())
-        .unwrap_or(MODULE_STARVATION_COOLDOWN_EPOCHS)
-        .clamp(
-            MODULE_STARVATION_COOLDOWN_EPOCHS_FLOOR,
-            MODULE_STARVATION_COOLDOWN_EPOCHS_CEILING,
-        )
-}
 
 // =============================================================================
 // Quality-Based Module Skipping (Issue #1074)
@@ -979,6 +803,25 @@ pub const ADAPTIVE_PROPOSAL_SIGN_FLIP_PROBABILITY: f32 = 0.15;
 /// Overridable via the `NEAT_AI_DISCOVERY_MIN_EXPECTED_GAIN` environment
 /// variable.
 ///
+/// ## Scale — this value is denominated in the *pre-calibration* prediction
+/// scale (Issue #1778)
+///
+/// This is the noise screen on the **raw prediction**: the smallest creature
+/// error reduction a candidate can predict before that prediction is dominated
+/// by round-off in the downstream evaluator. It is *not* denominated in the
+/// realised creature-score-delta scale that
+/// `expected_creature_score_gain` carries after
+/// [`NEURON_PREDICTION_CALIBRATION`] / [`SYNAPSE_PREDICTION_CALIBRATION`] have
+/// been applied.
+///
+/// Comparing it directly against a post-calibration gain — as the filters did
+/// before Issue #1778 — silently multiplied the screen's strictness by
+/// `1 / calibration`, i.e. 333× for add-neuron and 3333× for add-synapse, so no
+/// candidate the pipeline can produce could clear it. Call
+/// [`min_expected_gain_floor_for_neurons`] /
+/// [`min_expected_gain_floor_for_synapses`] at a post-calibration comparison
+/// site instead; they convert this value into the calibrated scale.
+///
 /// ## Valid Range
 /// Must be > 0.0. Values above 1e-3 may filter genuinely useful candidates.
 /// Values below 1e-8 defeat the purpose of the floor.
@@ -1015,6 +858,81 @@ pub fn min_expected_creature_score_gain() -> f32 {
             MIN_EXPECTED_CREATURE_SCORE_GAIN_FLOOR,
             MIN_EXPECTED_CREATURE_SCORE_GAIN_CEILING,
         )
+}
+
+/// Absolute backstop under the calibrated gain floor (Issue #1778).
+///
+/// [`calibrated_gain_floor`] converts the pre-calibration noise screen into the
+/// calibrated scale by multiplying by the per-type calibration constant. This
+/// backstop stops that conversion from ever opening the screen wider than the
+/// band in which the estimate is known to be uncorrelated with the outcome.
+///
+/// Evidence (`docs/analysis/candidate-rate-diagnosis-1777.md`): the production
+/// coordinated `change-squash` that estimated `4.17e-10` realised `-8.65e-4` —
+/// an actively harmful change whose estimate carried no usable signal, and the
+/// exact false acceptance the Issue #1740 guard tests exist to prevent. `1e-9`
+/// sits above that whole collapsed band while remaining two orders below the
+/// smallest realised *accepted* delta (`1.95e-7`), so it rejects noise without
+/// touching the achievable band.
+///
+/// ## Valid Range
+/// Must be > 0.0 and well below the smallest realised accepted delta
+/// (`~1.95e-7`). Values above 1e-7 would re-reject the achievable band.
+pub const GAIN_FLOOR_NOISE_BACKSTOP: f32 = 1e-9;
+
+/// Convert the pre-calibration noise screen into the calibrated scale
+/// (Issue #1778).
+///
+/// `expected_creature_score_gain` reaches the add-neuron / add-synapse floor
+/// filters *after* the fixed per-type calibration constant has rescaled it from
+/// the prediction scale into the realised creature-score-delta scale. The
+/// screen itself ([`min_expected_creature_score_gain`]) is denominated in the
+/// prediction scale, so it must be rescaled the same way before the comparison
+/// is meaningful.
+///
+/// Only the **fixed, type-level** calibration constant is divided out here. The
+/// per-creature calibration *correction* (`calibration_correction.rs`, Issue
+/// #1131) stays on the candidate side deliberately: it is evidence that *this
+/// creature's* predictions over-shoot, so tightening acceptance in response is
+/// the intended behaviour. The base constant is not evidence about a candidate
+/// at all — it differs 10× between add-neuron and add-synapse purely by
+/// candidate *type*, and leaving it only on the candidate side made the floor
+/// 10× stricter for synapses for no reason connected to their merit.
+///
+/// Returns `0.0` when the screen is configured off (`0.0` is the documented
+/// "disable the floor" override). A `calibration` outside `(0.0, 1.0]` is not a
+/// units conversion, so the unconverted screen is returned rather than a
+/// silently widened one.
+#[must_use]
+pub fn calibrated_gain_floor(calibration: f32) -> f32 {
+    let configured = min_expected_creature_score_gain();
+    if configured <= 0.0 {
+        return 0.0;
+    }
+    if !calibration.is_finite() || calibration <= 0.0 || calibration > 1.0 {
+        return configured;
+    }
+    (configured * calibration).max(GAIN_FLOOR_NOISE_BACKSTOP)
+}
+
+/// Effective post-calibration expected-gain floor for add-neuron candidates
+/// (Issue #1778).
+///
+/// [`calibrated_gain_floor`] applied to [`NEURON_PREDICTION_CALIBRATION`]:
+/// `1e-5 × 0.003 = 3e-8` at the default screen.
+#[must_use]
+pub fn min_expected_gain_floor_for_neurons() -> f32 {
+    calibrated_gain_floor(NEURON_PREDICTION_CALIBRATION)
+}
+
+/// Effective post-calibration expected-gain floor for add-synapse candidates
+/// (Issue #1778).
+///
+/// [`calibrated_gain_floor`] applied to [`SYNAPSE_PREDICTION_CALIBRATION`]:
+/// `1e-5 × 0.0003 = 3e-9` at the default screen.
+#[must_use]
+pub fn min_expected_gain_floor_for_synapses() -> f32 {
+    calibrated_gain_floor(SYNAPSE_PREDICTION_CALIBRATION)
 }
 
 // =============================================================================
@@ -1441,49 +1359,139 @@ pub const MICRO_NUDGE_VARIANT_BOOST: f32 = 1.5;
 pub const REMOVAL_CANDIDATE_BOOST: f32 = 1.5;
 
 /// Minimum net improvement required for a `remove-low-impact` candidate to
-/// survive (Issue #1142).
+/// survive, **in units of `costOfGrowth`** (Issues #1142, #1814).
 ///
-/// Production discovery-cache analysis (failure cache entry
-/// `v2_remove-low-impact_0ce92a87-a048-49d0-9b53-43487d123817.json`) captured a
-/// removal candidate with:
-/// - `boosted_savings = 1.20e-7`
-/// - `activation_weighted_impact = 1.14e-7`
-/// - `net_improvement = +6.64e-8`
-/// - `actualErrorReduction = -2.39e-7` (the removal harmed the creature)
+/// # Why the floor is denominated, not absolute (Issue #1814)
 ///
-/// A predicted net improvement of ~6e-8 is numerically indistinguishable from
-/// floating-point noise — the `REMOVAL_CANDIDATE_BOOST` of 1.5× on raw savings
-/// is what pushed that candidate above the `savings > impact` gate. Dropping
-/// candidates whose `net_improvement` is below this floor prevents
-/// boost-inflated noise from reaching the FFI response.
+/// The screened quantity is
+/// `boostedSavings − contribution`, and `boostedSavings` is
+/// `REMOVAL_CANDIDATE_BOOST × costOfGrowth × (1 + degree/10)` — **linear in the
+/// host-supplied `costOfGrowth`**. Screening it with an absolute `f32` compared
+/// two quantities on different scales: at the shipped default
+/// [`DEFAULT_COST_OF_GROWTH`](crate::focus::DEFAULT_COST_OF_GROWTH) of `1e-7` the
+/// old absolute `1e-5` floor needed a **657-synapse** hidden neuron with zero
+/// contribution to clear it, so it rejected every neuron the production
+/// population actually contains. Worse, any host-side change to `costOfGrowth`
+/// silently rescaled the gate's strictness by the same factor.
 ///
-/// The default matches `COORDINATED_MIN_EXPECTED_GAIN` (1e-5) so that
-/// remove-low-impact candidates face at least the same floor as coordinated
-/// structural candidates (Issue #1110).
+/// Expressing the floor as a multiple of `costOfGrowth` makes that coupling
+/// explicit and scale-invariant: the same neuron gets the same verdict whatever
+/// `costOfGrowth` the host sends. This mirrors Gate 1's
+/// [`REMOVAL_NET_GAIN_FLOOR_UNITS`] on the analysis path — the shared
+/// denomination decided in `docs/analysis/remove-neuron-gain-scale-1785.md`.
 ///
-/// Overridable via the `NEAT_AI_DISCOVERY_REMOVE_LOW_IMPACT_NOISE_FLOOR`
-/// environment variable.
+/// # Why `1.0` — one hidden neuron's complexity cost
+///
+/// A removal must be worth at least one whole hidden neuron of complexity, net
+/// of the contribution it takes with it. The value is bracketed, not picked:
+///
+/// - **Above `0.664`**, so the #1142 numerical-noise class is still rejected.
+///   Production discovery-cache entry
+///   `v2_remove-low-impact_0ce92a87-a048-49d0-9b53-43487d123817.json` captured
+///   `boosted_savings = 1.20e-7`, `activation_weighted_impact = 1.14e-7`,
+///   `net_improvement = +6.64e-8` and `actualErrorReduction = -2.39e-7` (the
+///   removal *harmed* the creature). At the shipped
+///   [`DEFAULT_COST_OF_GROWTH`](crate::focus::DEFAULT_COST_OF_GROWTH) that net
+///   is `0.664` units, so a floor of `1.0` unit rejects it with 1.5× margin —
+///   the #1142 guarantee is preserved, re-denominated.
+/// - **Below `1.5`**, so a zero-contribution orphan stays prunable: with no
+///   synapses its net is exactly `REMOVAL_CANDIDATE_BOOST × costOfGrowth`
+///   = `1.5` units. A rule that cannot prune a dead neuron has failed at its
+///   only certain case.
+///
+/// # Break-even degree (replaces the old 657)
+///
+/// With zero contribution the net is `1.5 × (1 + degree/10)` units, which
+/// exceeds `1.0` unit at **degree 0** — every zero-contribution hidden neuron
+/// now clears the floor, at any degree and any `costOfGrowth`. The floor instead
+/// bounds the *contribution* a neuron may carry: it survives while
+/// `contribution ≤ costOfGrowth × (0.5 + 0.15 × degree)`, e.g. `2.3e-7` for a
+/// 12-synapse neuron at the shipped default.
+///
+/// # Overrides
+///
+/// Both are read at call time by [`remove_low_impact_noise_floor`]:
+/// `NEAT_AI_DISCOVERY_REMOVE_LOW_IMPACT_NOISE_FLOOR_UNITS` sets this multiplier,
+/// and the pre-#1814 `NEAT_AI_DISCOVERY_REMOVE_LOW_IMPACT_NOISE_FLOOR` still
+/// pins an **absolute** floor verbatim (including `0.0` to disable it).
 ///
 /// ## Valid Range
-/// Must be > 0.0. Values above 1e-3 may filter genuinely useful removals.
-/// Values below 1e-8 defeat the purpose of the floor.
-pub const REMOVE_LOW_IMPACT_NOISE_FLOOR: f32 = 1e-5;
+/// Must be in (0.664, 1.5). Below `0.664` the #1142 noise class leaks through;
+/// at or above `1.5` a zero-contribution orphan can no longer be pruned.
+pub const REMOVE_LOW_IMPACT_NOISE_FLOOR_UNITS: f32 = 1.0;
 
-/// Return the effective remove-low-impact noise-floor (Issue #1142).
+/// Return the effective remove-low-impact noise-floor for a given
+/// `cost_of_growth` (Issues #1142, #1814).
 ///
-/// Reads `NEAT_AI_DISCOVERY_REMOVE_LOW_IMPACT_NOISE_FLOOR` at call time so
-/// tests and operators can override the default without recompiling. `0.0`
-/// is accepted as a valid "disable the floor" value for tests that exercise
-/// the pre-#1142 impact/savings contract at tiny magnitudes. A value that
-/// fails to parse, is non-finite, or is negative falls back to the
-/// compile-time default [`REMOVE_LOW_IMPACT_NOISE_FLOOR`].
+/// Returns `max(REMOVE_LOW_IMPACT_NOISE_FLOOR_UNITS × cost_of_growth,
+/// GAIN_FLOOR_NOISE_BACKSTOP)` — the same shape, and the same backstop, as
+/// Gate 1's [`removal_net_gain_floor`]. The backstop stops a host sending a
+/// vanishing `cost_of_growth` from opening the screen into the band where the
+/// arithmetic is pure floating-point noise; it binds only below
+/// `cost_of_growth = 1e-9`.
+///
+/// A non-finite or non-positive `cost_of_growth` is a caller bug (#1807 owns
+/// validating it) and cannot produce a meaningful saving, so the backstop alone
+/// is returned rather than a silently widened — or `NaN` — floor.
+///
+/// # Overrides
+///
+/// * `NEAT_AI_DISCOVERY_REMOVE_LOW_IMPACT_NOISE_FLOOR` — an **absolute** floor,
+///   returned verbatim and unscaled. Preserved from #1142 so existing operator
+///   and test overrides keep their meaning; `0.0` still disables the floor.
+///   Takes precedence over the units override.
+/// * `NEAT_AI_DISCOVERY_REMOVE_LOW_IMPACT_NOISE_FLOOR_UNITS` — the multiplier on
+///   `cost_of_growth`, replacing [`REMOVE_LOW_IMPACT_NOISE_FLOOR_UNITS`]. `0.0`
+///   disables the floor.
+///
+/// A value that fails to parse, is non-finite, or is negative is ignored and the
+/// compile-time default applies.
 #[must_use]
-pub fn remove_low_impact_noise_floor() -> f32 {
-    std::env::var("NEAT_AI_DISCOVERY_REMOVE_LOW_IMPACT_NOISE_FLOOR")
+pub fn remove_low_impact_noise_floor(cost_of_growth: f32) -> f32 {
+    if let Some(absolute) = env_f32_non_negative("NEAT_AI_DISCOVERY_REMOVE_LOW_IMPACT_NOISE_FLOOR")
+    {
+        return absolute;
+    }
+
+    let units = env_f32_non_negative("NEAT_AI_DISCOVERY_REMOVE_LOW_IMPACT_NOISE_FLOOR_UNITS")
+        .unwrap_or(REMOVE_LOW_IMPACT_NOISE_FLOOR_UNITS);
+
+    if units == 0.0 {
+        return 0.0;
+    }
+    if !cost_of_growth.is_finite() || cost_of_growth <= 0.0 {
+        return GAIN_FLOOR_NOISE_BACKSTOP;
+    }
+    (units * cost_of_growth).max(GAIN_FLOOR_NOISE_BACKSTOP)
+}
+
+/// Read a finite, non-negative `f32` from `name`, or `None` when unset or
+/// invalid (Issue #1814).
+fn env_f32_non_negative(name: &str) -> Option<f32> {
+    std::env::var(name)
         .ok()
         .and_then(|v| v.trim().parse::<f32>().ok())
         .filter(|v| v.is_finite() && *v >= 0.0)
-        .unwrap_or(REMOVE_LOW_IMPACT_NOISE_FLOOR)
+}
+
+/// Lock protecting every test that reads or writes either
+/// `NEAT_AI_DISCOVERY_REMOVE_LOW_IMPACT_NOISE_FLOOR` override (Issues #1142,
+/// #1767, #1814).
+///
+/// The whole crate shares one lock, so a constants test mutating the env-var can
+/// never race a focus-triage test that depends on the default floor.
+///
+/// Poisoning is tolerated deliberately: one failing test would otherwise
+/// cascade into a `PoisonError` panic in every other test holding the lock,
+/// hiding the single real failure behind a wall of unrelated ones.
+#[cfg(test)]
+pub(crate) fn noise_floor_env_lock() -> std::sync::MutexGuard<'static, ()> {
+    use std::sync::{Mutex, OnceLock, PoisonError};
+    static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    ENV_LOCK
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
 }
 
 // =============================================================================
@@ -1608,3 +1616,222 @@ pub const LOGISTIC_CALIBRATION_STEEPNESS: f32 = 8.0;
 /// Must be in (0.2, 0.9). Values below 0.3 do not sufficiently discount
 /// moderate ratios. Values above 0.8 discount too aggressively.
 pub const LOGISTIC_CALIBRATION_MIDPOINT: f32 = 0.6;
+
+// =============================================================================
+// Sole-op remove-neuron net-gain screen (Issue #1812, decided by Issue #1811)
+// =============================================================================
+
+/// Converts a neuron's unitless propagation-aware influence fraction into a
+/// creature-score delta, for the sole-op `RemoveNeuron` net-gain rule
+/// (Issue #1812).
+///
+/// `estimate_remove_neuron_gain` emits `−influence`, a dimensionless fraction of
+/// output sensitivity in `[0, 1]` — not a creature-score quantity. This constant
+/// is the missing unit conversion, mirroring what
+/// [`NEURON_PREDICTION_CALIBRATION`] does for the add-neuron path, and it is set
+/// to the same value: it is the only measured neuron-level → creature-level
+/// conversion in the repository, derived from the same production population
+/// (#891/#1056), and it is the larger of the two measured calibrations, which
+/// makes the removal screen *stricter* — the conservative default while removal
+/// outcomes remain unmeasured.
+///
+/// **Interim value.** No removal has ever survived either gate (#1810), so this
+/// cannot yet be fitted from realised removal outcomes; #1815's end-to-end guard
+/// supplies the first ones. The fixture verdicts are invariant to it for every
+/// value above `1.03e-6`, so no verdict rests on the exact number — see
+/// `docs/analysis/remove-neuron-gain-scale-1785.md`.
+///
+/// **Applied bare.** Unlike the add path, the per-creature
+/// `calibration_correction` is deliberately *not* applied on top. That
+/// correction is clamped to `[0.001, 1.0]` so it only ever discounts, and the
+/// calibrated quantity here is a **cost**: discounting it would shrink the
+/// penalty and make removals easier to accept, inverting the correction's safety
+/// direction.
+///
+/// ## Valid Range
+/// Must be in (0.0, 1.0]. Values below `1.03e-6` start admitting neurons that
+/// carry real downstream influence.
+pub const REMOVE_INFLUENCE_CALIBRATION: f32 = NEURON_PREDICTION_CALIBRATION;
+
+/// Acceptance margin for a sole-op `RemoveNeuron`, in units of `costOfGrowth`
+/// (Issue #1812).
+///
+/// `0.5` is half of one hidden neuron's complexity cost, bracketed rather than
+/// picked:
+///
+/// - **Below `1.0`**, because a zero-influence orphan nets exactly
+///   `1.0 × costOfGrowth` — the smallest unambiguously free removal that exists.
+///   A floor at or above one neuron's cost rejects it, and a rule that cannot
+///   prune a dead neuron has failed at its only certain case.
+/// - **Above `0.0`**, because at zero a removal whose estimated loss exactly
+///   cancels its saving is accepted, spending the host's ablation budget on a
+///   break-even change with no margin for estimator error.
+///
+/// ## Valid Range
+/// Must be in (0.0, 1.0). At `1.0` the orphan case becomes an exact-equality
+/// comparison in `f32`.
+pub const REMOVAL_NET_GAIN_FLOOR_UNITS: f32 = 0.5;
+
+/// The acceptance floor for a sole-op `RemoveNeuron` candidate's
+/// **net** `expected_creature_score_gain` (Issue #1812).
+///
+/// Sole-op removals are screened here instead of against
+/// [`coordinated_post_discount_noise_floor`]: their gain is
+/// `saving − calibrated influence loss`, denominated in units of
+/// `cost_of_growth` rather than on the add-path prediction scale, so the shared
+/// floor is not a comparison between like quantities. The shared floor keeps its
+/// value and still governs every other candidate type and every multi-op group
+/// — this replaces it for one candidate type, it does not drop it.
+///
+/// Returns `max(REMOVAL_NET_GAIN_FLOOR_UNITS × cost_of_growth,
+/// GAIN_FLOOR_NOISE_BACKSTOP)`. The backstop stops a host sending a tiny
+/// `cost_of_growth` from opening the screen into the band where the estimate is
+/// uncorrelated with the outcome; it binds only below `cost_of_growth = 2e-9`.
+/// A non-finite or non-positive `cost_of_growth` is a caller bug and cannot
+/// produce a meaningful saving, so the backstop alone is returned rather than a
+/// silently widened (or `NaN`) floor.
+#[must_use]
+pub fn removal_net_gain_floor(cost_of_growth: f32) -> f32 {
+    if !cost_of_growth.is_finite() || cost_of_growth <= 0.0 {
+        return GAIN_FLOOR_NOISE_BACKSTOP;
+    }
+    (REMOVAL_NET_GAIN_FLOOR_UNITS * cost_of_growth).max(GAIN_FLOOR_NOISE_BACKSTOP)
+}
+
+// =============================================================================
+// Unit tests — remove-low-impact noise floor denomination (Issue #1814)
+// =============================================================================
+
+#[cfg(test)]
+mod remove_low_impact_noise_floor_tests {
+    use super::*;
+
+    const ABSOLUTE_ENV: &str = "NEAT_AI_DISCOVERY_REMOVE_LOW_IMPACT_NOISE_FLOOR";
+    const UNITS_ENV: &str = "NEAT_AI_DISCOVERY_REMOVE_LOW_IMPACT_NOISE_FLOOR_UNITS";
+
+    /// Clear both overrides so a test starts from the compile-time default.
+    fn clear_overrides() {
+        // SAFETY: every caller holds `noise_floor_env_lock()`, so no other test
+        // touches the environment concurrently.
+        unsafe {
+            std::env::remove_var(ABSOLUTE_ENV);
+            std::env::remove_var(UNITS_ENV);
+        }
+    }
+
+    /// The floor is a multiple of `costOfGrowth`, so a 10× change in
+    /// `costOfGrowth` moves the threshold by exactly 10× — the property that
+    /// makes the screen scale-invariant (Issue #1814).
+    #[test]
+    fn floor_is_linear_in_cost_of_growth() {
+        let _guard = noise_floor_env_lock();
+        clear_overrides();
+
+        assert!((remove_low_impact_noise_floor(1e-7) - 1e-7).abs() < 1e-12);
+        assert!((remove_low_impact_noise_floor(1e-6) - 1e-6).abs() < 1e-11);
+        assert!((remove_low_impact_noise_floor(1e-4) - 1e-4).abs() < 1e-9);
+    }
+
+    /// A vanishing, non-finite or non-positive `costOfGrowth` cannot widen the
+    /// screen into pure floating-point noise: the shared backstop applies.
+    #[test]
+    fn backstop_clamps_degenerate_cost_of_growth() {
+        let _guard = noise_floor_env_lock();
+        clear_overrides();
+
+        for degenerate in [1e-12_f32, 0.0, -1.0, f32::NAN, f32::INFINITY] {
+            assert!(
+                (remove_low_impact_noise_floor(degenerate) - GAIN_FLOOR_NOISE_BACKSTOP).abs()
+                    < 1e-14,
+                "costOfGrowth {degenerate} must fall back to the noise backstop"
+            );
+        }
+    }
+
+    /// The pre-#1814 absolute override still pins the threshold verbatim, at
+    /// any `costOfGrowth` — the #1142 operator escape hatch is preserved.
+    #[test]
+    fn absolute_env_override_is_preserved() {
+        let _guard = noise_floor_env_lock();
+        clear_overrides();
+        // SAFETY: env access is serialised via `noise_floor_env_lock()`.
+        unsafe {
+            std::env::set_var(ABSOLUTE_ENV, "3e-4");
+        }
+        let pinned_low = remove_low_impact_noise_floor(1e-7);
+        let pinned_high = remove_low_impact_noise_floor(1e-3);
+
+        // `0.0` still disables the floor entirely (the pre-#1814 test path).
+        // SAFETY: env access is serialised via `noise_floor_env_lock()`.
+        unsafe {
+            std::env::set_var(ABSOLUTE_ENV, "0.0");
+        }
+        let disabled = remove_low_impact_noise_floor(1e-7);
+        clear_overrides();
+
+        assert!((pinned_low - 3e-4).abs() < 1e-9, "got {pinned_low:e}");
+        assert!((pinned_high - 3e-4).abs() < 1e-9, "got {pinned_high:e}");
+        assert!(
+            (disabled - 0.0).abs() < f32::EPSILON,
+            "0.0 must disable the floor, got {disabled:e}"
+        );
+    }
+
+    /// The new units override replaces the multiplier and keeps scaling with
+    /// `costOfGrowth`; the absolute override wins when both are set.
+    #[test]
+    fn units_env_override_scales_and_yields_to_absolute() {
+        let _guard = noise_floor_env_lock();
+        clear_overrides();
+        // SAFETY: env access is serialised via `noise_floor_env_lock()`.
+        unsafe {
+            std::env::set_var(UNITS_ENV, "2.0");
+        }
+        let scaled_low = remove_low_impact_noise_floor(1e-7);
+        let scaled_high = remove_low_impact_noise_floor(1e-6);
+
+        // SAFETY: env access is serialised via `noise_floor_env_lock()`.
+        unsafe {
+            std::env::set_var(ABSOLUTE_ENV, "5e-6");
+        }
+        let absolute_wins = remove_low_impact_noise_floor(1e-7);
+        clear_overrides();
+
+        assert!((scaled_low - 2e-7).abs() < 1e-12, "got {scaled_low:e}");
+        assert!((scaled_high - 2e-6).abs() < 1e-11, "got {scaled_high:e}");
+        assert!(
+            (absolute_wins - 5e-6).abs() < 1e-11,
+            "got {absolute_wins:e}"
+        );
+    }
+
+    /// An unparsable, negative or non-finite override is ignored rather than
+    /// silently disabling the screen.
+    #[test]
+    fn invalid_overrides_fall_back_to_the_default() {
+        let _guard = noise_floor_env_lock();
+        for invalid in ["not-a-number", "-1e-6", "NaN", ""] {
+            clear_overrides();
+            // SAFETY: env access is serialised via `noise_floor_env_lock()`.
+            unsafe {
+                std::env::set_var(ABSOLUTE_ENV, invalid);
+                std::env::set_var(UNITS_ENV, invalid);
+            }
+            let floor = remove_low_impact_noise_floor(1e-7);
+            assert!(
+                (floor - 1e-7).abs() < 1e-12,
+                "override {invalid:?} must be ignored, got {floor:e}"
+            );
+        }
+        clear_overrides();
+    }
+
+    /// The shipped multiplier stays inside the bracket its doc comment claims:
+    /// strict enough to reject the #1142 `6.64e-8`-class net improvement at the
+    /// default `costOfGrowth`, loose enough to prune a zero-contribution orphan.
+    #[test]
+    fn shipped_units_sit_inside_the_documented_bracket() {
+        const { assert!(REMOVE_LOW_IMPACT_NOISE_FLOOR_UNITS > 0.664) };
+        const { assert!(REMOVE_LOW_IMPACT_NOISE_FLOOR_UNITS < REMOVAL_CANDIDATE_BOOST) };
+    }
+}

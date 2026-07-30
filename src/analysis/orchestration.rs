@@ -17,11 +17,13 @@ use crate::observability::{
 use crate::{AnalyzeAllInput, AnalyzeNeuronsInput, AnalyzeSynapsesInput};
 
 use super::cost_function_hint::CostFunctionHint;
+use super::diagnostics::{RejectionBreakdown, rejection_reasons};
 use super::shared::{AnalyzeAllResult, AnalyzeNeuronsResult, AnalyzeSynapsesResult};
 use super::task_descriptor::TaskDescriptor;
 use super::{
-    cache, candidate_aggregation, candidate_compression, discovery_dispatch, module_dispatch_specs,
-    module_weights, neuron, neuron_fingerprint, synapse, utils,
+    cache, candidate_aggregation, candidate_compression, discovery_dispatch,
+    fingerprint_skip_escape, module_dispatch_specs, module_weights, neuron, neuron_fingerprint,
+    synapse, utils,
 };
 
 /// Aggregate rejection counts from synapse `no_candidate_reasons` into the
@@ -86,6 +88,44 @@ fn aggregate_neuron_rejection_breakdown(neu: &mut AnalyzeNeuronsResult) {
         + u32::try_from(neu.metadata.candidates_returned).unwrap_or(u32::MAX);
     neu.metadata.top_level_summary =
         top_level_summary(&neu.metadata.rejection_breakdown, Some(denom));
+}
+
+/// Total focus targets dropped by the per-target cooldown filter across the
+/// whole pass (Issue #1797).
+///
+/// Each surface filters its own focus order, so the pass total is the sum of
+/// the two phase counts; a surface that did not run contributes nothing. This
+/// is what feeds the drought diagnostic's `target_cooldown_skipped` field,
+/// replacing the hard-coded `0` the diagnostic used to report.
+fn pass_target_cooldown_skipped(
+    synapse: Option<&super::shared::SynapseAnalysisMetadata>,
+    neuron: Option<&super::shared::NeuronAnalysisMetadata>,
+) -> u32 {
+    let synapse_skipped = synapse.map_or(0, |m| m.target_cooldown_skipped);
+    let neuron_skipped = neuron.map_or(0, |m| m.target_cooldown_skipped);
+    synapse_skipped.saturating_add(neuron_skipped)
+}
+
+/// Build the pass-level rejection breakdown, seeded with the focus neurons the
+/// structural fingerprint cache skipped this pass (Issue #1781, #1801).
+///
+/// A skipped focus neuron was never analysed, so it could not produce a
+/// proposal — its absence must not read as "the gate rejected it"
+/// (`REJECTION_FINGERPRINT_UNCHANGED` is in
+/// [`UPSTREAM_REJECTION_REASONS`](super::candidate_starvation::UPSTREAM_REJECTION_REASONS)).
+/// #1781 counted only the whole-pass skip; the far more common partial skip
+/// (some focus neurons unchanged, the rest analysed) stayed silent. Every
+/// `analyze_all` return path builds its breakdown here, so both cases are
+/// visible and — the returns being mutually exclusive — the same hits can never
+/// be counted twice. Zero hits yields an empty breakdown, because
+/// [`RejectionBreakdown::record_many_u32`] ignores a zero count.
+fn pass_breakdown_with_fingerprint_skips(fingerprint_cache_hits: usize) -> RejectionBreakdown {
+    let mut breakdown = RejectionBreakdown::new();
+    breakdown.record_many_u32(
+        rejection_reasons::REJECTION_FINGERPRINT_UNCHANGED,
+        u32::try_from(fingerprint_cache_hits).unwrap_or(u32::MAX),
+    );
+    breakdown
 }
 
 /// Extract a human-readable message from a panic payload (Issue #1087).
@@ -297,6 +337,19 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
     // so that a prior SIGTERM does not immediately abort this invocation.
     crate::cancellation::reset_cancellation();
 
+    // Issue #1790: advance the global target-cooldown epoch exactly once per
+    // discovery pass, at the head of the pass. Both `apply_target_cooldown`
+    // call sites (neuron preparation and synapse orchestration) read the epoch
+    // off this tracker later in the pass, so advancing here — rather than
+    // inside each — gives them one consistent value and moves the counter by
+    // exactly one per pass. Without this the counter never left `0` and no
+    // cooldown could ever expire.
+    let pass_epoch = super::target_failure_tracker::advance_global_epoch();
+    tracing::debug!(
+        pass_epoch,
+        "Issue #1790: advanced the global target-cooldown epoch for this discovery pass"
+    );
+
     // Phase timer for total analysis (Issue #214). Also drives the consolidated
     // per-cycle deadline-consumption breakdown total (Issue #1409).
     let total_timer = PhaseTimer::new("total_analysis");
@@ -330,9 +383,29 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
     let cost_hint: CostFunctionHint = task_descriptor.cost_function_hint();
 
     // Issue #490: Compute current fingerprints and filter unchanged neurons.
+    // Issue #1781: the structural fingerprint cache is released while the
+    // creature is in a drought — the topology cannot change while nothing is
+    // accepted, so the cache would otherwise skip every focus neuron pass after
+    // pass, ignoring freshly recorded data.
     let current_fingerprints = neuron_fingerprint::compute_neuron_fingerprints(&input.creature);
+    let fingerprint_cache_bypassed = fingerprint_skip_escape::should_bypass_fingerprint_cache(
+        input.discovery_outcome_log.as_ref(),
+        fingerprint_skip_escape::DEFAULT_FINGERPRINT_SKIP_DROUGHT_EPOCHS,
+    );
+    if fingerprint_cache_bypassed && input.previous_neuron_fingerprints.is_some() {
+        tracing::warn!(
+            focus_neurons = input.focus_neurons.len(),
+            drought_epochs = fingerprint_skip_escape::DEFAULT_FINGERPRINT_SKIP_DROUGHT_EPOCHS,
+            "Issue #1781: drought escape hatch — ignoring previousNeuronFingerprints and \
+             re-analysing the full focus set"
+        );
+    }
     let (effective_focus_neurons, fingerprint_cache_hits, fingerprint_cache_misses) =
-        if let Some(prev_fp) = &input.previous_neuron_fingerprints {
+        if let Some(prev_fp) = input
+            .previous_neuron_fingerprints
+            .as_ref()
+            .filter(|_| !fingerprint_cache_bypassed)
+        {
             let filter_result = neuron_fingerprint::filter_changed_neurons(
                 &input.focus_neurons,
                 &input.creature,
@@ -369,14 +442,20 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
             fingerprint_cache_hits,
             fingerprint_cache_misses,
             module_outcome_tracker: input.module_outcome_tracker.clone().unwrap_or_default(),
+            pass_rejection_breakdown: pass_breakdown_with_fingerprint_skips(fingerprint_cache_hits),
         });
     }
 
     // If all focus neurons were skipped by fingerprint filtering, return early.
     if effective_focus_neurons.is_empty() && (include_synapse || include_neuron) {
-        if utils::verbose_enabled() {
-            tracing::debug!("all focus neurons unchanged — skipping GPU analysis");
-        }
+        // Issue #1781: count the whole-pass drop so it is not silent. Without
+        // this the pass returns nothing at all — no candidates, no breakdown,
+        // no diagnostic — and reads as unexplained search exhaustion.
+        tracing::warn!(
+            skipped_focus_neurons = fingerprint_cache_hits,
+            "Issue #1781: every focus neuron was unchanged — whole pass skipped, \
+             recorded as fingerprint_unchanged"
+        );
         return Ok(AnalyzeAllResult {
             synapse: None,
             neuron: None,
@@ -387,6 +466,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
             fingerprint_cache_hits,
             fingerprint_cache_misses,
             module_outcome_tracker: input.module_outcome_tracker.clone().unwrap_or_default(),
+            pass_rejection_breakdown: pass_breakdown_with_fingerprint_skips(fingerprint_cache_hits),
         });
     }
 
@@ -407,6 +487,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
             fingerprint_cache_hits,
             fingerprint_cache_misses,
             module_outcome_tracker: input.module_outcome_tracker.clone().unwrap_or_default(),
+            pass_rejection_breakdown: pass_breakdown_with_fingerprint_skips(fingerprint_cache_hits),
         });
     }
 
@@ -435,6 +516,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
             fingerprint_cache_hits,
             fingerprint_cache_misses,
             module_outcome_tracker: input.module_outcome_tracker.clone().unwrap_or_default(),
+            pass_rejection_breakdown: pass_breakdown_with_fingerprint_skips(fingerprint_cache_hits),
         });
     }
 
@@ -533,6 +615,9 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
                 fingerprint_cache_hits,
                 fingerprint_cache_misses,
                 module_outcome_tracker: input.module_outcome_tracker.clone().unwrap_or_default(),
+                pass_rejection_breakdown: pass_breakdown_with_fingerprint_skips(
+                    fingerprint_cache_hits,
+                ),
             });
         }
         Err(e) => return Err(e).context("failed to load parquet record cache for analysis"),
@@ -562,6 +647,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
             fingerprint_cache_hits,
             fingerprint_cache_misses,
             module_outcome_tracker: input.module_outcome_tracker.clone().unwrap_or_default(),
+            pass_rejection_breakdown: pass_breakdown_with_fingerprint_skips(fingerprint_cache_hits),
         });
     }
 
@@ -579,6 +665,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
             fingerprint_cache_hits,
             fingerprint_cache_misses,
             module_outcome_tracker: input.module_outcome_tracker.clone().unwrap_or_default(),
+            pass_rejection_breakdown: pass_breakdown_with_fingerprint_skips(fingerprint_cache_hits),
         });
     }
 
@@ -634,6 +721,9 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
                 fingerprint_cache_hits,
                 fingerprint_cache_misses,
                 module_outcome_tracker: input.module_outcome_tracker.clone().unwrap_or_default(),
+                pass_rejection_breakdown: pass_breakdown_with_fingerprint_skips(
+                    fingerprint_cache_hits,
+                ),
             });
         }
     }
@@ -713,6 +803,9 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
                 fingerprint_cache_hits,
                 fingerprint_cache_misses,
                 module_outcome_tracker: input.module_outcome_tracker.clone().unwrap_or_default(),
+                pass_rejection_breakdown: pass_breakdown_with_fingerprint_skips(
+                    fingerprint_cache_hits,
+                ),
             });
         }
         Err(e) => return Err(e).context("failed during analysis dispatch"),
@@ -747,12 +840,13 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
     // configured threshold, bias the module tracker toward low-risk change types
     // before it is consumed by downstream allocation and boost passes.
     let outcome_log = input.discovery_outcome_log.clone().unwrap_or_default();
-    let rolling_success_rate = outcome_log.rolling_success_rate();
-    let discovery_mode = super::discovery_mode::decide_mode(
+    let mode_decision = super::discovery_mode::decide_mode_with_escalation(
         &outcome_log,
         crate::config::low_success_rate_threshold(),
         crate::config::conservative_mode_max_epochs(),
     );
+    let rolling_success_rate = mode_decision.rolling_success_rate;
+    let discovery_mode = mode_decision.mode;
     if discovery_mode == super::discovery_mode::DiscoveryMode::Conservative
         && utils::verbose_enabled()
     {
@@ -760,6 +854,15 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
             rolling_success_rate,
             "Issue #1132: conservative discovery mode engaged — biasing module weights \
              toward low-risk change types"
+        );
+    }
+    if mode_decision.is_extended_drought() {
+        tracing::info!(
+            rolling_success_rate,
+            trailing_failure_streak = mode_decision.trailing_failure_streak,
+            max_conservative_epochs = crate::config::conservative_mode_max_epochs(),
+            "Issue #1803: extended drought — conservative risk bias reverted to normal, \
+             expensive discovery modules kept escalated"
         );
     }
     let mut tracker = match discovery_mode {
@@ -771,12 +874,15 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
 
     // Issue #1547: Creature-scale module tiering re-enables the full discovery
     // module set whenever the creature is in a drought / novelty-escalation pass.
-    // Conservative discovery mode (#1132) engages on the same low rolling
-    // success-rate condition that drives novelty escalation (#1423) and drought
-    // escape (#1422), so it is the signal — available before dispatch — used to
+    // The low rolling success rate that drives novelty escalation (#1423) and
+    // drought escape (#1422) is the signal — available before dispatch — used to
     // keep every expensive module running while the creature is struggling.
-    let tiering_escalation_active =
-        discovery_mode == super::discovery_mode::DiscoveryMode::Conservative;
+    //
+    // Issue #1803: this used to read `discovery_mode == Conservative`, so the
+    // #1132 risk-bias cooldown also tiered out the expensive modules once the
+    // failure streak passed `conservative_mode_max_epochs` — narrowing the module
+    // set exactly when the drought was worst. `module_escalation_active` tracks
+    // only the collapsed-rate condition, so breadth now outlives the bias.
 
     // Issue #1057: Gate add-synapse candidates based on historical success rate
     // and synapse density. When the ModuleOutcomeTracker shows consistent failure
@@ -913,7 +1019,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
                             discovery_deadline,
                             cost_hint,
                             task_descriptor,
-                            tiering_escalation_active,
+                            &mode_decision,
                         )
                     }))
                     .unwrap_or_else(|panic_payload| {
@@ -1074,13 +1180,15 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
         // path, alongside the #1559 redistribution above. A genuinely-constant
         // neuron carries no per-sample variance, so a plain bias fold is fully
         // compensable — no survivor redistribution is needed. For each sole-op
-        // RemoveNeuron candidate that removes a constant-class neuron, evaluate
-        // the fold behind the evaluate-before-accept gate and emit the folded
-        // per-target bias deltas so the applier folds the constant contribution
-        // into downstream biases rather than folding a mean. Routing is by class,
-        // mutually exclusive with the redistribution path: a looks-constant or
-        // no-records candidate is rejected fail-loud (no fold emitted, never
-        // deleted blind), the same records gathered above are reused.
+        // RemoveNeuron candidate whose neuron is *measured* functionally constant
+        // (Issue #1779 — the declared `"constant"` class never reaches here, as
+        // every producer emits hidden neurons), evaluate the fold behind the
+        // evaluate-before-accept gate and emit the folded per-target bias deltas
+        // so the applier folds the constant contribution into downstream biases
+        // rather than folding a mean. Routing is mutually exclusive with the
+        // redistribution path: a looks-constant or no-records candidate is
+        // rejected fail-loud (no fold emitted, never deleted blind), and the same
+        // records gathered above are reused.
         let folded = super::discovery_dispatch::apply_constant_neuron_bias_fold(
             &input.creature,
             &records,
@@ -1148,12 +1256,26 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
     // sub-issue of the #1620 milestone) flags such neurons; this overrides the
     // flagged candidate's gain with the priority marker AFTER the honest-gain
     // override and drought demotion (bypassing both) and BEFORE the final gain
-    // floor (so the promoted candidate survives). Until the detector is wired
-    // the flag set is empty and this is a documented no-op.
+    // floor (so the promoted candidate survives). Two flag sources are unioned:
+    // the structural detector (#1813 — a hidden neuron whose output cannot vary
+    // given the topology, which needs no recorded activations) and the measured
+    // #1779 source (every candidate that just received an accepted #1623 bias
+    // fold above, i.e. the same evaluate-before-accept verification this module's
+    // safety argument rests on). Without either, the honest gain (≈ −0.75 for a
+    // harmless constant neuron) is below the floor and the fold never reaches the
+    // consumer at all.
     if let Some(syn) = synapse_result.as_mut() {
-        let flagged = super::remove_neuron_constant_promotion::functionally_constant_neuron_uuids(
-            &input.creature,
-        );
+        let mut flagged =
+            super::remove_neuron_constant_promotion::functionally_constant_neuron_uuids(
+                &input.creature,
+            );
+        let structural = flagged.len();
+        let measured_flags =
+            super::remove_neuron_constant_promotion::bias_folded_constant_neuron_uuids(
+                &syn.coordinated_structural_candidates,
+            );
+        let measured = measured_flags.len();
+        flagged.extend(measured_flags);
         let promoted =
             super::remove_neuron_constant_promotion::promote_constant_remove_neuron_candidates(
                 &mut syn.coordinated_structural_candidates,
@@ -1162,8 +1284,10 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
         if promoted > 0 {
             tracing::debug!(
                 promoted,
+                structural,
+                measured,
                 "Issue #1622: promoted {promoted} functionally-constant remove-neuron \
-                 candidate(s) to priority"
+                 candidate(s) to priority ({structural} flagged structurally, #1813)"
             );
         }
     }
@@ -1267,6 +1391,39 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
         neu.metadata.rolling_success_rate = rolling_success_rate;
     }
 
+    // Issue #1791: flush this pass's per-target outcomes to the global
+    // target-failure tracker. The tracker was read by both preparation layers
+    // but never written, so `is_empty()` short-circuited every cooldown filter
+    // and the suppression was permanently inert.
+    //
+    // One flush per pass, under a single lock, merging both modules' verdicts:
+    // the tracker is per-target-per-*pass*, and the epoch only advances once per
+    // pass (Issue #1790), so recording each module separately would grow a
+    // target's streak twice as fast as the cooldown window can expire it.
+    let mut pass_target_outcomes: Vec<super::target_pass_outcomes::TargetPassOutcome> = Vec::new();
+    let mut pass_candidates = 0usize;
+    if let Some(syn) = synapse_result.as_ref() {
+        pass_target_outcomes.extend(syn.metadata.target_pass_outcomes.iter().cloned());
+        pass_candidates = pass_candidates.saturating_add(syn.metadata.candidates_returned);
+    }
+    if let Some(neu) = neuron_result.as_ref() {
+        pass_target_outcomes.extend(neu.metadata.target_pass_outcomes.iter().cloned());
+        pass_candidates = pass_candidates.saturating_add(neu.metadata.candidates_returned);
+    }
+    let target_cooldown_skipped = pass_target_cooldown_skipped(
+        synapse_result.as_ref().map(|syn| &syn.metadata),
+        neuron_result.as_ref().map(|neu| &neu.metadata),
+    );
+    let pass_analysis_outcome = super::AnalysisOutcome::from_pass_flags(
+        memory_budget_exceeded,
+        crate::cancellation::is_memory_pressure_cancelled(),
+        pass_candidates,
+    );
+    super::target_pass_outcomes::flush_target_pass_outcomes(
+        &pass_target_outcomes,
+        &pass_analysis_outcome,
+    );
+
     // Issue #1202: Drought diagnostic. When the trailing-failure streak in the
     // caller-supplied outcome log crosses the configured threshold, emit a
     // single structured warn log and attach the payload to both metadata
@@ -1320,13 +1477,14 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
             consecutive_failures,
             rolling_success_rate,
             discovery_mode,
-            candidate_cache: None,
             target_tracker: tracker_snapshot.as_ref(),
             current_epoch,
-            target_cooldown_skipped: 0,
+            // Issue #1791: the real per-phase filter return value, no longer a
+            // hard-coded `0`. A permanently-zero value across a fleet is the
+            // production signature that tracker population has regressed.
+            target_cooldown_skipped,
             rejection_breakdown,
             candidates_returned,
-            starvation_tracker: None,
         };
         if let Some(diagnostic) =
             super::drought_diagnostic::emit_drought_diagnostic(&inputs, drought_threshold)
@@ -1340,8 +1498,8 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
         }
 
         // Issue #1205: Operator escape hatch — after the drought diagnostic
-        // has surfaced, optionally force a one-shot reset of failed-candidate
-        // cache entries and active target cooldowns. Driven by
+        // has surfaced, optionally force a one-shot reset of the active target
+        // cooldowns. Driven by
         // `NEAT_AI_DISCOVERY_DROUGHT_RESET_AFTER_EPOCHS`; disabled when unset.
         if let Some(drought_reset_after) = crate::config::drought_reset_after_epochs() {
             // Re-lock the global tracker so we can mutate it. The earlier
@@ -1350,7 +1508,6 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
             if let Ok(mut guard) = super::target_failure_tracker::global_tracker().lock() {
                 let epoch_for_reset = guard.current_epoch();
                 let _ = super::drought_reset::maybe_perform_drought_reset(
-                    None,
                     Some(&mut *guard),
                     consecutive_failures,
                     drought_reset_after,
@@ -1367,7 +1524,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
         if consecutive_failures == 0
             && let Ok(mut guard) = super::target_failure_tracker::global_tracker().lock()
         {
-            super::drought_reset::rearm_drought_reset(None, Some(&mut *guard));
+            super::drought_reset::rearm_drought_reset(Some(&mut *guard));
         }
     }
 
@@ -1445,5 +1602,113 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
         fingerprint_cache_hits,
         fingerprint_cache_misses,
         module_outcome_tracker: tracker,
+        pass_rejection_breakdown: pass_breakdown_with_fingerprint_skips(fingerprint_cache_hits),
     })
+}
+
+#[cfg(test)]
+mod target_cooldown_tests {
+    use super::pass_target_cooldown_skipped;
+    use crate::analysis::candidate_starvation::signals_from_breakdown;
+    use crate::analysis::diagnostics::rejection_reasons::REJECTION_TARGET_COOLDOWN_SKIPPED;
+    use crate::analysis::shared::{NeuronAnalysisMetadata, SynapseAnalysisMetadata};
+    use crate::analysis::target_failure_tracker::fold_target_cooldown_skips;
+
+    /// Build a phase metadata surface exactly as the orchestration layers do:
+    /// the filter return value is stored on the metadata *and* folded into that
+    /// surface's rejection breakdown.
+    fn synapse_surface(skipped: u32) -> SynapseAnalysisMetadata {
+        let mut metadata = SynapseAnalysisMetadata {
+            target_cooldown_skipped: skipped,
+            ..Default::default()
+        };
+        fold_target_cooldown_skips(skipped, &mut metadata.rejection_breakdown);
+        metadata
+    }
+
+    fn neuron_surface(skipped: u32) -> NeuronAnalysisMetadata {
+        let mut metadata = NeuronAnalysisMetadata {
+            target_cooldown_skipped: skipped,
+            ..Default::default()
+        };
+        fold_target_cooldown_skips(skipped, &mut metadata.rejection_breakdown);
+        metadata
+    }
+
+    fn breakdown_count(counts: &crate::analysis::diagnostics::RejectionBreakdown) -> u32 {
+        counts
+            .counts()
+            .get(REJECTION_TARGET_COOLDOWN_SKIPPED)
+            .copied()
+            .unwrap_or(0)
+    }
+
+    /// Issue #1797: a synapse-only pass with K cooldown-skipped targets reports
+    /// K in the surfaced breakdown and K as the pass total.
+    #[test]
+    fn cooldown_skipped_counts_synapse_only() {
+        const K: u32 = 3;
+        let synapse = synapse_surface(K);
+
+        assert_eq!(breakdown_count(&synapse.rejection_breakdown), K);
+        assert_eq!(pass_target_cooldown_skipped(Some(&synapse), None), K);
+
+        // The starvation classifier reads only the breakdown: skipped targets
+        // were never analysed, so they are upstream evidence.
+        let signals = signals_from_breakdown(&synapse.rejection_breakdown, 0);
+        assert_eq!(signals.upstream_rejections, K);
+        assert_eq!(signals.gate_side_rejections, 0);
+    }
+
+    /// A neuron-only pass reports its own count and nothing from the absent
+    /// synapse surface.
+    #[test]
+    fn cooldown_skipped_counts_neuron_only() {
+        const K: u32 = 4;
+        let neuron = neuron_surface(K);
+
+        assert_eq!(breakdown_count(&neuron.rejection_breakdown), K);
+        assert_eq!(pass_target_cooldown_skipped(None, Some(&neuron)), K);
+
+        let signals = signals_from_breakdown(&neuron.rejection_breakdown, 0);
+        assert_eq!(signals.upstream_rejections, K);
+    }
+
+    /// Both surfaces filter their own focus order, so the pass total is the sum
+    /// — and each surface's breakdown carries only its own skips.
+    #[test]
+    fn cooldown_skipped_counts_both_no_double_count() {
+        const SYNAPSE_SKIPPED: u32 = 3;
+        const NEURON_SKIPPED: u32 = 2;
+        let synapse = synapse_surface(SYNAPSE_SKIPPED);
+        let neuron = neuron_surface(NEURON_SKIPPED);
+
+        assert_eq!(
+            breakdown_count(&synapse.rejection_breakdown),
+            SYNAPSE_SKIPPED
+        );
+        assert_eq!(breakdown_count(&neuron.rejection_breakdown), NEURON_SKIPPED);
+        assert_eq!(
+            pass_target_cooldown_skipped(Some(&synapse), Some(&neuron)),
+            SYNAPSE_SKIPPED + NEURON_SKIPPED
+        );
+        // Neither surface absorbed the other's skips.
+        assert_eq!(synapse.rejection_breakdown.total(), SYNAPSE_SKIPPED);
+        assert_eq!(neuron.rejection_breakdown.total(), NEURON_SKIPPED);
+    }
+
+    /// A pass with no cooldown skips leaves the reason key absent rather than
+    /// present-and-zero, and totals zero.
+    #[test]
+    fn cooldown_skipped_absent_when_no_targets_dropped() {
+        let synapse = synapse_surface(0);
+        let neuron = neuron_surface(0);
+        assert!(synapse.rejection_breakdown.is_empty());
+        assert!(neuron.rejection_breakdown.is_empty());
+        assert_eq!(
+            pass_target_cooldown_skipped(Some(&synapse), Some(&neuron)),
+            0
+        );
+        assert_eq!(pass_target_cooldown_skipped(None, None), 0);
+    }
 }

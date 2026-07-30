@@ -7,13 +7,11 @@ use std::time::{Duration, SystemTime};
 use crate::analysis::shared;
 use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson};
 
+use super::super::diagnostics::rejection_reasons::REJECTION_MODULE_SKIPPED_QUALITY_SATISFIED;
 use super::{
     DiscoveryDetectionResult, DiscoveryModuleSpec, ModuleOutcomeTracker,
-    detect_discovery_modules_parallel, detect_discovery_modules_parallel_with_starvation,
-    run_discovery_modules_parallel,
+    detect_discovery_modules_parallel, run_discovery_modules_parallel,
 };
-use crate::analysis::diagnostics::rejection_reasons::REJECTION_MODULE_STARVED;
-use crate::analysis::module_starvation_tracker::ModuleStarvationTracker;
 
 fn empty_synapse_result() -> shared::AnalyzeSynapsesResult {
     shared::AnalyzeSynapsesResult {
@@ -43,6 +41,40 @@ fn make_candidate(gain: f32) -> CoordinatedStructuralCandidateJson {
         expected_creature_score_gain: gain,
         comment: Some(format!("test gain={gain}")),
     }
+}
+
+/// Candidate targeting a distinct neuron, so the per-final-target coordinated
+/// cap (Issue #1271, 3 per target) does not silently discard it.
+///
+/// Issue #1799: the quality-skip fixtures need ≥ `QUALITY_SKIP_MIN_CANDIDATES`
+/// candidates to actually *survive* the merge, otherwise skipping never
+/// activates and any assertion about it is vacuous.
+fn make_candidate_to(target: &str, gain: f32) -> CoordinatedStructuralCandidateJson {
+    CoordinatedStructuralCandidateJson {
+        remove_neuron_compensation: None,
+        constant_neuron_bias_fold: None,
+        operations: vec![CoordinatedStructuralOpJson::RemoveSynapse {
+            from_neuron_uuid: "a".to_string(),
+            to_neuron_uuid: target.to_string(),
+        }],
+        expected_creature_score_gain: gain,
+        comment: Some(format!("test target={target} gain={gain}")),
+    }
+}
+
+/// High-quality candidates spread across distinct targets — enough to trigger
+/// quality-based module skipping (Issue #1074).
+fn high_quality_candidates_for_skip() -> Vec<CoordinatedStructuralCandidateJson> {
+    use super::super::constants::{QUALITY_SKIP_GAIN_THRESHOLD, QUALITY_SKIP_MIN_CANDIDATES};
+
+    (0..QUALITY_SKIP_MIN_CANDIDATES + 5)
+        .map(|i| {
+            make_candidate_to(
+                &format!("target_{i}"),
+                QUALITY_SKIP_GAIN_THRESHOLD + 0.1 * (i as f32 + 1.0),
+            )
+        })
+        .collect()
 }
 
 fn make_module(
@@ -554,7 +586,7 @@ fn parallel_detection_preserves_module_metadata_when_skipped() {
 
 #[test]
 fn quality_skip_skips_later_modules_when_enough_high_quality_candidates() {
-    use super::super::constants::{QUALITY_SKIP_GAIN_THRESHOLD, QUALITY_SKIP_MIN_CANDIDATES};
+    use super::super::constants::QUALITY_SKIP_MIN_CANDIDATES;
 
     let _lock = crate::watchdog::lock_for_test_serialisation();
     let _wd = crate::watchdog::Watchdog::start(crate::watchdog::WatchdogConfig {
@@ -565,9 +597,7 @@ fn quality_skip_skips_later_modules_when_enough_high_quality_candidates() {
     let mut syn = empty_synapse_result();
 
     // First module produces enough high-quality candidates to trigger skipping.
-    let high_quality_candidates: Vec<_> = (0..QUALITY_SKIP_MIN_CANDIDATES + 5)
-        .map(|i| make_candidate(QUALITY_SKIP_GAIN_THRESHOLD + 0.1 * (i as f32 + 1.0)))
-        .collect();
+    let high_quality_candidates = high_quality_candidates_for_skip();
 
     let modules = vec![
         make_module("high_yield", Some(high_quality_candidates)),
@@ -589,6 +619,18 @@ fn quality_skip_skips_later_modules_when_enough_high_quality_candidates() {
         total <= QUALITY_SKIP_MIN_CANDIDATES + 5,
         "Expected at most {} candidates (first module only), got {total}",
         QUALITY_SKIP_MIN_CANDIDATES + 5,
+    );
+
+    // Issue #1799: the discarded candidates must be counted — in candidates,
+    // not modules, so the skipped module's 2 candidates give a count of 2.
+    assert_eq!(
+        syn.metadata
+            .rejection_breakdown
+            .counts()
+            .get(REJECTION_MODULE_SKIPPED_QUALITY_SATISFIED)
+            .copied(),
+        Some(2),
+        "Quality-skipped candidates must be counted (candidates, not modules)"
     );
 }
 
@@ -619,6 +661,18 @@ fn quality_skip_does_not_skip_when_insufficient_high_quality_candidates() {
         syn.coordinated_structural_candidates.len(),
         3,
         "All modules should run when quality threshold not met"
+    );
+
+    // Issue #1799: nothing was skipped, so the counter must stay absent/zero.
+    assert_eq!(
+        syn.metadata
+            .rejection_breakdown
+            .counts()
+            .get(REJECTION_MODULE_SKIPPED_QUALITY_SATISFIED)
+            .copied()
+            .unwrap_or(0),
+        0,
+        "No quality skipping occurred, so no candidates should be counted as skipped"
     );
 }
 
@@ -740,8 +794,6 @@ fn parallel_detection_panic_message_includes_module_context() {
 
 #[test]
 fn quality_skip_still_records_stats_for_skipped_modules() {
-    use super::super::constants::{QUALITY_SKIP_GAIN_THRESHOLD, QUALITY_SKIP_MIN_CANDIDATES};
-
     let _lock = crate::watchdog::lock_for_test_serialisation();
     let _wd = crate::watchdog::Watchdog::start(crate::watchdog::WatchdogConfig {
         stall_timeout: Duration::from_secs(60),
@@ -751,9 +803,7 @@ fn quality_skip_still_records_stats_for_skipped_modules() {
     let mut syn = empty_synapse_result();
 
     // Enough high-quality candidates to trigger skipping.
-    let high_quality: Vec<_> = (0..QUALITY_SKIP_MIN_CANDIDATES + 5)
-        .map(|i| make_candidate(QUALITY_SKIP_GAIN_THRESHOLD + 0.5 * (i as f32 + 1.0)))
-        .collect();
+    let high_quality = high_quality_candidates_for_skip();
 
     let modules = vec![
         make_module("producer", Some(high_quality)),
@@ -784,86 +834,37 @@ fn quality_skip_still_records_stats_for_skipped_modules() {
         module_names.contains(&"skipped_module"),
         "Skipped module should still have stats recorded"
     );
-}
 
-// =============================================================================
-// Issue #1273 — Per-creature, per-module starvation cooldown
-// =============================================================================
-
-/// A starved module's `detect_fn` must be skipped during the parallel detection
-/// phase even when the module would otherwise produce candidates.
-#[test]
-fn starvation_tracker_skips_detect_fn_when_module_is_starved() {
-    let _lock = crate::watchdog::lock_for_test_serialisation();
-    let _wd = crate::watchdog::Watchdog::start(crate::watchdog::WatchdogConfig {
-        stall_timeout: Duration::from_secs(60),
-        abort_delay: Duration::from_secs(1),
-    });
-
-    // Build a starvation tracker that already has "coordinated-structural"
-    // in active cooldown at epoch 5.
-    let mut starvation = ModuleStarvationTracker::with_thresholds(3, 10);
-    for epoch in 0..3 {
-        starvation.record_failure("coordinated-structural", epoch);
-    }
-    assert!(starvation.is_starved("coordinated-structural", 5));
-
-    // detect_fn must NOT execute for the starved module.
-    let invoked = Arc::new(AtomicUsize::new(0));
-    let invoked_clone = Arc::clone(&invoked);
-    let starved_spec = DiscoveryModuleSpec {
-        module_name: "coordinated-structural".to_string(),
-        phase_name: "test_phase",
-        max_candidates: 0,
-        detect_fn: Box::new(move || {
-            invoked_clone.fetch_add(1, Ordering::SeqCst);
-            Some(DiscoveryDetectionResult {
-                detected_count: 1,
-                candidates: vec![make_candidate(0.5)],
-            })
-        }),
-    };
-    let healthy_spec = make_module("change-bias", Some(vec![make_candidate(1.0)]));
-
-    let results = detect_discovery_modules_parallel_with_starvation(
-        vec![starved_spec, healthy_spec],
-        None,
-        None,
-        Some(&starvation),
-        5,
-    );
-
+    // Issue #1799: the skipped module held 1 candidate, so the breakdown must
+    // report exactly 1 — the discarded candidate count, not the module count.
     assert_eq!(
-        invoked.load(Ordering::SeqCst),
-        0,
-        "starved module's detect_fn must not run"
+        syn.metadata
+            .rejection_breakdown
+            .counts()
+            .get(REJECTION_MODULE_SKIPPED_QUALITY_SATISFIED)
+            .copied(),
+        Some(1),
+        "Skipped module's discarded candidates must be counted in the breakdown"
     );
 
-    let starved_entry = results
-        .entries
+    // The existing per-module stats are unchanged by the new counter.
+    let skipped_stats = syn
+        .metadata
+        .discovery_module_stats
         .iter()
-        .find(|e| e.module_name == "coordinated-structural")
-        .expect("starved entry present");
-    assert!(
-        starved_entry.starved,
-        "entry must carry the starved flag for the merge phase"
-    );
-    assert!(starved_entry.result.is_none());
-
-    let healthy_entry = results
-        .entries
-        .iter()
-        .find(|e| e.module_name == "change-bias")
-        .expect("healthy entry present");
-    assert!(!healthy_entry.starved);
-    assert!(healthy_entry.result.is_some());
+        .find(|s| s.module_name == "skipped_module")
+        .expect("skipped module stats present");
+    assert_eq!(skipped_stats.candidates_produced, 1);
 }
 
-/// Merging detection results that include a starved entry must record one
-/// `module_starved` rejection in the synapse metadata so the drought
-/// diagnostic can attribute the lost candidate slot.
+/// Issue #1799: a quality-skipping pass must classify as abundance, never as
+/// `CandidateStarved` — the skip fired *because* candidates were plentiful.
 #[test]
-fn merge_phase_records_module_starved_rejection() {
+fn quality_skip_drops_are_classified_as_abundance() {
+    use super::super::candidate_starvation::{
+        StarvationClass, StarvationConfig, classify, signals_from_breakdown,
+    };
+
     let _lock = crate::watchdog::lock_for_test_serialisation();
     let _wd = crate::watchdog::Watchdog::start(crate::watchdog::WatchdogConfig {
         stall_timeout: Duration::from_secs(60),
@@ -872,58 +873,60 @@ fn merge_phase_records_module_starved_rejection() {
 
     let mut syn = empty_synapse_result();
 
-    let mut starvation = ModuleStarvationTracker::with_thresholds(2, 100);
-    starvation.record_failure("coordinated-structural", 0);
-    starvation.record_failure("coordinated-structural", 1);
+    let high_quality = high_quality_candidates_for_skip();
 
-    let starved_spec = DiscoveryModuleSpec {
-        module_name: "coordinated-structural".to_string(),
-        phase_name: "test_phase",
-        max_candidates: 0,
-        detect_fn: Box::new(|| {
-            Some(DiscoveryDetectionResult {
-                detected_count: 1,
-                candidates: vec![make_candidate(0.5)],
-            })
-        }),
-    };
-    let healthy_spec = make_module("change-bias", Some(vec![make_candidate(1.0)]));
-
-    let results = detect_discovery_modules_parallel_with_starvation(
-        vec![starved_spec, healthy_spec],
-        None,
-        None,
-        Some(&starvation),
-        2,
-    );
+    let modules = vec![
+        make_module("producer", Some(high_quality)),
+        make_module(
+            "skipped_module",
+            Some(vec![
+                make_candidate(0.1),
+                make_candidate(0.2),
+                make_candidate(0.3),
+                make_candidate(0.4),
+                make_candidate(0.5),
+            ]),
+        ),
+    ];
 
     let mut tracker = ModuleOutcomeTracker::new();
-    super::merge_discovery_module_results(&mut syn, results, None, false, &mut tracker);
+    run_discovery_modules_parallel(&mut syn, modules, None, false, &mut tracker);
 
-    let count = syn
-        .metadata
-        .rejection_breakdown
-        .counts()
-        .get(REJECTION_MODULE_STARVED)
-        .copied()
-        .unwrap_or(0);
-    assert_eq!(count, 1, "exactly one module_starved rejection expected");
-
-    // The healthy module's candidate should still arrive at the synapse result.
-    assert_eq!(syn.coordinated_structural_candidates.len(), 1);
+    let signals = signals_from_breakdown(&syn.metadata.rejection_breakdown, 0);
+    assert_eq!(
+        signals.abundance_rejections, 5,
+        "Quality-skipped candidates must land in the abundance partition"
+    );
+    assert_eq!(signals.upstream_rejections, 0);
+    assert_ne!(
+        classify(&signals, &StarvationConfig::default()),
+        StarvationClass::CandidateStarved,
+        "A quality-skipping pass must never be classified CandidateStarved"
+    );
 }
 
-/// When no starvation tracker is provided (None), the detection phase must
-/// behave identically to the legacy path: every module's `detect_fn` runs and
-/// no `module_starved` rejection is recorded.
+// =============================================================================
+// Issue #1793 — the per-creature starvation cooldown was deleted, not wired
+// =============================================================================
+
+/// Retargets the two Issue #1273 starvation tests. The tracker they exercised
+/// was never populated in production (the sole production caller hard-coded
+/// `None` / epoch `0`), so it was deleted. What must now hold is the inverse:
+/// the single detection entry point applies no per-creature cooldown at all —
+/// every module's `detect_fn` runs, and no `module_starved` rejection reaches
+/// the merge phase (the reason no longer exists).
 #[test]
-fn starvation_tracker_optional_when_none_passed() {
+fn detection_applies_no_per_creature_starvation_cooldown() {
     let _lock = crate::watchdog::lock_for_test_serialisation();
     let _wd = crate::watchdog::Watchdog::start(crate::watchdog::WatchdogConfig {
         stall_timeout: Duration::from_secs(60),
         abort_delay: Duration::from_secs(1),
     });
 
+    let mut syn = empty_synapse_result();
+
+    // The exact module that motivated Issue #1273 — 41 consecutive failures on
+    // one creature. Nothing may suppress it at detection time now.
     let invoked = Arc::new(AtomicUsize::new(0));
     let invoked_clone = Arc::clone(&invoked);
     let spec = DiscoveryModuleSpec {
@@ -939,10 +942,20 @@ fn starvation_tracker_optional_when_none_passed() {
         }),
     };
 
-    let results =
-        detect_discovery_modules_parallel_with_starvation(vec![spec], None, None, None, 999);
+    let results = detect_discovery_modules_parallel(vec![spec], None, None);
 
     assert_eq!(invoked.load(Ordering::SeqCst), 1);
-    assert!(!results.entries[0].starved);
     assert!(results.entries[0].result.is_some());
+
+    let mut tracker = ModuleOutcomeTracker::new();
+    super::merge_discovery_module_results(&mut syn, results, None, false, &mut tracker);
+
+    assert!(
+        !syn.metadata
+            .rejection_breakdown
+            .counts()
+            .contains_key("module_starved"),
+        "the module_starved rejection reason was removed with the tracker"
+    );
+    assert_eq!(syn.coordinated_structural_candidates.len(), 1);
 }

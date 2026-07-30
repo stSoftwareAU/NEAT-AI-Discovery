@@ -345,7 +345,13 @@ struct LoadingMeta {
     projected_mb: u64,
 }
 
-const DEFAULT_COST_OF_GROWTH: f32 = 1e-7;
+/// Cost per hidden neuron when the caller supplies none — matches NEAT-AI's
+/// `Score.ts` formula.
+///
+/// The **single** definition of the default (Issue #1807): every caller,
+/// including the FFI entry point, resolves through this constant rather than
+/// repeating the literal, so the two can never drift apart.
+pub const DEFAULT_COST_OF_GROWTH: f32 = 1e-7;
 const IMPACT_EPSILON: f32 = 0.0001;
 const IMPACT_GAMMA: f32 = 0.8;
 
@@ -1339,7 +1345,9 @@ fn rank_selectable(
         cost_of_growth_threshold,
     );
 
-    let rejection_breakdown = build_rejection_breakdown(&removal_outcome);
+    // Issue #1808: one breakdown builder, shared with the structure-only path,
+    // so the two triage copies cannot report different reason sets.
+    let rejection_breakdown = removal_outcome.rejection_breakdown();
     let duration_ms = start.elapsed().as_millis();
     log_focus_ranking_summary(
         meta.mode,
@@ -1368,26 +1376,6 @@ fn rank_selectable(
     })
 }
 
-/// Build a stable-keyed rejection breakdown from a [`RemovalCandidateOutcome`]
-/// (Issue #1142).
-///
-/// Reuses the Issue #1129 rejection-reason vocabulary so downstream tooling
-/// (FFI consumers, observability dashboards) can merge these counts into the
-/// existing `metadata.rejection_breakdown` map without any special-casing.
-fn build_rejection_breakdown(
-    outcome: &removal_candidates::RemovalCandidateOutcome,
-) -> std::collections::HashMap<String, u32> {
-    use crate::analysis::diagnostics::rejection_reasons::REJECTION_REMOVAL_BELOW_NOISE_FLOOR;
-    let mut map = std::collections::HashMap::new();
-    if outcome.noise_floor_rejections > 0 {
-        map.insert(
-            REJECTION_REMOVAL_BELOW_NOISE_FLOOR.to_string(),
-            outcome.noise_floor_rejections,
-        );
-    }
-    map
-}
-
 /// Rank focus neurons with optional historical discovery success data.
 ///
 /// Issue #227: By tracking which neurons have historically led to successful discoveries
@@ -1412,7 +1400,8 @@ fn build_rejection_breakdown(
 /// * `parquet_file` - Path to the parquet file containing discovery records
 /// * `creature` - The creature to rank neurons for
 /// * `max_results` - Optional maximum number of neurons to return
-/// * `cost_of_growth` - Optional cost of growth threshold (default: 1e-7)
+/// * `cost_of_growth` - Optional cost of growth threshold (default:
+///   [`DEFAULT_COST_OF_GROWTH`])
 /// * `history` - Optional discovery history for historical success data
 ///
 /// # Returns

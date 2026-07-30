@@ -97,7 +97,7 @@ pub struct AnalyzeParallelOutput {
     /// memory pressure, or missing GPU) and never evaluated the creature
     /// (Issue #1421). Such a pass returns 0 candidates but is NOT evidence of
     /// search exhaustion — the host must exclude it from drought / target
-    /// cooldown / module starvation accounting.
+    /// cooldown accounting.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub environmentally_disabled: Option<analysis::EnvironmentalDisableReason>,
     /// Consolidated explanation for a zero-candidate pass (Issue #1446).
@@ -180,10 +180,16 @@ pub struct EnvironmentalGatesJson {
 /// reflects the whole pass, and prefers the synapse-side drought / alarm
 /// payloads (falling back to the neuron side) since both halves carry the same
 /// creature-level signal.
+///
+/// `pass_breakdown` carries rejections recorded before either surface produced
+/// metadata (Issue #1781) — a pass dropped whole by the fingerprint cache has
+/// no synapse or neuron metadata at all, so this is the only route by which
+/// that drop reaches the operator.
 #[must_use]
 pub fn build_zero_candidate_summary(
     synapse_metadata: Option<&analysis::shared::SynapseAnalysisMetadata>,
     neuron_metadata: Option<&analysis::shared::NeuronAnalysisMetadata>,
+    pass_breakdown: &analysis::diagnostics::RejectionBreakdown,
     environmental_gates: EnvironmentalGatesJson,
 ) -> ZeroCandidateSummary {
     let mut merged = analysis::diagnostics::RejectionBreakdown::new();
@@ -193,6 +199,7 @@ pub fn build_zero_candidate_summary(
     if let Some(n) = neuron_metadata {
         merged.merge_from(n.rejection_breakdown.counts());
     }
+    merged.merge_from(pass_breakdown.counts());
     let dominant_rejection_reason = merged.dominant_reason().map(|(r, _)| r.to_string());
 
     let drought_diagnostic = synapse_metadata

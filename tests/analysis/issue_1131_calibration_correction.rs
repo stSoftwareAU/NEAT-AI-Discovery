@@ -121,6 +121,7 @@ fn twenty_over_estimations_clamp_to_minimum_correction() {
             target_uuid: None,
             improved_count: None,
             total_count: None,
+            age_epochs: None,
         })
         .collect();
     let correction = CalibrationCorrection::from_failure_cache(&cache);
@@ -162,6 +163,7 @@ fn analyze_all_exposes_calibration_corrections_in_metadata() {
                 target_uuid: None,
                 improved_count: None,
                 total_count: None,
+                age_epochs: None,
             });
         }
     }
@@ -255,6 +257,7 @@ fn calibration_corrections_are_deterministic() {
             target_uuid: None,
             improved_count: None,
             total_count: None,
+            age_epochs: None,
         })
         .collect();
 

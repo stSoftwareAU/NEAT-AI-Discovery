@@ -6,6 +6,111 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Removed
+
+#### `ModuleStarvationTracker` deleted rather than wired (Issue #1793)
+
+The per-(creature, module) starvation cooldown (Issue #1273) was never populated
+in production: the sole production caller reached it through a wrapper that
+hard-coded `starvation_tracker = None, current_epoch = 0`, and the tracker could
+have no producer at its documented per-`analyze_all` scope. The live
+`ModuleOutcomeTracker` gate already suppresses persistently-failing modules from
+real data, so the dead layer was removed instead of duplicated.
+
+- Removed `analysis::module_starvation_tracker`, the
+  `prepare_and_detect_discovery_modules_with_starvation` /
+  `detect_discovery_modules_parallel_with_starvation` wrappers, and the
+  `DiscoveryModuleDetectionEntry.starved` flag.
+- **Breaking (FFI payload):** `droughtDiagnostic.starvedModuleCount` is no
+  longer serialised — it could only ever be `0`. The `module_starved` rejection
+  reason is gone from `ALL_REJECTION_REASONS` for the same reason.
+- **Breaking (config):** `NEAT_AI_DISCOVERY_MODULE_STARVATION_FAILURE_STREAK`
+  and `NEAT_AI_DISCOVERY_MODULE_STARVATION_COOLDOWN_EPOCHS` are removed; they
+  configured a tracker that no longer exists.
+
+### Added
+
+#### Fail-loud candidate reconciliation on every pass (Issue #1802)
+
+Issues #1796–#1801 wired the six silent drop paths the #1782 diagnosis found into
+`RejectionBreakdown`, but nothing stopped the seventh being added the same way.
+Each surface now owns a per-pass `CandidateLedger` and asserts
+`considered == accounted` where its breakdown is finalised. See
+[`docs/analysis/candidate-reconciliation-1802.md`](docs/analysis/candidate-reconciliation-1802.md).
+
+- On a mismatch the residual is recorded under the new stable reason
+  `unaccounted_drop`, one `tracing::warn!` names the surface and the delta, and a
+  `debug_assert!` fires under strict mode — on by default for debug builds, so a
+  new silent drop path fails CI. Override with
+  `NEAT_AI_DISCOVERY_STRICT_CANDIDATE_RECONCILIATION`.
+- `synapseMetadata` / `neuronMetadata` carry a `candidate_reconciliation` payload
+  so callers can confirm the invariant positively rather than by the absence of a
+  failure marker.
+- Wiring the ledger exposed six further bare `continue`s, all now counted:
+  `below_improved_ratio` (three sites), `target_saturated` (candidate squash
+  compounding a near-saturated target), `cpu_pre_reject_no_signal` (no usable
+  weight could be fitted), `zero_improvement` (non-positive post-evaluation
+  improvement), and the new reason `degenerate_weight_update` (two sites where a
+  clamped weight-update delta collapsed to a no-op).
+- A balanced pass logs nothing, records nothing, and costs two relaxed atomic
+  loads per surface.
+
+### Fixed
+
+#### Structural removal triage collapsed into one implementation (Issue #1805)
+
+Two near-identical copies of the least-impact removal criterion existed side by
+side and had already drifted once. The criterion — savings-vs-impact, the
+`REMOVAL_CANDIDATE_BOOST` application point, the non-finite-impact policy
+(#1804), the noise-floor re-gate (#1142), the hidden-only filter and the
+net-improvement-descending sort — now lives only in
+`identify_structural_removal_candidates`.
+
+- `focus::triage_removal_candidates` is retained as a documented thin **adapter**
+  over that single implementation (no public items removed, so no breaking
+  change). Its per-candidate `reason` string now carries the shipped path's
+  wording, and its pass is `rayon`-parallel rather than serial.
+- **Fixed:** the shipped FFI path (`rank_focus_neurons`) took `costOfGrowth` raw,
+  so a non-positive value silently produced zero candidates and a NaN value
+  emitted every hidden neuron — including high-impact ones — with NaN savings.
+  It now shares the adapter's validation: non-finite or non-positive falls back
+  to the `1e-7` default with a WARN.
+
+#### Quality-skipped candidates count as an abundance rejection (Issue #1799)
+
+Quality-based module skipping (Issue #1074) discarded the remaining discovery
+modules' candidates without incrementing any rejection counter, so the drop was
+invisible to `candidate_starvation::classify`, which reads the
+`RejectionBreakdown` alone.
+
+- New stable reason `module_skipped_quality_satisfied`, recorded with the
+  skipped module's `candidates_produced` (unit: **candidates**, not modules) so
+  `signals_from_breakdown` totals stay meaningful.
+- Classified as an **abundance** rejection alongside `budget_truncated` and
+  `per_target_cap` — the skip fires because the pass already holds enough
+  high-quality candidates, so a quality-skipping pass is never classified
+  `CandidateStarved` on the strength of these drops.
+- Skipping behaviour, `modulesSkippedByQuality` metadata, and the per-module
+  stats are unchanged — observability only.
+
+#### Failure-cache entries expire; fingerprint skip gains an escape hatch (Issue #1781)
+
+Persisted suppression state could hold a creature in drought indefinitely.
+
+- `FailureCacheEntry` accepts an optional `ageEpochs` (alias
+  `epochsSinceRecorded`). Entries at or beyond 20 passes suppress nothing; a
+  coarse (target-agnostic) entry keeps its wildcard reach for only 5 passes, so
+  one `coordinated-structural` failure can no longer suppress every coordinated
+  candidate forever. An entry with no reported age matches exactly and gets no
+  wildcard reach.
+- The `previousNeuronFingerprints` skip is bypassed after 3 consecutive empty
+  passes — the structural fingerprint cannot change during a drought, so the
+  cache was skipping every focus neuron regardless of new recorded data.
+- A whole-pass fingerprint drop now records one `fingerprint_unchanged`
+  rejection per skipped neuron, surfaced through
+  `zeroCandidateSummary.rejectionBreakdown` and fed to the starvation
+  classifier as an upstream (starvation) reason.
+
 ### Changed
 
 #### Remove private-repo links and mentions from archived PR summaries (Issue #1726)

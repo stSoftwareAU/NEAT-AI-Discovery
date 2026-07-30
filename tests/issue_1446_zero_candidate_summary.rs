@@ -11,6 +11,7 @@
 use std::collections::HashMap;
 
 use neat_ai_discovery::analysis::EnvironmentalDisableReason;
+use neat_ai_discovery::analysis::diagnostics::RejectionBreakdown;
 use neat_ai_discovery::analysis::diagnostics::rejection_reasons::{
     REJECTION_NO_SAMPLES, REJECTION_NO_TARGET_RECORDS,
 };
@@ -38,7 +39,8 @@ fn no_target_records_fixture_sets_dominant_reason() {
         .rejection_breakdown
         .record_many_u32(REJECTION_NO_SAMPLES, 1);
 
-    let summary = build_zero_candidate_summary(Some(&synapse), None, gates());
+    let summary =
+        build_zero_candidate_summary(Some(&synapse), None, &RejectionBreakdown::new(), gates());
 
     assert_eq!(
         summary.dominant_rejection_reason.as_deref(),
@@ -75,7 +77,12 @@ fn merges_synapse_and_neuron_breakdowns() {
         .rejection_breakdown
         .record_many_u32(REJECTION_NO_SAMPLES, 1);
 
-    let summary = build_zero_candidate_summary(Some(&synapse), Some(&neuron), gates());
+    let summary = build_zero_candidate_summary(
+        Some(&synapse),
+        Some(&neuron),
+        &RejectionBreakdown::new(),
+        gates(),
+    );
 
     assert_eq!(
         summary
@@ -103,7 +110,8 @@ fn environmental_gates_are_surfaced() {
         environmentally_disabled: Some(EnvironmentalDisableReason::MemoryGated),
     };
 
-    let summary = build_zero_candidate_summary(Some(&synapse), None, env_gates);
+    let summary =
+        build_zero_candidate_summary(Some(&synapse), None, &RejectionBreakdown::new(), env_gates);
 
     assert!(summary.environmental_gates.memory_budget_exceeded);
     assert_eq!(
@@ -124,7 +132,8 @@ fn serialises_with_camel_case_field_names() {
         .rejection_breakdown
         .record_many_u32(REJECTION_NO_TARGET_RECORDS, 4);
 
-    let summary = build_zero_candidate_summary(Some(&synapse), None, gates());
+    let summary =
+        build_zero_candidate_summary(Some(&synapse), None, &RejectionBreakdown::new(), gates());
     let value: serde_json::Value =
         serde_json::to_value(&summary).expect("summary serialises to JSON");
 

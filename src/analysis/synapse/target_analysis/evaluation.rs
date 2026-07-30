@@ -82,6 +82,12 @@ pub(crate) fn collect_and_process_helpful_results(
     {
         let _timing = TimingScope::result_processing(&ctx.timing_collector);
         for (work, stats) in helpful_work_batch.iter().zip(helpful_stats_batch.iter()) {
+            // Issue #1802: one work item entering disposition = one considered
+            // candidate. This is the single batch-formation site for the
+            // helpful-synapse path; every `continue` below must pair with a
+            // recorded verdict.
+            ctx.ledger.record_considered(1);
+
             // Issue #1164: short-circuit subsequent same-target candidates if
             // an earlier candidate for this target failed within this batch.
             if ctx
@@ -89,6 +95,7 @@ pub(crate) fn collect_and_process_helpful_results(
                 .should_skip(work.target_uuid.as_str())
             {
                 ctx.within_batch_failures.record_skip();
+                ctx.ledger.record_accounted(1);
                 continue;
             }
             let positive_is_better = stats.positive_count >= stats.negative_count;
@@ -109,11 +116,21 @@ pub(crate) fn collect_and_process_helpful_results(
                 // a within-batch failure for this target.
                 ctx.within_batch_failures
                     .record_failure(work.target_uuid.as_str());
+                // Issue #1802: `record_zero_improvement` below turns this into
+                // the breakdown's `zero_improvement` count; mark the verdict.
+                ctx.ledger.record_accounted(1);
                 continue;
             }
 
             let full_total_count = work.samples.len() as u32;
-            if full_total_count == 0 {
+            // Issue #1798: count the drop (`no_samples`) instead of dropping
+            // silently — the candidate never reaches the accept gate, so the
+            // starvation classifier could not otherwise see it.
+            if ctx
+                .evaluation_drops
+                .drop_for_empty_samples(work.samples.as_slice())
+            {
+                ctx.ledger.record_accounted(1);
                 continue;
             }
 
@@ -123,7 +140,13 @@ pub(crate) fn collect_and_process_helpful_results(
                 1.0,
             ) {
                 Some(w) => w,
-                None => continue,
+                // Issue #1802: the same predicate (and reason) as the CPU
+                // pre-reject screen — no usable signal to fit a weight to.
+                None => {
+                    ctx.evaluation_drops.drop_no_usable_weight();
+                    ctx.ledger.record_accounted(1);
+                    continue;
+                }
             };
 
             let target_squash = ctx
@@ -150,6 +173,11 @@ pub(crate) fn collect_and_process_helpful_results(
                 let Some((_new_weight, delta_weight)) =
                     clamp_weight_update_delta(old_weight, weight)
                 else {
+                    // Issue #1802: the clamped delta is a no-op, so applying the
+                    // update would change nothing — a real verdict, not a
+                    // silent drop.
+                    ctx.evaluation_drops.drop_degenerate_weight_update();
+                    ctx.ledger.record_accounted(1);
                     continue;
                 };
                 let (improvement, improved, worsened, _, magnitude) =
@@ -355,6 +383,10 @@ pub(crate) fn collect_and_process_helpful_results(
                 // candidates can be short-circuited.
                 ctx.within_batch_failures
                     .record_failure(work.target_uuid.as_str());
+                // Issue #1802: post-evaluation improvement was non-positive —
+                // count it rather than dropping the evaluated candidate silently.
+                ctx.evaluation_drops.drop_zero_improvement();
+                ctx.ledger.record_accounted(1);
                 continue;
             }
 
@@ -373,6 +405,10 @@ pub(crate) fn collect_and_process_helpful_results(
                     0.0
                 };
                 if improved_ratio < effective_ratio {
+                    // Issue #1802: the improved-sample-ratio floor is a gate
+                    // verdict and belongs in the breakdown.
+                    ctx.evaluation_drops.drop_below_improved_ratio();
+                    ctx.ledger.record_accounted(1);
                     continue;
                 }
             }
@@ -422,6 +458,9 @@ pub(crate) fn collect_and_process_helpful_results(
                                 weight: applied_weight,
                             },
                         ));
+                        // Issue #1802: `record_below_threshold` below turns this
+                        // into the breakdown's `below_threshold` count.
+                        ctx.ledger.record_accounted(1);
                         continue;
                     }
                     // Accepted below threshold — record for monitoring
@@ -452,8 +491,14 @@ pub(crate) fn collect_and_process_helpful_results(
                 let Some((new_weight, delta_weight)) =
                     clamp_weight_update_delta(old_weight, weight)
                 else {
+                    // Issue #1802: as above — a degenerate clamped delta is a
+                    // recorded verdict, not a silent drop.
+                    ctx.evaluation_drops.drop_degenerate_weight_update();
+                    ctx.ledger.record_accounted(1);
                     continue;
                 };
+                // Issue #1802: admitted as a coordinated set-weight candidate.
+                ctx.ledger.record_accounted(1);
                 // Issue #1021: Record accepted coordinated candidate
                 ctx.mcmc_tracker.record_accepted(
                     &work.source_uuid,
@@ -476,6 +521,10 @@ pub(crate) fn collect_and_process_helpful_results(
                 });
             } else {
                 diagnostics_selected.push(work.target_uuid.as_str());
+                // Issue #1802: from here the work item is admitted exactly once
+                // — either folded into a coordinated setBias candidate below, or
+                // emitted as a helpful synapse candidate at the end of the arm.
+                ctx.ledger.record_accounted(1);
                 // Issue #178: constant source folding into setBias
                 if let Some(threshold) = ctx.constant_source_effect_threshold {
                     let mut act_min = f32::INFINITY;

@@ -25,8 +25,13 @@ use crate::analysis::scoring::calibration_correction::{
 /// the absolute noise floor (Issue #1191).
 ///
 /// Reads the configured floor via
-/// [`min_expected_creature_score_gain`](crate::analysis::constants::min_expected_creature_score_gain)
-/// (overridable through `NEAT_AI_DISCOVERY_MIN_EXPECTED_GAIN`). Each drop is
+/// [`min_expected_gain_floor_for_synapses`](crate::analysis::constants::min_expected_gain_floor_for_synapses)
+/// (overridable through `NEAT_AI_DISCOVERY_MIN_EXPECTED_GAIN`). The gains
+/// reaching this filter are post-calibration, so the configured screen is
+/// converted into that scale by `SYNAPSE_PREDICTION_CALIBRATION` first — before
+/// Issue #1778 it was compared raw, which made the floor 3333× stricter than
+/// intended and unreachable by any candidate the pipeline can produce. Each
+/// drop is
 /// recorded against the global
 /// [`candidates_below_gain_floor_total`](crate::observability::GainFloorMetrics)
 /// counter so operators can see how many candidates the floor removes per
@@ -38,7 +43,7 @@ use crate::analysis::scoring::calibration_correction::{
 pub fn apply_min_expected_gain_floor_for_synapses(
     candidates: &mut Vec<CandidateSynapseJson>,
 ) -> usize {
-    let floor = crate::analysis::constants::min_expected_creature_score_gain();
+    let floor = crate::analysis::constants::min_expected_gain_floor_for_synapses();
     let before = candidates.len();
     candidates.retain(|c| c.expected_creature_score_gain >= floor);
     let dropped = before - candidates.len();
@@ -732,6 +737,14 @@ pub(crate) fn build_metadata(
         creature_drought_alarm: None,
         // Issue #1444: populated by orchestration's fail-fast gate only.
         insufficient_recording: None,
+        // Issue #1791: set by `analyse_synapses` from the real
+        // `apply_target_cooldown` return value.
+        target_cooldown_skipped: 0,
+        // Issue #1791: set by `finalise_synapse_results` from the per-target
+        // diagnostics.
+        target_pass_outcomes: Vec::new(),
+        // Issue #1802: set by the orchestrator once the breakdown is final.
+        candidate_reconciliation: None,
     }
 }
 
@@ -768,6 +781,7 @@ mod remove_neuron_calibration_tests {
             target_uuid: None,
             improved_count: None,
             total_count: None,
+            age_epochs: None,
         }
     }
 

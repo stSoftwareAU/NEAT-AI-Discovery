@@ -253,7 +253,27 @@ The live dispatch path wires this in (Issue #1689): every emitted sole-op
 `RemoveNeuron` candidate that removes a variance-carrying neuron now carries a
 `removeNeuronCompensation` block (optimal `Δw`, the covariance statistic, and the
 `fullyCompensable` flag) so the applier redistributes weight instead of folding
-the mean. Constant neurons route to the #1623 bias fold instead.
+the mean.
+
+Routing between the two remedies is by **measured** constancy (Issue #1779): a
+neuron whose recorded activations are constant within the fold's
+evaluate-before-accept gate takes the #1623 bias fold — its removal candidate
+carries a `constantNeuronBiasFold` block of per-target `biasDelta = w × c` values
+and is promoted past the gain floor (#1622), because folding those deltas makes
+the removal behaviour-preserving. Everything else takes redistribution. The
+earlier gate asked for the *declared* `"constant"` neuron class, which no
+`removeNeuron` producer emits, so the fold never fired.
+
+```mermaid
+flowchart TD
+    A[Sole-op removeNeuron candidate] --> B[Per-sample activations<br/>DiscoverRecords]
+    B --> C{"Fold gate: max residual<br/>|w·(a_i − c)| ≤ 1e-6?"}
+    C -->|accepted| D[constantNeuronBiasFold<br/>biasDelta = w × c per target]
+    D --> E[Promoted past the gain floor #1622]
+    C -->|rejected / no records| F{Correlated shared-target<br/>survivor?}
+    F -->|yes| G[removeNeuronCompensation<br/>optimal Δw + covariance]
+    F -->|no| H[No remedy emitted —<br/>applier flags the removal]
+```
 
 The compact-covariance sufficient statistic, the `Δw`/residual maths, and the
 evaluation flow are documented in

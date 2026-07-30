@@ -114,6 +114,58 @@ pub fn should_skip_module(
         && classify_module(module_name) == ModuleTier::Expensive
 }
 
+/// Log the per-pass tiering decision (Issue #1803).
+///
+/// Every line carries the three fields an operator needs to explain the module
+/// set they are looking at: the trailing-failure streak, the rolling success rate
+/// and the resulting `module_count`. Nothing is logged when the creature is at or
+/// below the threshold (or tiering is disabled) — that is not a decision, and
+/// silence keeps the drought lines meaningful.
+///
+/// `dispatched_module_count` is the module count **after** any retain step;
+/// `skipped_modules` is empty when nothing was tiered out.
+pub fn log_tiering_decision(
+    decision: &super::discovery_mode::ModeDecision,
+    hidden_neuron_count: usize,
+    threshold: usize,
+    dispatched_module_count: usize,
+    skipped_modules: &[String],
+) {
+    if threshold == 0 || hidden_neuron_count <= threshold {
+        return;
+    }
+
+    if decision.module_escalation_active {
+        // The full set was deliberately kept so the drought pass can try
+        // everything (#1422 / #1423 / #1803).
+        tracing::info!(
+            hidden_neuron_count,
+            threshold,
+            module_count = dispatched_module_count,
+            trailing_failure_streak = decision.trailing_failure_streak,
+            rolling_success_rate = decision.rolling_success_rate,
+            discovery_mode = decision.mode.as_str(),
+            extended_drought = decision.is_extended_drought(),
+            "Issue #1547: drought/novelty escalation active — full discovery module \
+             set re-enabled on large creature"
+        );
+    } else if !skipped_modules.is_empty() {
+        tracing::info!(
+            hidden_neuron_count,
+            threshold,
+            skipped_count = skipped_modules.len(),
+            module_count = dispatched_module_count,
+            total_count = dispatched_module_count + skipped_modules.len(),
+            trailing_failure_streak = decision.trailing_failure_streak,
+            rolling_success_rate = decision.rolling_success_rate,
+            discovery_mode = decision.mode.as_str(),
+            skipped_modules = ?skipped_modules,
+            "Issue #1547: creature-scale tiering — expensive discovery modules skipped on \
+             large creature (no escalation active)"
+        );
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

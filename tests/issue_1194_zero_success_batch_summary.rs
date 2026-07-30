@@ -35,6 +35,7 @@ fn fc_entry(
         target_uuid: target_uuid.map(str::to_string),
         improved_count: None,
         total_count: None,
+        age_epochs: None,
     }
 }
 

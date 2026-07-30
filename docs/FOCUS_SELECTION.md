@@ -129,6 +129,36 @@ removalCandidate ⟺ boostedSavings > contribution  AND  (boostedSavings − con
   dropped and surfaced under `rejectionBreakdown`
   (`REJECTION_REMOVAL_BELOW_NOISE_FLOOR`).
 
+#### Rejection accounting (Issue #1808)
+
+Every hidden neuron entering triage ends in exactly one bucket — emitted as a
+candidate, or counted under a named reason — so `candidates + rejections`
+always equals the hidden neurons considered. Both gates report through the same
+`rejectionBreakdown` map, so a caller never has to hard-code a reason string:
+
+| Verdict | Reported as |
+|---------|-------------|
+| `boostedSavings > contribution` and margin ≥ noise floor | a `removalCandidates[]` entry |
+| `boostedSavings ≤ contribution` | `removal_savings_below_impact` |
+| margin < noise floor | `removal_below_noise_floor` |
+| mean activation above threshold (record-derived path only) | `removal_active_neuron` |
+
+```mermaid
+flowchart LR
+    H["hidden neuron"] --> G1{"boostedSavings<br/>&gt; contribution?"}
+    G1 -- no --> R1["removal_savings_below_impact"]
+    G1 -- yes --> G2{"margin ≥<br/>noiseFloor?"}
+    G2 -- no --> R2["removal_below_noise_floor"]
+    G2 -- yes --> C["removalCandidates[]"]
+    R1 --> B["rejectionBreakdown"]
+    R2 --> B
+```
+
+`triage_removal_candidates` returns the same shape:
+`StructuralRemovalTriage::rejection_breakdown()` plus
+`hidden_neurons_considered`, so the structure-only adapter and the shipped FFI
+path can no longer diverge on what they report.
+
 ### 4.2 Activation-weighted gates stay in the analysis phase
 
 The gates that genuinely need records run **later**, after the focus set is

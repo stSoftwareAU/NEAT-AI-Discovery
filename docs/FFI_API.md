@@ -480,8 +480,6 @@ per `analyze_all` invocation when the diagnostic fires.
       "consecutiveFailures": 6,
       "rollingSuccessRate": 0.0,
       "discoveryMode": "conservative",
-      "candidateCacheSize": 128,
-      "candidateCacheSuppressedCount": 42,
       "targetCooldownActiveCount": 3,
       "targetCooldownSkipped": 5,
       "dominantRejectionReason": "no_eligible_sources",
@@ -501,8 +499,6 @@ per `analyze_all` invocation when the diagnostic fires.
 | `consecutiveFailures` | Trailing-failure streak from the caller-supplied `discoveryOutcomeLog`. |
 | `rollingSuccessRate` | Rolling success rate over the most recent window (0.0–1.0). |
 | `discoveryMode` | `"normal"` or `"conservative"` (Issue #1132). |
-| `candidateCacheSize` | Total entries in the candidate outcome cache. `0` when no cache is supplied. |
-| `candidateCacheSuppressedCount` | Failed cache entries still inside the staleness window — actively suppressing new candidates. |
 | `targetCooldownActiveCount` | Targets currently in cooldown via the per-target failure tracker (Issue #1130). |
 | `targetCooldownSkipped` | Targets dropped by the cooldown filter on the most recent run (best-effort, `0` when not tracked). |
 | `dominantRejectionReason` | Stable name of the rejection reason with the highest count (or `null` when nothing was rejected). |
@@ -549,16 +545,317 @@ The suppressed count is also wired into `rejectionBreakdown` under the stable
 reason `duplicate_of_failure_cache`, so duplicate suppression is no longer
 invisible in the Rust-side rejection stats.
 
+**Classifier ordering (Issue #1800).** The pass total
+(`synapse + neuron` suppressed) is folded into the breakdown the starvation
+classifier reads **before** it classifies, not only into the surfaced wire maps
+afterwards. Suppression is the evidence of starvation, so a classifier blind to
+it could never recommend bypassing the very filter causing the drought: any
+pass with at least `4` gate-side rejections read as `ProposalRichOverRejected`
+and the handshake stayed disabled however much suppression was occurring. The
+per-surface `rejectionBreakdown` maps and `failureCacheSuppressedCount` are
+unchanged; the count is folded into the classifier input exactly once.
+
+```mermaid
+flowchart LR
+    S["synapse rejectionBreakdown"] --> C["combined breakdown"]
+    N["neuron rejectionBreakdown"] --> C
+    P["pass rejectionBreakdown\n(#1781)"] --> C
+    F["failure-cache suppressed\nsyn + neu (#1447)"] --> C
+    C --> SIG["signals_from_breakdown"]
+    SIG --> CL["candidate_starvation::classify"]
+    CL --> G["gate_escalation → noveltyEscalationActive"]
+    S --> W1["synapseMetadata.rejectionBreakdown"]
+    N --> W2["neuronMetadata.rejectionBreakdown"]
+    F --> W1
+    F --> W2
+```
+
+Because upstream evidence is what the fold contributes, `classify` treats
+pre-gate drops outnumbering the proposals the generator provably formed as
+starvation regardless of the formed-proposal floor. The converged production
+profile of Issue #1737 (thousands of gate-side rejections, effectively no
+upstream drops) stays `ProposalRichOverRejected`.
+
 **Handshake contract.** When `noveltyEscalationActive` is `true`, the NEAT-AI
 consumer should **skip its failure-cache filter for the top-K candidates** of
 this pass (mirroring the Issue #1423 novelty-escalation intent) so at least one
 candidate reaches Phase-1 evaluation instead of being suppressed as a known
 failure. When `false`, the failure-cache filter applies as normal. Identity
-matching uses the same tuple NEAT-AI keys on: an entry field left unset
-(`targetUuid`, `targetSquash`) acts as a wildcard, so a target-agnostic
-`coordinated-structural` failure entry still suppresses any coordinated
-candidate. The TypeScript-side filter bypass is tracked as a separate NEAT-AI
-change.
+matching uses the same tuple NEAT-AI keys on (`changeType`, `targetUuid`,
+`targetSquash`), bounded by the entry's age — see below. The TypeScript-side
+filter bypass is tracked as a separate NEAT-AI change.
+
+#### Failure-Cache Entry Expiry (Issue #1781)
+
+The cache is persisted by the host and re-supplied on every call, so without an
+age Rust cannot tell a failure recorded moments ago from one recorded hundreds
+of passes back. Each `failureCache` entry therefore accepts an optional
+`ageEpochs` field (alias `epochsSinceRecorded`) — the entry's age in discovery
+passes:
+
+```json
+{
+  "failureCache": [
+    {
+      "changeType": "coordinated-structural",
+      "expectedErrorReduction": 0.12,
+      "actualErrorReduction": -0.004,
+      "targetUuid": "neuron-17",
+      "ageEpochs": 3
+    }
+  ]
+}
+```
+
+Matching rules, in order:
+
+| Entry age | Behaviour |
+|-----------|-----------|
+| `< 5` passes | Full matching, including wildcard reach: an unset `targetUuid` / `targetSquash` suppresses any candidate of that `changeType`. |
+| `5` – `19` passes | Exact matching only. A coarse entry no longer stands in for every target of its change type; it still suppresses an equally target-agnostic candidate. |
+| `≥ 20` passes | Expired — the entry suppresses nothing. |
+| absent (`ageEpochs` omitted) | Never expires, but cannot demonstrate freshness, so it matches exactly and gets **no** wildcard reach. |
+
+Before this, one target-agnostic `coordinated-structural` entry suppressed every
+coordinated candidate for the lifetime of the creature. Hosts that do not send
+`ageEpochs` should prune their own cache; Rust's suppressed count is now
+deliberately narrower than an unbounded host-side filter would drop.
+
+#### Fingerprint-Skip Escape Hatch (Issue #1781)
+
+`previousNeuronFingerprints` (Issue #490) skips focus neurons whose structural
+fingerprint is unchanged. During a drought the topology by definition does not
+change, so the cache used to skip **every** focus neuron pass after pass —
+returning no candidates, no rejection breakdown and no diagnostic, regardless of
+freshly recorded data.
+
+Two changes make that path safe:
+
+- **Escape hatch** — once `discoveryOutcomeLog` shows 3 consecutive empty
+  passes, `previousNeuronFingerprints` is ignored and the full focus set is
+  re-analysed against the new recordings. A `tracing::warn!` names the bypass.
+- **Visible drop** — the pass records one `fingerprint_unchanged` rejection per
+  skipped neuron. The count reaches the operator through
+  `zeroCandidateSummary.rejectionBreakdown` (there is no synapse / neuron
+  metadata on a whole-pass skip) and feeds the starvation classifier.
+
+##### Partial Skips Are Counted Too (Issue #1801)
+
+Issue #1781 counted the drop only when **every** focus neuron was unchanged. The
+far more common **partial** skip — the cache drops some focus neurons and the
+pass proceeds with the rest — was silent, so those never-analysed neurons read as
+gate rejections in the candidate-rate diagnosis.
+
+Every `analyzeAll` return path now reports `fingerprint_unchanged` equal to
+`fingerprintCacheHits`, whole-pass and partial alike. The paths are mutually
+exclusive, so the same hits are never counted twice, and a pass with zero cache
+hits records no entry at all. Because `fingerprint_unchanged` is an *upstream*
+rejection reason, the starvation classifier attributes the skip to generation
+(the neuron was never analysed), not to over-rejection at the gate.
+
+#### Within-Batch Same-Target Short-Circuit (Issue #1796)
+
+When a candidate targeting neuron T fails within a batch, every remaining
+same-target candidate in that batch is short-circuited (Issue #1164). The limit
+is `1` by default (`NEAT_AI_DISCOVERY_BATCH_TARGET_FAILURE_LIMIT`), so a single
+failure suppresses all the rest — previously without incrementing any counter,
+so the classifier could not see the drop.
+
+Each surface now folds its aggregate skip count into `rejectionBreakdown` under
+the stable reason `within_batch_target_short_circuit`:
+
+```json
+{
+  "synapseMetadata": {
+    "rejectionBreakdown": { "within_batch_target_short_circuit": 3 }
+  }
+}
+```
+
+```mermaid
+flowchart LR
+    C1["candidate 1 → target T"] --> E["GPU evaluation"]
+    E -->|fails| F["record_failure(T)"]
+    C2["candidates 2..N → target T"] --> S{"should_skip(T)?"}
+    F -.-> S
+    S -->|yes| K["record_skip()"]
+    K --> B["rejectionBreakdown\nwithin_batch_target_short_circuit: N-1"]
+    B --> CL["candidate_starvation::classify\n(upstream — never reached the gate)"]
+```
+
+The count is folded once per surface from that surface's own tracker, so it
+always equals the `within_batch_skipped` value in the aggregate skip log and
+cannot be double counted across the neuron and synapse surfaces. It is
+classified as an **upstream** rejection: the suppressed candidates were never
+evaluated, so none reached the accept gate.
+
+#### Target-Cooldown Skips (Issue #1797)
+
+A focus target that has failed on too many consecutive passes is dropped by the
+per-target cooldown filter (Issue #1130) **before** any per-target analysis cost
+is incurred — the whole target leaves the focus order, so none of its candidates
+are generated or evaluated. The count was previously logged only, and the
+drought diagnostic hard-coded `targetCooldownSkipped: 0`.
+
+Each surface now folds its own `apply_target_cooldown` return value into
+`rejectionBreakdown` under the stable reason `target_cooldown_skipped`, and the
+drought diagnostic reports the real per-pass total (synapse + neuron):
+
+```json
+{
+  "synapseMetadata": {
+    "rejectionBreakdown": { "target_cooldown_skipped": 3 },
+    "droughtDiagnostic": { "targetCooldownSkipped": 5 }
+  }
+}
+```
+
+```mermaid
+flowchart LR
+    F["focus targets"] --> CD{"in cooldown?"}
+    CD -->|no| A["per-target analysis"]
+    CD -->|yes| K["dropped — never analysed"]
+    K --> B["rejectionBreakdown\ntarget_cooldown_skipped: K"]
+    K --> D["droughtDiagnostic\ntargetCooldownSkipped: synapse + neuron"]
+    B --> CL["candidate_starvation::classify\n(upstream — never reached the gate)"]
+```
+
+Each surface folds only its own count, so the two surfaces cannot double count,
+and each breakdown value equals the `cooldown_skipped` value in that phase's
+cooldown filter log. It is classified as an **upstream** rejection: the target
+was never analysed, so no proposal could reach the accept gate. Cooldown
+filtering behaviour itself is unchanged — this is observability only.
+
+#### Evaluation Drop Sites (Issue #1798)
+
+Three per-candidate drop sites inside the evaluation loops discarded candidates
+without incrementing any counter, so the drops were invisible to the starvation
+classifier:
+
+| Surface | Condition | Stable reason |
+|---------|-----------|---------------|
+| neuron | sample building produced no samples for the source | `no_samples` |
+| neuron | the source activation carries no variance (constant source) | `zero_source_variance` |
+| synapse | the GPU work item had no samples | `no_samples` |
+
+`zero_source_variance` is a **distinct** cause from `no_samples`: the source
+exists and *was* sampled, it just carries no signal, so no weight fitted to it
+is meaningful.
+
+```json
+{
+  "neuronMetadata": {
+    "rejectionBreakdown": { "no_samples": 3, "zero_source_variance": 2 }
+  }
+}
+```
+
+```mermaid
+flowchart LR
+    C["candidate → target T"] --> S{"samples empty?"}
+    S -->|yes| N["no_samples++"]
+    S -->|no| V{"source variance ≤ ε?"}
+    V -->|yes| Z["zero_source_variance++"]
+    V -->|no| E["GPU evaluation → accept gate"]
+    N --> B["rejectionBreakdown\n(folded once per surface)"]
+    Z --> B
+    B --> CL["candidate_starvation::classify\n(upstream — never reached the gate)"]
+```
+
+Counts accumulate in per-batch integer counters and are folded into the
+breakdown once per surface, so the per-candidate loop stays allocation-free and
+the neuron and synapse surfaces cannot double count. Both reasons are
+classified as **upstream** rejections: the candidate never reached the accept
+gate. Drop behaviour itself is unchanged — this is observability only.
+
+#### Quality-Based Module Skipping (Issue #1799)
+
+Once a merge pass has accumulated enough high-quality candidates, quality-based
+module skipping (Issue #1074) discards the remaining discovery modules' results
+wholesale. The drop was previously invisible to the classifier: only
+`modulesSkippedByQuality` was incremented, and the classifier reads the
+`rejectionBreakdown` alone.
+
+The skipped module's candidates are now counted under the stable reason
+`module_skipped_quality_satisfied`. **The unit is candidates, not modules** —
+the value is the sum of the skipped modules' `candidatesProduced`, so it stays
+comparable with every other reason in `signals_from_breakdown`:
+
+```json
+{
+  "synapseMetadata": {
+    "rejectionBreakdown": { "module_skipped_quality_satisfied": 2 },
+    "discoveryModuleStats": [{ "moduleName": "skipped", "candidatesProduced": 2 }]
+  }
+}
+```
+
+```mermaid
+flowchart LR
+    M["module results"] --> Q{"quality skip active?"}
+    Q -->|no| MG["merge candidates"]
+    Q -->|yes| K["discard candidatesProduced"]
+    K --> B["rejectionBreakdown\nmodule_skipped_quality_satisfied: C"]
+    B --> CL["candidate_starvation::classify\n(abundance — proof the pass is NOT starved)"]
+```
+
+Unlike the other silent drops, this one means the *opposite* of starvation: the
+modules were skipped precisely because enough high-quality candidates already
+existed. It is therefore classified as an **abundance** rejection, alongside
+`budget_truncated` and `per_target_cap`, so a quality-skipping pass is never
+classified `CandidateStarved` on the strength of these drops. Existing
+`modulesSkippedByQuality` metadata, the per-module stats, and the skipping
+behaviour itself are unchanged — this is observability only.
+
+#### Candidate Reconciliation — the fail-loud invariant (Issue #1802)
+
+Wiring each individual drop path into `rejectionBreakdown` did not stop the
+**next** one being added silently. Each surface therefore keeps a per-pass ledger
+and, where its breakdown is finalised, asserts that every candidate which entered
+disposition has a recorded verdict:
+
+```text
+considered == accounted            (accounted = accepted + counted rejections)
+```
+
+A balanced pass emits nothing. On a mismatch the unaccounted residual is recorded
+under the stable reason `unaccounted_drop`, so the loss is visible in the payload
+even on a release build where assertions are compiled out:
+
+```json
+{
+  "neuronMetadata": {
+    "rejectionBreakdown": { "unaccounted_drop": 4 }
+  }
+}
+```
+
+```mermaid
+flowchart LR
+    F["batch formed\nconsidered += n"] --> D{"disposition recorded?"}
+    D -->|"accept / counted rejection"| A["accounted += 1"]
+    D -->|"bare `continue`"| X["no verdict"]
+    A --> R{"considered == accounted?"}
+    X --> R
+    R -->|yes| OK["clean pass — no log, no entry"]
+    R -->|no| W["warn! naming surface + delta"]
+    W --> U["rejectionBreakdown\nunaccounted_drop: delta"]
+```
+
+Alongside the payload entry, a single `tracing::warn!` names the surface
+(`neuron` / `synapse`) and the unaccounted delta, and a `debug_assert!` fires
+under strict mode (on by default for debug builds — see
+`NEAT_AI_DISCOVERY_STRICT_CANDIDATE_RECONCILIATION` in
+[docs/CONFIGURATION.md](CONFIGURATION.md)). `unaccounted_drop` is classified as an
+**upstream** rejection: a candidate with no recorded gate verdict cannot be
+counted as evidence the gate over-rejected.
+
+Wiring the ledger surfaced six further silent drops, now counted under
+`below_improved_ratio`, `target_saturated`, `cpu_pre_reject_no_signal`,
+`zero_improvement`, and the new stable reason `degenerate_weight_update` (a
+weight-update candidate whose clamped delta collapsed to a no-op). Drop behaviour
+is unchanged throughout — this is observability only. Full design notes:
+[docs/analysis/candidate-reconciliation-1802.md](analysis/candidate-reconciliation-1802.md).
 
 ### Zero-Candidate Summary (Issue #1446)
 

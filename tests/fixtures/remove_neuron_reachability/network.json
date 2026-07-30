@@ -1,0 +1,785 @@
+{
+  "_comment": "Synthetic production-shaped creature for the Issue #1785 remove-neuron reachability characterisation (Issue #1810). Hand-authored and self-contained: 6 inputs, 36 hidden neurons in four feed-forward layers (12/10/8/3) plus 3 orphaned hidden neurons, and 2 outputs. Every weight is 1.0 and every squash IDENTITY, so each neuron's structural impact is a pure function of the topology. The hub h-b-00 carries 6 incoming and 6 outgoing synapses - the fixture's maximum degree of 12 - so its boosted removal savings at costOfGrowth=1e-7 are exactly 1.5 * 1e-7 * (1 + 12/10) = 3.3e-7. Neurons are ordered inputs, hidden layers, orphans, outputs so every synapse points forward (Issue #1184).",
+  "semanticVersion": "4.0.0",
+  "forwardOnly": true,
+  "input": 6,
+  "output": 2,
+  "neurons": [
+    {
+      "uuid": "in-0",
+      "type": "input",
+      "squash": "IDENTITY",
+      "bias": 0.0
+    },
+    {
+      "uuid": "in-1",
+      "type": "input",
+      "squash": "IDENTITY",
+      "bias": 0.0
+    },
+    {
+      "uuid": "in-2",
+      "type": "input",
+      "squash": "IDENTITY",
+      "bias": 0.0
+    },
+    {
+      "uuid": "in-3",
+      "type": "input",
+      "squash": "IDENTITY",
+      "bias": 0.0
+    },
+    {
+      "uuid": "in-4",
+      "type": "input",
+      "squash": "IDENTITY",
+      "bias": 0.0
+    },
+    {
+      "uuid": "in-5",
+      "type": "input",
+      "squash": "IDENTITY",
+      "bias": 0.0
+    },
+    {
+      "uuid": "h-a-00",
+      "type": "hidden",
+      "squash": "IDENTITY",
+      "bias": 0.0
+    },
+    {
+      "uuid": "h-a-01",
+      "type": "hidden",
+      "squash": "IDENTITY",
+      "bias": 0.0
+    },
+    {
+      "uuid": "h-a-02",
+      "type": "hidden",
+      "squash": "IDENTITY",
+      "bias": 0.0
+    },
+    {
+      "uuid": "h-a-03",
+      "type": "hidden",
+      "squash": "IDENTITY",
+      "bias": 0.0
+    },
+    {
+      "uuid": "h-a-04",
+      "type": "hidden",
+      "squash": "IDENTITY",
+      "bias": 0.0
+    },
+    {
+      "uuid": "h-a-05",
+      "type": "hidden",
+      "squash": "IDENTITY",
+      "bias": 0.0
+    },
+    {
+      "uuid": "h-a-06",
+      "type": "hidden",
+      "squash": "IDENTITY",
+      "bias": 0.0
+    },
+    {
+      "uuid": "h-a-07",
+      "type": "hidden",
+      "squash": "IDENTITY",
+      "bias": 0.0
+    },
+    {
+      "uuid": "h-a-08",
+      "type": "hidden",
+      "squash": "IDENTITY",
+      "bias": 0.0
+    },
+    {
+      "uuid": "h-a-09",
+      "type": "hidden",
+      "squash": "IDENTITY",
+      "bias": 0.0
+    },
+    {
+      "uuid": "h-a-10",
+      "type": "hidden",
+      "squash": "IDENTITY",
+      "bias": 0.0
+    },
+    {
+      "uuid": "h-a-11",
+      "type": "hidden",
+      "squash": "IDENTITY",
+      "bias": 0.0
+    },
+    {
+      "uuid": "h-b-00",
+      "type": "hidden",
+      "squash": "IDENTITY",
+      "bias": 0.0
+    },
+    {
+      "uuid": "h-b-01",
+      "type": "hidden",
+      "squash": "IDENTITY",
+      "bias": 0.0
+    },
+    {
+      "uuid": "h-b-02",
+      "type": "hidden",
+      "squash": "IDENTITY",
+      "bias": 0.0
+    },
+    {
+      "uuid": "h-b-03",
+      "type": "hidden",
+      "squash": "IDENTITY",
+      "bias": 0.0
+    },
+    {
+      "uuid": "h-b-04",
+      "type": "hidden",
+      "squash": "IDENTITY",
+      "bias": 0.0
+    },
+    {
+      "uuid": "h-b-05",
+      "type": "hidden",
+      "squash": "IDENTITY",
+      "bias": 0.0
+    },
+    {
+      "uuid": "h-b-06",
+      "type": "hidden",
+      "squash": "IDENTITY",
+      "bias": 0.0
+    },
+    {
+      "uuid": "h-b-07",
+      "type": "hidden",
+      "squash": "IDENTITY",
+      "bias": 0.0
+    },
+    {
+      "uuid": "h-b-08",
+      "type": "hidden",
+      "squash": "IDENTITY",
+      "bias": 0.0
+    },
+    {
+      "uuid": "h-b-09",
+      "type": "hidden",
+      "squash": "IDENTITY",
+      "bias": 0.0
+    },
+    {
+      "uuid": "h-c-00",
+      "type": "hidden",
+      "squash": "IDENTITY",
+      "bias": 0.0
+    },
+    {
+      "uuid": "h-c-01",
+      "type": "hidden",
+      "squash": "IDENTITY",
+      "bias": 0.0
+    },
+    {
+      "uuid": "h-c-02",
+      "type": "hidden",
+      "squash": "IDENTITY",
+      "bias": 0.0
+    },
+    {
+      "uuid": "h-c-03",
+      "type": "hidden",
+      "squash": "IDENTITY",
+      "bias": 0.0
+    },
+    {
+      "uuid": "h-c-04",
+      "type": "hidden",
+      "squash": "IDENTITY",
+      "bias": 0.0
+    },
+    {
+      "uuid": "h-c-05",
+      "type": "hidden",
+      "squash": "IDENTITY",
+      "bias": 0.0
+    },
+    {
+      "uuid": "h-c-06",
+      "type": "hidden",
+      "squash": "IDENTITY",
+      "bias": 0.0
+    },
+    {
+      "uuid": "h-c-07",
+      "type": "hidden",
+      "squash": "IDENTITY",
+      "bias": 0.0
+    },
+    {
+      "uuid": "h-d-00",
+      "type": "hidden",
+      "squash": "IDENTITY",
+      "bias": 0.0
+    },
+    {
+      "uuid": "h-d-01",
+      "type": "hidden",
+      "squash": "IDENTITY",
+      "bias": 0.0
+    },
+    {
+      "uuid": "h-d-02",
+      "type": "hidden",
+      "squash": "IDENTITY",
+      "bias": 0.0
+    },
+    {
+      "uuid": "h-x-0",
+      "type": "hidden",
+      "squash": "IDENTITY",
+      "bias": 0.0
+    },
+    {
+      "uuid": "h-x-1",
+      "type": "hidden",
+      "squash": "IDENTITY",
+      "bias": 0.0
+    },
+    {
+      "uuid": "h-x-2",
+      "type": "hidden",
+      "squash": "IDENTITY",
+      "bias": 0.0
+    },
+    {
+      "uuid": "out-0",
+      "type": "output",
+      "squash": "IDENTITY",
+      "bias": 0.0
+    },
+    {
+      "uuid": "out-1",
+      "type": "output",
+      "squash": "IDENTITY",
+      "bias": 0.0
+    }
+  ],
+  "synapses": [
+    {
+      "fromUUID": "in-0",
+      "toUUID": "h-a-00",
+      "weight": 1.0
+    },
+    {
+      "fromUUID": "in-1",
+      "toUUID": "h-a-00",
+      "weight": 1.0
+    },
+    {
+      "fromUUID": "in-1",
+      "toUUID": "h-a-01",
+      "weight": 1.0
+    },
+    {
+      "fromUUID": "in-2",
+      "toUUID": "h-a-01",
+      "weight": 1.0
+    },
+    {
+      "fromUUID": "in-2",
+      "toUUID": "h-a-02",
+      "weight": 1.0
+    },
+    {
+      "fromUUID": "in-3",
+      "toUUID": "h-a-02",
+      "weight": 1.0
+    },
+    {
+      "fromUUID": "in-3",
+      "toUUID": "h-a-03",
+      "weight": 1.0
+    },
+    {
+      "fromUUID": "in-4",
+      "toUUID": "h-a-03",
+      "weight": 1.0
+    },
+    {
+      "fromUUID": "in-4",
+      "toUUID": "h-a-04",
+      "weight": 1.0
+    },
+    {
+      "fromUUID": "in-5",
+      "toUUID": "h-a-04",
+      "weight": 1.0
+    },
+    {
+      "fromUUID": "in-5",
+      "toUUID": "h-a-05",
+      "weight": 1.0
+    },
+    {
+      "fromUUID": "in-0",
+      "toUUID": "h-a-05",
+      "weight": 1.0
+    },
+    {
+      "fromUUID": "in-0",
+      "toUUID": "h-a-06",
+      "weight": 1.0
+    },
+    {
+      "fromUUID": "in-1",
+      "toUUID": "h-a-06",
+      "weight": 1.0
+    },
+    {
+      "fromUUID": "in-1",
+      "toUUID": "h-a-07",
+      "weight": 1.0
+    },
+    {
+      "fromUUID": "in-2",
+      "toUUID": "h-a-07",
+      "weight": 1.0
+    },
+    {
+      "fromUUID": "in-2",
+      "toUUID": "h-a-08",
+      "weight": 1.0
+    },
+    {
+      "fromUUID": "in-3",
+      "toUUID": "h-a-08",
+      "weight": 1.0
+    },
+    {
+      "fromUUID": "in-3",
+      "toUUID": "h-a-09",
+      "weight": 1.0
+    },
+    {
+      "fromUUID": "in-4",
+      "toUUID": "h-a-09",
+      "weight": 1.0
+    },
+    {
+      "fromUUID": "in-4",
+      "toUUID": "h-a-10",
+      "weight": 1.0
+    },
+    {
+      "fromUUID": "in-5",
+      "toUUID": "h-a-10",
+      "weight": 1.0
+    },
+    {
+      "fromUUID": "in-5",
+      "toUUID": "h-a-11",
+      "weight": 1.0
+    },
+    {
+      "fromUUID": "in-0",
+      "toUUID": "h-a-11",
+      "weight": 1.0
+    },
+    {
+      "fromUUID": "h-a-00",
+      "toUUID": "h-b-00",
+      "weight": 1.0
+    },
+    {
+      "fromUUID": "h-a-01",
+      "toUUID": "h-b-00",
+      "weight": 1.0
+    },
+    {
+      "fromUUID": "h-a-02",
+      "toUUID": "h-b-00",
+      "weight": 1.0
+    },
+    {
+      "fromUUID": "h-a-03",
+      "toUUID": "h-b-01",
+      "weight": 1.0
+    },
+    {
+      "fromUUID": "h-a-04",
+      "toUUID": "h-b-01",
+      "weight": 1.0
+    },
+    {
+      "fromUUID": "h-a-05",
+      "toUUID": "h-b-01",
+      "weight": 1.0
+    },
+    {
+      "fromUUID": "h-a-06",
+      "toUUID": "h-b-02",
+      "weight": 1.0
+    },
+    {
+      "fromUUID": "h-a-07",
+      "toUUID": "h-b-02",
+      "weight": 1.0
+    },
+    {
+      "fromUUID": "h-a-08",
+      "toUUID": "h-b-02",
+      "weight": 1.0
+    },
+    {
+      "fromUUID": "h-a-09",
+      "toUUID": "h-b-03",
+      "weight": 1.0
+    },
+    {
+      "fromUUID": "h-a-10",
+      "toUUID": "h-b-03",
+      "weight": 1.0
+    },
+    {
+      "fromUUID": "h-a-11",
+      "toUUID": "h-b-03",
+      "weight": 1.0
+    },
+    {
+      "fromUUID": "h-a-00",
+      "toUUID": "h-b-04",
+      "weight": 1.0
+    },
+    {
+      "fromUUID": "h-a-01",
+      "toUUID": "h-b-04",
+      "weight": 1.0
+    },
+    {
+      "fromUUID": "h-a-02",
+      "toUUID": "h-b-04",
+      "weight": 1.0
+    },
+    {
+      "fromUUID": "h-a-03",
+      "toUUID": "h-b-05",
+      "weight": 1.0
+    },
+    {
+      "fromUUID": "h-a-04",
+      "toUUID": "h-b-05",
+      "weight": 1.0
+    },
+    {
+      "fromUUID": "h-a-05",
+      "toUUID": "h-b-05",
+      "weight": 1.0
+    },
+    {
+      "fromUUID": "h-a-06",
+      "toUUID": "h-b-06",
+      "weight": 1.0
+    },
+    {
+      "fromUUID": "h-a-07",
+      "toUUID": "h-b-06",
+      "weight": 1.0
+    },
+    {
+      "fromUUID": "h-a-08",
+      "toUUID": "h-b-06",
+      "weight": 1.0
+    },
+    {
+      "fromUUID": "h-a-09",
+      "toUUID": "h-b-07",
+      "weight": 1.0
+    },
+    {
+      "fromUUID": "h-a-10",
+      "toUUID": "h-b-07",
+      "weight": 1.0
+    },
+    {
+      "fromUUID": "h-a-11",
+      "toUUID": "h-b-07",
+      "weight": 1.0
+    },
+    {
+      "fromUUID": "h-a-00",
+      "toUUID": "h-b-08",
+      "weight": 1.0
+    },
+    {
+      "fromUUID": "h-a-01",
+      "toUUID": "h-b-08",
+      "weight": 1.0
+    },
+    {
+      "fromUUID": "h-a-02",
+      "toUUID": "h-b-08",
+      "weight": 1.0
+    },
+    {
+      "fromUUID": "h-a-03",
+      "toUUID": "h-b-09",
+      "weight": 1.0
+    },
+    {
+      "fromUUID": "h-a-04",
+      "toUUID": "h-b-09",
+      "weight": 1.0
+    },
+    {
+      "fromUUID": "h-a-05",
+      "toUUID": "h-b-09",
+      "weight": 1.0
+    },
+    {
+      "fromUUID": "h-a-06",
+      "toUUID": "h-b-00",
+      "weight": 1.0
+    },
+    {
+      "fromUUID": "h-a-07",
+      "toUUID": "h-b-00",
+      "weight": 1.0
+    },
+    {
+      "fromUUID": "h-a-08",
+      "toUUID": "h-b-00",
+      "weight": 1.0
+    },
+    {
+      "fromUUID": "h-b-00",
+      "toUUID": "h-c-00",
+      "weight": 1.0
+    },
+    {
+      "fromUUID": "h-b-01",
+      "toUUID": "h-c-00",
+      "weight": 1.0
+    },
+    {
+      "fromUUID": "h-b-02",
+      "toUUID": "h-c-00",
+      "weight": 1.0
+    },
+    {
+      "fromUUID": "h-b-03",
+      "toUUID": "h-c-01",
+      "weight": 1.0
+    },
+    {
+      "fromUUID": "h-b-04",
+      "toUUID": "h-c-01",
+      "weight": 1.0
+    },
+    {
+      "fromUUID": "h-b-05",
+      "toUUID": "h-c-01",
+      "weight": 1.0
+    },
+    {
+      "fromUUID": "h-b-06",
+      "toUUID": "h-c-02",
+      "weight": 1.0
+    },
+    {
+      "fromUUID": "h-b-07",
+      "toUUID": "h-c-02",
+      "weight": 1.0
+    },
+    {
+      "fromUUID": "h-b-08",
+      "toUUID": "h-c-02",
+      "weight": 1.0
+    },
+    {
+      "fromUUID": "h-b-09",
+      "toUUID": "h-c-03",
+      "weight": 1.0
+    },
+    {
+      "fromUUID": "h-b-00",
+      "toUUID": "h-c-03",
+      "weight": 1.0
+    },
+    {
+      "fromUUID": "h-b-01",
+      "toUUID": "h-c-03",
+      "weight": 1.0
+    },
+    {
+      "fromUUID": "h-b-02",
+      "toUUID": "h-c-04",
+      "weight": 1.0
+    },
+    {
+      "fromUUID": "h-b-03",
+      "toUUID": "h-c-04",
+      "weight": 1.0
+    },
+    {
+      "fromUUID": "h-b-04",
+      "toUUID": "h-c-04",
+      "weight": 1.0
+    },
+    {
+      "fromUUID": "h-b-05",
+      "toUUID": "h-c-05",
+      "weight": 1.0
+    },
+    {
+      "fromUUID": "h-b-06",
+      "toUUID": "h-c-05",
+      "weight": 1.0
+    },
+    {
+      "fromUUID": "h-b-07",
+      "toUUID": "h-c-05",
+      "weight": 1.0
+    },
+    {
+      "fromUUID": "h-b-08",
+      "toUUID": "h-c-06",
+      "weight": 1.0
+    },
+    {
+      "fromUUID": "h-b-09",
+      "toUUID": "h-c-06",
+      "weight": 1.0
+    },
+    {
+      "fromUUID": "h-b-00",
+      "toUUID": "h-c-06",
+      "weight": 1.0
+    },
+    {
+      "fromUUID": "h-b-01",
+      "toUUID": "h-c-07",
+      "weight": 1.0
+    },
+    {
+      "fromUUID": "h-b-02",
+      "toUUID": "h-c-07",
+      "weight": 1.0
+    },
+    {
+      "fromUUID": "h-b-03",
+      "toUUID": "h-c-07",
+      "weight": 1.0
+    },
+    {
+      "fromUUID": "h-b-00",
+      "toUUID": "h-c-01",
+      "weight": 1.0
+    },
+    {
+      "fromUUID": "h-b-00",
+      "toUUID": "h-c-02",
+      "weight": 1.0
+    },
+    {
+      "fromUUID": "h-b-00",
+      "toUUID": "h-c-04",
+      "weight": 1.0
+    },
+    {
+      "fromUUID": "h-c-00",
+      "toUUID": "h-d-00",
+      "weight": 1.0
+    },
+    {
+      "fromUUID": "h-c-01",
+      "toUUID": "h-d-00",
+      "weight": 1.0
+    },
+    {
+      "fromUUID": "h-c-02",
+      "toUUID": "h-d-00",
+      "weight": 1.0
+    },
+    {
+      "fromUUID": "h-c-03",
+      "toUUID": "h-d-01",
+      "weight": 1.0
+    },
+    {
+      "fromUUID": "h-c-04",
+      "toUUID": "h-d-01",
+      "weight": 1.0
+    },
+    {
+      "fromUUID": "h-c-05",
+      "toUUID": "h-d-01",
+      "weight": 1.0
+    },
+    {
+      "fromUUID": "h-c-06",
+      "toUUID": "h-d-02",
+      "weight": 1.0
+    },
+    {
+      "fromUUID": "h-c-07",
+      "toUUID": "h-d-02",
+      "weight": 1.0
+    },
+    {
+      "fromUUID": "h-c-00",
+      "toUUID": "h-d-02",
+      "weight": 1.0
+    },
+    {
+      "fromUUID": "h-d-00",
+      "toUUID": "out-0",
+      "weight": 1.0
+    },
+    {
+      "fromUUID": "h-d-01",
+      "toUUID": "out-1",
+      "weight": 1.0
+    },
+    {
+      "fromUUID": "h-d-02",
+      "toUUID": "out-0",
+      "weight": 1.0
+    },
+    {
+      "fromUUID": "in-0",
+      "toUUID": "h-x-0",
+      "weight": 1.0
+    },
+    {
+      "fromUUID": "in-2",
+      "toUUID": "h-x-0",
+      "weight": 1.0
+    },
+    {
+      "fromUUID": "in-1",
+      "toUUID": "h-x-1",
+      "weight": 1.0
+    },
+    {
+      "fromUUID": "in-3",
+      "toUUID": "h-x-1",
+      "weight": 1.0
+    },
+    {
+      "fromUUID": "in-2",
+      "toUUID": "h-x-2",
+      "weight": 1.0
+    },
+    {
+      "fromUUID": "in-4",
+      "toUUID": "h-x-2",
+      "weight": 1.0
+    }
+  ]
+}

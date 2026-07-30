@@ -46,6 +46,27 @@ pub fn gpu_metrics() -> bool {
     *VAL.get_or_init(|| std::env::var("NEAT_AI_DISCOVERY_GPU_METRICS").is_ok())
 }
 
+/// Whether a candidate-reconciliation mismatch should trip a `debug_assert!`
+/// (Issue #1802).
+///
+/// Defaults to **on for debug builds** — so a new unaccounted drop path fails
+/// the PR that introduces it under `cargo test` — and off for release builds,
+/// where assertions are compiled out and the warn-only posture applies anyway.
+/// Either way the `unaccounted_drop` rejection-breakdown entry and the
+/// `tracing::warn!` are emitted, so a mismatch is never silent.
+///
+/// Set `NEAT_AI_DISCOVERY_STRICT_CANDIDATE_RECONCILIATION=0` to force warn-only
+/// in a debug build, or `=1` to state the default explicitly.
+///
+/// Deliberately **not** cached in a `OnceLock`: it is read twice per discovery
+/// pass, and caching would stop tests toggling it. Prefer
+/// [`crate::analysis::candidate_reconciliation::StrictModeGuard`] over mutating
+/// the environment.
+pub fn strict_candidate_reconciliation() -> bool {
+    super::helpers::parse_optional_bool_env("NEAT_AI_DISCOVERY_STRICT_CANDIDATE_RECONCILIATION")
+        .unwrap_or(cfg!(debug_assertions))
+}
+
 /// Threshold for prediction-vs-actual calibration mismatch logging
 /// (Issue #1165).
 ///

@@ -84,6 +84,13 @@ fn create_test_creature(
 fn regression_split_error_must_return_fallback_candidates() {
     skip_without_gpu!();
 
+    // Issue #1791: the global target-cooldown tracker is now genuinely
+    // populated by every `analyze_all` pass. This binary shares one process and
+    // reuses the synthetic `output-0` UUID across many tests, so an earlier
+    // test's failed passes can push this test's focus target into cooldown and
+    // filter it out before analysis. Start from a clean slate.
+    neat_ai_discovery::analysis::target_failure_tracker::reset_global_tracker();
+
     // Issue #1191: this regression scenario deliberately constructs weak
     // 0.1–2% improvements that, after pessimism / calibration discounting,
     // fall below the new 1e-5 production noise floor. Disable the floor for

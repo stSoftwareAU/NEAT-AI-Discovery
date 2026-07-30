@@ -76,7 +76,12 @@ pub(super) fn finalise_synapse_results(
     let input_min = m.input_min_with_records.load(Ordering::Relaxed);
     let input_max = m.input_max_with_records.load(Ordering::Relaxed);
 
-    let metadata = post_processing::build_metadata(&post_processing::MetadataParams {
+    // Issue #1791: one verdict per target for this pass, captured before the
+    // diagnostics are dropped. `analyze_all` merges it with the neuron phase's
+    // list and flushes both to the global cooldown tracker under one lock.
+    let target_pass_outcomes = params.diagnostics.pass_outcomes();
+
+    let mut metadata = post_processing::build_metadata(&post_processing::MetadataParams {
         target_value_seen: m.target_value_seen.load(Ordering::Relaxed),
         saturation_aware_used: m.saturation_aware_used.load(Ordering::Relaxed),
         candidates_found: pp_metrics.candidates_found,
@@ -95,6 +100,7 @@ pub(super) fn finalise_synapse_results(
         collapse_bypass_below_floor_drops,
         cpu_pre_reject_no_signal_drops: params.diagnostics.cpu_pre_reject_no_signal_drop_count(),
     });
+    metadata.target_pass_outcomes = target_pass_outcomes;
 
     Ok(AnalyzeSynapsesResult {
         helpful_synapses: helpful_results,

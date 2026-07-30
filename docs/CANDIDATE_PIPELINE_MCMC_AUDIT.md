@@ -156,7 +156,6 @@ provides this effect without the complexity of a cooling schedule.
 
 **Would it help?** This is the most promising MCMC-inspired technique, and
 the pipeline **already implements a version of it**:
-- `candidate_cache.rs` tracks success/failure outcomes per candidate type
 - `module_weights.rs` adjusts per-module weights based on historical success
 - `scale_outcomes.rs` tracks per-scale success rates for weight variants
 - Source-type boosts (`INPUT_SOURCE_BOOST = 1.5`) are calibrated from cache data

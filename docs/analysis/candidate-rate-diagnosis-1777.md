@@ -235,7 +235,8 @@ the fixed `0.003` / `0.0003` base constants that sit in front of it. That is the
 gap between "the floor is correctly scaled" and "the floor is reachable".
 
 → follow-up: **#1778 — re-derive the gain floor against the post-calibration
-scale**
+scale** (**resolved** — see
+[`gain-floor-rescale-1778.md`](gain-floor-rescale-1778.md))
 (and confirm whether the calibration constants belong upstream or downstream of
 the floor at all). Note that the fix is *not* simply to lower the floor — the
 false-positive guard test from #1740 is right that lowering it against a
@@ -316,6 +317,14 @@ consecutive failures, which clears `tiering_escalation_active`
 (`orchestration.rs:778`) and drops the 7 expensive discovery modules on
 creatures over 1000 hidden neurons — **the module set narrows exactly when the
 drought is worst.**
+
+**Fixed by #1803.** The revert was only ever a cooldown on the *risk bias*
+(Issue #1132: "exit conservative mode … after a max cooldown of
+`CONSERVATIVE_MODE_MAX_EPOCHS`"); Issue #1547 later reused `mode == Conservative`
+as the module-tiering escalation signal, coupling module **breadth** to the bias
+cooldown. `decide_mode_with_escalation` now separates the two: the mode still
+reverts, while `module_escalation_active` follows the collapsed rolling rate
+alone, so Extended Drought keeps the full module set.
 
 → follow-ups: **#1780** (dead suppression trackers make the drought reset a
 no-op), **#1781** (failure-cache entries never expire; fingerprint skip has no

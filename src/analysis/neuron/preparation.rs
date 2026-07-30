@@ -569,6 +569,12 @@ fn build_empty_result(
             creature_drought_alarm: None,
             // Issue #1444: populated by orchestration's fail-fast gate only.
             insufficient_recording: None,
+            // Issue #1791: this early return evaluated nothing, so it records
+            // no cooldown skips and no per-target verdicts.
+            target_cooldown_skipped: 0,
+            target_pass_outcomes: Vec::new(),
+            // Issue #1802: this early return never formed a candidate.
+            candidate_reconciliation: None,
         },
     }
 }
@@ -1001,5 +1007,43 @@ mod tests {
     #[test]
     fn test_not_saturated_sentinel_keeps_candidates() {
         assert!(!TargetSaturationInfo::NOT_SATURATED.rejects_candidates());
+    }
+
+    /// Issue #1791: `apply_target_cooldown` — the production filter — actually
+    /// removes a target once its streak crosses the threshold. Before the
+    /// tracker was populated, `tracker.is_empty()` short-circuited this function
+    /// on every pass, so the suppression could never fire.
+    #[test]
+    fn apply_target_cooldown_drops_target_past_threshold() {
+        use crate::analysis::target_failure_tracker::global_tracker;
+
+        let cooled = "prep-cooldown-drops-target";
+        let survivor = "prep-cooldown-survivor";
+
+        let epoch = {
+            let mut tracker = global_tracker()
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let epoch = tracker.current_epoch();
+            for _ in 0..tracker.cooldown_consecutive_failures() {
+                tracker.record_failure(cooled, epoch);
+            }
+            epoch
+        };
+
+        let mut focus_order = vec![cooled.to_string(), survivor.to_string()];
+        let skipped = apply_target_cooldown(&mut focus_order, None);
+
+        assert_eq!(
+            skipped, 1,
+            "the cooled-down target must be filtered out of the focus order"
+        );
+        assert_eq!(focus_order, vec![survivor.to_string()]);
+
+        // Leave the shared global tracker as we found it.
+        let mut tracker = global_tracker()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        tracker.record_success(cooled, epoch);
     }
 }

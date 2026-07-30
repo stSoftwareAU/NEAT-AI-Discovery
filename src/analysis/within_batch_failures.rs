@@ -29,6 +29,8 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 
 use crate::analysis::constants::WITHIN_BATCH_TARGET_FAILURE_LIMIT;
+use crate::analysis::diagnostics::RejectionBreakdown;
+use crate::analysis::diagnostics::rejection_reasons::REJECTION_WITHIN_BATCH_TARGET_SHORT_CIRCUIT;
 use crate::config::within_batch_target_failure_limit_env;
 
 /// Per-batch tracker keyed by target UUID.
@@ -140,6 +142,27 @@ impl Default for WithinBatchFailureTracker {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Fold this batch's short-circuit skips into `breakdown` as
+/// [`REJECTION_WITHIN_BATCH_TARGET_SHORT_CIRCUIT`] rejections (Issue #1796).
+///
+/// Without this the short-circuit was a silent drop: the suppressed candidates
+/// incremented no rejection counter, so
+/// [`crate::analysis::candidate_starvation::classify`] — which reads only the
+/// breakdown — could not see them.
+///
+/// Aggregate, not per-candidate: one call per surface (neuron / synapse) keeps
+/// the evaluation hot loop allocation-free. Each orchestration call owns a
+/// distinct tracker, so calling this once per surface cannot double count.
+/// Returns the folded count.
+pub fn fold_within_batch_skips(
+    tracker: &WithinBatchFailureTracker,
+    breakdown: &mut RejectionBreakdown,
+) -> u32 {
+    let skips = tracker.skip_count();
+    breakdown.record_many_u32(REJECTION_WITHIN_BATCH_TARGET_SHORT_CIRCUIT, skips);
+    skips
 }
 
 #[cfg(test)]

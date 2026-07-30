@@ -14,7 +14,7 @@ use std::time::SystemTime;
 
 use crate::analysis::diagnostics::NeuronDiagnostics;
 use crate::analysis::gpu::GpuWorkQueue;
-use crate::analysis::samples::{EPSILON, HelpfulSample, compute_source_variance_discount};
+use crate::analysis::samples::{HelpfulSample, compute_source_variance_discount};
 use crate::analysis::scoring::cross_validation::{
     CrossValidationConfig, compute_cross_validation_score,
 };
@@ -55,6 +55,17 @@ pub(crate) struct NeuronEvalContext<'a> {
     /// Issue #1164: Within-batch target-failure short-circuit tracker.
     pub within_batch_failures:
         &'a Arc<crate::analysis::within_batch_failures::WithinBatchFailureTracker>,
+    /// Issue #1798: per-batch counters for the pre-evaluation drop sites
+    /// (no samples / constant source), folded into the metadata rejection
+    /// breakdown once per surface.
+    pub evaluation_drops: &'a Arc<crate::analysis::evaluation_drops::EvaluationDropCounters>,
+    /// Issue #1802: per-pass reconciliation ledger for this surface.
+    ///
+    /// Candidates are counted as *considered* where the GPU evaluators form
+    /// them, and as *accounted* at each disposition. A future bare `continue`
+    /// leaves the two out of balance, which fails the invariant instead of
+    /// losing the candidate silently.
+    pub ledger: &'a Arc<crate::analysis::candidate_reconciliation::CandidateLedger>,
 }
 
 /// Evaluate neuron candidates for all sources with samples against a single
@@ -76,7 +87,10 @@ pub(crate) fn evaluate_neuron_candidates(
             break;
         }
 
-        if result.samples.is_empty() {
+        // Issue #1798: count the drop (`no_samples`) instead of dropping
+        // silently — the candidate never reaches the accept gate, so the
+        // starvation classifier could not otherwise see it.
+        if ctx.evaluation_drops.drop_for_empty_samples(&result.samples) {
             continue;
         }
 
@@ -96,8 +110,13 @@ pub(crate) fn evaluate_neuron_candidates(
         // Issue #130 (v0.2.2): Compute source variance discount.
         // If source activation has low variance, predictions are unreliable.
         let source_variance_discount = compute_source_variance_discount(&result.samples);
-        if source_variance_discount <= EPSILON {
-            // Source is constant - skip evaluation entirely
+        // Source is constant — skip evaluation entirely. Issue #1798: counted
+        // as `zero_source_variance`, a distinct cause from `no_samples` (the
+        // source was sampled, it just carries no signal).
+        if ctx
+            .evaluation_drops
+            .drop_for_zero_source_variance(source_variance_discount)
+        {
             continue;
         }
 
@@ -145,14 +164,20 @@ fn evaluate_relu_split(
         )?
     };
 
+    // Issue #1802: the split shader has now formed this batch, so count it once
+    // here — the single batch-formation site for the ReLU-split path.
+    let formed = usize::from(split_result.positive_error_candidate.is_some())
+        + usize::from(split_result.negative_error_candidate.is_some());
+    ctx.ledger.record_considered(formed);
+
     // Issue #1143: Hard-reject ReLU-split candidates when the target is
     // saturated. Independent of the intermediate squash: a saturated
     // HARD_TANH output cannot absorb new gradient from a `ReLU` intermediate
     // any more than from `ArcTan` or `BENT_IDENTITY`.
     if ctx.target_saturation.rejects_candidates() {
-        let dropped = u32::from(split_result.positive_error_candidate.is_some())
-            + u32::from(split_result.negative_error_candidate.is_some());
-        ctx.diagnostics.record_target_saturated_drops(dropped);
+        ctx.diagnostics
+            .record_target_saturated_drops(u32::try_from(formed).unwrap_or(u32::MAX));
+        ctx.ledger.record_accounted(formed);
         return Ok(());
     }
 
@@ -162,6 +187,11 @@ fn evaluate_relu_split(
             // Issue #1164: a rejected candidate counts as a within-batch failure
             // for the target so subsequent same-target candidates can be skipped.
             ctx.within_batch_failures.record_failure(target_uuid);
+            // Issue #1802: count the drop instead of only recording the
+            // within-batch failure — the candidate was formed and rejected at
+            // the improved-ratio gate, so that verdict belongs in the breakdown.
+            ctx.evaluation_drops.drop_below_improved_ratio();
+            ctx.ledger.record_accounted(1);
             if verbose_enabled() {
                 tracing::trace!(
                     direction = "push UP",
@@ -194,6 +224,9 @@ fn evaluate_relu_split(
                 );
             }
             ctx.diagnostics.mark_candidate_selected(target_uuid);
+            // Issue #1802: admitted to the surface's candidate map — the
+            // accounted side of the reconciliation identity.
+            ctx.ledger.record_accounted(1);
             let mut map = lock_or_bail(ctx.helpful_map, "helpful_map")?;
             upsert_candidate(&mut map, candidate);
         }
@@ -204,6 +237,9 @@ fn evaluate_relu_split(
         if !passes_neuron_improved_ratio(&candidate) {
             // Issue #1164: rejected candidate → within-batch failure for target.
             ctx.within_batch_failures.record_failure(target_uuid);
+            // Issue #1802: as above — the improved-ratio verdict is recorded.
+            ctx.evaluation_drops.drop_below_improved_ratio();
+            ctx.ledger.record_accounted(1);
             if verbose_enabled() {
                 tracing::trace!(
                     direction = "push DOWN",
@@ -236,6 +272,9 @@ fn evaluate_relu_split(
                 );
             }
             ctx.diagnostics.mark_candidate_selected(target_uuid);
+            // Issue #1802: admitted to the surface's candidate map — the
+            // accounted side of the reconciliation identity.
+            ctx.ledger.record_accounted(1);
             let mut map = lock_or_bail(ctx.helpful_map, "helpful_map")?;
             upsert_candidate(&mut map, candidate);
         }
@@ -273,10 +312,15 @@ fn evaluate_activation_specs(
     // including ArcTan and BENT_IDENTITY (the production discovery-cache
     // evidence). Count the drops so they surface in the rejection
     // breakdown under `REJECTION_TARGET_SATURATED`.
+    // Issue #1802: the batched shader has now formed this batch — the single
+    // batch-formation site for the activation-spec path.
+    ctx.ledger.record_considered(batched_candidates.len());
+
     if ctx.target_saturation.rejects_candidates() {
         ctx.diagnostics.record_target_saturated_drops(
             u32::try_from(batched_candidates.len()).unwrap_or(u32::MAX),
         );
+        ctx.ledger.record_accounted(batched_candidates.len());
         return Ok(());
     }
 
@@ -285,6 +329,10 @@ fn evaluate_activation_specs(
         if !passes_neuron_improved_ratio(&candidate) {
             // Issue #1164: rejected candidate → within-batch failure for target.
             ctx.within_batch_failures.record_failure(target_uuid);
+            // Issue #1802: record the improved-ratio verdict rather than
+            // dropping the formed candidate silently.
+            ctx.evaluation_drops.drop_below_improved_ratio();
+            ctx.ledger.record_accounted(1);
             continue;
         }
 
@@ -298,6 +346,11 @@ fn evaluate_activation_specs(
                 super::preparation::compounds_target_clipping(&candidate.squash, ts)
             })
         {
+            // Issue #1802: the near-saturated target is the cause, so this drop
+            // joins the fully-saturated hard-reject under the same reason
+            // instead of vanishing.
+            ctx.diagnostics.record_target_saturated_drops(1);
+            ctx.ledger.record_accounted(1);
             continue;
         }
 
@@ -327,6 +380,8 @@ fn evaluate_activation_specs(
         apply_cross_validation_penalty(&mut candidate, samples);
 
         ctx.diagnostics.mark_candidate_selected(target_uuid);
+        // Issue #1802: admitted to the surface's candidate map.
+        ctx.ledger.record_accounted(1);
         let mut map = lock_or_bail(ctx.helpful_map, "helpful_map")?;
         upsert_candidate(&mut map, candidate);
     }

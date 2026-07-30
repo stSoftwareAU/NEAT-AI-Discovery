@@ -107,8 +107,8 @@ pub fn assess_remove_neuron(
     })
 }
 
-/// Estimate the honest, propagation-aware creature-score gain from removing a
-/// neuron.
+/// Estimate the honest, propagation-aware **cost** of removing a neuron — the
+/// influence term of the removal gain, not the gain itself.
 ///
 /// The returned value is signed:
 /// - Its **magnitude** is the neuron's propagation-aware influence on the
@@ -117,8 +117,24 @@ pub fn assess_remove_neuron(
 ///   output attenuate to a tiny value.
 /// - Its **sign** is negative (or zero): removing a neuron that still carries
 ///   downstream influence is expected to *reduce* the trained network's score
-///   by roughly its influence, so the honest "gain" from removal is
-///   non-positive.
+///   by roughly its influence, so this term is non-positive.
+///
+/// # Sign and scale contract (Issue #1812)
+///
+/// The magnitude is a **unitless fraction of output sensitivity in `[0, 1]`**,
+/// as returned by [`compute_impacts_public`]. It is *not* a creature-score
+/// delta, and it must not be written into `expectedCreatureScoreGain` on its
+/// own: that field is consumed as a creature-score **benefit** by the shared
+/// gain-descending ranking sort and by the acceptance floor, so a bare
+/// non-positive cost can never clear a positive floor (the Issue #1785 / #1810
+/// zero yield).
+///
+/// Two conversions turn this into the emitted gain, both applied by
+/// [`removal_net_gain`](super::remove_neuron_net_gain::removal_net_gain): the
+/// magnitude is multiplied by `REMOVE_INFLUENCE_CALIBRATION` to reach the
+/// creature-score scale, and subtracted from the exact complexity saving. The
+/// sign and value returned here are unchanged by that — do **not** flip the sign
+/// to make removals acceptable.
 ///
 /// # Arguments
 /// * `creature` - The creature's network topology (neurons and synapses).

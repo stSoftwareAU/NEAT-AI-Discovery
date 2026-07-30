@@ -22,7 +22,6 @@
 //! - `samples/` - Sample data structures and GPU formats
 //! - `constants/` - Central discovery thresholds and constants (thematic sub-modules)
 //! - `cache/` - Record caching for parquet files (Issue #565)
-//! - `candidate_cache.rs` - Candidate outcome cache for success/failure tracking
 //! - `streaming.rs` - Streaming parquet loading with block-based caching
 //! - `discovery_dispatch.rs` - Generic discovery module dispatch pattern
 //! - `candidate_clustering.rs` - Candidate clustering to reduce redundant ablation tests
@@ -34,10 +33,10 @@
 pub mod activation;
 pub mod analysis_outcome;
 pub mod cache;
-pub mod candidate_cache;
 pub mod candidate_clustering;
 pub mod candidate_compression;
 pub mod candidate_diversity;
+pub mod candidate_reconciliation;
 pub mod candidate_starvation;
 pub mod change_squash_gain;
 pub mod constants;
@@ -52,11 +51,12 @@ pub mod drought_diagnostic;
 pub mod drought_reset;
 pub mod early_termination;
 pub mod ensemble_scoring;
+pub mod evaluation_drops;
 pub mod failure_cache_handshake;
+pub mod fingerprint_skip_escape;
 pub mod gpu;
 pub mod insufficient_recording;
 pub mod merge_redundant_neuron;
-pub mod module_starvation_tracker;
 pub mod module_tiering;
 pub mod module_weights;
 pub mod neuron;
@@ -71,6 +71,7 @@ pub mod remove_neuron_compensation;
 pub mod remove_neuron_constant_promotion;
 pub mod remove_neuron_drought;
 pub mod remove_neuron_gain;
+pub mod remove_neuron_net_gain;
 #[cfg(test)]
 mod remove_neuron_regression_test;
 pub mod samples;
@@ -80,6 +81,7 @@ pub mod streaming;
 pub mod synapse;
 pub mod system;
 pub mod target_failure_tracker;
+pub mod target_pass_outcomes;
 pub mod task_descriptor;
 pub mod utils;
 pub mod within_batch_failures;
@@ -118,6 +120,14 @@ pub use analysis_outcome::{AnalysisOutcome, EnvironmentalDisableReason, PassOutc
 // fabricated floor-at-0.1 placeholder).
 pub use remove_neuron_gain::estimate_remove_neuron_gain;
 
+// Issue #1812: the sole-op remove-neuron net-gain rule — the estimator's
+// unitless cost converted onto the creature-score scale and netted against the
+// exact complexity saving, plus the floor that screens it.
+pub use remove_neuron_net_gain::{
+    analysis_cost_of_growth, estimate_remove_neuron_net_gain, removal_influence_loss,
+    removal_net_gain, removal_net_gain_accepted,
+};
+
 // Issue #1532: propagation-aware change-squash gain estimator (extends the
 // #1518 approach to the change-squash estimate path).
 pub use change_squash_gain::estimate_change_squash_gain;
@@ -132,8 +142,8 @@ pub use remove_neuron_gain::{
 // #1518 gain ranking and #1448 drought demotion as priority remove-neuron
 // candidates.
 pub use remove_neuron_constant_promotion::{
-    CONSTANT_NEURON_PRIORITY_GAIN, functionally_constant_neuron_uuids,
-    promote_constant_remove_neuron_candidates,
+    CONSTANT_NEURON_PRIORITY_GAIN, bias_folded_constant_neuron_uuids,
+    functionally_constant_neuron_uuids, promote_constant_remove_neuron_candidates,
 };
 
 // Issue #1623: bias-fold removal for functionally-constant hidden neurons —

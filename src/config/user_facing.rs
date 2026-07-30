@@ -1319,16 +1319,15 @@ pub fn min_available_memory_gb() -> f64 {
 /// Chosen as `2.5 ×` the conservative-mode cap
 /// ([`crate::analysis::discovery_mode::DEFAULT_CONSERVATIVE_MODE_MAX_EPOCHS`],
 /// 20) so the gentler adaptive levers — conservative-gain multiplier
-/// (#1132) and the adaptive staleness window (#1203) — have ample time to
-/// recover before the heavier one-shot cache flush fires. Previously the
+/// (#1132) and the adaptive target cooldown (#1204) — have ample time to
+/// recover before the heavier one-shot reset fires. Previously the
 /// escape hatch was opt-in and stayed disarmed in production through the
 /// weeks-long drought it was built for (Issue #1205, #1418); arming it by
 /// default closes that gap.
 pub const DEFAULT_DROUGHT_RESET_AFTER_EPOCHS: u32 = 50;
 
-/// Operator escape hatch — force a one-shot reset of the candidate cache
-/// failed entries and target cooldown tracker after this many consecutive
-/// empty discovery passes (Issue #1205).
+/// Operator escape hatch — force a one-shot reset of the target cooldown
+/// tracker after this many consecutive empty discovery passes (Issue #1205).
 ///
 /// **Armed by default** (Issue #1422): when
 /// `NEAT_AI_DISCOVERY_DROUGHT_RESET_AFTER_EPOCHS` is unset or invalid the lever
@@ -1337,10 +1336,14 @@ pub const DEFAULT_DROUGHT_RESET_AFTER_EPOCHS: u32 = 50;
 /// override the threshold, or to `0` to deliberately disable the lever
 /// (returns `None`).
 ///
-/// The reset clears all failed `CandidateOutcomeCache` outcomes (preserving
-/// successes and source-type stats) and all `TargetFailureTracker` entries
-/// currently in cooldown. The reset fires at most once per consecutive
-/// failure streak; a successful pass re-arms the lever.
+/// The reset clears all `TargetFailureTracker` entries currently in cooldown
+/// (below-threshold tracking is preserved). The reset fires at most once per
+/// consecutive failure streak; a successful pass re-arms the lever.
+///
+/// Issue #1792: this used to also promise clearing of failed
+/// `CandidateOutcomeCache` outcomes, but that cache was never constructed
+/// outside tests so the clearing step never ran. The cache has been deleted and
+/// the promise withdrawn.
 pub fn drought_reset_after_epochs() -> Option<u32> {
     match std::env::var("NEAT_AI_DISCOVERY_DROUGHT_RESET_AFTER_EPOCHS") {
         // Explicit, parseable override: `0` disables the lever, any positive

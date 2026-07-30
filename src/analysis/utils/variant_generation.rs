@@ -990,6 +990,7 @@ mod calibrated_variant_tests {
             target_uuid: None,
             improved_count: None,
             total_count: None,
+            age_epochs: None,
         }
     }
 

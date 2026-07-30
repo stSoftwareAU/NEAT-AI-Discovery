@@ -190,6 +190,30 @@ impl NeuronDiagnostics {
         }
     }
 
+    /// Snapshot one per-target verdict per target for the global cooldown
+    /// tracker (Issue #1791).
+    ///
+    /// A target counts as evaluated once at least one source was tried against
+    /// it; pre-analysis filters (input / hidden / constant) never evaluated the
+    /// target, so they yield no evidence and must not move its streak.
+    pub(crate) fn pass_outcomes(
+        &self,
+    ) -> Vec<crate::analysis::target_pass_outcomes::TargetPassOutcome> {
+        self.entries
+            .iter()
+            .map(|entry_ref| {
+                let entry = entry_ref.value();
+                let filtered =
+                    entry.hidden_filtered || entry.input_filtered || entry.constant_filtered;
+                crate::analysis::target_pass_outcomes::TargetPassOutcome::new(
+                    entry.target_uuid.clone(),
+                    entry.had_candidate,
+                    !filtered && entry.evaluated_sources > 0,
+                )
+            })
+            .collect()
+    }
+
     /// Mark a neuron as filtered out because it's a hidden neuron.
     /// Hidden neurons are not valid targets for add-neuron analysis because their
     /// backpropagated errors don't reliably translate to output error reduction.

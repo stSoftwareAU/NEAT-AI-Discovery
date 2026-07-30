@@ -1,36 +1,37 @@
-//! Issue #1777 — is the acceptance gain floor reachable at all?
+//! Issue #1777 — the expected-gain discount stack multiplier is capped by the
+//! calibration constant.
 //!
-//! Diagnostic characterisation of the **expected-gain discount stack** against
-//! the acceptance floor it must clear. The #1737 diagnosis found production
-//! candidates carrying `expectedCreatureScoreGain` of `~1e-10` or exactly `0`
-//! against a `1e-5` floor, and named the estimator as the primary root cause.
-//! The #1740 threshold review then confirmed the floor value itself is sound.
+//! Diagnostic characterisation of the **expected-gain discount stack**. The
+//! #1737 diagnosis found production candidates carrying
+//! `expectedCreatureScoreGain` of `~1e-10` or exactly `0` against a `1e-5`
+//! floor, and named the estimator as the primary root cause. The #1740
+//! threshold review then confirmed the floor value itself is sound.
 //!
 //! Neither audit measured the two together. This suite does: it drives the
 //! **shipped** discount functions end to end, in the same order and with the
 //! same constants as `neuron/post_processing.rs` and `synapse/scoring`, and
-//! reports the *break-even raw gain* — the raw creature error reduction a
-//! candidate must carry for its post-discount gain to survive the floor.
+//! pins the resulting multiplier. Every factor in the stack is `<= 1.0`, so the
+//! fixed calibration constant caps the achievable multiplier at `3e-3`
+//! (add-neuron) / `3e-4` (add-synapse) — the measurement that named the scale
+//! mismatch.
 //!
-//! The tests are characterisation-only: they pin today's measured numbers so a
-//! later change to the calibration constants or the floor is visible as a test
-//! diff. They deliberately assert **no** fix — the remediation is tracked
-//! separately (see `docs/analysis/candidate-rate-diagnosis-1777.md`).
+//! **Issue #1778 — break-even assertions relocated.** These tests originally
+//! also divided the raw `MIN_EXPECTED_CREATURE_SCORE_GAIN` by each multiplier
+//! and asserted the resulting break-even raw gain was unreachable. That was the
+//! bug, and it is now fixed: the filters convert the screen into the calibrated
+//! scale before comparing. The break-even characterisation therefore moved to
+//! `tests/issue_1778_gain_floor_reachability_fix.rs`, which pins the *reachable*
+//! figures against the effective floor. Everything below — the multiplier cap
+//! itself — is unchanged behaviour and still measured here.
 
 use neat_ai_discovery::analysis::constants::{
-    MIN_EXPECTED_CREATURE_SCORE_GAIN, NEURON_PREDICTION_CALIBRATION, SYNAPSE_PREDICTION_CALIBRATION,
+    NEURON_PREDICTION_CALIBRATION, SYNAPSE_PREDICTION_CALIBRATION,
 };
 use neat_ai_discovery::analysis::scoring::calibration_correction::MIN_CALIBRATION_CORRECTION;
 use neat_ai_discovery::analysis::synapse::scoring::{
     apply_logistic_prediction_calibration, apply_neuron_pessimism_discount,
     apply_saturation_prediction_discount, apply_synapse_pessimism_discount,
 };
-
-/// Largest realised score delta observed in the production candidate cache
-/// (#1737): accepted changes land around `1e-7`, rejected ones up to `~1e-3`.
-/// A candidate whose break-even raw gain sits above this band can never be
-/// accepted on a converged network, however good the change actually is.
-const OBSERVED_REALISED_DELTA_CEILING: f32 = 1e-3;
 
 /// Run the shipped add-neuron discount stack over a raw creature error
 /// reduction, in the order `apply_creature_level_metrics` applies it.
@@ -76,14 +77,8 @@ fn synapse_post_discount_gain(
     )
 }
 
-/// Raw creature error reduction needed for the post-discount gain to reach the
-/// acceptance floor, given a multiplier measured from a unit raw gain.
-fn break_even_raw_gain(unit_multiplier: f32) -> f32 {
-    MIN_EXPECTED_CREATURE_SCORE_GAIN / unit_multiplier
-}
-
 #[test]
-fn perfect_add_neuron_candidate_needs_a_third_of_a_percent_raw_gain() {
+fn perfect_add_neuron_multiplier_is_capped_by_the_calibration_constant() {
     // The most favourable inputs the pipeline admits: full structural impact,
     // every sample improved, full improvement magnitude, no saturation, and a
     // neutral (never-discounting) calibration correction.
@@ -102,23 +97,10 @@ fn perfect_add_neuron_candidate_needs_a_third_of_a_percent_raw_gain() {
         "best-case neuron multiplier {multiplier:e} should sit within 10% of \
          the calibration cap {NEURON_PREDICTION_CALIBRATION:e}"
     );
-
-    let break_even = break_even_raw_gain(multiplier);
-    // 1e-5 / 3e-3 == 3.33e-3, i.e. a 0.33% creature error reduction — from a
-    // single structural change, under ideal conditions.
-    assert!(
-        (3.0e-3..4.0e-3).contains(&break_even),
-        "break-even raw gain {break_even:e} outside the characterised band"
-    );
-    assert!(
-        break_even > OBSERVED_REALISED_DELTA_CEILING,
-        "even a perfect add-neuron candidate needs {break_even:e} raw gain, \
-         above the {OBSERVED_REALISED_DELTA_CEILING:e} realised ceiling"
-    );
 }
 
 #[test]
-fn perfect_add_synapse_candidate_needs_over_three_percent_raw_gain() {
+fn perfect_add_synapse_multiplier_is_capped_by_the_calibration_constant() {
     let multiplier = synapse_post_discount_gain(1.0, 100, 100, Some(1.0), 1.0);
 
     assert!(
@@ -131,46 +113,28 @@ fn perfect_add_synapse_candidate_needs_over_three_percent_raw_gain() {
         "best-case synapse multiplier {multiplier:e} should sit within 10% of \
          the calibration cap {SYNAPSE_PREDICTION_CALIBRATION:e}"
     );
-
-    let break_even = break_even_raw_gain(multiplier);
-    // 1e-5 / 3e-4 == 3.33e-2 — a 3.3% creature error reduction from one synapse.
-    assert!(
-        (3.0e-2..4.0e-2).contains(&break_even),
-        "break-even raw gain {break_even:e} outside the characterised band"
-    );
-    assert!(
-        break_even > OBSERVED_REALISED_DELTA_CEILING * 10.0,
-        "even a perfect add-synapse candidate needs {break_even:e} raw gain"
-    );
 }
 
 #[test]
-fn typical_add_neuron_candidate_break_even_is_above_the_realised_band() {
+fn typical_add_neuron_multiplier_is_below_the_best_case() {
     // A plainly good candidate on a converged network: most samples improve,
     // improvements are a third of the available magnitude, target is not
     // saturated, and the failure cache is neutral.
     let multiplier = neuron_post_discount_gain(1.0, 0.8, 70, 100, Some(0.33), None, 1.0);
-    let break_even = break_even_raw_gain(multiplier);
 
     assert!(
         multiplier < NEURON_PREDICTION_CALIBRATION,
         "typical multiplier {multiplier:e} must be below the best case"
     );
-    // Measured: multiplier ~9.8e-4, break-even ~1.0e-2 (a 1% creature error
-    // reduction from a single added neuron).
+    // Measured: ~9.8e-4, i.e. roughly a third of the calibration cap.
     assert!(
-        (5.0e-3..5.0e-2).contains(&break_even),
-        "typical break-even raw gain {break_even:e} outside the characterised band"
-    );
-    assert!(
-        break_even > OBSERVED_REALISED_DELTA_CEILING,
-        "typical add-neuron break-even {break_even:e} should sit above the \
-         {OBSERVED_REALISED_DELTA_CEILING:e} realised ceiling"
+        (5.0e-4..2.0e-3).contains(&multiplier),
+        "typical multiplier {multiplier:e} outside the characterised band"
     );
 }
 
 #[test]
-fn saturated_target_break_even_is_another_order_of_magnitude_worse() {
+fn saturated_target_multiplier_is_another_order_of_magnitude_worse() {
     let unsaturated = neuron_post_discount_gain(1.0, 1.0, 100, 100, Some(1.0), None, 1.0);
     let saturated = neuron_post_discount_gain(1.0, 1.0, 100, 100, Some(1.0), Some(1.0), 1.0);
 
@@ -190,9 +154,11 @@ fn saturated_target_break_even_is_another_order_of_magnitude_worse() {
 /// `[0.001, 1.0]`), and it is *fed by realised outcomes of accepted changes*.
 /// A creature whose recent history is all over-estimates drives it to the
 /// floor, which multiplies the already-small calibration constant by another
-/// 1000×. This test measures how far that pushes the break-even gain.
+/// 1000×. Issue #1778 keeps this correction on the candidate side deliberately
+/// — it is evidence about the creature — so the shrinkage measured here is
+/// intended behaviour, not the scale bug.
 #[test]
-fn failure_cache_correction_at_its_floor_makes_the_gain_floor_unreachable() {
+fn failure_cache_correction_at_its_floor_shrinks_the_multiplier_1000x() {
     let neutral = neuron_post_discount_gain(1.0, 1.0, 100, 100, Some(1.0), None, 1.0);
     let clamped = neuron_post_discount_gain(
         1.0,
@@ -208,15 +174,6 @@ fn failure_cache_correction_at_its_floor_makes_the_gain_floor_unreachable() {
     assert!(
         (900.0..1100.0).contains(&ratio),
         "correction floor should shrink the multiplier ~1000x, got {ratio}"
-    );
-
-    let break_even = break_even_raw_gain(clamped);
-    assert!(
-        break_even > 1.0,
-        "with the correction clamped to {MIN_CALIBRATION_CORRECTION}, a candidate \
-         needs a raw gain of {break_even:e} (>100% creature error reduction) to \
-         clear the {MIN_EXPECTED_CREATURE_SCORE_GAIN:e} floor — the floor is \
-         unreachable by construction"
     );
 }
 

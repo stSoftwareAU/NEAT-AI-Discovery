@@ -373,6 +373,12 @@ matches NEAT-AI's `Score.ts` complexity penalty per neuron.
 | `1e-9` or lower | Encourages creature expansion for evolution on new neurons |
 | Higher values | More aggressive pruning (use with caution) |
 
+A non-finite or non-positive `costOfGrowth` is a caller bug: every entry point,
+including the `rank_focus_neurons` FFI request, rejects it with a WARN naming
+both the offending value and the substituted default, then proceeds on the
+default (Issue #1807). Note that a JSON number outside `f32` range reaches the
+criterion as `±∞` (`1e39`) or `0.0` (`1e-60`), so it is rejected the same way.
+
 Removal candidates are sorted by `activation_weighted_impact` ascending (lowest
 first = safest to remove). Each candidate also includes `removalSavings`
 calculated from NEAT-AI's complexity formula:
@@ -399,8 +405,12 @@ Removal is therefore split across two phases over the **same** impact map:
 | **Triage** (focus time) | `boostedSavings > \|structural_impact\|` | none — topology only |
 | **Gating** (analysis, after focus is fixed) | `boostedSavings > activation_weighted_impact`, plus the mean-activation and constant-variance gates | required |
 
-The triage phase is `focus::triage_removal_candidates`; the activation-weighted
-phase remains `identify_removal_candidates` inside the ranking pipeline. See
+The triage criterion lives in exactly one function,
+`identify_structural_removal_candidates` (the path the FFI ships); the public
+`focus::triage_removal_candidates` is a thin adapter over it that reshapes the
+result into the record-free `StructuralRemovalCandidate` (Issue #1805). The
+activation-weighted phase remains `identify_removal_candidates` inside the
+ranking pipeline. See
 [docs/FOCUS_SELECTION.md § 9](FOCUS_SELECTION.md#9-removal-triage--the-opposite-axis-issue-1767)
 for the opposite-axes rule that governs both.
 
@@ -459,8 +469,15 @@ operation is a `RemoveNeuron`, attaches a `removeNeuronCompensation` block to th
 emitted candidate JSON: the optimal `deltaWeight`, the compact covariance
 statistic (`sampleCount`, variances, covariance, correlation), the bias-only and
 redistributed residual variances, and the `fullyCompensable` flag. Routing is by
-neuron **class** — constant neurons (no per-sample variance) are left untouched
-for the #1623 bias-fold remedy, not duplicated here. Consistent with
+**measured** constancy (Issue #1779) — a neuron whose recorded activations are
+constant within the #1623 fold gate carries no per-sample variance to
+redistribute and is left untouched for the bias-fold remedy, not duplicated here.
+Routing on the *declared* `neuron_type == "constant"` class instead (the
+original #1689 gate) made the fold unreachable: every producer of a sole-op
+`RemoveNeuron`
+emits **hidden** neurons, so a functionally-constant hidden neuron — the
+realistic case — was deleted with no fold and picked up a zero-valued
+redistribution remedy carrying no bias information. Consistent with
 propose-and-evaluate, provably-regressive removals are **not** gated at proposal
 time: the remedy is attached and evaluation decides. Candidates with no
 shared-target survivor or no aligned records are emitted with the field absent —

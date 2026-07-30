@@ -19,9 +19,12 @@
 //!
 //! 2. **The engine does not collapse it** — the nearest transform in the engine
 //!    today is the constant-neuron bias-fold removal of #1620/#1623, whose
-//!    detector seam [`functionally_constant_neuron_uuids`] currently flags
-//!    nothing. There is **no analytical dominance proof** in the engine, so a
-//!    dominated (but non-constant) branch is never flagged and never removed.
+//!    detector seam [`functionally_constant_neuron_uuids`] flags nothing *for
+//!    these fixtures*: since Issue #1813 that seam is wired, but it only flags a
+//!    neuron whose output cannot vary at all, and every branch here is driven by
+//!    a live input. There is **no analytical dominance proof** in the engine, so
+//!    a dominated (but variance-carrying) branch is never flagged and never
+//!    removed.
 //!    The **target** end state — dominated branch removed *and* the surviving
 //!    single-branch aggregate folded to a pass-through (`InputB → RELU →
 //!    output`) — is not reached. Each such test asserts today's non-collapse and
@@ -214,8 +217,10 @@ fn worked_example_max_current_non_collapse() {
     let synapses_before = creature.synapses.len();
 
     // CURRENT engine behaviour: the nearest transform (constant-neuron bias-fold
-    // removal, #1620/#1623) flags nothing — there is no analytical dominance
-    // proof in the engine, so the dominated ABSOLUTE branch is not detected.
+    // removal, #1620/#1623) flags nothing — its structural detector (#1813) only
+    // flags neurons that cannot vary, and every branch here is input-driven.
+    // There is no analytical dominance proof in the engine, so the dominated
+    // ABSOLUTE branch is not detected.
     let flagged = functionally_constant_neuron_uuids(&creature);
     assert!(
         flagged.is_empty(),

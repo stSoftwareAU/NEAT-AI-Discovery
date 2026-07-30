@@ -349,9 +349,12 @@ pub struct RankFocusNeuronsInput {
     pub creature: CreatureJson,
     #[serde(default)]
     pub max_results: Option<usize>,
-    /// The cost of growth from NEAT-AI (default: 1e-7).
+    /// The cost of growth from NEAT-AI (default:
+    /// [`DEFAULT_COST_OF_GROWTH`](crate::focus::DEFAULT_COST_OF_GROWTH)).
     /// Neurons with `activation_weighted_impact` below this threshold are
-    /// candidates for removal. The default 1e-7 matches NEAT-AI's Score.ts formula.
+    /// candidates for removal. The default matches NEAT-AI's Score.ts formula.
+    /// A non-finite or non-positive value is rejected with a WARN and replaced
+    /// by that default (Issue #1807) rather than producing nonsense savings.
     /// Lower values (e.g., 1e-9) encourage creature expansion for evolution.
     /// Issue #132: Pass this from NEAT-AI's configured costOfGrowth for consistency.
     #[serde(default)]
