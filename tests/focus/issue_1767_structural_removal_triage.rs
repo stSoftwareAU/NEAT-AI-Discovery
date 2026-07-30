@@ -19,13 +19,15 @@
 //! FFI entry point, which also covers the JSON mapping onto
 //! `removalCandidates` / `rejectionBreakdown`.
 //!
-//! One case cannot be expressed on this surface: a **non-finite**
-//! `costOfGrowth`. `NaN` and `Infinity` are not representable in JSON, so they
-//! can never reach the FFI at all — that half of the cost-of-growth fallback is
-//! pinned directly against the shipped function by
+//! Non-positive `costOfGrowth` values are asserted here. `NaN` and `Infinity`
+//! are not JSON literals, so a caller cannot write them directly — but a JSON
+//! number that overflows `f32` (`1e39`) still arrives as `±∞`, and one that
+//! underflows (`1e-60`) arrives as `0.0`. Those FFI-reachable non-finite cases
+//! plus the WARN the substitution must emit are covered by
+//! `tests/analysis/issue_1807_ffi_cost_of_growth_validation.rs`; the `NaN` half
+//! is pinned against the shipped function by
 //! `unification_parity_tests::entry_points_agree_on_an_invalid_cost_of_growth`
-//! in `src/focus/ranking/removal_triage.rs`. The reachable half (non-positive
-//! values) is asserted here.
+//! in `src/focus/ranking/removal_triage.rs`.
 
 use neat_ai_discovery::analysis::diagnostics::rejection_reasons::REJECTION_REMOVAL_BELOW_NOISE_FLOOR;
 use neat_ai_discovery::focus::rank_focus_neurons;
@@ -384,10 +386,9 @@ fn candidates_are_sorted_by_net_improvement_descending() {
 /// A non-positive cost-of-growth is a caller bug: the shipped path falls back to
 /// the crate default rather than producing nonsense savings.
 ///
-/// `NaN` / `Infinity` cannot be encoded in JSON, so they are unreachable through
-/// the FFI; that half of the guard is pinned against the shipped function by
-/// `entry_points_agree_on_an_invalid_cost_of_growth` in
-/// `src/focus/ranking/removal_triage.rs` (Issue #1806).
+/// The non-finite cases reachable over FFI (an `f32`-overflowing JSON number)
+/// and the WARN that must accompany every substitution live in
+/// `tests/analysis/issue_1807_ffi_cost_of_growth_validation.rs` (Issue #1807).
 #[test]
 #[serial]
 fn invalid_cost_of_growth_falls_back_to_the_default() {

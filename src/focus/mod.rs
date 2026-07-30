@@ -63,13 +63,13 @@ pub use selection::{
 
 // From ranking
 pub use ranking::{
-    FocusLazyReason, FocusLoadingMode, RankFocusStats, RankedNeuron, RecordProvider,
-    RemovalCandidate, SelectionStats, StructuralRemovalCandidate, StructuralRemovalTriage,
-    SynapseCounts, calculate_removal_savings, decide_loading_mode_for_available_memory,
-    decide_loading_mode_for_budget, lazy_pass_exceeds_perf_cliff, rank_focus_neurons,
-    rank_focus_neurons_with_descriptor, rank_focus_neurons_with_descriptor_and_deadline,
-    rank_focus_neurons_with_history, rank_focus_neurons_with_history_and_descriptor,
-    triage_removal_candidates,
+    DEFAULT_COST_OF_GROWTH, FocusLazyReason, FocusLoadingMode, RankFocusStats, RankedNeuron,
+    RecordProvider, RemovalCandidate, SelectionStats, StructuralRemovalCandidate,
+    StructuralRemovalTriage, SynapseCounts, calculate_removal_savings,
+    decide_loading_mode_for_available_memory, decide_loading_mode_for_budget,
+    lazy_pass_exceeds_perf_cliff, rank_focus_neurons, rank_focus_neurons_with_descriptor,
+    rank_focus_neurons_with_descriptor_and_deadline, rank_focus_neurons_with_history,
+    rank_focus_neurons_with_history_and_descriptor, triage_removal_candidates,
 };
 // Issue #1767: structure-only removal triage (near-opposite axis to focus).
 pub(crate) use ranking::identify_structural_removal_candidates;

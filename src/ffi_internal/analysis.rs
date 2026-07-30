@@ -700,9 +700,10 @@ pub fn rank_focus_neurons_internal(input_json: &str) -> Result<String> {
     // pruning them. It is structure-only: no discovery parquet is opened, so it
     // never reintroduces the focus-time parquet dependency #1766 removed. The
     // activation-weighted gates that need records stay in the analysis phase.
-    // `costOfGrowth` defaults to NEAT-AI's Score.ts 1e-7. Issue #1783: the
-    // single criterion validates it, so a non-finite or non-positive value
-    // falls back to that default with a WARN instead of being taken raw.
+    // `costOfGrowth` defaults to `DEFAULT_COST_OF_GROWTH` (NEAT-AI's Score.ts
+    // value). Issue #1783: the single criterion validates it, so a non-finite
+    // or non-positive value falls back to that default with a WARN instead of
+    // being taken raw — Issue #1807 pins that on this entry point.
     let removal_outcome =
         focus::identify_structural_removal_candidates(&input.creature, input.cost_of_growth);
     let rejection_breakdown = removal_outcome.rejection_breakdown();
