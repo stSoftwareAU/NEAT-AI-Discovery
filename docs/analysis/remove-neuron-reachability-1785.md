@@ -83,9 +83,10 @@ sign is unchanged and the floor is replaced for one candidate type, not dropped.
 | Rejections counted under `below_expected_gain_floor` | 36 | **0** |
 
 The three survivors are exactly the fixture's zero-influence orphans, and they
-survive **without** promotion — Block 2 still measures zero promotions, so the
-#1622 escape hatch is no longer the only route past Gate 1. Every one of the 33
-rejections is counted under its own reason: nothing leaves the pass silently.
+survive **without** promotion — Block 2 still measures zero promotions, so
+the #1622 escape hatch is no longer the only route past Gate 1. Every one of
+the 33 rejections is counted under its own reason: nothing leaves the pass
+silently.
 
 A synthetic hidden neuron wired straight into `out-1` with a dominant weight
 (influence `−9.99e-1`, net gain `−2.997e-3`) is still rejected and counted, which
