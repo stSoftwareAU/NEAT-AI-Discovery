@@ -43,31 +43,101 @@ use super::{cache, shared, synapse};
 pub fn apply_coordinated_gain_floor(
     candidates: &mut Vec<CoordinatedStructuralCandidateJson>,
 ) -> u32 {
-    apply_coordinated_gain_floor_with_multiplier(candidates, 1.0)
+    apply_coordinated_gain_floor_with_multiplier(candidates, 1.0).total()
+}
+
+/// The per-reason drop counts from one gain-floor pass (Issue #1812).
+///
+/// The pass screens two populations against two different floors, so it must
+/// report two counts: collapsing them would file every sole-op removal under a
+/// reason that no longer describes why it was dropped.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct GainFloorDrops {
+    /// Candidates dropped by [`coordinated_post_discount_noise_floor`] — every
+    /// candidate type except a sole-op `RemoveNeuron`, plus every multi-op
+    /// group. Counted under `REJECTION_BELOW_EXPECTED_GAIN_FLOOR`.
+    pub below_expected_gain_floor: u32,
+    /// Sole-op `RemoveNeuron` candidates dropped by `removal_net_gain_floor`
+    /// because the calibrated influence loss outweighed the complexity saving.
+    /// Counted under `REJECTION_REMOVAL_LOSS_EXCEEDS_SAVING`.
+    pub removal_loss_exceeds_saving: u32,
+}
+
+impl GainFloorDrops {
+    /// Total candidates dropped by the pass, across both floors.
+    #[must_use]
+    pub fn total(self) -> u32 {
+        self.below_expected_gain_floor
+            .saturating_add(self.removal_loss_exceeds_saving)
+    }
+}
+
+/// Whether a candidate's sole operation is a `RemoveNeuron` — the bare neuron
+/// removal that carries a net-benefit gain rather than a prediction-scale one
+/// (Issue #1812).
+fn is_sole_op_remove_neuron(candidate: &CoordinatedStructuralCandidateJson) -> bool {
+    matches!(
+        candidate.operations.as_slice(),
+        [CoordinatedStructuralOpJson::RemoveNeuron { .. }]
+    )
 }
 
 /// Variant of [`apply_coordinated_gain_floor`] that multiplies each
-/// candidate's per-op-count floor by a caller-supplied factor before
-/// filtering (Issue #1132, #1272).
+/// candidate's floor by a caller-supplied factor before filtering
+/// (Issue #1132, #1272), reporting the drops per reason (Issue #1812).
 ///
 /// The `multiplier` must be `>= 1.0`; values below 1.0 are clamped to 1.0 so
 /// the floor can never become looser than the default. Conservative discovery
 /// mode passes a multiplier above 1.0 to bias away from borderline structural
-/// candidates when the creature has a low recent success rate. The multiplier
-/// is applied to the per-tier floor returned by
-/// [`coordinated_post_discount_noise_floor`], so the relative tier ordering
-/// is preserved.
+/// candidates when the creature has a low recent success rate.
+///
+/// ## Which floor a candidate is screened against (Issue #1812)
+///
+/// Two populations, two denominations — the multiplier applies to both:
+///
+/// - **Sole-op `RemoveNeuron`** → `removal_net_gain_floor(costOfGrowth)`. Its
+///   `expected_creature_score_gain` is a *net benefit in units of
+///   `costOfGrowth`* — the exact complexity saving minus the calibrated
+///   influence loss (see
+///   [`remove_neuron_net_gain`](super::remove_neuron_net_gain)). Screening it
+///   against the add-path floor compared two different quantities and dropped
+///   every removal by construction (Issue #1785 / #1810).
+/// - **Everything else, including every multi-op group** →
+///   [`coordinated_post_discount_noise_floor`] per operation count, unchanged in
+///   value and scope. A multi-op candidate's gain reflects the whole atomic
+///   group, not a bare neuron removal, so it is deliberately not rescoped.
+///
+/// The floor is replaced for one candidate type, not dropped: a removal that
+/// genuinely loses accuracy still yields a negative net gain and is still
+/// rejected here.
 pub fn apply_coordinated_gain_floor_with_multiplier(
     candidates: &mut Vec<CoordinatedStructuralCandidateJson>,
     multiplier: f32,
-) -> u32 {
+) -> GainFloorDrops {
     let factor = multiplier.max(1.0);
-    let before = candidates.len();
+    let cost_of_growth = super::remove_neuron_net_gain::analysis_cost_of_growth();
+    let mut drops = GainFloorDrops::default();
     candidates.retain(|c| {
+        if is_sole_op_remove_neuron(c) {
+            let accepted = super::remove_neuron_net_gain::removal_net_gain_accepted(
+                c.expected_creature_score_gain,
+                cost_of_growth,
+                factor,
+            );
+            if !accepted {
+                drops.removal_loss_exceeds_saving =
+                    drops.removal_loss_exceeds_saving.saturating_add(1);
+            }
+            return accepted;
+        }
         let floor = coordinated_post_discount_noise_floor(c.operations.len()) * factor;
-        c.expected_creature_score_gain >= floor
+        let accepted = c.expected_creature_score_gain >= floor;
+        if !accepted {
+            drops.below_expected_gain_floor = drops.below_expected_gain_floor.saturating_add(1);
+        }
+        accepted
     });
-    u32::try_from(before.saturating_sub(candidates.len())).unwrap_or(u32::MAX)
+    drops
 }
 
 /// Remove coordinated-structural candidates whose `expected_creature_score_gain`
@@ -108,7 +178,11 @@ pub fn reject_non_finite_gains(candidates: &mut Vec<CoordinatedStructuralCandida
 /// - `expected_creature_score_gain` is screened in both the fast-path and the
 ///   skipped-post-processing fallback.
 /// - `metadata.rejection_breakdown[REJECTION_BELOW_EXPECTED_GAIN_FLOOR]` is
-///   updated with the drop count.
+///   updated with the drop count — and, for sole-op `RemoveNeuron` candidates
+///   screened against `removal_net_gain_floor` instead,
+///   `metadata.rejection_breakdown[REJECTION_REMOVAL_LOSS_EXCEEDS_SAVING]`
+///   (Issue #1812). Every drop is counted under the reason that describes the
+///   comparison that made it.
 /// - `metadata.candidates_returned` is refreshed so the FFI caller sees an
 ///   accurate total after filtering.
 ///
@@ -120,6 +194,7 @@ pub fn apply_final_coordinated_gain_floor(
 ) -> u32 {
     use super::diagnostics::rejection_reasons::{
         REJECTION_BELOW_EXPECTED_GAIN_FLOOR, REJECTION_NON_FINITE_GAIN,
+        REJECTION_REMOVAL_LOSS_EXCEEDS_SAVING,
     };
 
     // Issue #1367: Drop non-finite gains (NaN / ±∞) before the floor comparison.
@@ -135,18 +210,25 @@ pub fn apply_final_coordinated_gain_floor(
         discovery_mode,
         conservative_multiplier,
     );
-    let removed = apply_coordinated_gain_floor_with_multiplier(
+    let drops = apply_coordinated_gain_floor_with_multiplier(
         &mut synapse.coordinated_structural_candidates,
         gain_multiplier,
     );
-    synapse
-        .metadata
-        .rejection_breakdown
-        .record_many_u32(REJECTION_BELOW_EXPECTED_GAIN_FLOOR, removed);
+    synapse.metadata.rejection_breakdown.record_many_u32(
+        REJECTION_BELOW_EXPECTED_GAIN_FLOOR,
+        drops.below_expected_gain_floor,
+    );
+    // Issue #1812: sole-op removals are screened against a different floor, so
+    // they are counted under their own reason — never silently, and never under
+    // a reason that no longer describes the comparison that dropped them.
+    synapse.metadata.rejection_breakdown.record_many_u32(
+        REJECTION_REMOVAL_LOSS_EXCEEDS_SAVING,
+        drops.removal_loss_exceeds_saving,
+    );
     synapse.metadata.candidates_returned = synapse.helpful_synapses.len()
         + synapse.harmful_synapses.len()
         + synapse.coordinated_structural_candidates.len();
-    removed
+    drops.total()
 }
 
 /// Compute the operation-count discount for a coordinated candidate (Issue #732, #1058).

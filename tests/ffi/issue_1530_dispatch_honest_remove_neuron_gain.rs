@@ -10,20 +10,34 @@
 //! [`apply_honest_remove_neuron_gain`] is the dispatch seam the orchestration
 //! calls on the assembled coordinated candidates before the drought demotion
 //! and final gain floor. These tests drive that seam with a deliberately wrong
-//! request-supplied gain and assert the returned gain comes from the honest,
-//! propagation-aware estimator — it does **not** echo the supplied value.
+//! request-supplied gain and assert the returned gain is derived from the
+//! honest, propagation-aware estimator — it does **not** echo the supplied value.
 //!
 //! The depth test reproduces the failure end-to-end on the committed deep-chain
 //! topology fixture (hand-authored and synthetic — Issue #1722): a deep neuron
-//! carrying the placeholder gain is corrected to an estimate that tracks the
-//! analytic propagated effect in sign and magnitude rather than the placeholder.
+//! carrying the placeholder gain is corrected to a value derived from the
+//! analytic propagated effect rather than the placeholder.
+//!
+//! # Updated by Issue #1812
+//!
+//! The seam no longer writes the estimator's output verbatim. That output is a
+//! **unitless** influence fraction, negated — a cost term — and writing it into
+//! `expectedCreatureScoreGain` compared it against a floor denominated in
+//! creature-score benefit, dropping every sole-op removal by construction
+//! (#1785/#1810). The seam now writes
+//! `saving − |influence| × REMOVE_INFLUENCE_CALIBRATION`, so these tests assert
+//! on the estimator's tracking of the analytic reference (unchanged) *and* on
+//! the conversion that turns it into the emitted gain.
 
 #![allow(clippy::cast_precision_loss)] // Intentional numeric casts (Issue #873)
 
 use std::path::{Path, PathBuf};
 
 use neat_ai_discovery::analysis::discovery_dispatch::apply_honest_remove_neuron_gain;
-use neat_ai_discovery::analysis::estimate_remove_neuron_gain;
+use neat_ai_discovery::analysis::{
+    analysis_cost_of_growth, estimate_remove_neuron_gain, removal_net_gain,
+};
+use neat_ai_discovery::focus::{SynapseCounts, calculate_removal_savings};
 use neat_ai_discovery::{
     CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson, CreatureJson,
 };
@@ -112,12 +126,16 @@ fn dispatch_replaces_request_supplied_gain_with_honest_estimate() {
         "the single RemoveNeuron candidate is overridden"
     );
 
-    let honest = estimate_remove_neuron_gain(&creature, "deep").expect("estimator gain");
+    let influence = estimate_remove_neuron_gain(&creature, "deep").expect("estimator gain");
+    // `deep` has one incoming and one outgoing synapse.
+    let saving = calculate_removal_savings(1, 1, analysis_cost_of_growth());
+    let expected = f64::from(removal_net_gain(saving, influence));
     let reported = f64::from(candidates[0].expected_creature_score_gain);
 
     assert!(
-        (reported - honest).abs() < 1e-6,
-        "dispatch must report the honest estimate {honest}, not the supplied 0.5 (got {reported})"
+        (reported - expected).abs() < 1e-12,
+        "dispatch must report the net benefit derived from the honest estimate {influence} \
+         (expected {expected}), not the supplied 0.5 (got {reported})"
     );
     assert!(
         (reported - 0.5).abs() > 1e-6,
@@ -125,7 +143,7 @@ fn dispatch_replaces_request_supplied_gain_with_honest_estimate() {
     );
     assert!(
         reported < 0.0,
-        "a genuinely-connected neuron's honest remove gain is negative, got {reported}"
+        "a genuinely-connected neuron's removal must net a negative benefit, got {reported}"
     );
 }
 
@@ -151,20 +169,38 @@ fn dispatch_tracks_analytic_reference_at_depth() {
     );
     assert!(
         magnitude_ratio(f64::from(PLACEHOLDER_GAIN), reported) > 100.0,
-        "the placeholder {PLACEHOLDER_GAIN} should dwarf the honest gain {reported} (>100×)"
+        "the placeholder {PLACEHOLDER_GAIN} should dwarf the reported gain {reported} (>100×)"
     );
 
-    // The honest gain tracks the analytic reference's sign and magnitude:
-    // removing a neuron that still carries downstream influence is a small net
-    // loss.
+    // The estimator — the gain's cost term — still tracks the analytic
+    // reference's sign and magnitude. This is the #1530 guarantee, unchanged by
+    // #1812's re-denomination.
+    let influence = estimate_remove_neuron_gain(&creature, TARGET_NEURON).expect("estimator gain");
     assert!(
-        reported < 0.0 && reported.signum() == REFERENCE_EFFECT.signum(),
-        "honest gain {reported} must share the analytic reference's negative sign"
+        influence < 0.0 && influence.signum() == REFERENCE_EFFECT.signum(),
+        "the estimated cost {influence} must share the analytic reference's negative sign"
     );
-    let ratio = magnitude_ratio(reported, REFERENCE_EFFECT);
+    let ratio = magnitude_ratio(influence, REFERENCE_EFFECT);
     assert!(
         (0.1..=10.0).contains(&ratio),
-        "honest gain {reported} must be within one order of magnitude of the analytic \
+        "the estimated cost {influence} must be within one order of magnitude of the analytic \
          reference {REFERENCE_EFFECT} (ratio {ratio})"
+    );
+
+    // #1812: the emitted gain is that cost, converted onto the creature-score
+    // scale and netted against the exact complexity saving. Still a net loss —
+    // the removal does not pay for the influence it destroys.
+    let counts = SynapseCounts::new(&creature);
+    let (incoming, outgoing) = counts.get(TARGET_NEURON);
+    let saving = calculate_removal_savings(incoming, outgoing, analysis_cost_of_growth());
+    let expected = f64::from(removal_net_gain(saving, influence));
+    assert!(
+        (reported - expected).abs() < 1e-12,
+        "emitted gain {reported} must be the net benefit {expected} (saving {saving} minus the \
+         calibrated cost of {influence})"
+    );
+    assert!(
+        reported < 0.0,
+        "a neuron carrying real downstream influence must net a negative benefit, got {reported}"
     );
 }

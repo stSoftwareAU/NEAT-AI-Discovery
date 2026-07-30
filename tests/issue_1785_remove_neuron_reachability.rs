@@ -11,10 +11,19 @@
 //! The two gates, from one creature:
 //!
 //! - **Gate 1 — analysis path.** A sole-op `RemoveNeuron` candidate per hidden
-//!   neuron, run through `apply_honest_remove_neuron_gain` (#1530). The honest
-//!   gain is `−impact`, so it is non-positive by construction while
-//!   `coordinated_post_discount_noise_floor(1)` is strictly positive: **no**
-//!   candidate can clear the floor.
+//!   neuron, run through `apply_honest_remove_neuron_gain` (#1530) and then the
+//!   FFI-facing `apply_final_coordinated_gain_floor`.
+//!
+//!   **Updated by Issue #1812.** The original pin recorded a zero yield: the
+//!   emitted gain was `−impact`, non-positive by construction, screened against
+//!   the strictly-positive `coordinated_post_discount_noise_floor(1)`, so no
+//!   candidate could clear the floor. #1812 gave the gain its missing benefit
+//!   term and unit conversion (`saving − calibrated influence loss`, decided by
+//!   #1811) and routes sole-op removals to `removal_net_gain_floor`. Blocks 1
+//!   and 1b now pin the post-fix behaviour: the three zero-influence orphans
+//!   reach the FFI-facing survivor set, and every neuron carrying real influence
+//!   — including a synthetic high-influence one — is still rejected and counted
+//!   under `REJECTION_REMOVAL_LOSS_EXCEEDS_SAVING`.
 //! - **Gate 2 — focus / FFI path.** `identify_structural_removal_candidates` is
 //!   `pub(crate)`, so it is reached the way production reaches it — through
 //!   `rank_focus_neurons_internal` (Issue #1806) — and the boosted savings from
@@ -38,15 +47,23 @@
 
 use std::path::{Path, PathBuf};
 
+use neat_ai_discovery::analysis::candidate_aggregation::apply_final_coordinated_gain_floor;
 use neat_ai_discovery::analysis::constants::{
-    REMOVAL_CANDIDATE_BOOST, coordinated_post_discount_noise_floor, remove_low_impact_noise_floor,
+    REMOVAL_CANDIDATE_BOOST, coordinated_post_discount_noise_floor, removal_net_gain_floor,
+    remove_low_impact_noise_floor,
 };
-use neat_ai_discovery::analysis::diagnostics::rejection_reasons::REJECTION_REMOVAL_BELOW_NOISE_FLOOR;
+use neat_ai_discovery::analysis::diagnostics::rejection_reasons::{
+    REJECTION_BELOW_EXPECTED_GAIN_FLOOR, REJECTION_REMOVAL_BELOW_NOISE_FLOOR,
+    REJECTION_REMOVAL_LOSS_EXCEEDS_SAVING,
+};
 use neat_ai_discovery::analysis::discovery_dispatch::apply_honest_remove_neuron_gain;
+use neat_ai_discovery::analysis::discovery_mode::DiscoveryMode;
+use neat_ai_discovery::analysis::estimate_remove_neuron_gain;
 use neat_ai_discovery::analysis::remove_neuron_constant_promotion::{
     bias_folded_constant_neuron_uuids, functionally_constant_neuron_uuids,
     promote_constant_remove_neuron_candidates,
 };
+use neat_ai_discovery::analysis::shared::{AnalyzeSynapsesResult, SynapseAnalysisMetadata};
 use neat_ai_discovery::focus::{DEFAULT_COST_OF_GROWTH, SynapseCounts, calculate_removal_savings};
 use neat_ai_discovery::rank_focus_neurons_internal;
 use neat_ai_discovery::{
@@ -147,6 +164,73 @@ fn sole_op_remove_neuron_candidates(
         .collect()
 }
 
+/// The synthetic neuron Block 1b adds to the fixture: one hidden neuron wired
+/// straight into `out-1` with a dominant weight, so removing it costs almost the
+/// whole output.
+const SYNTHETIC_HOT_NEURON: &str = "h-synthetic-hot";
+
+/// The fixture plus [`SYNTHETIC_HOT_NEURON`], inserted before the outputs so the
+/// creature stays forward-only.
+fn creature_with_synthetic_high_influence_neuron() -> CreatureJson {
+    let mut creature = fixture_creature();
+    let first_output = creature
+        .neurons
+        .iter()
+        .position(|n| n.neuron_type == "output")
+        .expect("the fixture has output neurons");
+    let mut hot = creature.neurons[first_output - 1].clone();
+    hot.uuid = SYNTHETIC_HOT_NEURON.to_string();
+    hot.neuron_type = "hidden".to_string();
+    creature.neurons.insert(first_output, hot);
+
+    let template = creature.synapses[0].clone();
+    let mut inbound = template.clone();
+    inbound.from_uuid = "in-0".to_string();
+    inbound.to_uuid = SYNTHETIC_HOT_NEURON.to_string();
+    inbound.weight = 1.0;
+    let mut outbound = template;
+    outbound.from_uuid = SYNTHETIC_HOT_NEURON.to_string();
+    outbound.to_uuid = "out-1".to_string();
+    outbound.weight = 1000.0;
+    creature.synapses.push(inbound);
+    creature.synapses.push(outbound);
+    creature
+}
+
+/// The neuron a sole-op `RemoveNeuron` candidate targets.
+fn removal_target(candidate: &CoordinatedStructuralCandidateJson) -> &str {
+    match candidate.operations.as_slice() {
+        [CoordinatedStructuralOpJson::RemoveNeuron { neuron_uuid }] => neuron_uuid.as_str(),
+        other => panic!("expected a sole-op RemoveNeuron candidate, got {other:?}"),
+    }
+}
+
+/// Drive the FFI-facing final gain floor over `candidates` and return the
+/// survivors plus the rejection breakdown the FFI response would carry.
+fn final_floor_survivors(
+    candidates: Vec<CoordinatedStructuralCandidateJson>,
+) -> (Vec<CoordinatedStructuralCandidateJson>, Value) {
+    let mut synapse = AnalyzeSynapsesResult {
+        helpful_synapses: Vec::new(),
+        harmful_synapses: Vec::new(),
+        synapse_weight_updates: Vec::new(),
+        coordinated_structural_candidates: candidates,
+        candidate_clusters: Vec::new(),
+        gpu_used: false,
+        no_candidate_reasons: Vec::new(),
+        metadata: SynapseAnalysisMetadata::default(),
+    };
+    apply_final_coordinated_gain_floor(&mut synapse, DiscoveryMode::Normal, 1.0);
+    let breakdown = serde_json::to_value(synapse.metadata.rejection_breakdown.counts())
+        .expect("rejection breakdown serialises");
+    (synapse.coordinated_structural_candidates, breakdown)
+}
+
+/// One reason's count from a serialised rejection breakdown (absent → 0).
+fn breakdown_count(breakdown: &Value, reason: &str) -> usize {
+    usize::try_from(breakdown[reason].as_u64().unwrap_or(0)).expect("count fits a usize")
+}
+
 /// Assert the fixture still exercises what this suite measures. Without these
 /// the measurement blocks below could pass vacuously on a hollowed-out fixture.
 fn assert_fixture_preconditions(creature: &CreatureJson) {
@@ -200,20 +284,26 @@ fn ffi_focus_response(creature: &CreatureJson, cost_of_growth: f32) -> Value {
     response
 }
 
-/// **Block 1 — Gate 1, the analysis path.**
+/// **Block 1 — Gate 1, the analysis path (post-#1812).**
 ///
-/// Build the sole-op `RemoveNeuron` candidate set, apply the #1530 honest-gain
-/// override, and measure how many honest gains clear
-/// `coordinated_post_discount_noise_floor(1)`. Today: none, and none can — the
-/// honest gain is `−impact` (non-positive) against a strictly positive floor.
+/// Build the sole-op `RemoveNeuron` candidate set, apply the #1530/#1812
+/// net-gain override, and drive the FFI-facing `apply_final_coordinated_gain_floor`
+/// — the last stage before the FFI response, and the one that populates
+/// `metadata.rejection_breakdown` and `metadata.candidates_returned`.
+///
+/// Pins the flip this milestone exists to make: the three zero-influence orphans
+/// survive to the response **without** the #1622 promotion (nothing is flagged
+/// here — Block 2 proves that), and the other 33 are rejected and counted under
+/// `REJECTION_REMOVAL_LOSS_EXCEEDS_SAVING`.
 #[test]
 #[serial]
-fn gate_1_analysis_path_yields_no_floor_clearing_remove_neuron_candidate() {
+fn gate_1_analysis_path_yields_surviving_remove_neuron_candidates() {
     let _gates = default_gates();
     let creature = fixture_creature();
     assert_fixture_preconditions(&creature);
 
     let mut candidates = sole_op_remove_neuron_candidates(&creature);
+    let hidden_count = candidates.len();
     let removable = apply_honest_remove_neuron_gain(&creature, &mut candidates);
 
     let mut gains: Vec<f64> = candidates
@@ -221,32 +311,129 @@ fn gate_1_analysis_path_yields_no_floor_clearing_remove_neuron_candidate() {
         .map(|c| f64::from(c.expected_creature_score_gain))
         .collect();
     let (min, median, max) = distribution(&mut gains);
-    let floor = coordinated_post_discount_noise_floor(1);
-    let clearing = gains.iter().filter(|g| **g >= f64::from(floor)).count();
+    let removal_floor = removal_net_gain_floor(COST_OF_GROWTH);
+    let shared_floor = coordinated_post_discount_noise_floor(1);
 
-    println!("=== Block 1 — Gate 1 (analysis path, honest remove-neuron gain) ===");
-    println!("hidden neurons (candidate set): {}", candidates.len());
+    let (survivors, breakdown) = final_floor_survivors(candidates);
+    let counted_rejections = breakdown_count(&breakdown, REJECTION_REMOVAL_LOSS_EXCEEDS_SAVING);
+    let shared_floor_rejections = breakdown_count(&breakdown, REJECTION_BELOW_EXPECTED_GAIN_FLOOR);
+
+    println!("=== Block 1 — Gate 1 (analysis path, net remove-neuron gain) ===");
+    println!("hidden neurons (candidate set): {hidden_count}");
     println!("removable neurons (gain overridden): {removable}");
-    println!("honest gain min:    {min:e}");
-    println!("honest gain median: {median:e}");
-    println!("honest gain max:    {max:e}");
-    println!("coordinated_post_discount_noise_floor(1): {floor:e}");
-    println!("neurons clearing the floor: {clearing}");
+    println!("net gain min:    {min:e}");
+    println!("net gain median: {median:e}");
+    println!("net gain max:    {max:e}");
+    println!("removal_net_gain_floor({COST_OF_GROWTH:e}): {removal_floor:e}");
+    println!("coordinated_post_discount_noise_floor(1): {shared_floor:e}");
+    println!(
+        "candidates surviving to the FFI response: {}",
+        survivors.len()
+    );
+    println!(
+        "rejections counted under {REJECTION_REMOVAL_LOSS_EXCEEDS_SAVING}: {counted_rejections}"
+    );
 
     assert_eq!(
-        removable,
-        candidates.len(),
-        "every hidden neuron must receive an honest gain, or the distribution is measured over a \
+        removable, hidden_count,
+        "every hidden neuron must receive a net gain, or the distribution is measured over a \
          partly-placeholder set"
     );
     assert!(
-        max <= 0.0,
-        "the honest gain is −impact and must stay non-positive; best was {max:e} — {PIN_HINT}"
+        max > 0.0,
+        "at least one removal must now net a positive benefit; best was {max:e} — {PIN_HINT}"
+    );
+    assert!(
+        !survivors.is_empty(),
+        "at least one non-promoted sole-op RemoveNeuron candidate must reach the FFI response — \
+         {PIN_HINT}"
     );
     assert_eq!(
-        clearing, 0,
-        "no remove-neuron candidate clears the {floor:e} floor today (best honest gain {max:e}) — \
+        survivors.len(),
+        3,
+        "the fixture's three zero-influence orphans are exactly the removals worth making — \
          {PIN_HINT}"
+    );
+    let mut surviving_uuids: Vec<&str> = survivors.iter().map(removal_target).collect();
+    surviving_uuids.sort_unstable();
+    assert_eq!(
+        surviving_uuids,
+        vec!["h-x-0", "h-x-1", "h-x-2"],
+        "the survivors must be the zero-influence orphans, not a connected neuron — {PIN_HINT}"
+    );
+    assert_eq!(
+        counted_rejections + survivors.len(),
+        hidden_count,
+        "every sole-op removal must leave the pass as a survivor or a counted rejection — a \
+         silent drop would reproduce the exact fail-loud violation #1785 raised"
+    );
+    assert_eq!(
+        shared_floor_rejections, 0,
+        "a sole-op removal must be counted under its own reason, never under the shared \
+         add-path floor reason — {PIN_HINT}"
+    );
+}
+
+/// **Block 1b — Gate 1 still rejects a harmful removal.**
+///
+/// The same fixture plus one synthetic hidden neuron wired straight into an
+/// output with a dominant weight, so it carries near-total downstream influence.
+/// The rule must reject it — and count the rejection under a named reason —
+/// while the zero-influence orphans still survive. Without this the fix could
+/// have been "accept everything".
+#[test]
+#[serial]
+fn gate_1_rejects_a_synthetic_high_influence_neuron() {
+    let _gates = default_gates();
+    let creature = creature_with_synthetic_high_influence_neuron();
+
+    let influence = estimate_remove_neuron_gain(&creature, SYNTHETIC_HOT_NEURON)
+        .expect("the synthetic neuron is a removal candidate");
+    let mut candidates = sole_op_remove_neuron_candidates(&creature);
+    apply_honest_remove_neuron_gain(&creature, &mut candidates);
+    let hot_gain = candidates
+        .iter()
+        .find(|c| removal_target(c) == SYNTHETIC_HOT_NEURON)
+        .expect("the synthetic neuron has a candidate")
+        .expected_creature_score_gain;
+
+    let (survivors, breakdown) = final_floor_survivors(candidates);
+    let counted_rejections = breakdown_count(&breakdown, REJECTION_REMOVAL_LOSS_EXCEEDS_SAVING);
+    let surviving_uuids: Vec<&str> = survivors.iter().map(removal_target).collect();
+
+    println!("=== Block 1b — Gate 1 rejects a synthetic high-influence neuron ===");
+    println!("synthetic neuron: {SYNTHETIC_HOT_NEURON}");
+    println!("estimate_remove_neuron_gain: {influence:e}");
+    println!("net expectedCreatureScoreGain: {hot_gain:e}");
+    println!(
+        "removal_net_gain_floor: {:e}",
+        removal_net_gain_floor(COST_OF_GROWTH)
+    );
+    println!("survivors: {surviving_uuids:?}");
+    println!(
+        "rejections counted under {REJECTION_REMOVAL_LOSS_EXCEEDS_SAVING}: {counted_rejections}"
+    );
+
+    assert!(
+        influence <= -0.5,
+        "the synthetic neuron must carry near-total downstream influence, got {influence:e} — \
+         the fixture no longer exercises the harmful-removal case"
+    );
+    assert!(
+        hot_gain < 0.0,
+        "a high-influence removal must net a negative benefit, got {hot_gain:e} — {PIN_HINT}"
+    );
+    assert!(
+        !surviving_uuids.contains(&SYNTHETIC_HOT_NEURON),
+        "the synthetic high-influence neuron must never reach the FFI response — {PIN_HINT}"
+    );
+    assert!(
+        counted_rejections > 0,
+        "its rejection must be counted under a named reason, not dropped silently — {PIN_HINT}"
+    );
+    assert!(
+        surviving_uuids.contains(&"h-x-0"),
+        "the zero-influence orphans must still survive alongside the rejection — {PIN_HINT}"
     );
 }
 
