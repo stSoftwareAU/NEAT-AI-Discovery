@@ -3,7 +3,7 @@
 Sub-issue of the #1785 milestone: the evidence base every other sub-issue is
 measured against.
 
-#1785 cites a reproduction that does not exist on `Develop` —
+Issue #1785 cites a reproduction that does not exist on `Develop` —
 `tests/issue_1777_discovery_diagnostic.rs` is not a file in this repository, and
 [`candidate-rate-diagnosis-1777.md`](candidate-rate-diagnosis-1777.md) has no
 "Fresh-run evidence" section. The numbers it quotes were therefore not
@@ -172,5 +172,5 @@ For a remove-neuron candidate to reach NEAT-AI, **both** gates must yield:
   diagnostic at all.
 
 Both are out of scope for #1810, which only measures and pins. They belong to
-#1785's other sub-issues, and each should re-run the command at the top of this
+the other sub-issues of #1785, and each should re-run the command at the top of this
 document and update this table as part of its closing checklist.
