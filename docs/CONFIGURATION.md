@@ -118,8 +118,6 @@ default rather than aborting.
 | `NEAT_AI_DISCOVERY_BATCH_TARGET_FAILURE_LIMIT` | 1 | Within-batch failures on a single target before subsequent same-target candidates in that batch are short-circuited. Must be `>= 1`; invalid values fall back to the default. |
 | `NEAT_AI_DISCOVERY_COOLDOWN_CONSERVATIVE_DIVISOR` | 2 | Divisor that shrinks the target-cooldown epoch window while in Conservative mode so failing targets re-enter focus sooner. Clamped to `[1, 64]`. |
 | `NEAT_AI_DISCOVERY_COOLDOWN_EXTENDED_DROUGHT_DIVISOR` | 4 | Divisor applied to the target-cooldown window during an extended drought (last-ditch escape hatch; effective cooldown floored at 2 epochs). Clamped to `[1, 64]`. |
-| `NEAT_AI_DISCOVERY_STALENESS_CONSERVATIVE_DIVISOR` | 2 | Divisor that shrinks the candidate-cache staleness window in Conservative mode so failed candidates are re-evaluated sooner. Clamped to `[1, 64]`. |
-| `NEAT_AI_DISCOVERY_STALENESS_EXTENDED_DROUGHT_DIVISOR` | 4 | Divisor applied to the candidate-cache staleness window during an extended drought (effective window floored at 5 epochs). Clamped to `[1, 64]`. |
 
 ## Memory & recording gates
 

@@ -184,8 +184,7 @@ pub const TARGET_COOLDOWN_EPOCHS: u64 = 10;
 /// Halving the cooldown window during a drought lets previously-failing
 /// targets re-enter the focus list twice as fast, instead of staying parked
 /// for the full default while the pipeline struggles to find any
-/// improvement. Mirrors the candidate-cache staleness relaxation
-/// (Issue #1203).
+/// improvement.
 ///
 /// Overridable via `NEAT_AI_DISCOVERY_COOLDOWN_CONSERVATIVE_DIVISOR`.
 ///
