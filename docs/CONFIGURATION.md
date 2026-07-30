@@ -96,7 +96,8 @@ default rather than aborting.
 | `NEAT_AI_DISCOVERY_MODULE_TIERING_HIDDEN_THRESHOLD` | 1000 | Hidden-neuron count above which **expensive**-tier discovery modules are skipped at dispatch on non-escalation passes (Issue #1547). Suppressed during drought / novelty-escalation passes so the full set re-enables. `0` disables it entirely. |
 | `NEAT_AI_DISCOVERY_MH_TEMPERATURE` | off | Metropolis-Hastings temperature for probabilistic acceptance. |
 | `NEAT_AI_DISCOVERY_BATCH_SUCCESSFUL` | off | Re-enable the disabled batch-successful module (Issue #1059). |
-| `NEAT_AI_DISCOVERY_REMOVE_LOW_IMPACT_NOISE_FLOOR` | `1e-5` | Minimum `net_improvement` a remove-low-impact candidate must clear to reach the FFI response (matches `COORDINATED_MIN_EXPECTED_GAIN`). Non-negative finite values only; `0.0` disables the floor (test path); invalid values fall back to the default. Sensible band `1e-8`–`1e-3`. |
+| `NEAT_AI_DISCOVERY_REMOVE_LOW_IMPACT_NOISE_FLOOR` | unset | **Absolute** override for the minimum `net_improvement` a remove-low-impact candidate must clear to reach the FFI response. Applied verbatim, ignoring `costOfGrowth`, and takes precedence over the `_UNITS` form below. Non-negative finite values only; `0.0` disables the floor (test path); invalid values fall back to the denominated default. Sensible band `1e-8`–`1e-3` at the production `costOfGrowth` (Issues #1142, #1814). |
+| `NEAT_AI_DISCOVERY_REMOVE_LOW_IMPACT_NOISE_FLOOR_UNITS` | `1.0` | The remove-low-impact noise floor **in units of `costOfGrowth`** — the screened quantity (`boostedSavings − contribution`) is linear in `costOfGrowth`, so the floor is too (Issue #1814). Effective floor is `units × costOfGrowth`, clamped below by the `1e-9` gain-floor noise backstop. Must stay in `(0.664, 1.5)`: below `0.664` the #1142 numerical-noise class leaks through, at or above `1.5` a zero-contribution orphan can no longer be pruned. `0.0` disables the floor; invalid values fall back to `1.0`. |
 | `NEAT_AI_DISCOVERY_COORDINATED_NOISE_FLOOR_MULTIPLIER` | 1.0 | **Test-only escape hatch.** Multiplier applied to every per-op-count coordinated-structural noise floor; production callers leave it unset. Finite `> 0.0` values only, clamped to `[1e-3, 100.0]`; invalid values fall back to `1.0` (Issue #1142). |
 
 ## Drought & novelty escalation
@@ -118,8 +119,6 @@ default rather than aborting.
 | `NEAT_AI_DISCOVERY_BATCH_TARGET_FAILURE_LIMIT` | 1 | Within-batch failures on a single target before subsequent same-target candidates in that batch are short-circuited. Must be `>= 1`; invalid values fall back to the default. |
 | `NEAT_AI_DISCOVERY_COOLDOWN_CONSERVATIVE_DIVISOR` | 2 | Divisor that shrinks the target-cooldown epoch window while in Conservative mode so failing targets re-enter focus sooner. Clamped to `[1, 64]`. |
 | `NEAT_AI_DISCOVERY_COOLDOWN_EXTENDED_DROUGHT_DIVISOR` | 4 | Divisor applied to the target-cooldown window during an extended drought (last-ditch escape hatch; effective cooldown floored at 2 epochs). Clamped to `[1, 64]`. |
-| `NEAT_AI_DISCOVERY_STALENESS_CONSERVATIVE_DIVISOR` | 2 | Divisor that shrinks the candidate-cache staleness window in Conservative mode so failed candidates are re-evaluated sooner. Clamped to `[1, 64]`. |
-| `NEAT_AI_DISCOVERY_STALENESS_EXTENDED_DROUGHT_DIVISOR` | 4 | Divisor applied to the candidate-cache staleness window during an extended drought (effective window floored at 5 epochs). Clamped to `[1, 64]`. |
 
 ## Memory & recording gates
 

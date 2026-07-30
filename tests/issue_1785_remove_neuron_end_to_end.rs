@@ -164,9 +164,11 @@ fn synapse(from: &str, to: &str, weight: f32) -> SynapseJson {
 ///
 /// Derived rather than hard-coded: the guard is "a neuron worth pruning reaches
 /// the response", so when a gate is recalibrated (Issue #1814 lowers this floor)
-/// the fixture shrinks with it and the invariant still holds.
+/// the fixture shrinks with it and the invariant still holds. Since #1814 the
+/// floor is denominated in units of `costOfGrowth`, so the target is evaluated
+/// at the same `COST_OF_GROWTH` the savings are.
 fn prunable_degree() -> usize {
-    let target = remove_low_impact_noise_floor() * 1.5;
+    let target = remove_low_impact_noise_floor(COST_OF_GROWTH) * 1.5;
     (1..=100_000)
         .find(|degree| {
             calculate_removal_savings(*degree, 0, COST_OF_GROWTH) * REMOVAL_CANDIDATE_BOOST

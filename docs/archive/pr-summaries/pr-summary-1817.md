@@ -13,9 +13,10 @@ source, test, or configuration file is touched, so no version bump is required
 
 ### Base branch
 
-This PR targets `milestone/bug-fix-29-jul`, not `Develop`. The offending file
-was added by PR #1809 and exists only on the milestone line — it is absent from
-`Develop`, so the fix can only land where the artefact actually lives.
+This PR targets `Develop`. The offending file was added by PR #1809 on the
+`milestone/bug-fix-29-jul` line, which has since merged into `Develop` (PR
+#1847) carrying the unescaped `;` with it — so `Develop` is now where the
+artefact lives and where the fix lands.
 
 ## Evidence
 
