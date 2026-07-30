@@ -1256,11 +1256,12 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
     // sub-issue of the #1620 milestone) flags such neurons; this overrides the
     // flagged candidate's gain with the priority marker AFTER the honest-gain
     // override and drought demotion (bypassing both) and BEFORE the final gain
-    // floor (so the promoted candidate survives). The structural detector seam is
-    // still unwired (it flags nothing), so Issue #1779 supplies the measured flag
-    // source: every candidate that just received an accepted #1623 bias fold
-    // above. That is the same evaluate-before-accept verification this module's
-    // safety argument rests on — without it the honest gain (≈ −0.75 for a
+    // floor (so the promoted candidate survives). Two flag sources are unioned:
+    // the structural detector (#1813 — a hidden neuron whose output cannot vary
+    // given the topology, which needs no recorded activations) and the measured
+    // #1779 source (every candidate that just received an accepted #1623 bias
+    // fold above, i.e. the same evaluate-before-accept verification this module's
+    // safety argument rests on). Without either, the honest gain (≈ −0.75 for a
     // harmless constant neuron) is below the floor and the fold never reaches the
     // consumer at all.
     if let Some(syn) = synapse_result.as_mut() {
@@ -1268,11 +1269,13 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
             super::remove_neuron_constant_promotion::functionally_constant_neuron_uuids(
                 &input.creature,
             );
-        flagged.extend(
+        let structural = flagged.len();
+        let measured_flags =
             super::remove_neuron_constant_promotion::bias_folded_constant_neuron_uuids(
                 &syn.coordinated_structural_candidates,
-            ),
-        );
+            );
+        let measured = measured_flags.len();
+        flagged.extend(measured_flags);
         let promoted =
             super::remove_neuron_constant_promotion::promote_constant_remove_neuron_candidates(
                 &mut syn.coordinated_structural_candidates,
@@ -1281,8 +1284,10 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
         if promoted > 0 {
             tracing::debug!(
                 promoted,
+                structural,
+                measured,
                 "Issue #1622: promoted {promoted} functionally-constant remove-neuron \
-                 candidate(s) to priority"
+                 candidate(s) to priority ({structural} flagged structurally, #1813)"
             );
         }
     }

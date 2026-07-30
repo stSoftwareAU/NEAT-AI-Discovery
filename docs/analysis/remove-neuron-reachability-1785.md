@@ -96,16 +96,19 @@ is the direct check that the fix did not become "accept everything".
 
 | Measurement | Value |
 |---|---|
-| `functionally_constant_neuron_uuids(&creature)` | **empty** (unwired seam, `remove_neuron_constant_promotion.rs:117`) |
+| `functionally_constant_neuron_uuids(&creature)` | **empty** for this fixture (the seam is wired by #1813; no hidden neuron here is structurally constant) |
 | Candidates carrying a `constant_neuron_bias_fold` | **0** |
 | `bias_folded_constant_neuron_uuids(&candidates)` | **empty** |
 | Candidates promoted to `CONSTANT_NEURON_PRIORITY_GAIN` | **0** |
 
-The only route past Gate 1 is #1622 promotion. Its structural flag source is a
-documented, still-unwired seam that returns an empty set, and its live #1779
-source needs a candidate carrying an *accepted* bias fold — which the
-structure-only candidate set never attaches. The escape hatch therefore yields
-zero, matching #1785's "0 promotion entries".
+The only route past Gate 1 is #1622 promotion. Its structural flag source is
+wired (#1813) but flags only neurons whose output cannot vary given the topology
+— none in this fixture, where every hidden neuron has a non-zero-weight path from
+a live input — and its measured #1779 source needs a candidate carrying an
+*accepted* bias fold, which the structure-only candidate set never attaches. The
+escape hatch therefore yields zero **for this creature**, matching #1785's "0
+promotion entries"; a creature carrying a structurally-constant hidden neuron now
+promotes it.
 
 ## Block 3 — Gate 2, focus / FFI path
 
@@ -168,7 +171,7 @@ code.
 
 | #1785 says | Correct on `a36e9ba` |
 |---|---|
-| `remove_neuron_constant_promotion.rs:112-114` | `remove_neuron_constant_promotion.rs:117-119` — `functionally_constant_neuron_uuids` returns an empty `HashSet` |
+| `remove_neuron_constant_promotion.rs:112-114` | `functionally_constant_neuron_uuids` returned an empty `HashSet` unconditionally; Issue #1813 replaced it with the structural detector |
 | `candidate_scoring.rs:1470` (`REMOVE_LOW_IMPACT_NOISE_FLOOR`) | `candidate_scoring.rs:1469`; `REMOVAL_CANDIDATE_BOOST` at `candidate_scoring.rs:1440` |
 | `removal_candidates.rs:160-170` (silent drop site) | that range is `RemovalCandidateOutcome::rejection_breakdown` (`:161-171`); the silent `boosted_savings <= contribution` drop is at `removal_candidates.rs:387-389` |
 | triage lives in `removal_triage.rs` | the shipped copy is `removal_candidates.rs::identify_structural_removal_candidates` (`:462`), called from `ffi_internal/analysis.rs:707`. `removal_triage.rs` retains only the thin `triage_removal_candidates` adapter over the same criterion (#1805) |

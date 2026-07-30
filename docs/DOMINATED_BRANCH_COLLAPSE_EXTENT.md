@@ -67,7 +67,7 @@ becomes a pass-through with weights/biases folded.
 
 | Aggregate | Current engine behaviour | Target |
 |-----------|--------------------------|--------|
-| MAXIMUM | No collapse. Nearest transform (constant-neuron bias-fold, #1620/#1623) flags nothing — its detector seam `functionally_constant_neuron_uuids` returns empty; there is **no analytical dominance proof** in the engine. | Remove `neuron-abs`, fold `neuron-max` to `input-1 → neuron-relu → output-0`. |
+| MAXIMUM | No collapse. Nearest transform (constant-neuron bias-fold, #1620/#1623) flags nothing — its detector seam `functionally_constant_neuron_uuids` is wired (#1813) but only flags neurons whose output cannot vary, and every branch here is input-driven; there is **no analytical dominance proof** in the engine. | Remove `neuron-abs`, fold `neuron-max` to `input-1 → neuron-relu → output-0`. |
 | MINIMUM | No collapse (mirror of MAX, sign flipped). | Remove the dominated `neuron-relu`, fold to `input-0 → neuron-abs → output-0`. |
 | IF | No collapse. | Remove the dominated branch **only where the condition is degenerate** — see F1. |
 
