@@ -1805,7 +1805,7 @@ mod remove_low_impact_noise_floor_tests {
         );
     }
 
-    /// An unparseable, negative or non-finite override is ignored rather than
+    /// An unparsable, negative or non-finite override is ignored rather than
     /// silently disabling the screen.
     #[test]
     fn invalid_overrides_fall_back_to_the_default() {
