@@ -153,6 +153,24 @@ Pre-existing coverage that gates the new reasons: the
 `degenerate_weight_update` (gate-side) and `unaccounted_drop` (upstream) are
 classified.
 
+## CI fixes on this branch
+
+Two failures blocked the PR; both are fixed here.
+
+| Check         | Failure                                                                                                  | Fix                                                                                              |
+| ------------- | -------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| markdownlint  | `docs/analysis/candidate-reconciliation-1802.md:5` — a line beginning `#1796–#1801` parsed as an ATX heading (MD018) | reworded to "Issues #1796 through #1801" so no line starts with `#`                              |
+| Quality Checks / Coverage | `tests/issue_1801_partial_fingerprint_rejection.rs` panicked with `GPU unavailable` on the GPU-less runners | added the repository's GPU-skip guard to the two cases that reach the GPU path                    |
+
+The #1801 test failure is pre-existing on `milestone/bug-fix-29-jul` — PR #1828
+merged while its Quality Checks job was skipped, so the two GPU-dependent cases
+never ran on a GPU-less runner. Both call `analyze_all` on a pass that is *not* a
+whole-pass early return, so the GPU analyser is required; they now skip on hosts
+without a GPU exactly as the rest of the suite does. The third case
+(`whole_pass_skip_counts_hits_exactly_once`) returns before the GPU is touched
+and is left running unconditionally. Because `cargo test` aborts at the first
+failing binary, `issue_1802_*` never ran in CI until this fix.
+
 ## Security Self-Check
 
 - **Input validation** — no new external input; both new public entry points take

@@ -1,8 +1,8 @@
 # Candidate reconciliation — the fail-loud invariant (Issue #1802)
 
 The #1782 diagnosis found six places where a discovery pass dropped a candidate
-with a bare `continue`. Each compiled, passed tests, and shipped. Issues
-#1796–#1801 wired each of those six paths into `RejectionBreakdown`, but that
+with a bare `continue`. Each compiled, passed tests, and shipped. Issues #1796
+through #1801 wired each of those six paths into `RejectionBreakdown`, but that
 left the class of bug intact: nothing stopped the **seventh** from being added
 the same way.
 
