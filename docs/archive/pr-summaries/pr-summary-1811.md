@@ -80,3 +80,27 @@ also records that #1810's characterisation pin
 `docs/analysis/remove-neuron-reachability-1785.md` must be updated together.
 
 `./quality.sh` was run and passes on this branch.
+
+## Follow-up — the influence calibration is applied bare
+
+PR #1837 delivered the decision record above. A follow-up refinement closes one
+gap in its "code this without further interpretation" claim.
+
+The rule reuses `NEURON_PREDICTION_CALIBRATION` as the interim
+`REMOVE_INFLUENCE_CALIBRATION`, but the add path never uses that constant **bare**
+— `neuron/post_processing.rs:324` always multiplies it by
+`calibration_correction.correction_for(...)`. An implementer of #1812 reusing the
+constant "by symmetry with the add path" would carry the correction across, and
+that inverts its safety direction: the correction is clamped to `[0.001, 1.0]`
+(`calibration_correction.rs:64`), so it **only ever discounts**, and discounting a
+*cost* shrinks the penalty and makes removals **easier** to accept.
+
+The verdict genuinely flips. A degree-4 neuron at the `~1e-4` influence
+`remove_neuron_gain.rs` describes for deep neurons is correctly **rejected** bare
+(`loss 3e-7` vs `saving 1.4e-7`) but **accepted** with the correction at its clamp
+(`loss 3e-10`, net `≈ +1.4e-7`) — across the whole `3.3e-5`–`3.3e-2` influence
+band #1785 exists to protect.
+
+The doc now states the exclusion explicitly, with the reasoning and the worked
+flip. Docs-only; no constant or code changes. Verified with `markdownlint-cli2`
+(0 errors) and `codespell` (clean).
