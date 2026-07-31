@@ -307,6 +307,19 @@ function cancelSession(sessionId: string): void {
 }
 ```
 
+Cancellation is final. Once a session is cancelled — or removed by the TTL sweep
+— every subsequent `append_discovery_records` call for it returns
+`success: false`, even one already in flight on another thread (Issue #1876). A
+batch whose records are about to be discarded with the `.parquet.tmp` file is
+never acknowledged as written:
+
+```json
+{
+  "success": false,
+  "error": "Session cancelled: <sessionId>"
+}
+```
+
 ### Process Crash Recovery
 
 If the process crashes mid-recording:
