@@ -93,6 +93,8 @@ pub use ffi_types::{
     GetVersionOutput,
     GpuAdapterInfoJson,
     GpuTimingBreakdownJson,
+    // Creature bounds gate (`ffi_types::creature_bounds`).
+    MAX_CREATURE_INPUT_NEURONS,
     McmcDiagnosticsJson,
     MergeParquetInput,
     MergeParquetOutput,
@@ -134,6 +136,8 @@ pub use ffi_types::{
     error_fields_from_anyhow,
     no_error_fields,
     panic_error_fields,
+    // Creature input-bound validation helper (Issue #1867).
+    validate_creature_input_bounds,
     // Forward-only validation helper.
     validate_forward_only_synapses,
 };

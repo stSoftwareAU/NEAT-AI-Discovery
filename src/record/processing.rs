@@ -33,10 +33,16 @@ pub fn process_training_data(
         .map(|index| format!("input-{index}"))
         .collect();
 
+    // Issue #1867: checked once up front — `creature.input` is caller-supplied
+    // and a wrapped sum would size every per-observation batch wrongly.
+    let records_per_sample = non_input_neuron_count
+        .checked_add(input.creature.input)
+        .ok_or_else(|| anyhow::anyhow!("Discovery records per sample would overflow usize"))?;
+
     for (relative_idx, training_record) in input.training_data.iter().enumerate() {
         let obs_index_u32 = obs_indices[relative_idx];
 
-        let mut batch_records = Vec::with_capacity(non_input_neuron_count + input.creature.input);
+        let mut batch_records = Vec::with_capacity(records_per_sample);
 
         // Use pre-computed neuron_data if available (from TypeScript)
         // Otherwise, we would need to activate the creature here (not implemented)

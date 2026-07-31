@@ -160,7 +160,11 @@ pub unsafe extern "C" fn start_discovery_session(
         // session. The session retains the creature for the lifetime of
         // append/finish calls, so a violation here would taint every
         // record written through that session.
-        if let Err(typed) = validate_forward_only_synapses(&input.creature) {
+        // Issue #1867: the same gate bounds the creature's input-neuron
+        // count before the session captures the creature.
+        if let Err(typed) = validate_forward_only_synapses(&input.creature)
+            .and_then(|()| validate_creature_input_bounds(&input.creature))
+        {
             let kind = typed.error_kind();
             let output = StartSessionOutput {
                 success: false,

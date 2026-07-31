@@ -77,13 +77,22 @@ Discovery assumes **forward-only** networks (no recurrent feedback):
 - No cross-sample state — each recorded activation/error is for a single
   training sample.
 
-#### Validated FFI Surface (Issue #1184, #1188)
+#### Validated FFI Surface (Issue #1184, #1188, #1867)
 
 `validate_forward_only_synapses` (in `src/ffi_types/forward_only_validation.rs`)
-is the defence-in-depth gate. It runs immediately after JSON deserialisation and
+and `validate_creature_input_bounds` (in `src/ffi_types/creature_bounds.rs`) are
+the defence-in-depth gates. They run immediately after JSON deserialisation and
 before any business logic on every FFI entry point that accepts a
 `CreatureJson`. A violation returns a structured `DiscoveryError::InvalidInput`
 with `error_kind: "data_validation"`.
+
+`validate_creature_input_bounds` caps `creature.input` at
+`MAX_CREATURE_INPUT_NEURONS` (1,000,000). The count is caller-supplied and sizes
+allocations in both the recording and analysis paths, so an unbounded value
+aborts the process via `handle_alloc_error` — an abort `panic::catch_unwind`
+cannot intercept (Issue #1867). The cap is absolute, **not** relative to
+`creature.neurons.len()`: input neurons are implied by the count and are not
+listed in `creature.neurons`.
 
 | FFI entry point | Accepts `CreatureJson` | Validates | Notes |
 |-----------------|------------------------|-----------|-------|
@@ -109,7 +118,8 @@ with `error_kind: "data_validation"`.
 
 There are intentionally **no validation-bypassing paths** for creature input.
 Any new FFI entry point that accepts a `CreatureJson` must call
-`validate_forward_only_synapses` before any business logic and update this table.
+`validate_forward_only_synapses` **and** `validate_creature_input_bounds` before
+any business logic and update this table.
 
 ### Atomic Record Writes
 

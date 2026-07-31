@@ -1044,6 +1044,20 @@ Discovery assumes **forward-only** networks (no recurrent feedback). This is cri
 - **Discovered neurons must be inserted, not appended**: When applying an add-neuron candidate, the new neuron must be inserted at the correct index.
 - **No "remembering" across samples**: Discovery explicitly does **not** support recurrent connections.
 
+### 🚧 Creature Input Bound (Issue #1867)
+
+Every entry point that accepts a `creature` also bounds `creature.input`:
+
+- The maximum accepted input-neuron count is **1,000,000**
+  (`MAX_CREATURE_INPUT_NEURONS`).
+- A larger count returns `success: false` with
+  `errorKind: "data_validation"` before any recording or analysis work starts.
+  The count sizes allocations in both pipelines, so an unbounded value would
+  abort the process rather than return an error.
+- The bound is absolute, **not** relative to `creature.neurons.length`: input
+  neurons are implied by the count and are not listed in `creature.neurons`
+  (the example payload above pairs `"input": 20` with a single listed neuron).
+
 ---
 
 ## 📁 File Format
