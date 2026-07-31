@@ -25,6 +25,8 @@
 //! does not stamp the one-shot tombstone, so an ineffective reset at epoch N no
 //! longer blocks an effective one at epoch N+1.
 
+use std::sync::{Mutex, PoisonError};
+
 use super::target_failure_tracker::TargetFailureTracker;
 
 /// State of the reset's one clearable input, the [`TargetFailureTracker`]
@@ -172,6 +174,30 @@ pub fn maybe_perform_drought_reset(
     })
 }
 
+/// Lock `tracker` and run [`maybe_perform_drought_reset`] against it, using the
+/// tracker's own current epoch as the reset epoch (Issue #1875).
+///
+/// A poisoned lock is recovered via [`PoisonError::into_inner`] rather than
+/// skipped: the state under this lock is counters mutated by infallible
+/// HashMap/arithmetic operations, so a poisoned guard is still internally
+/// consistent, and silently skipping the operator escape hatch is the exact
+/// "fails without a trace" outcome the drought-reset design forbids
+/// (Issue #1794).
+pub fn maybe_perform_drought_reset_locked(
+    tracker: &Mutex<TargetFailureTracker>,
+    consecutive_failures: u32,
+    drought_reset_after: u32,
+) -> Option<DroughtResetOutcome> {
+    let mut guard = tracker.lock().unwrap_or_else(PoisonError::into_inner);
+    let current_epoch = guard.current_epoch();
+    maybe_perform_drought_reset(
+        Some(&mut guard),
+        consecutive_failures,
+        drought_reset_after,
+        current_epoch,
+    )
+}
+
 /// Re-arm the lever by clearing the drought-reset tombstone on the tracker
 /// (Issue #1205). The orchestrator calls this when the rolling outcome log
 /// reports a fresh success (`consecutive_failures == 0`).
@@ -179,6 +205,16 @@ pub fn rearm_drought_reset(tracker: Option<&mut TargetFailureTracker>) {
     if let Some(t) = tracker {
         t.clear_drought_reset_tombstone();
     }
+}
+
+/// Lock `tracker` and re-arm the lever (Issue #1875).
+///
+/// Recovers a poisoned lock for the same reason as
+/// [`maybe_perform_drought_reset_locked`]: skipping the re-arm would leave a
+/// stale tombstone that silently suppresses the next drought's reset.
+pub fn rearm_drought_reset_locked(tracker: &Mutex<TargetFailureTracker>) {
+    let mut guard = tracker.lock().unwrap_or_else(PoisonError::into_inner);
+    rearm_drought_reset(Some(&mut guard));
 }
 
 #[cfg(test)]

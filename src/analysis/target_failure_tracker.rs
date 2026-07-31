@@ -466,6 +466,20 @@ pub fn global_tracker() -> &'static Mutex<TargetFailureTracker> {
     TRACKER.get_or_init(|| Mutex::new(TargetFailureTracker::new()))
 }
 
+/// Clone the tracker held behind `tracker` for read-only diagnostic use
+/// (Issue #1875).
+///
+/// A poisoned lock is recovered rather than reported as "no tracker": the state
+/// is counters mutated by infallible operations, so a poisoned guard is still
+/// internally consistent, and a drought diagnostic that silently loses its
+/// tracker payload is the failure mode Issue #1794 exists to prevent.
+pub fn snapshot_tracker(tracker: &Mutex<TargetFailureTracker>) -> TargetFailureTracker {
+    tracker
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone()
+}
+
 /// Advance the process-global tracker by exactly one discovery pass, returning
 /// the new epoch (Issue #1790).
 ///
