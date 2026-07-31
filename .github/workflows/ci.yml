@@ -156,9 +156,25 @@ jobs:
         
         echo "✅ Version updated from $CURRENT_VERSION to $NEW_VERSION"
         
-        cargo update
+        # Record the new crate version in Cargo.lock and nothing else. A bare
+        # `cargo update` re-resolves every direct and transitive dependency to
+        # the newest published version with no age check, bypassing the
+        # quarantine window (Issue #1878). Dependency movement belongs to
+        # ./bump-deps.sh and Renovate, which enforce it.
+        cargo update --workspace
         cargo outdated -R || true
-        
+
+        # Fail loud rather than pushing an unquarantined dependency graph:
+        # this job commits whatever is in the tree with the ACTIONS_PUSH PAT,
+        # so the lockfile diff must be exactly this crate's own version bump.
+        LOCK_DIFF=$(git diff --unified=0 -- Cargo.lock | grep -E '^[-+][^-+]' || true)
+        EXPECTED_DIFF=$(printf -- '-version = "%s"\n+version = "%s"' "$CURRENT_VERSION" "$NEW_VERSION")
+        if [ "$LOCK_DIFF" != "$EXPECTED_DIFF" ]; then
+          echo "::error::Cargo.lock moved beyond the version bump — dependency updates must go through ./bump-deps.sh or Renovate (Issue #1878)"
+          echo "$LOCK_DIFF"
+          exit 1
+        fi
+
     - name: Check if there are changes
       id: changes
       shell: bash

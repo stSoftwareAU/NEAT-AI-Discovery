@@ -105,7 +105,11 @@ the gate runs on milestone sub-issue PRs too, not just the rollup into `Develop`
 
 - `auto-format` — applies `rustfmt` and commits fixes
 - `version-increment` — auto-bumps the patch version on every PR when changes
-  exist (uses the `ACTIONS_PUSH` PAT so the push re-triggers workflows)
+  exist (uses the `ACTIONS_PUSH` PAT so the push re-triggers workflows). It
+  refreshes only this crate's own `Cargo.lock` entry (`cargo update
+  --workspace`) and fails loud if any dependency resolution moves — dependency
+  bumps go through `./bump-deps.sh` or Renovate, which enforce the quarantine
+  window (Issue #1878)
 - `quality` — fmt check, Clippy, cargo check, doc build, tests, build
 - `spell-check` — runs codespell on the codebase
 - `validation` — checks required files and `Cargo.toml`
