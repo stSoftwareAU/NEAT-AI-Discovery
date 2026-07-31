@@ -111,6 +111,7 @@ the gate runs on milestone sub-issue PRs too, not just the rollup into `Develop`
 - `auto-format` — applies `rustfmt` and commits fixes
 - `version-increment` — auto-bumps the patch version on every PR when changes
   exist (uses the `ACTIONS_PUSH` PAT so the push re-triggers workflows)
+
 - `quality` — fmt check, Clippy, cargo check, doc build, tests, build
 - `spell-check` — runs codespell on the codebase
 - `validation` — checks required files and `Cargo.toml`
@@ -118,6 +119,12 @@ the gate runs on milestone sub-issue PRs too, not just the rollup into `Develop`
 - `shellcheck` (separate workflow `.github/workflows/shellcheck.yml`) — runs the
   committed `quality/bash_syntax.sh` (`bash -n`) gate, then lints bash scripts
   via ShellCheck (Issue #1755)
+
+Every checkout in `ci.yml` sets `persist-credentials: false`, so no token is
+written to `.git/config`. The `ACTIONS_PUSH` PAT is bound to `ACTIONS_PUSH_TOKEN`
+on the individual pull/fetch/push steps of `version-increment` and `auto-format`,
+which authenticate with an explicit remote URL — third-party `build.rs` code run
+by `cargo install` therefore cannot read the PAT off disk (Issue #1868).
 
 **Do NOT modify `.github/workflows/ci.yml` without explicit approval.**
 

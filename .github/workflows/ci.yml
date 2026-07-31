@@ -63,22 +63,38 @@ jobs:
       with:
         ref: ${{ github.head_ref }}
         fetch-depth: 0
-        token: ${{ secrets.ACTIONS_PUSH }}
+        # The write-capable ACTIONS_PUSH PAT is NOT handed to checkout: with
+        # `persist-credentials: true` (the default) it lands in `.git/config`
+        # where the later `cargo install` build scripts could read it. The PAT
+        # is supplied per-step via an authenticated remote URL instead
+        # (Issue #1868).
+        persist-credentials: false
 
     - name: Configure Git
       run: |
         git config user.name "github-actions[bot]"
         git config user.email "github-actions[bot]@users.noreply.github.com"
-        
+
     - name: Pull latest changes
       env:
         HEAD_REF: ${{ github.head_ref }}
-      run: git pull origin "$HEAD_REF"
-        
-    - name: Fetch base branch
+        ACTIONS_PUSH_TOKEN: ${{ secrets.ACTIONS_PUSH }}
+        REPOSITORY: ${{ github.repository }}
       run: |
-        git fetch origin Develop:Develop || git fetch origin develop:develop || true
-        
+        set -euo pipefail
+        git pull "https://x-access-token:${ACTIONS_PUSH_TOKEN}@github.com/${REPOSITORY}.git" "$HEAD_REF"
+
+    - name: Fetch base branch
+      env:
+        ACTIONS_PUSH_TOKEN: ${{ secrets.ACTIONS_PUSH }}
+        REPOSITORY: ${{ github.repository }}
+      run: |
+        set -euo pipefail
+        REMOTE_URL="https://x-access-token:${ACTIONS_PUSH_TOKEN}@github.com/${REPOSITORY}.git"
+        git fetch "$REMOTE_URL" "+Develop:refs/remotes/origin/Develop" \
+          || git fetch "$REMOTE_URL" "+develop:refs/remotes/origin/develop" \
+          || true
+
     - name: Install Rust toolchain
       # Pinned to a SHA from the action's `stable` branch (Issue #1216).
       # That branch's action.yml defaults `toolchain` to `stable`, so the
@@ -164,12 +180,14 @@ jobs:
       shell: bash
       env:
         HEAD_REF: ${{ github.head_ref }}
+        ACTIONS_PUSH_TOKEN: ${{ secrets.ACTIONS_PUSH }}
+        REPOSITORY: ${{ github.repository }}
       run: |
         set -euo pipefail
         if ! git diff --quiet; then
           git add -A
           git commit -m "chore: auto-increment versions for changed projects"
-          git push origin "$HEAD_REF"
+          git push "https://x-access-token:${ACTIONS_PUSH_TOKEN}@github.com/${REPOSITORY}.git" "HEAD:$HEAD_REF"
         else
           echo "No version changes to commit"
         fi
@@ -399,7 +417,9 @@ jobs:
       with:
         ref: ${{ github.head_ref }}
         fetch-depth: 0
-        token: ${{ secrets.ACTIONS_PUSH }}
+        # Keep the ACTIONS_PUSH PAT out of `.git/config`; the push step
+        # authenticates with an explicit remote URL instead (Issue #1868).
+        persist-credentials: false
 
     - name: Ensure bash scripts are executable
       shell: bash
@@ -451,7 +471,11 @@ jobs:
       if: steps.check_changes.outputs.has_changes == 'true'
       env:
         HEAD_REF: ${{ github.head_ref }}
-      run: git push origin "$HEAD_REF"
+        ACTIONS_PUSH_TOKEN: ${{ secrets.ACTIONS_PUSH }}
+        REPOSITORY: ${{ github.repository }}
+      run: |
+        set -euo pipefail
+        git push "https://x-access-token:${ACTIONS_PUSH_TOKEN}@github.com/${REPOSITORY}.git" "HEAD:$HEAD_REF"
 
   # Shell script linting is handled by .github/workflows/shellcheck.yml
   # (ludeeus/action-shellcheck), which is a strict superset of `bash -n`
