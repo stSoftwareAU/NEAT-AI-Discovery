@@ -11,6 +11,7 @@
     clippy::cast_precision_loss
 )] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 
+pub mod dense_bound;
 mod snapshot;
 mod stats;
 mod timestamp;

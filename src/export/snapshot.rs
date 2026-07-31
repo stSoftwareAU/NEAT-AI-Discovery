@@ -62,6 +62,10 @@ pub fn export_visualisation_snapshot(
         .map(|(i, &o)| (o, i))
         .collect();
 
+    // Issue #1869: the dense grid below is O(neurons × observations) regardless
+    // of how sparse the recording is — bound it before the first allocation.
+    super::dense_bound::ensure_dense_snapshot_fits(records_by_neuron.len(), obs_indices.len())?;
+
     // Build neuron recordings (columnar)
     let mut neurons_recording: HashMap<String, NeuronRecording> = HashMap::new();
 

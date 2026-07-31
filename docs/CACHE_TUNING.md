@@ -109,12 +109,21 @@ any system regardless of RAM.
 
 ## Tier Selection Logic
 
-The cache uses a simple heuristic based on the Parquet file size and available
-system memory. The estimated expanded size accounts for Parquet compression
-(approximately 3x decompression ratio).
+The cache uses a simple heuristic based on the projected decoded size of the
+Parquet file and available system memory. Since Issue #1869 the projection is
+read from the Parquet **footer** — the exact decompressed row count and error
+value count — with the old `file_size × 3` compression heuristic kept only as a
+floor, because dictionary and RLE encodings routinely beat 3:1 on this schema.
+
+The projection remains an estimate. The enforced bound is the cumulative decode
+budget the reader charges per record (see
+`NEAT_AI_DISCOVERY_MAX_PARQUET_DECODE_MB` in
+[CONFIGURATION.md](CONFIGURATION.md)), which aborts a decode mid-flight rather
+than discovering the overrun afterwards.
 
 ```
-estimated_expanded = file_size_bytes × 3
+estimated_expanded = max(footer_rows × per_record_bytes + error_values × 4,
+                         file_size_bytes × 3)
 
 if estimated_expanded < available_memory / 4:
     → PreloadAll
@@ -205,7 +214,8 @@ the available memory, or the memory budget was set too high.
 
 **Diagnosis:**
 1. Check the Parquet file size: `ls -lh discovery_data.parquet`
-2. Estimate the expanded size: `file_size × 3`
+2. Estimate the expanded size — the footer-derived projection, floored at
+   `file_size × 3` (Issue #1869)
 3. Compare against available RAM: `free -h` (Linux) or Activity Monitor (macOS)
 
 **Fix:**

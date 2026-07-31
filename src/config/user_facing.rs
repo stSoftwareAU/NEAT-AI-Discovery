@@ -585,6 +585,44 @@ pub fn focus_ranking_memory_budget_mb() -> Option<u64> {
     }
 }
 
+/// Get the hard ceiling, in megabytes, on the records decoded from a single
+/// parquet file (Issue #1869).
+///
+/// Set `NEAT_AI_DISCOVERY_MAX_PARQUET_DECODE_MB` to bound every parquet decode
+/// on paths that carry no explicit caller budget (the visualisation snapshot
+/// export, focus gradients). The reader charges each materialised record
+/// against the ceiling inside its batch loop and aborts with a typed
+/// memory-exhaustion error once it is reached, rather than discovering the
+/// overrun after the allocation.
+///
+/// Returns `None` when the variable is unset, empty, non-numeric, or zero — the
+/// caller then falls back to half of total system RAM.
+pub fn max_parquet_decode_mb() -> Option<u64> {
+    let raw = std::env::var("NEAT_AI_DISCOVERY_MAX_PARQUET_DECODE_MB").ok()?;
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    match trimmed.parse::<u64>() {
+        Ok(0) => {
+            tracing::debug!(
+                raw_value = trimmed,
+                "Ignoring NEAT_AI_DISCOVERY_MAX_PARQUET_DECODE_MB=0 (must be > 0)"
+            );
+            None
+        }
+        Ok(v) => Some(v),
+        Err(_) => {
+            tracing::debug!(
+                raw_value = trimmed,
+                "Ignoring invalid NEAT_AI_DISCOVERY_MAX_PARQUET_DECODE_MB \
+                 (expected a positive integer in megabytes)"
+            );
+            None
+        }
+    }
+}
+
 /// Default safety margin (in megabytes) reserved from OS-available memory
 /// before the focus ranker pre-loads a parquet file (Issue #1376).
 pub const DEFAULT_FOCUS_RANKING_MEMORY_MARGIN_MB: u64 = 1024;

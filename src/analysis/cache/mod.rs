@@ -166,7 +166,9 @@ impl RecordCache {
         budget_mb: Option<u64>,
     ) -> Result<Self> {
         match plan_cache_preload(parquet_file, budget_mb) {
-            CachePreloadMode::Preload => Self::new_preloaded_with_deadline(parquet_file, deadline),
+            CachePreloadMode::Preload => {
+                Self::new_preloaded_with_deadline_and_budget(parquet_file, deadline, budget_mb)
+            }
             CachePreloadMode::Lazy => Self::new_lazy(parquet_file),
         }
     }
@@ -202,7 +204,23 @@ impl RecordCache {
         parquet_file: &str,
         deadline: Option<std::time::SystemTime>,
     ) -> Result<Self> {
-        use crate::parquet_format::shared_records::load_grouped_records_shared;
+        Self::new_preloaded_with_deadline_and_budget(parquet_file, deadline, None)
+    }
+
+    /// Internal pre-loaded implementation with a deadline and the caller's
+    /// memory budget (Issue #1869).
+    ///
+    /// The budget bounds the decode itself: records are charged against it
+    /// inside the reader's batch loop, so a file that decodes far larger than
+    /// its compressed size projected aborts part-way with a typed
+    /// memory-exhaustion error instead of completing the allocation and being
+    /// detected only by the post-load budget check.
+    fn new_preloaded_with_deadline_and_budget(
+        parquet_file: &str,
+        deadline: Option<std::time::SystemTime>,
+        budget_mb: Option<u64>,
+    ) -> Result<Self> {
+        use crate::parquet_format::shared_records::load_grouped_records_shared_with_budget;
         use std::time::Instant;
 
         let start = Instant::now();
@@ -211,7 +229,7 @@ impl RecordCache {
         // no second full scan occurs, freeing the analysis deadline for the
         // synapse / neuron work. The records keep their decode order (matching
         // the previous direct read) so analysis output is unchanged.
-        let shared = load_grouped_records_shared(parquet_file, deadline)?;
+        let shared = load_grouped_records_shared_with_budget(parquet_file, deadline, budget_mb)?;
         let elapsed = start.elapsed();
 
         // Pre-populate the cache with OnceLock-wrapped records. Each neuron's
