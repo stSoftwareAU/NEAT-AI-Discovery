@@ -307,6 +307,16 @@ so the lock file is never absent while the directory still exists.
   { "success": true, "alreadyGone": false }
   ```
 
+- **Path validation** (Issue #1866): `tempDir` is recursively deleted, so it is
+  accepted only when it is positively identifiable as a discovery directory —
+  a path component contains `.discovery`, **or** the directory contains
+  `discovery.lock` or `discovery_data.parquet`. Paths containing `..`,
+  symlinked directories, and non-directories are refused. A rejected path
+  yields `{"success": false, "errorKind": "data_validation", "retryable": false}` and nothing is
+  removed. The check runs before any existence probe, so a non-existent path
+  outside a discovery root is also refused rather than reported as
+  `alreadyGone`. Every accepted removal logs its resolved canonical path at
+  `info!` level as an audit trail.
 - **Memory**: the returned pointer **must** be freed with `free_discovery_result`.
 
 ### Orphaned Directory Sweep (`clean_orphaned_discovery_dirs`, Issue #1100)

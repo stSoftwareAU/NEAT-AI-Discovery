@@ -15,6 +15,7 @@ mod issue_1530_dispatch_honest_remove_neuron_gain;
 mod issue_1766_structural_focus_selection;
 mod issue_1767_structural_removal_triage;
 mod issue_1779_bias_fold_wire_contract;
+mod issue_1866_cleanup_dir_path_guard;
 mod issue_574_ffi_json_fuzz_edge_cases;
 mod issue_711_ffi_safety_unsafe_markers;
 mod issue_950_numeric_neuron_ids;

@@ -26,11 +26,16 @@
 
 use std::fs;
 use std::io;
-use std::path::Path;
+use std::path::{Component, Path};
 
 /// Conventional lock-file name placed inside a discovery temp directory
 /// to indicate it is still in use.
 pub const LOCK_FILE_NAME: &str = "discovery.lock";
+
+/// Conventional parquet data-file name written inside a discovery temp
+/// directory. Used alongside [`LOCK_FILE_NAME`] as positive evidence that a
+/// directory really is a discovery session (Issue #1866).
+pub const DISCOVERY_DATA_FILE_NAME: &str = "discovery_data.parquet";
 
 /// Marker substring that must appear in the final path component of any
 /// `base_dir` accepted by [`clean_orphaned_discovery_dirs`] (Issue #1218).
@@ -52,14 +57,116 @@ pub enum CleanupOutcome {
     AlreadyGone,
 }
 
+/// Reject a caller-supplied path that is not plainly a discovery directory
+/// (Issue #1866).
+///
+/// `cleanup_discovery_dir` is FFI-exposed and recursively deletes whatever it
+/// is handed, so a host-side path bug, a mis-set environment variable, or a
+/// partially-compromised caller would otherwise obtain an unconstrained
+/// `rm -rf` at the host process's privilege (CWE-73). A path is accepted only
+/// when it is positively identifiable as ours:
+///
+/// * some path component contains [`DISCOVERY_DIR_MARKER`] (the same allowlist
+///   [`clean_orphaned_discovery_dirs`] already applies, which also covers the
+///   scanner's internal delegation), **or**
+/// * the directory itself contains a [`LOCK_FILE_NAME`] or
+///   [`DISCOVERY_DATA_FILE_NAME`] file.
+///
+/// `..` components are refused outright because they could escape a genuine
+/// discovery root while still carrying a marker component.
+///
+/// Like the sibling scanner's gate, this runs **before** any existence probe
+/// so a caller cannot bypass it by passing a path that does not yet exist.
+fn assert_is_discovery_dir(path: &Path, temp_dir: &str) -> io::Result<()> {
+    let invalid = |detail: String| io::Error::new(io::ErrorKind::InvalidInput, detail);
+
+    if temp_dir.is_empty() {
+        return Err(invalid("temp_dir must not be empty".to_string()));
+    }
+
+    if path.components().any(|c| c == Component::ParentDir) {
+        return Err(invalid(format!(
+            "temp_dir must not contain '..' components: {temp_dir}"
+        )));
+    }
+
+    let has_marker_component = path.components().any(|c| {
+        matches!(c, Component::Normal(name) if name.to_str().is_some_and(|n| n.contains(DISCOVERY_DIR_MARKER)))
+    });
+    let has_discovery_contents =
+        path.join(LOCK_FILE_NAME).exists() || path.join(DISCOVERY_DATA_FILE_NAME).exists();
+
+    if has_marker_component || has_discovery_contents {
+        return Ok(());
+    }
+
+    Err(invalid(format!(
+        "temp_dir must be a discovery directory (a path component must contain \
+         {DISCOVERY_DIR_MARKER}, or the directory must contain {LOCK_FILE_NAME} \
+         or {DISCOVERY_DATA_FILE_NAME}): {temp_dir}"
+    )))
+}
+
 /// Atomically clean up a discovery temp directory (Issue #1100).
 ///
 /// Removes the entire directory tree in a single recursive call so that
 /// the lock file is never absent while the directory still exists. If the
 /// directory has already been removed (e.g. by the orphan scanner), this
 /// returns `Ok(CleanupOutcome::AlreadyGone)` instead of an error.
+///
+/// # Errors
+///
+/// Returns [`io::ErrorKind::InvalidInput`] when `temp_dir` is not recognisable
+/// as a discovery directory, contains a `..` component, is a symlink, or is not
+/// a directory at all (Issue #1866). A path is recognised when a path component
+/// contains [`DISCOVERY_DIR_MARKER`], or the directory contains a
+/// [`LOCK_FILE_NAME`] or [`DISCOVERY_DATA_FILE_NAME`] file. Any other I/O
+/// failure from the recursive removal is propagated unchanged.
 pub fn cleanup_discovery_dir(temp_dir: &str) -> io::Result<CleanupOutcome> {
     let path = Path::new(temp_dir);
+
+    assert_is_discovery_dir(path, temp_dir)?;
+
+    // Probe with `symlink_metadata` rather than `exists()` so a symlinked
+    // `temp_dir` is never followed: `fs::remove_dir_all` on a symlinked
+    // directory has had platform- and version-dependent behaviour where it
+    // could delete the link target's contents (Issue #1218, #1866).
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => {
+            // Nothing exists, so nothing can be destroyed. Preserve the
+            // Issue #1100 race-suppression contract.
+            tracing::debug!(
+                path = %temp_dir,
+                "Discovery temp directory already removed by another actor"
+            );
+            return Ok(CleanupOutcome::AlreadyGone);
+        }
+        Err(err) => return Err(err),
+    };
+
+    if metadata.is_symlink() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("Refusing to remove a symlinked temp_dir: {temp_dir}"),
+        ));
+    }
+
+    if !metadata.is_dir() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("temp_dir is not a directory: {temp_dir}"),
+        ));
+    }
+
+    // A destructive action must leave an audit trail, so log the resolved
+    // canonical path at `info!` before removing anything (Issue #1866).
+    let resolved = fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    tracing::info!(
+        path = %temp_dir,
+        resolved = %resolved.display(),
+        "Removing discovery temp directory"
+    );
 
     match fs::remove_dir_all(path) {
         Ok(()) => {
@@ -263,8 +370,10 @@ mod tests {
 
     #[test]
     fn test_cleanup_already_gone_returns_ok() {
+        // The path sits under a `.discovery` root so it passes the Issue
+        // #1866 allowlist, which is enforced before the existence probe.
         let base = TempDir::new().unwrap();
-        let nonexistent = base.path().join("does-not-exist");
+        let nonexistent = base.path().join(".discovery").join("does-not-exist");
 
         let result = cleanup_discovery_dir(nonexistent.to_str().unwrap()).unwrap();
         assert_eq!(result, CleanupOutcome::AlreadyGone);
@@ -446,8 +555,12 @@ mod tests {
     fn test_concurrent_cleanup_no_not_found_error() {
         // Simulates the race condition: two actors try to clean the same dir.
         // Both should succeed without errors.
-        let base = TempDir::new().unwrap();
-        let discovery_dir = base.path().join("concurrent-dir");
+        // The session lives under a `.discovery` root so both actors' calls
+        // pass the Issue #1866 allowlist, including the second one made after
+        // the directory is already gone.
+        let temp = TempDir::new().unwrap();
+        let base = make_discovery_root(temp.path());
+        let discovery_dir = base.join("concurrent-dir");
         fs::create_dir(&discovery_dir).unwrap();
         File::create(discovery_dir.join("data.parquet")).unwrap();
 
