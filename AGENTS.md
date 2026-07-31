@@ -32,12 +32,18 @@ triggers, the auto-format job, and the `version-increment` job (which uses the
 
 ---
 
-## Dependency Bumps — the `cargo upgrade --incompatible` trap
+## Dependency Bumps — `./bump-deps.sh` only, never the quality gate
 
-`./quality.sh` runs `cargo upgrade --incompatible` (see
-[CONTRIBUTING.md](CONTRIBUTING.md) for the full gate). The `--incompatible` flag
-force-bumps dependencies across **major** versions, which can break unrelated
-source. The **wgpu**/naga **29 → 30** bump (changed
+`./quality.sh` does **not** upgrade dependencies (Issue #1865) — a pre-commit
+gate verifies the tree, it must not mutate its dependency graph. Bump with
+`./bump-deps.sh`, which age-checks every change to the resolved `Cargo.lock`
+(transitive packages included) against `VIBE_BUMP_QUARANTINE_HOURS` (default
+24h) and pins in-quarantine versions back. Do not reintroduce
+`cargo upgrade` / `cargo update` into `quality.sh`.
+
+`cargo upgrade --incompatible` — which `bump-deps.sh` uses only to *discover*
+candidates — force-bumps dependencies across **major** versions, which can break
+unrelated source. The **wgpu**/naga **29 → 30** bump (changed
 `Buffer::get_mapped_range()` to return `Result<BufferView, MapRangeError>` and
 added `RequestAdapterOptions::apply_limit_buckets`) broke `src/analysis/gpu/*`
 and was independently rediscovered and reverted in ~ten PRs before the migration

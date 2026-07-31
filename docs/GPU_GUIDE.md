@@ -9,9 +9,10 @@ NEAT-AI-Discovery. For a high-level overview, see [README.md](../README.md).
 
 The GPU backend targets **wgpu 30 / naga 30 / pollster 1.0** (`Cargo.toml`). The
 29 → 30 migration is **complete** (Issue #1594); this note records the API
-breakages so a future major bump — which `quality.sh`'s
-`cargo upgrade --incompatible` step will surface again — is not re-derived from
-scratch (it was independently rediscovered in ~ten PRs before landing):
+breakages so a future major bump — which `bump-deps.sh`'s
+`cargo upgrade --incompatible` discovery step will surface again — is not
+re-derived from scratch (it was independently rediscovered in ~ten PRs before
+landing):
 
 - **`Buffer::get_mapped_range()` now returns `Result<BufferView, MapRangeError>`.**
   All six read-back paths in `src/analysis/gpu/*` unwrap it with `.context(...)?`
