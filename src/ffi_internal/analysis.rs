@@ -482,10 +482,6 @@ fn neuron_candidate_identities(
         .collect()
 }
 
-/// Clone a rejection breakdown into its wire map, wiring the previously-dead
-/// `REJECTION_DUPLICATE_OF_FAILURE_CACHE` reason with the cross-stack
-/// failure-cache suppression count (Issue #1447). Keeps duplicate suppression
-/// visible in the surfaced rejection stats.
 /// Assemble the rejection breakdown the starvation classifier reads for a pass
 /// (Issue #1800).
 ///
@@ -521,6 +517,10 @@ pub fn starvation_classifier_breakdown(
     combined
 }
 
+/// Clone a rejection breakdown into its wire map, wiring the previously-dead
+/// `REJECTION_DUPLICATE_OF_FAILURE_CACHE` reason with the cross-stack
+/// failure-cache suppression count (Issue #1447). Keeps duplicate suppression
+/// visible in the surfaced rejection stats.
 fn breakdown_with_failure_cache(
     breakdown: &analysis::diagnostics::RejectionBreakdown,
     suppressed: usize,
