@@ -55,7 +55,11 @@ pub fn analyze_parallel_internal(input_json: &str) -> Result<String> {
     // downstream `target_analysis` filter silently drops back-edges, so
     // failing fast here surfaces upstream corruption (e.g. NEAT-AI
     // `loadFrom` strip warnings) instead of letting it taint discovery.
-    if let Err(typed) = validate_forward_only_synapses(&input.creature) {
+    // Issue #1867: the same gate bounds the creature's input-neuron count,
+    // which sizes per-input allocations downstream.
+    if let Err(typed) = validate_forward_only_synapses(&input.creature)
+        .and_then(|()| validate_creature_input_bounds(&input.creature))
+    {
         let kind = typed.error_kind();
         let output = AnalyzeParallelOutput {
             success: false,
@@ -595,7 +599,11 @@ pub fn rank_focus_neurons_internal(input_json: &str) -> Result<String> {
 
     // Issue #1184: Reject corrupt creatures carrying recurrent or
     // unresolved synapses before ranking touches the topology.
-    if let Err(typed) = validate_forward_only_synapses(&input.creature) {
+    // Issue #1867: the same gate bounds the creature's input-neuron count,
+    // which sizes per-input allocations downstream.
+    if let Err(typed) = validate_forward_only_synapses(&input.creature)
+        .and_then(|()| validate_creature_input_bounds(&input.creature))
+    {
         let kind = typed.error_kind();
         let output = RankFocusNeuronsOutput {
             success: false,

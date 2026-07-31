@@ -98,7 +98,11 @@ pub fn export_visualisation_snapshot_internal(input_json: &str) -> Result<String
     // topology. The exporter computes impacts and reconstruction checks
     // that assume a forward-only ordering — a back-edge would silently
     // skew the snapshot output.
-    if let Err(typed) = validate_forward_only_synapses(&input.creature) {
+    // Issue #1867: the same gate bounds the creature's input-neuron count,
+    // which sizes per-input allocations downstream.
+    if let Err(typed) = validate_forward_only_synapses(&input.creature)
+        .and_then(|()| validate_creature_input_bounds(&input.creature))
+    {
         let kind = typed.error_kind();
         let output = ExportVisualisationSnapshotOutput {
             success: false,

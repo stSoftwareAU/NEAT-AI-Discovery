@@ -35,7 +35,11 @@ pub fn record_discovery_internal(input_json: &str) -> Result<String> {
 
     // Issue #1184: Reject corrupt creatures carrying recurrent or
     // unresolved synapses before they reach the recording pipeline.
-    if let Err(typed) = validate_forward_only_synapses(&input.creature) {
+    // Issue #1867: and reject an out-of-range input-neuron count, which
+    // would otherwise drive an unbounded allocation inside the pipeline.
+    if let Err(typed) = validate_forward_only_synapses(&input.creature)
+        .and_then(|()| validate_creature_input_bounds(&input.creature))
+    {
         let kind = typed.error_kind();
         let output = RecordDiscoveryOutput {
             success: false,
