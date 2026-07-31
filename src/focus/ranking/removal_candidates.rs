@@ -240,6 +240,18 @@ impl RemovalCandidateOutcome {
 /// in the 1e-8 range) would otherwise survive the pipeline. The dropped-count
 /// is surfaced under [`REJECTION_REMOVAL_BELOW_NOISE_FLOOR`] in
 /// `metadata.rejection_breakdown`.
+///
+/// # Non-finite impact policy (Issue #1872)
+///
+/// A neuron whose `impact` or `activation_weighted_impact` is **non-finite** is
+/// never emitted, matching the structural path's #1804 policy. Every gate below
+/// is NaN-false and the descending `total_cmp` sort orders a positive NaN
+/// *above* `+inf`, so such a neuron previously became the **top-ranked** removal
+/// candidate. A genuine `0.0` contribution remains prunable.
+///
+/// `cost_of_growth_threshold` must already be validated by
+/// [`effective_cost_of_growth`]: a non-finite value makes `savings` NaN and —
+/// through the same NaN-false gates — emits *every* ranked neuron.
 pub(super) fn identify_removal_candidates(
     neurons: &[RankedNeuron],
     synapse_counts: &SynapseCounts,
@@ -272,6 +284,19 @@ pub(super) fn identify_removal_candidates(
             // The 21.5% success rate justifies prioritising these candidates, but
             // see Issue #1142 — we must re-check against a noise floor below.
             let boosted_savings = savings * REMOVAL_CANDIDATE_BOOST;
+
+            // Issue #1872: mirror the structural path's non-finite-impact policy
+            // (#1804). A NaN synapse weight in the host creature propagates NaN
+            // through `impact` into `activation_weighted_impact`, and every gate
+            // below is NaN-false — so the neuron passed all three and then sorted
+            // *above* `+inf` under `total_cmp`, becoming the top-ranked removal
+            // candidate. A contribution that cannot be reasoned about is treated
+            // as infinitely costly to remove: the savings can never exceed it, so
+            // this is the same counted verdict a genuinely over-contributing
+            // neuron gets. A genuine `0.0` impact stays prunable.
+            if !n.impact.is_finite() || !n.activation_weighted_impact.is_finite() {
+                return Emit::SavingsBelowImpactReject;
+            }
 
             // Issue #235: Filter on boosted savings > impact (removal improves score)
             // instead of impact < threshold (may miss valid candidates).
@@ -381,7 +406,13 @@ pub(super) fn identify_removal_candidates(
 /// [`triage_removal_candidates`](super::triage_removal_candidates) adapter, so
 /// the shipped FFI path took `costOfGrowth` raw. It now guards the single
 /// criterion, which is what makes the two entry points provably identical.
-fn effective_cost_of_growth(cost_of_growth: Option<f32>) -> f32 {
+///
+/// Issue #1872: the record-derived ranking path (`rank_selectable`) also
+/// resolves its threshold through here, so a non-finite `costOfGrowth` can no
+/// longer make `savings`
+/// NaN and — via the NaN-false gates — emit *every* ranked neuron as a removal
+/// candidate.
+pub(super) fn effective_cost_of_growth(cost_of_growth: Option<f32>) -> f32 {
     match cost_of_growth {
         Some(value) if value.is_finite() && value > 0.0 => value,
         Some(invalid) => {
@@ -794,7 +825,11 @@ mod noise_floor_tests {
     /// Craft a [`RankedNeuron`] with the exact impact/activation values needed
     /// to produce a targeted `activation_weighted_impact` without touching
     /// the production record-derived code paths.
-    fn ranked_neuron(uuid: &str, impact: f32, activation_weighted_impact: f32) -> RankedNeuron {
+    pub(super) fn ranked_neuron(
+        uuid: &str,
+        impact: f32,
+        activation_weighted_impact: f32,
+    ) -> RankedNeuron {
         // mean_activation is derived so that structural impact × mean_activation
         // equals the desired activation_weighted_impact. Tests use impact ≈ 0
         // (disconnected neurons) so the `mean_activation` filter never fires.
@@ -819,7 +854,11 @@ mod noise_floor_tests {
 
     /// Build a minimal `CreatureJson` with the given (incoming, outgoing)
     /// synapse counts for the neuron named `uuid`.
-    fn creature_with_synapse_counts(uuid: &str, incoming: usize, outgoing: usize) -> CreatureJson {
+    pub(super) fn creature_with_synapse_counts(
+        uuid: &str,
+        incoming: usize,
+        outgoing: usize,
+    ) -> CreatureJson {
         let mut neurons: Vec<NeuronJson> = vec![NeuronJson {
             uuid: uuid.to_string(),
             neuron_type: "hidden".to_string(),
@@ -1023,6 +1062,174 @@ mod noise_floor_tests {
             breakdown.values().sum::<u32>(),
             outcome.total_rejections(),
             "every rejection must be named in the breakdown: {breakdown:?}"
+        );
+    }
+}
+
+// =============================================================================
+// Unit tests for Issue #1872 — non-finite guards on the record-derived path
+// =============================================================================
+
+#[cfg(test)]
+mod record_path_nonfinite_tests {
+    //! Issue #1872: the record-derived twin of the #1804 / #1783 guards.
+    //!
+    //! Every gate in [`identify_removal_candidates`] is NaN-false, and the
+    //! descending `total_cmp` sort orders a positive NaN *above* `+inf`, so a
+    //! NaN `activation_weighted_impact` used to survive triage and rank first —
+    //! the strongest licence for a destructive edit granted to the one neuron
+    //! whose contribution cannot be reasoned about. A non-finite `costOfGrowth`
+    //! did the same to every ranked neuron at once by making `savings` NaN.
+
+    use super::noise_floor_tests::{creature_with_synapse_counts, ranked_neuron};
+    use super::*;
+
+    /// Clear the override so the shipped, `costOfGrowth`-denominated floor
+    /// governs (Issue #1814). Callers must hold [`env_lock`].
+    fn use_shipped_noise_floor() {
+        // SAFETY: every caller holds `env_lock()`, so no other test touches the
+        // environment concurrently.
+        unsafe {
+            std::env::remove_var("NEAT_AI_DISCOVERY_REMOVE_LOW_IMPACT_NOISE_FLOOR");
+        }
+    }
+
+    /// A NaN contribution must never be emitted as a removal candidate — and in
+    /// particular must never outrank a genuine candidate.
+    #[test]
+    fn nan_activation_weighted_impact_is_never_a_candidate() {
+        let _guard = env_lock();
+        use_shipped_noise_floor();
+
+        let growth = 2e-5_f32 / 1.8;
+        let creature = creature_with_synapse_counts("h-keep", 1, 1);
+        let synapse_counts = SynapseCounts::new(&creature);
+
+        let neurons = [
+            ranked_neuron("h-nan", 0.0, f32::NAN),
+            // Net improvement 1.5e-5 ⇒ a genuine candidate.
+            ranked_neuron("h-keep", 0.0, 5e-6),
+        ];
+        let outcome = identify_removal_candidates(&neurons, &synapse_counts, growth);
+
+        assert!(
+            outcome.candidates.iter().all(|c| c.neuron_uuid != "h-nan"),
+            "a NaN contribution must never license removal, got {:?}",
+            outcome
+                .candidates
+                .iter()
+                .map(|c| c.neuron_uuid.as_str())
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(
+            outcome.candidates.len(),
+            1,
+            "the genuine candidate must survive: {outcome:?}"
+        );
+        assert_eq!(outcome.candidates[0].neuron_uuid, "h-keep");
+        // The drop is counted, never silently swallowed (Issue #1808).
+        assert_eq!(outcome.savings_below_impact_rejections, 1, "{outcome:?}");
+        assert_eq!(
+            outcome.candidates.len() as u32 + outcome.total_rejections(),
+            outcome.considered,
+            "conservation invariant must hold: {outcome:?}"
+        );
+    }
+
+    /// An infinite contribution — and a NaN structural `impact` paired with a
+    /// zero mean activation — are the same "cannot be reasoned about" class.
+    #[test]
+    fn infinite_and_nan_impact_are_never_candidates() {
+        let _guard = env_lock();
+
+        let growth = 2e-5_f32 / 1.8;
+        let creature = creature_with_synapse_counts("h-keep", 1, 1);
+        let synapse_counts = SynapseCounts::new(&creature);
+
+        let neurons = [
+            ranked_neuron("h-inf", 0.0, f32::INFINITY),
+            ranked_neuron("h-neg-inf", 0.0, f32::NEG_INFINITY),
+            ranked_neuron("h-nan-impact", f32::NAN, f32::NAN),
+        ];
+        let outcome = identify_removal_candidates(&neurons, &synapse_counts, growth);
+
+        assert!(
+            outcome.candidates.is_empty(),
+            "no non-finite neuron may be a removal candidate, got {:?}",
+            outcome
+                .candidates
+                .iter()
+                .map(|c| c.neuron_uuid.as_str())
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(outcome.savings_below_impact_rejections, 3, "{outcome:?}");
+    }
+
+    /// The guard must not over-correct: a genuine `0.0` contribution is still
+    /// the strongest removal candidate.
+    #[test]
+    fn zero_contribution_is_still_a_candidate() {
+        let _guard = env_lock();
+        use_shipped_noise_floor();
+
+        let growth = 2e-5_f32 / 1.8;
+        let creature = creature_with_synapse_counts("h-zero", 1, 1);
+        let synapse_counts = SynapseCounts::new(&creature);
+
+        let outcome = identify_removal_candidates(
+            &[ranked_neuron("h-zero", 0.0, 0.0)],
+            &synapse_counts,
+            growth,
+        );
+
+        assert_eq!(outcome.candidates.len(), 1, "{outcome:?}");
+        assert_eq!(outcome.candidates[0].neuron_uuid, "h-zero");
+    }
+
+    /// Issue #1783's validator, exercised directly: non-finite and non-positive
+    /// host values fall back to the shipped default rather than poisoning
+    /// `savings`.
+    #[test]
+    fn effective_cost_of_growth_rejects_nonsense_host_values() {
+        for invalid in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY, 0.0, -1e-4] {
+            assert_eq!(
+                effective_cost_of_growth(Some(invalid)),
+                DEFAULT_COST_OF_GROWTH,
+                "costOfGrowth {invalid} must fall back to the default"
+            );
+        }
+        assert_eq!(effective_cost_of_growth(None), DEFAULT_COST_OF_GROWTH);
+        assert!((effective_cost_of_growth(Some(1e-4)) - 1e-4).abs() < f32::EPSILON);
+    }
+
+    /// A NaN threshold reaching the triage would make `savings` NaN and — via
+    /// the same NaN-false gates — emit every ranked neuron. Routing the host
+    /// value through [`effective_cost_of_growth`] first is what stops that.
+    #[test]
+    fn validated_threshold_stops_the_flood_a_raw_nan_would_cause() {
+        let _guard = env_lock();
+        use_shipped_noise_floor();
+
+        let creature = creature_with_synapse_counts("h-contributing", 1, 1);
+        let synapse_counts = SynapseCounts::new(&creature);
+        // Contribution 1e-3 dwarfs the savings at any sane costOfGrowth.
+        let neurons = [ranked_neuron("h-contributing", 0.0, 1e-3)];
+
+        let raw = identify_removal_candidates(&neurons, &synapse_counts, f32::NAN);
+        assert_eq!(
+            raw.candidates.len(),
+            1,
+            "pinning the hazard: a raw NaN threshold passes every gate"
+        );
+
+        let validated = identify_removal_candidates(
+            &neurons,
+            &synapse_counts,
+            effective_cost_of_growth(Some(f32::NAN)),
+        );
+        assert!(
+            validated.candidates.is_empty(),
+            "a validated threshold must keep the contributing neuron safe: {validated:?}"
         );
     }
 }
