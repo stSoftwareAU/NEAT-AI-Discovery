@@ -19,7 +19,7 @@
 //! orderings match the pre-cache behaviour, so no analysis or focus output
 //! changes.
 
-use crate::parquet_format::read_all_records_grouped_by_neuron_with_deadline;
+use crate::parquet_format::read_all_records_grouped_by_neuron_bounded;
 use crate::types::DiscoverRecord;
 use anyhow::Result;
 use parking_lot::Mutex;
@@ -76,13 +76,26 @@ static CACHE: LazyLock<Mutex<Option<CacheSlot>>> = LazyLock::new(|| Mutex::new(N
 /// On a cache hit the records are returned without any disk access, so a
 /// discovery cycle that runs focus selection then analysis on the same parquet
 /// decodes the file exactly once. On a miss the file is decoded via
-/// [`read_all_records_grouped_by_neuron_with_deadline`], stored, and returned.
+/// [`read_all_records_grouped_by_neuron_bounded`], stored, and returned.
 ///
 /// `deadline` applies only to the decode on a miss; a hit ignores it because no
 /// loading occurs.
 pub fn load_grouped_records_shared(
     path: &str,
     deadline: Option<SystemTime>,
+) -> Result<Arc<SharedGroupedRecords>> {
+    load_grouped_records_shared_with_budget(path, deadline, None)
+}
+
+/// Load the grouped discovery records for `path`, bounding a decode on a cache
+/// miss with the caller's memory budget in megabytes (Issue #1869).
+///
+/// The budget applies only to the decode: a cache hit returns the already
+/// materialised records, which were themselves bounded when first decoded.
+pub fn load_grouped_records_shared_with_budget(
+    path: &str,
+    deadline: Option<SystemTime>,
+    budget_mb: Option<u64>,
 ) -> Result<Arc<SharedGroupedRecords>> {
     let key = CacheKey::for_path(path);
 
@@ -103,7 +116,12 @@ pub fn load_grouped_records_shared(
 
     // Miss: decode the file outside the lock so callers for other files are not
     // blocked on this (potentially slow) read.
-    let grouped = read_all_records_grouped_by_neuron_with_deadline(path, deadline)?;
+    let grouped = read_all_records_grouped_by_neuron_bounded(
+        path,
+        deadline,
+        crate::parquet_format::ColumnProfile::Full,
+        budget_mb,
+    )?;
     let shared: Arc<SharedGroupedRecords> = Arc::new(
         grouped
             .into_iter()

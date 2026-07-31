@@ -113,6 +113,28 @@ Persisted suppression state could hold a creature in drought indefinitely.
 
 ### Security
 
+#### Parquet decode is now bounded, not predicted (Issue #1869)
+
+The pre-load admission decision was `compressed_file_size × 3`, and the only
+memory-budget check ran *after* the allocation it was meant to prevent. Parquet's
+dictionary and RLE encodings routinely beat 3:1 on this schema's repeated neuron
+UUIDs, so a file projected at "300 MB, fits comfortably" could decode into many
+gigabytes and abort the host process.
+
+- `estimate_parquet_in_memory_bytes` now projects from the Parquet **footer** —
+  the exact decompressed row count and `errors` value count — with the old
+  `file_size × 3` heuristic kept only as a floor.
+- The reader charges every materialised record against a cumulative
+  `DecodeBudget` **inside** its batch loop, alongside the existing cancellation
+  and deadline checks, and fails loud with a typed `MemoryExhausted` error the
+  moment the ceiling is reached. The analysis phase forwards its
+  `max_analysis_memory_mb`; budget-free paths use
+  `NEAT_AI_DISCOVERY_MAX_PARQUET_DECODE_MB`, defaulting to half of total RAM.
+  This closes the `max_obs` gap — that limit caps distinct *observations*, so a
+  file whose rows all share one `obs_index` was unbounded even at `maxObs: 1`.
+- The snapshot exporter's dense `O(neurons × observations)` grid is checked
+  against the same ceiling before the first vector is allocated.
+
 #### Pre-commit gate no longer bypasses the dependency quarantine (Issue #1865)
 
 `./quality.sh` — the documented pre-commit step — ran `cargo upgrade
