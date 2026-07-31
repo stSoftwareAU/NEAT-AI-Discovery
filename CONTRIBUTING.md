@@ -97,7 +97,9 @@ If any step fails, fix the issue and re-run. Do **not** commit code that fails
 `cargo upgrade --incompatible` + `cargo update`, which pulled crates published
 minutes earlier and bypassed the 24h quarantine window. Bump dependencies with
 `./bump-deps.sh` — it age-checks every change to the resolved `Cargo.lock`,
-transitive packages included — or let Renovate raise the PR.
+transitive packages included — or let Renovate raise the PR. `./bump-deps.sh`
+requires `cargo-deny`: its audit gate exits 9 rather than skipping when the tool
+is missing, so the bump can never pass unaudited (Issue #1870).
 
 **GPU tests are skipped in CI** (no GPU available). For full coverage, run
 `./quality.sh` locally before pushing.
@@ -115,7 +117,10 @@ the gate runs on milestone sub-issue PRs too, not just the rollup into `Develop`
 - `quality` — fmt check, Clippy, cargo check, doc build, tests, build
 - `spell-check` — runs codespell on the codebase
 - `validation` — checks required files and `Cargo.toml`
-- `security` — runs the security audit workflow
+- `security` — runs the security audit workflow: `cargo audit` (RustSec
+  advisories), `cargo deny check` (the `deny.toml` licence, ban and
+  dependency-source policy, enforced in CI since Issue #1870), and
+  `dependency-review`
 - `shellcheck` (separate workflow `.github/workflows/shellcheck.yml`) — runs the
   committed `quality/bash_syntax.sh` (`bash -n`) gate, then lints bash scripts
   via ShellCheck (Issue #1755)

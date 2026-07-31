@@ -19,7 +19,10 @@ set -euo pipefail
 #     The pre-commit quality gate verifies the tree and never mutates it.
 #
 # Audit gate: after bumping, `cargo deny check` must pass; any new advisory
-# fails the run. The Vibe Coder worker reverts the bump on non-zero exit.
+# fails the run. The Vibe Coder worker reverts the bump on non-zero exit. A
+# missing cargo-deny is a hard failure (exit 9), not a skip — the gate is the
+# only reader of deny.toml, so skipping it silently passed the licence, ban and
+# dependency-source policy (Issue #1870).
 #
 # Lockfile integrity: after Cargo.toml mutations we run `cargo update` and
 # then `cargo check --locked` to ensure the lockfile matches the registry.
@@ -38,6 +41,7 @@ set -euo pipefail
 #
 # Exit codes:
 #   0   clean (or no-op)
+#   9   cargo-deny is not installed — the audit gate cannot run
 #   non-zero  bump rejected (audit failed, lockfile mismatch, invalid input)
 
 # ── Helper functions (sourceable for tests) ───────────────────────────
@@ -335,6 +339,20 @@ bump_deps::current_epoch() {
     fi
 }
 
+# bump_deps::require_cargo_deny
+# Return 0 when cargo-deny is on PATH; otherwise print an error and return 1.
+# The audit gate is the only check that reads deny.toml, so a missing tool must
+# fail the run — skipping it silently passed the licence, ban and
+# dependency-source policy on any host without cargo-deny (Issue #1870).
+bump_deps::require_cargo_deny() {
+    if command -v cargo-deny >/dev/null 2>&1; then
+        return 0
+    fi
+    echo "ERROR: cargo-deny not installed — the audit gate cannot run and must not be skipped" >&2
+    echo "       Install it: cargo install --locked cargo-deny" >&2
+    return 1
+}
+
 # When sourced by the test suite we stop before parsing arguments / running.
 if [[ "${BUMP_DEPS_SOURCE_ONLY:-0}" == "1" ]]; then
     # shellcheck disable=SC2317  # `exit 0` is the fallback when not sourced.
@@ -387,6 +405,8 @@ Exit codes:
   0  clean (or no-op)
   8  bump rejected — a package inside the quarantine window could not be
      pinned back (new transitive package, or --precise failed).
+  9  cargo-deny is not installed — the audit gate cannot run and is never
+     skipped (install: cargo install --locked cargo-deny).
   *  bump rejected — audit failure, lockfile drift, or bad input.
 USAGE
 }
@@ -660,22 +680,21 @@ fi
 # Phase 4: audit gate.
 AUDIT_RUN=0
 if [[ "$DRY_RUN" -eq 0 ]]; then
-    if command -v cargo-deny >/dev/null 2>&1; then
-        echo "📜 Running audit gate (cargo deny check)…"
-        if ! cargo deny check 2>&1 | tee /tmp/bump-deps-deny.log; then
-            OFFENDER="$(grep -oE '[a-zA-Z0-9_-]+ v[0-9][^ ]*' /tmp/bump-deps-deny.log | head -1 || true)"
-            if [[ -n "$OFFENDER" ]]; then
-                echo "ERROR: audit gate failed (offending crate: $OFFENDER)" >&2
-            else
-                echo "ERROR: audit gate failed (cargo deny check rejected the bumped tree)" >&2
-            fi
-            exit 7
-        fi
-        AUDIT_RUN=1
-        echo ""
-    else
-        echo "⚠️  cargo-deny not installed — audit gate skipped (install: cargo install cargo-deny)"
+    if ! bump_deps::require_cargo_deny; then
+        exit 9
     fi
+    echo "📜 Running audit gate (cargo deny check)…"
+    if ! cargo deny check 2>&1 | tee /tmp/bump-deps-deny.log; then
+        OFFENDER="$(grep -oE '[a-zA-Z0-9_-]+ v[0-9][^ ]*' /tmp/bump-deps-deny.log | head -1 || true)"
+        if [[ -n "$OFFENDER" ]]; then
+            echo "ERROR: audit gate failed (offending crate: $OFFENDER)" >&2
+        else
+            echo "ERROR: audit gate failed (cargo deny check rejected the bumped tree)" >&2
+        fi
+        exit 7
+    fi
+    AUDIT_RUN=1
+    echo ""
 fi
 
 # Phase 5: summary.
@@ -694,7 +713,7 @@ else
             echo "✅ bump-deps: no bumps (dry-run)"
         fi
     else
-        echo "✅ bump-deps: no bumps (quarantined=$EXTERNAL_REVERTED, lock_pinned_back=$LOCK_REVERTED)"
+        echo "✅ bump-deps: no bumps (quarantined=$EXTERNAL_REVERTED, lock_pinned_back=$LOCK_REVERTED, audit_run=$AUDIT_RUN)"
     fi
 fi
 if [[ -n "$QUARANTINED_DEPS" ]]; then

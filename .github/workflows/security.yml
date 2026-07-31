@@ -20,10 +20,11 @@ permissions:
 jobs:
   security:
     runs-on: ubuntu-latest
-    # cargo install cargo-audit + audit run + dependency-review.
-    # Compiling cargo-audit from source dominates runtime; 20 minutes
-    # covers a cold build while still bounding hangs (Issue #1287).
-    timeout-minutes: 20
+    # cargo install cargo-audit + cargo-deny, both audit runs, and
+    # dependency-review. Compiling the two plugins from source dominates
+    # runtime; 30 minutes covers a cold build of both while still bounding
+    # hangs (Issue #1287, Issue #1870).
+    timeout-minutes: 30
     steps:
     - name: Checkout code
       # Pinned to actions/checkout v6.0.2 (Node.js 24) to avoid the
@@ -60,6 +61,22 @@ jobs:
       # because it is version-pinned (0.22.1) for CVSS 4.0 support, whereas the
       # action resolved its own cargo-audit version.
       run: cargo audit
+
+    - name: Install cargo-deny
+      # Pinned and --locked for the same reason as cargo-audit above: without
+      # both flags a poisoned release of cargo-deny (or any transitive dep)
+      # would execute via build.rs with this workflow's GITHUB_TOKEN.
+      run: cargo install --locked --version 0.20.2 cargo-deny
+
+    - name: Run dependency policy check
+      # Enforces deny.toml in CI (Issue #1870). cargo audit and
+      # dependency-review check published *advisories* only; neither reads
+      # deny.toml, so the [sources] policy (crates.io only — no git remotes,
+      # no alternate registries), the [bans] table and the Apache-2.0
+      # compatible [licenses] allow-list were advisory until this step. A PR
+      # adding `foo = { git = "https://github.com/attacker/foo" }` bypasses
+      # crates.io checksums entirely and previously passed every gate.
+      run: cargo deny check
 
     - name: Dependency review
       if: ${{ inputs.include-dependency-review && github.event_name == 'pull_request' }}
