@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+#### `append_discovery_records` no longer acknowledges a cancelled session (Issue #1876)
+
+`append_records` could return `Ok(records_in_batch)` for a session that
+`cancel_session` or the TTL sweep had already removed, reporting records as
+written moments before the session's `.parquet.tmp` file was deleted. Sessions
+now carry a lock-free cancellation tombstone that `append_records` checks after
+taking the per-session lock and again after its writes, so the call fails with
+`Session cancelled: <sessionId>` instead. Cancelling still never waits on an
+in-flight Parquet write.
+
 ### Removed
 
 #### `ModuleStarvationTracker` deleted rather than wired (Issue #1793)

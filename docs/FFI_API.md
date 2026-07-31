@@ -957,7 +957,7 @@ cancel to abort):
 | Symbol | Purpose | Validates `CreatureJson` |
 |--------|---------|--------------------------|
 | `start_discovery_session` | Start a new recording session; returns a `sessionId`. | yes (Issue #1188) |
-| `append_discovery_records` | Append a batch of observations to an open session; returns `recordsWritten`. | no — session captured at start |
+| `append_discovery_records` | Append a batch of observations to an open session; returns `recordsWritten`, or an error if the session was cancelled or TTL-swept (Issue #1876). | no — session captured at start |
 | `finish_discovery_session` | Finalise and close the Parquet file; returns `tempDir`, `file`, `totalRecords`. | no |
 | `cancel_discovery_session` | Cancel a session, cleaning up without finalising. | no |
 
