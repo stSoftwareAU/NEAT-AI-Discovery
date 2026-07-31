@@ -56,7 +56,9 @@ pub use memory::{
 };
 
 // Re-export platform setup functions
-pub use platform::{ensure_xdg_runtime_dir, suppress_mesa_warnings_if_requested};
+pub use platform::{
+    GpuEnvSetup, ensure_xdg_runtime_dir, setup_gpu_environment, suppress_mesa_warnings_if_requested,
+};
 
 // Re-export deadline handling functions (Issue #268)
 pub use deadline::{

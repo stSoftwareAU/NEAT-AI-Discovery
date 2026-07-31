@@ -26,6 +26,14 @@
 // concurrently.** These functions are therefore documented as early-init entry
 // points — call them during GPU initialisation, before spawning any thread
 // that touches the environment.
+//
+// Safe callers must not assert that precondition — they cannot enforce it. GPU
+// init is lazy and reachable from a multi-threaded host at an arbitrary time
+// (Issue #1873). [`setup_gpu_environment`] is the safe entry point: it *checks*
+// the invariant by reading the live OS thread count from `/proc/self/task` and
+// only writes when the process is observably single-threaded. When other
+// threads already exist it skips the writes and warns loudly, degrading GPU
+// diagnostics rather than risking a `getenv` data race.
 
 /// Set an environment variable only if it is currently unset.
 ///
@@ -186,6 +194,121 @@ pub unsafe fn ensure_xdg_runtime_dir() {
 }
 
 // =============================================================================
+// Guarded (safe) GPU environment setup — Issue #1873
+// =============================================================================
+
+/// Verdict returned by [`setup_gpu_environment`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GpuEnvSetup {
+    /// The process was observably single-threaded, so the environment writes
+    /// were applied.
+    Applied,
+    /// Nothing needed writing — either the platform requires no setup
+    /// (non-Linux) or every variable is already present in the environment.
+    NotRequired,
+    /// Other threads are already live (or the thread count could not be
+    /// determined), so the writes were skipped to avoid racing a concurrent
+    /// `getenv`. GPU init continues with the environment as the host left it.
+    Skipped,
+}
+
+/// Whether the process environment may be mutated, given the observed number of
+/// live OS threads (`None` when the count could not be determined).
+///
+/// Only a genuinely single-threaded process is safe: `set_var` races any
+/// concurrent `getenv`. A new thread can only be created by an existing thread,
+/// so when this thread is the only one, and it spawns none before the write,
+/// no concurrent reader can exist. An undeterminable count is treated as unsafe.
+#[cfg(any(target_os = "linux", test))]
+pub(crate) fn may_mutate_environment(thread_count: Option<usize>) -> bool {
+    thread_count == Some(1)
+}
+
+/// Count the live OS threads in this process, or `None` if it cannot be read.
+#[cfg(target_os = "linux")]
+fn live_thread_count() -> Option<usize> {
+    let mut count = 0usize;
+    for entry in std::fs::read_dir("/proc/self/task").ok()? {
+        // A read error mid-iteration means the count is untrustworthy.
+        entry.ok()?;
+        count += 1;
+    }
+    (count > 0).then_some(count)
+}
+
+/// Whether any GPU environment variable still needs writing.
+#[cfg(target_os = "linux")]
+fn env_setup_pending() -> bool {
+    use std::env;
+
+    if env::var("XDG_RUNTIME_DIR").is_err() {
+        return true;
+    }
+    crate::config::quiet_gpu()
+        && ["EGL_LOG_LEVEL", "MESA_GLSL_CACHE_DISABLE", "MESA_DEBUG"]
+            .iter()
+            .any(|key| env::var(key).is_err())
+}
+
+/// Warn once that the GPU environment setup was skipped, and why.
+#[cfg(target_os = "linux")]
+fn warn_setup_skipped(thread_count: Option<usize>) {
+    use std::sync::Once;
+
+    static WARNED: Once = Once::new();
+    WARNED.call_once(|| {
+        tracing::warn!(
+            ?thread_count,
+            "GPU environment setup skipped: this process is already \
+             multi-threaded, so writing XDG_RUNTIME_DIR / Mesa variables would \
+             race a concurrent getenv (undefined behaviour). Set \
+             XDG_RUNTIME_DIR — and the Mesa variables when \
+             NEAT_AI_DISCOVERY_QUIET_GPU=1 — in the host environment before \
+             starting the process. GPU initialisation continues and may emit \
+             Wayland/Mesa warnings."
+        );
+    });
+}
+
+/// Apply the Linux GPU environment setup, but only while it is provably safe.
+///
+/// This is the safe entry point every GPU initialisation path should use. It
+/// enforces — rather than assumes — the soundness precondition of the `unsafe`
+/// [`suppress_mesa_warnings_if_requested`] / [`ensure_xdg_runtime_dir`] entry
+/// points by reading the live thread count from `/proc/self/task` first
+/// (Issue #1873). GPU init is lazy and reachable from a multi-threaded host, so
+/// no caller can promise the process is single-threaded; when it is not, the
+/// writes are skipped and logged instead of risking a `getenv` data race.
+#[cfg(target_os = "linux")]
+pub fn setup_gpu_environment() -> GpuEnvSetup {
+    if !env_setup_pending() {
+        return GpuEnvSetup::NotRequired;
+    }
+
+    let thread_count = live_thread_count();
+    if !may_mutate_environment(thread_count) {
+        warn_setup_skipped(thread_count);
+        return GpuEnvSetup::Skipped;
+    }
+
+    // SAFETY: `/proc/self/task` reported exactly one live thread — this one.
+    // Only an existing thread can create a new one, and this thread creates
+    // none between the check and the writes, so no other thread can read the
+    // process environment concurrently.
+    unsafe {
+        suppress_mesa_warnings_if_requested();
+        ensure_xdg_runtime_dir();
+    }
+    GpuEnvSetup::Applied
+}
+
+/// No-op on non-Linux platforms: nothing in the environment needs setting up.
+#[cfg(not(target_os = "linux"))]
+pub fn setup_gpu_environment() -> GpuEnvSetup {
+    GpuEnvSetup::NotRequired
+}
+
+// =============================================================================
 // Tests
 // =============================================================================
 
@@ -218,6 +341,122 @@ mod tests {
         unsafe {
             ensure_xdg_runtime_dir();
             ensure_xdg_runtime_dir();
+        }
+    }
+
+    /// Only a single live thread permits an environment write; anything else —
+    /// including an undeterminable count — must be refused (Issue #1873).
+    #[test]
+    fn test_may_mutate_environment_requires_single_thread() {
+        assert!(
+            may_mutate_environment(Some(1)),
+            "a single-threaded process has no concurrent getenv reader"
+        );
+        assert!(
+            !may_mutate_environment(Some(2)),
+            "a second live thread may read the environment concurrently"
+        );
+        assert!(
+            !may_mutate_environment(Some(64)),
+            "a rayon/host thread pool must block the write"
+        );
+        assert!(
+            !may_mutate_environment(None),
+            "an unknown thread count must be treated as unsafe"
+        );
+    }
+
+    /// The live thread count reflects threads that actually exist: it grows
+    /// while an extra thread is alive.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn test_live_thread_count_sees_extra_threads() {
+        use std::sync::mpsc;
+
+        let baseline = live_thread_count().expect("/proc/self/task should be readable");
+        assert!(baseline >= 1, "the calling thread must be counted");
+
+        let (release_tx, release_rx) = mpsc::channel::<()>();
+        let (ready_tx, ready_rx) = mpsc::channel::<()>();
+        let handle = std::thread::spawn(move || {
+            ready_tx.send(()).expect("ready signal should send");
+            release_rx.recv().ok();
+        });
+        ready_rx.recv().expect("worker thread should start");
+
+        let with_worker = live_thread_count().expect("/proc/self/task should be readable");
+        assert!(
+            with_worker >= 2,
+            "an extra live thread must be visible in the count, saw {with_worker}"
+        );
+        assert!(
+            !may_mutate_environment(Some(with_worker)),
+            "the environment must not be written while another thread lives"
+        );
+
+        release_tx.send(()).expect("release signal should send");
+        handle.join().expect("worker thread should join");
+    }
+
+    /// `setup_gpu_environment` is a *safe* function: no caller has to promise
+    /// an invariant it cannot enforce, and repeated calls agree (Issue #1873).
+    #[test]
+    fn test_setup_gpu_environment_is_safe_and_consistent() {
+        let first = setup_gpu_environment();
+        let second = setup_gpu_environment();
+        assert_eq!(first, second, "repeated setup must return the same verdict");
+    }
+
+    /// On non-Linux platforms there is nothing to set up.
+    #[cfg(not(target_os = "linux"))]
+    #[test]
+    fn test_setup_gpu_environment_is_a_noop_off_linux() {
+        assert_eq!(setup_gpu_environment(), GpuEnvSetup::NotRequired);
+    }
+
+    /// With another thread alive, the setup refuses to write and leaves an
+    /// unset `XDG_RUNTIME_DIR` unset — the regression guard for the #1873
+    /// `getenv` race. Serial because it mutates the process environment.
+    #[cfg(target_os = "linux")]
+    #[test]
+    #[serial_test::serial]
+    fn test_setup_gpu_environment_skips_when_other_threads_live() {
+        use std::env;
+        use std::sync::mpsc;
+
+        let saved = env::var("XDG_RUNTIME_DIR").ok();
+        // SAFETY: serialised via #[serial]; no other thread touches the env here.
+        unsafe { env::remove_var("XDG_RUNTIME_DIR") };
+
+        let (release_tx, release_rx) = mpsc::channel::<()>();
+        let (ready_tx, ready_rx) = mpsc::channel::<()>();
+        let handle = std::thread::spawn(move || {
+            ready_tx.send(()).expect("ready signal should send");
+            release_rx.recv().ok();
+        });
+        ready_rx.recv().expect("worker thread should start");
+
+        let verdict = setup_gpu_environment();
+
+        assert_eq!(
+            verdict,
+            GpuEnvSetup::Skipped,
+            "a live second thread must block the environment write"
+        );
+        assert!(
+            env::var("XDG_RUNTIME_DIR").is_err(),
+            "XDG_RUNTIME_DIR must stay unset when the write is refused"
+        );
+
+        release_tx.send(()).expect("release signal should send");
+        handle.join().expect("worker thread should join");
+
+        // SAFETY: serialised via #[serial]; restore any pre-existing value.
+        unsafe {
+            match saved {
+                Some(v) => env::set_var("XDG_RUNTIME_DIR", v),
+                None => env::remove_var("XDG_RUNTIME_DIR"),
+            }
         }
     }
 

@@ -43,8 +43,9 @@
 //! - `get_work_queue_capacity_for_tier()` - Get capacity for a specific tier
 //!
 //! ### Platform Setup
-//! - `ensure_xdg_runtime_dir()` - Ensure `XDG_RUNTIME_DIR` is set (Linux)
-//! - `suppress_mesa_warnings_if_requested()` - Suppress Mesa GPU warnings (Linux)
+//! - `setup_gpu_environment()` - Safe, thread-guarded GPU environment setup
+//! - `ensure_xdg_runtime_dir()` - Ensure `XDG_RUNTIME_DIR` is set (Linux, `unsafe`)
+//! - `suppress_mesa_warnings_if_requested()` - Suppress Mesa GPU warnings (Linux, `unsafe`)
 
 // =============================================================================
 // Memory Detection Re-exports
@@ -84,7 +85,7 @@ pub use crate::analysis::utils::memory::parse_meminfo_line;
 // =============================================================================
 
 pub use crate::analysis::utils::platform::{
-    ensure_xdg_runtime_dir, suppress_mesa_warnings_if_requested,
+    GpuEnvSetup, ensure_xdg_runtime_dir, setup_gpu_environment, suppress_mesa_warnings_if_requested,
 };
 
 // =============================================================================
