@@ -113,6 +113,22 @@ Persisted suppression state could hold a creature in drought indefinitely.
 
 ### Changed
 
+#### CI `version-increment` no longer re-resolves the lockfile (Issue #1878)
+
+The `version-increment` job ran a bare `cargo update` after bumping the patch
+version, then committed and pushed the result with the `ACTIONS_PUSH` PAT. That
+re-resolved every direct **and** transitive dependency to the newest published
+version with no age check, so a crate published minutes earlier landed in the
+committed `Cargo.lock` on every PR — the same bypass as Issue #1865, on the CI
+path rather than the pre-commit path.
+
+- The job now runs `cargo update --workspace`, which records only this crate's
+  own new version and leaves every dependency resolution untouched.
+- A fail-loud guard asserts the `Cargo.lock` diff is exactly the crate's own
+  version bump; anything else aborts the job rather than pushing an
+  unquarantined dependency graph. Dependency movement belongs to
+  `./bump-deps.sh` (which enforces `VIBE_BUMP_QUARANTINE_HOURS`) and Renovate.
+
 #### Remove private-repo links and mentions from archived PR summaries (Issue #1726)
 
 The archived PR summaries under `docs/archive/pr-summaries/` named private
