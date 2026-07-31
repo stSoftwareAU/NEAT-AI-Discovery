@@ -17,6 +17,15 @@
 //! shipped surface is the pair that *is* reachable: the zero-impact
 //! non-regression, and the "no candidate carries a non-finite impact"
 //! invariant.
+//!
+//! ## Issue #1872 — the record-derived twin
+//!
+//! `rank_focus_neurons` (still shipped public API) reaches the *record-derived*
+//! `identify_removal_candidates`, which missed both guards. It takes a
+//! `CreatureJson` **struct**, not JSON, so a NaN synapse weight — inexpressible
+//! over the FFI boundary — is reachable here, and `cost_of_growth` is an
+//! `Option<f32>` the host can set to a non-finite or negative value. The
+//! `record_derived_path` module below pins both on that surface.
 
 use neat_ai_discovery::rank_focus_neurons_internal;
 use serde_json::Value;
@@ -143,4 +152,188 @@ fn overflowing_weight_is_rejected_at_the_ffi_boundary() {
         parsed["error"].as_str().is_some_and(|e| !e.is_empty()),
         "a rejected input must carry a descriptive error"
     );
+}
+
+// =============================================================================
+// Issue #1872 — the record-derived removal path (`rank_focus_neurons`)
+// =============================================================================
+
+mod record_derived_path {
+    //! Issue #1872: `identify_removal_candidates` — the record-derived twin of
+    //! the structural triage above — accepted non-finite host-shaped values that
+    //! #1804 and #1783 hardened the structural path against.
+    //!
+    //! Every gate on that path is NaN-false (`boosted_savings <= impact`, the
+    //! active-neuron gate behind `impact > EPSILON`, and
+    //! `net_improvement < noise_floor`), and the descending `total_cmp` sort
+    //! orders a positive NaN *above* `+inf`. So a NaN contribution did not merely
+    //! survive triage — it became the **top-ranked** removal candidate, and a
+    //! non-finite `costOfGrowth` made *every* ranked neuron one.
+
+    use neat_ai_discovery::focus::rank_focus_neurons;
+    use neat_ai_discovery::parquet_format::write_records_to_parquet;
+    use neat_ai_discovery::types::DiscoverRecord;
+    use neat_ai_discovery::{CreatureJson, NeuronJson, SynapseJson};
+    use tempfile::NamedTempFile;
+
+    /// Large enough that a zero-contribution neuron's boosted savings clear the
+    /// `costOfGrowth`-denominated noise floor (Issue #1814).
+    const TEST_COST_OF_GROWTH: f32 = 1e-4;
+
+    fn neuron(uuid: &str, neuron_type: &str) -> NeuronJson {
+        NeuronJson {
+            uuid: uuid.to_string(),
+            neuron_type: neuron_type.to_string(),
+            squash: "IDENTITY".to_string(),
+            bias: 0.0,
+        }
+    }
+
+    fn synapse(from: &str, to: &str, weight: f32) -> SynapseJson {
+        SynapseJson {
+            from_uuid: from.to_string(),
+            to_uuid: to.to_string(),
+            weight,
+            synapse_type: None,
+        }
+    }
+
+    /// Two observations per neuron, at the given mean absolute activation.
+    fn records(neuron_activations: &[(&str, f32)]) -> Vec<DiscoverRecord> {
+        neuron_activations
+            .iter()
+            .flat_map(|(uuid, activation)| {
+                (0..2).map(move |obs| {
+                    DiscoverRecord::new(obs, (*uuid).to_string(), Some(0.5), *activation, vec![0.1])
+                })
+            })
+            .collect()
+    }
+
+    /// Rank the creature against a temporary parquet holding `activations`, and
+    /// return the removal-candidate UUIDs in emitted (rank) order.
+    fn removal_candidate_uuids(
+        creature: &CreatureJson,
+        activations: &[(&str, f32)],
+        cost_of_growth: Option<f32>,
+    ) -> Vec<String> {
+        let temp_file = NamedTempFile::new().expect("temp parquet");
+        let path = temp_file.path().to_str().expect("utf-8 temp path");
+        write_records_to_parquet(path, &records(activations)).expect("write parquet");
+
+        rank_focus_neurons(path, creature, None, cost_of_growth)
+            .expect("ranking must succeed")
+            .removal_candidates
+            .into_iter()
+            .map(|c| c.neuron_uuid)
+            .collect()
+    }
+
+    /// A creature carrying a NaN synapse weight — the propagation path the issue
+    /// describes, where `total_inbound_weight += synapse.weight.abs()` carries
+    /// NaN into `activation_weighted_impact`.
+    ///
+    /// `h-nan` is isolated on its own output so the NaN cannot contaminate the
+    /// other two neurons' impacts:
+    ///
+    /// * `h-nan`  — NaN weight into `out-0` ⇒ non-finite contribution.
+    /// * `h-zero` — `0.0` weight into `out-1` ⇒ a genuine `0.0` contribution.
+    /// * `h-keep` — `1.0` weight into `out-1` ⇒ contribution `1.0`.
+    fn creature_with_nan_weight() -> CreatureJson {
+        CreatureJson {
+            neurons: vec![
+                neuron("h-nan", "hidden"),
+                neuron("h-zero", "hidden"),
+                neuron("h-keep", "hidden"),
+                neuron("out-0", "output"),
+                neuron("out-1", "output"),
+            ],
+            synapses: vec![
+                synapse("in-0", "h-nan", 0.5),
+                synapse("in-0", "h-zero", 0.5),
+                synapse("in-0", "h-keep", 0.5),
+                synapse("h-nan", "out-0", f32::NAN),
+                synapse("h-zero", "out-1", 0.0),
+                synapse("h-keep", "out-1", 1.0),
+            ],
+            input: 1,
+            output: 2,
+        }
+    }
+
+    /// Activations low enough that the `REMOVAL_MEAN_ACTIVATION_THRESHOLD`
+    /// (0.04) gate never fires, so each verdict is decided by the guards under
+    /// test rather than by the activity screen.
+    const LOW_ACTIVATIONS: [(&str, f32); 5] = [
+        ("h-nan", 0.01),
+        ("h-zero", 0.01),
+        ("h-keep", 0.01),
+        ("out-0", 0.01),
+        ("out-1", 0.01),
+    ];
+
+    /// Acceptance 1: a neuron whose contribution is non-finite is never offered
+    /// for removal on the record-derived path either — bad numbers must not
+    /// license a destructive edit.
+    #[test]
+    fn nan_contribution_is_never_a_removal_candidate() {
+        let uuids = removal_candidate_uuids(
+            &creature_with_nan_weight(),
+            &LOW_ACTIVATIONS,
+            Some(TEST_COST_OF_GROWTH),
+        );
+
+        assert!(
+            !uuids.iter().any(|u| u == "h-nan"),
+            "a NaN contribution must never license removal, got {uuids:?}"
+        );
+    }
+
+    /// Acceptance 2: the guard must not over-correct — a genuinely
+    /// zero-contribution neuron is still prunable, and a high-contribution one
+    /// is still safe.
+    #[test]
+    fn zero_contribution_still_prunable_and_high_contribution_still_safe() {
+        let uuids = removal_candidate_uuids(
+            &creature_with_nan_weight(),
+            &LOW_ACTIVATIONS,
+            Some(TEST_COST_OF_GROWTH),
+        );
+
+        assert!(
+            uuids.iter().any(|u| u == "h-zero"),
+            "a genuine 0.0-contribution neuron must remain a removal candidate, got {uuids:?}"
+        );
+        assert!(
+            !uuids.iter().any(|u| u == "h-keep"),
+            "a high-contribution neuron must never be a removal candidate, got {uuids:?}"
+        );
+    }
+
+    /// Acceptance 3: a non-finite or non-positive host `costOfGrowth` must not
+    /// flood the result with removal candidates. `savings` would be NaN, and the
+    /// NaN-false gates would then pass every ranked neuron through.
+    ///
+    /// `h-keep` is the witness: its contribution (`1.0` × mean activation
+    /// `0.01`) dwarfs the savings at any sane `costOfGrowth`, and its mean
+    /// activation sits below the 0.04 activity gate, so only the savings-vs-
+    /// contribution comparison can reject it.
+    #[test]
+    fn nonsense_cost_of_growth_does_not_flood_removal_candidates() {
+        let creature = creature_with_nan_weight();
+
+        for invalid in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY, 0.0, -1e-4] {
+            let uuids = removal_candidate_uuids(&creature, &LOW_ACTIVATIONS, Some(invalid));
+            assert!(
+                !uuids.iter().any(|u| u == "h-keep"),
+                "costOfGrowth {invalid} must fall back to the default, not make every \
+                 neuron prunable; got {uuids:?}"
+            );
+            assert!(
+                !uuids.iter().any(|u| u == "h-nan"),
+                "costOfGrowth {invalid} must not resurrect the NaN-contribution neuron; \
+                 got {uuids:?}"
+            );
+        }
+    }
 }
