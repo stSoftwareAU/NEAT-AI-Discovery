@@ -1440,16 +1440,13 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
         &task_descriptor,
     );
     if consecutive_failures >= drought_threshold {
-        // Snapshot the global target-cooldown tracker. Lock failures fall back
-        // to "no tracker" so the diagnostic still fires.
-        let tracker_snapshot = super::target_failure_tracker::global_tracker()
-            .lock()
-            .ok()
-            .map(|guard| guard.clone());
-        let current_epoch = tracker_snapshot.as_ref().map_or(
-            0,
-            super::target_failure_tracker::TargetFailureTracker::current_epoch,
+        // Snapshot the global target-cooldown tracker. A poisoned lock is
+        // recovered (Issue #1875) so the diagnostic always carries real tracker
+        // state rather than silently degrading to "no tracker".
+        let tracker_snapshot = super::target_failure_tracker::snapshot_tracker(
+            super::target_failure_tracker::global_tracker(),
         );
+        let current_epoch = tracker_snapshot.current_epoch();
 
         // Pick whichever metadata surface has the richer rejection breakdown
         // for the dominant-reason field. Synapse takes precedence when both
@@ -1477,7 +1474,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
             consecutive_failures,
             rolling_success_rate,
             discovery_mode,
-            target_tracker: tracker_snapshot.as_ref(),
+            target_tracker: Some(&tracker_snapshot),
             current_epoch,
             // Issue #1791: the real per-phase filter return value, no longer a
             // hard-coded `0`. A permanently-zero value across a fleet is the
@@ -1504,16 +1501,14 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
         if let Some(drought_reset_after) = crate::config::drought_reset_after_epochs() {
             // Re-lock the global tracker so we can mutate it. The earlier
             // snapshot for the diagnostic was a clone; the reset must land on
-            // the actual global state.
-            if let Ok(mut guard) = super::target_failure_tracker::global_tracker().lock() {
-                let epoch_for_reset = guard.current_epoch();
-                let _ = super::drought_reset::maybe_perform_drought_reset(
-                    Some(&mut *guard),
-                    consecutive_failures,
-                    drought_reset_after,
-                    epoch_for_reset,
-                );
-            }
+            // the actual global state. A poisoned lock is recovered rather than
+            // skipped (Issue #1875) — the escape hatch must never no-op
+            // silently.
+            let _ = super::drought_reset::maybe_perform_drought_reset_locked(
+                super::target_failure_tracker::global_tracker(),
+                consecutive_failures,
+                drought_reset_after,
+            );
         }
     } else if let Some(drought_reset_after) = crate::config::drought_reset_after_epochs() {
         // Issue #1205: when consecutive_failures is below the diagnostic
@@ -1521,10 +1516,11 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
         // re-arm the tombstone after a successful pass so the next future
         // drought is not skipped.
         let _ = drought_reset_after; // configured value retained for diagnostics; no-op here
-        if consecutive_failures == 0
-            && let Ok(mut guard) = super::target_failure_tracker::global_tracker().lock()
-        {
-            super::drought_reset::rearm_drought_reset(Some(&mut *guard));
+        if consecutive_failures == 0 {
+            // Issue #1875: a poisoned lock must not silently skip the re-arm.
+            super::drought_reset::rearm_drought_reset_locked(
+                super::target_failure_tracker::global_tracker(),
+            );
         }
     }
 
