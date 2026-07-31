@@ -30,6 +30,11 @@ list is the `[licenses]` table in [`deny.toml`](deny.toml), enforced by
 triggers, the auto-format job, and the `version-increment` job (which uses the
 `ACTIONS_PUSH` PAT so its push re-triggers workflows) are load-bearing.
 
+The PAT must stay off disk: every checkout sets `persist-credentials: false` and
+the PAT is bound to `ACTIONS_PUSH_TOKEN` only on the steps that talk to the
+remote, which use an explicit authenticated URL (Issue #1868). Do not reintroduce
+`token: ${{ secrets.ACTIONS_PUSH }}` on a checkout step.
+
 ---
 
 ## Dependency Bumps — `./bump-deps.sh` only, never the quality gate
