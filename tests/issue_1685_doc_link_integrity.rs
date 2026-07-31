@@ -297,19 +297,29 @@ fn ci_doc_build_step_pointers_are_current() {
         !doc.contains("`quality.sh` (line 41)"),
         "ci-doc-build-step must not cite the stale quality.sh line 41 (Issue #1685)"
     );
-    assert!(
-        doc.contains("quality.sh:74-75"),
-        "ci-doc-build-step must cite the real quality.sh doc-build location (Issue #1685)"
-    );
-    // Verify the pointer against quality.sh itself.
+    // Derive the pointer from quality.sh itself rather than hard-coding it, so
+    // the check survives unrelated edits to the gate (the doc-build step moved
+    // when the dependency-upgrade block was removed — Issue #1865).
     let quality = read("quality.sh");
-    let doc_line = quality
+    let (idx, _) = quality
         .lines()
-        .nth(74) // line 75, zero-indexed
-        .expect("quality.sh has a line 75");
+        .enumerate()
+        .find(|(_, line)| line.contains("cargo doc"))
+        .expect("quality.sh must run `cargo doc`");
+    let doc_build_line = idx + 1; // 1-indexed
     assert!(
-        doc_line.contains("cargo doc"),
-        "quality.sh:75 should be the `cargo doc` build step; pointer would be stale otherwise"
+        doc.contains(&format!(
+            "quality.sh:{}-{doc_build_line}",
+            doc_build_line - 1
+        )),
+        "ci-doc-build-step must cite the real quality.sh doc-build location \
+         (expected `quality.sh:{}-{doc_build_line}`, Issue #1685)",
+        doc_build_line - 1
+    );
+    assert!(
+        doc.contains(&format!("`quality.sh:{doc_build_line}`")),
+        "ci-doc-build-step's flag-consistency table must cite \
+         `quality.sh:{doc_build_line}` (Issue #1685)"
     );
 
     // The proposal is only marked "pending" while no workflow builds the docs.

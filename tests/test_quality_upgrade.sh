@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
-# Test script for quality.sh dependency upgrade step (Issue #959)
+# Test script for the cargo-edit upgrade precondition (Issue #959)
 #
-# Validates that cargo upgrade --incompatible runs successfully
-# as part of the quality workflow.
+# Validates that `cargo upgrade --incompatible` runs successfully against this
+# manifest. Business-logic change (Issue #1865): the upgrade no longer runs in
+# `./quality.sh` — it bypassed the 24h dependency quarantine — so this script
+# now covers the discovery step used by `./bump-deps.sh`, which is the only
+# path that bumps dependencies. The assertions themselves are unchanged.
 
 set -euo pipefail
 

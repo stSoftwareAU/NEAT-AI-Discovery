@@ -81,18 +81,23 @@ so do not skip this step. `./quality.sh` performs these checks in order:
    installed)
 3. `./scripts/check-pr-summary-location.sh` — PR summaries must stay in
    `docs/archive/pr-summaries/` (Issue #1613)
-4. `cargo upgrade --incompatible` + `cargo update` (dependency upgrade)
-5. `cargo deny check` (licence and dependency audit)
-6. `cargo build` (debug, quick feedback)
-7. `cargo fmt --all` (auto-formatting)
-8. `cargo clippy --all-targets --all-features -- -D warnings`
-9. `cargo check --all-targets --all-features`
-10. `cargo test --lib --tests --all-features -- --test-threads=2`
-11. `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps` (documentation build)
-12. `cargo build --release --lib`
+4. `cargo deny check` (licence and dependency audit)
+5. `cargo build` (debug, quick feedback)
+6. `cargo fmt --all` (auto-formatting)
+7. `cargo clippy --all-targets --all-features -- -D warnings`
+8. `cargo check --all-targets --all-features`
+9. `cargo test --lib --tests --all-features -- --test-threads=2`
+10. `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps` (documentation build)
+11. `cargo build --release --lib`
 
 If any step fails, fix the issue and re-run. Do **not** commit code that fails
 `./quality.sh`.
+
+**The gate never upgrades dependencies** (Issue #1865). It used to run
+`cargo upgrade --incompatible` + `cargo update`, which pulled crates published
+minutes earlier and bypassed the 24h quarantine window. Bump dependencies with
+`./bump-deps.sh` — it age-checks every change to the resolved `Cargo.lock`,
+transitive packages included — or let Renovate raise the PR.
 
 **GPU tests are skipped in CI** (no GPU available). For full coverage, run
 `./quality.sh` locally before pushing.

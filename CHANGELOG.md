@@ -111,6 +111,28 @@ Persisted suppression state could hold a creature in drought indefinitely.
   `zeroCandidateSummary.rejectionBreakdown` and fed to the starvation
   classifier as an upstream (starvation) reason.
 
+### Security
+
+#### Pre-commit gate no longer bypasses the dependency quarantine (Issue #1865)
+
+`./quality.sh` — the documented pre-commit step — ran `cargo upgrade
+--incompatible` followed by `cargo update`, force-upgrading every direct and
+transitive crate with no age check. That bypassed both the Renovate
+`minimumReleaseAge` window and the `VIBE_BUMP_QUARANTINE_HOURS` gate, so a crate
+poisoned minutes earlier was pulled in and its `build.rs` executed locally.
+
+- Removed the upgrade/update step from `quality.sh`: the quality gate verifies
+  the tree and never mutates its dependency graph. Bumps go through
+  `./bump-deps.sh` or Renovate.
+- `bump-deps.sh` now enforces the quarantine against the **resolved lockfile**,
+  not just the manifest requirement strings. `Cargo.lock` is diffed against its
+  pre-bump state, every in-quarantine change — transitive included — is pinned
+  back with `cargo update --precise`, and a newly-pulled package inside the
+  window fails the run loud (exit 8) because there is no earlier version to pin
+  back to. Unknown publish times fail closed.
+- `--no-network` now also skips the lockfile refresh: an offline re-resolve
+  cannot be age-checked.
+
 ### Changed
 
 #### Remove private-repo links and mentions from archived PR summaries (Issue #1726)

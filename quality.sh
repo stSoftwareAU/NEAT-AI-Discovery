@@ -37,15 +37,13 @@ echo "shellcheck: all scripts passed"
 echo "📄 Checking PR summary layout..."
 ./scripts/check-pr-summary-location.sh
 
-# Update dependencies to latest versions (including incompatible upgrades)
-echo "📦 Upgrading Rust library dependencies..."
-if command -v cargo-upgrade &> /dev/null; then
-    cargo upgrade --incompatible
-    cargo update
-else
-    echo "⚠️  cargo-edit not installed — skipping dependency upgrade"
-    echo "   Install with: cargo install cargo-edit"
-fi
+# Dependency bumps deliberately do NOT happen here (Issue #1865). This gate is
+# the documented pre-commit step, so upgrading here pulled crates published
+# minutes earlier — bypassing both the Renovate `minimumReleaseAge` window and
+# the `VIBE_BUMP_QUARANTINE_HOURS` gate in ./bump-deps.sh, and executing a
+# freshly-poisoned crate's build.rs on the contributor's machine. A quality gate
+# verifies the tree; it must not mutate its dependency graph. Bump with
+# `./bump-deps.sh` (quarantine-gated) or let Renovate raise the PR.
 
 # Licence and dependency audit
 echo "📜 Running licence and dependency audit..."
