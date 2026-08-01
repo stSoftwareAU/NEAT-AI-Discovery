@@ -51,23 +51,6 @@ assert_output_contains() {
     fi
 }
 
-# Reserved for future negative-match assertions; keep here so adding new
-# tests does not require re-introducing the helper.
-# shellcheck disable=SC2329
-assert_output_not_contains() {
-    local description="$1"
-    local pattern="$2"
-    local output="$3"
-    if echo "$output" | grep -qE "$pattern"; then
-        echo "  FAIL: $description (output unexpectedly matched '$pattern')"
-        FAIL=$((FAIL + 1))
-        ERRORS="${ERRORS}  FAIL: ${description}\n"
-    else
-        echo "  PASS: $description"
-        PASS=$((PASS + 1))
-    fi
-}
-
 echo "bump-deps.sh Tests"
 echo "==================="
 echo ""

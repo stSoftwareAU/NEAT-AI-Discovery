@@ -6,6 +6,11 @@
 # Pinning to a mutable branch lets any push to upstream `master` execute
 # in this repository's CI on the next PR, with access to GITHUB_TOKEN.
 # The coding guidelines mandate SHA pins for third-party actions.
+#
+# Issue #1898 removed the unmaintained `ludeeus/action-shellcheck` wrapper, so
+# these checks are no longer written against that one action by name: they now
+# assert the pinning invariant over *every* action the workflow uses, which is
+# what Issue #1215 actually required.
 
 set -euo pipefail
 
@@ -27,27 +32,40 @@ if [ ! -f "$WORKFLOW_FILE" ]; then
   exit 1
 fi
 
-# --- Test: no @master / @main pin for ludeeus/action-shellcheck ---
-if grep -qE 'ludeeus/action-shellcheck@(master|main)\b' "$WORKFLOW_FILE"; then
-  fail "ludeeus/action-shellcheck is pinned to a mutable branch (@master or @main)"
+# Every `uses:` reference in the workflow, with comments and indentation
+# stripped back to `<action>@<ref> # <comment>`.
+uses_lines=$(grep -E '^[[:space:]]*-?[[:space:]]*uses:' "$WORKFLOW_FILE" || true)
+
+# --- Test: the workflow declares at least one action to check ---
+if [ -n "$uses_lines" ]; then
+  pass
+else
+  fail "$WORKFLOW_FILE declares no actions — expected at least actions/checkout"
+fi
+
+# --- Test: the unmaintained ludeeus wrapper has not come back (Issue #1898) ---
+if printf '%s\n' "$uses_lines" | grep -q 'ludeeus/action-shellcheck'; then
+  fail "the unmaintained ludeeus/action-shellcheck wrapper is back in $WORKFLOW_FILE"
 else
   pass
 fi
 
-# --- Test: ludeeus/action-shellcheck is pinned to a 40-char SHA ---
-if grep -qE 'ludeeus/action-shellcheck@[0-9a-f]{40}\b' "$WORKFLOW_FILE"; then
-  pass
+# --- Test: no action is pinned to a mutable branch or tag ---
+if printf '%s\n' "$uses_lines" | grep -qvE 'uses:[[:space:]]*[^@[:space:]]+@[0-9a-f]{40}\b'; then
+  fail "an action is not pinned to a 40-character commit SHA:
+$(printf '%s\n' "$uses_lines" | grep -vE 'uses:[[:space:]]*[^@[:space:]]+@[0-9a-f]{40}\b')"
 else
-  fail "ludeeus/action-shellcheck is not pinned to a 40-character commit SHA"
+  pass
 fi
 
-# --- Test: a trailing comment records the human-readable version ---
+# --- Test: every SHA pin carries a trailing human-readable version comment ---
 # Per the coding guideline: "Add the resolved tag in a trailing comment so
 # the version is auditable."
-if grep -qE 'ludeeus/action-shellcheck@[0-9a-f]{40}[[:space:]]+#' "$WORKFLOW_FILE"; then
-  pass
+if printf '%s\n' "$uses_lines" | grep -qvE '@[0-9a-f]{40}[[:space:]]+#[[:space:]]*[^[:space:]]'; then
+  fail "an action's SHA pin lacks a trailing version comment:
+$(printf '%s\n' "$uses_lines" | grep -vE '@[0-9a-f]{40}[[:space:]]+#[[:space:]]*[^[:space:]]')"
 else
-  fail "ludeeus/action-shellcheck SHA pin lacks a trailing version comment"
+  pass
 fi
 
 echo ""

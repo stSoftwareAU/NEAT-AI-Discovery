@@ -15,23 +15,9 @@ echo "================================"
 echo "📝 Checking bash script syntax..."
 ./quality/bash_syntax.sh .
 
-echo "Running shellcheck on bash scripts..."
-if ! command -v shellcheck &> /dev/null; then
-    echo "shellcheck is required — install: https://github.com/koalaman/shellcheck#installing"
-    exit 1
-fi
-SHELLCHECK_FAILED=0
-while IFS= read -r script; do
-    echo "  shellcheck: $script"
-    if ! shellcheck -s bash "$script"; then
-        SHELLCHECK_FAILED=1
-    fi
-done < <(find . -name "*.sh" -type f -not -path "./target/*" -not -path "./.git/*")
-if [[ "$SHELLCHECK_FAILED" -ne 0 ]]; then
-    echo "shellcheck: FAILED"
-    exit 1
-fi
-echo "shellcheck: all scripts passed"
+# Committed ShellCheck gate, shared with CI (Issue #1898)
+echo "🐚 Running shellcheck on bash scripts..."
+./quality/shellcheck.sh .
 
 # PR summaries must stay in their canonical archive dir (Issue #1613).
 echo "📄 Checking PR summary layout..."
