@@ -58,6 +58,24 @@ Tests that mutate shared global state (environment variables, deadline overrides
 watchdog) are marked with `#[serial]` from the `serial_test` crate and will not
 run concurrently with each other. All other tests run in parallel (`--test-threads=2`).
 
+### 🔌 Cargo Features
+
+Test scaffolding must not ship in the release `cdylib`/`rlib`. Such modules live
+behind **off-by-default** cargo features, so `cargo build --release --lib` never
+compiles them (Issue #1877):
+
+| Feature | Gates | Consumer |
+|---------|-------|----------|
+| `regression-harness` | `src/analysis/production_discovery_regression.rs` | `tests/production_discovery_regression.rs` |
+
+Always run tests with `--all-features` (as `./quality.sh` and CI do) — a plain
+`cargo test` **skips** targets that declare `required-features`. To run a gated
+suite on its own, name the feature:
+
+```bash
+cargo test --features regression-harness --test production_discovery_regression
+```
+
 ---
 
 ## 💻 Development Workflow

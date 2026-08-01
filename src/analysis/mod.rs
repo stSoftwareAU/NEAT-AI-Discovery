@@ -63,6 +63,9 @@ pub mod neuron;
 pub mod neuron_fingerprint;
 pub mod novelty_escalation;
 pub mod one_hot_class_allocation;
+/// Regression-test scaffolding, not shipped API — gated behind the
+/// off-by-default `regression-harness` feature (Issue #1877).
+#[cfg(feature = "regression-harness")]
 pub mod production_discovery_regression;
 pub mod quantised_error;
 pub mod recent_failure_window;

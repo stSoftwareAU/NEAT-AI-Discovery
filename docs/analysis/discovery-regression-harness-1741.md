@@ -98,8 +98,14 @@ accepted-improvement rate: 2/40 runs = 0.0500 (2 accepted / 200 total candidates
 ## Re-running and future use
 
 ```bash
-cargo test --test production_discovery_regression < /dev/null
+cargo test --features regression-harness --test production_discovery_regression < /dev/null
 ```
+
+The harness module is gated behind the off-by-default `regression-harness`
+feature so it stays out of the shipped library (Issue #1877), and this test
+target declares `required-features = ["regression-harness"]`. A plain
+`cargo test` therefore **skips** it; `./quality.sh` and CI run
+`cargo test --lib --tests --all-features`, which enables the feature.
 
 The test runs under `cargo test` in CI on every PR, so a future discovery-yield
 regression on the production topology fails the merge rather than surfacing in
