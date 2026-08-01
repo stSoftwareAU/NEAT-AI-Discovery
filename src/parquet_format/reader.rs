@@ -2,6 +2,7 @@
 
 use anyhow::{Context, Result};
 use arrow::array::{Array, Float32Array, ListArray, StringArray, UInt32Array};
+use arrow::datatypes::DataType;
 use parquet::arrow::ProjectionMask;
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use std::collections::{HashMap, HashSet};
@@ -9,6 +10,7 @@ use std::fs::File;
 
 use crate::DiscoveryError;
 use crate::parquet_format::decode_budget::DecodeBudget;
+use crate::parquet_format::schema::create_schema;
 use crate::types::DiscoverRecord;
 use std::time::SystemTime;
 
@@ -82,9 +84,32 @@ fn open_parquet_file(file_path: &str) -> Result<File> {
 /// Expected column names for the discovery Parquet schema.
 const EXPECTED_COLUMNS: &[&str] = &["obs_index", "neuron_uuid", "value", "activation", "errors"];
 
+/// Compare a file's column type against the discovery schema's (Issue #1901).
+///
+/// List columns match on element type and element nullability only: the element
+/// field's *name* varies between Parquet producers (`item` vs `element`) and has
+/// no bearing on how the column decodes.
+fn data_type_matches(actual: &DataType, expected: &DataType) -> bool {
+    match (actual, expected) {
+        (DataType::List(actual_item), DataType::List(expected_item)) => {
+            actual_item.data_type() == expected_item.data_type()
+                && actual_item.is_nullable() == expected_item.is_nullable()
+        }
+        _ => actual == expected,
+    }
+}
+
 /// Validate that the Parquet file's schema matches the expected discovery schema
 /// (Issue #1085). Checks that required columns exist and that the file has the
 /// expected number of root columns for the requested projection profile.
+///
+/// Each column's Arrow [`DataType`] and nullability are also checked against
+/// [`create_schema`] (Issue #1901). Arrow's `value()` accessors return the
+/// physical buffer contents for a null slot rather than an error, so a nullable
+/// `neuron_uuid` would decode as `""` and a nullable `activation` as `0.0` —
+/// silently forming a bogus UUID group and depressing MSE/MAE scores. Only the
+/// columns the writer declares nullable (`value`) may carry nulls; every other
+/// column makes the whole file invalid rather than partially usable.
 ///
 /// This is a metadata-only check with no performance impact on valid files.
 pub(crate) fn validate_parquet_schema(
@@ -139,14 +164,44 @@ pub(crate) fn validate_parquet_schema(
         ColumnProfile::WithoutErrors => &EXPECTED_COLUMNS[..4],
     };
 
+    let expected_schema = create_schema();
+
     for (idx, expected_name) in root_indices.iter().zip(columns_to_check.iter()) {
-        let actual_name = arrow_schema.field(*idx).name();
+        let actual_field = arrow_schema.field(*idx);
+        let actual_name = actual_field.name();
         if actual_name != *expected_name {
             return Err(DiscoveryError::Io {
                 detail: format!(
                     "Parquet file '{file_path}' schema mismatch: expected column '{expected_name}' \
                      at index {idx} but found '{actual_name}'. \
                      The file may not be a valid discovery Parquet file."
+                ),
+            }
+            .into());
+        }
+
+        // Names alone are not a schema (Issue #1901) — check type and nullability.
+        let expected_field = expected_schema.field(*idx);
+        if !data_type_matches(actual_field.data_type(), expected_field.data_type()) {
+            let expected_type = expected_field.data_type();
+            let actual_type = actual_field.data_type();
+            return Err(DiscoveryError::Io {
+                detail: format!(
+                    "Parquet file '{file_path}' schema mismatch: column '{expected_name}' at index \
+                     {idx} has type {actual_type:?} but the discovery schema requires \
+                     {expected_type:?}."
+                ),
+            }
+            .into());
+        }
+
+        if actual_field.is_nullable() && !expected_field.is_nullable() {
+            return Err(DiscoveryError::Io {
+                detail: format!(
+                    "Parquet file '{file_path}' schema mismatch: column '{expected_name}' at index \
+                     {idx} is nullable but the discovery schema requires it to be non-null. \
+                     A null '{expected_name}' would silently decode as a default value, so the \
+                     file is rejected rather than read."
                 ),
             }
             .into());
