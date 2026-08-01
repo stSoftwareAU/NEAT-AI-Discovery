@@ -27,6 +27,31 @@ The most commonly used entry points are:
 
 ---
 
+## 🔗 `merge_discovery_parquet` — Non-destructive Merge (Issue #1900)
+
+The merge is atomic and validating: nothing touches `output_file` until every
+input has been read successfully.
+
+- Inputs are read into a sibling temporary file (`{output_file}.tmp`), which is
+  renamed onto `output_file` only after the merged writer closes cleanly.
+- Every input's schema is validated against the discovery schema before any of
+  its batches are appended; a foreign schema fails the merge.
+- Listing `output_file` among `input_files` is rejected with an error rather
+  than truncating an input.
+- On any failure the temporary file is removed and an existing `output_file`
+  keeps its original bytes; the FFI response reports `success: false`.
+
+```mermaid
+flowchart TD
+    A[merge_discovery_parquet] --> B{output aliases an input?}
+    B -- yes --> E[Error: destination untouched]
+    B -- no --> C[Write inputs to output.tmp<br/>validate each schema]
+    C -- any failure --> D[Remove output.tmp] --> E
+    C -- all inputs read --> F[rename output.tmp → output_file]
+```
+
+---
+
 ## 🧠 Rust-side Memory Usage (Issue #1027)
 
 The Rust library allocates memory outside V8's heap, making it invisible to

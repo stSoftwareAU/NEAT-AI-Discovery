@@ -6,9 +6,11 @@ use arrow::datatypes::{DataType, Field};
 use arrow::record_batch::RecordBatch;
 use parquet::arrow::ArrowWriter;
 use parquet::file::properties::WriterProperties;
-use std::fs::File;
+use std::fs::{self, File};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use crate::parquet_format::reader::{ColumnProfile, validate_parquet_schema};
 use crate::parquet_format::schema::{
     MAX_ARROW_OFFSET, create_schema, truncate_utf8, validate_neuron_uuid,
 };
@@ -296,18 +298,53 @@ fn determine_chunk_end(
     end
 }
 
-/// Merge multiple discovery parquet files into a single Parquet file.
-/// Input files are appended in the provided order.
-pub fn merge_parquet_files(output_file: &str, input_files: &[String]) -> Result<()> {
-    if input_files.is_empty() {
-        return Err(anyhow::anyhow!(
-            "No discovery parquet files provided for merge"
-        ));
+/// Resolve `path` for aliasing comparison (Issue #1900).
+///
+/// Canonicalises the path when it exists; otherwise canonicalises its parent
+/// directory and re-joins the file name so a not-yet-created destination still
+/// compares correctly against existing inputs.
+fn resolve_for_alias_check(path: &str) -> PathBuf {
+    let candidate = Path::new(path);
+    if let Ok(canonical) = candidate.canonicalize() {
+        return canonical;
     }
 
+    match (candidate.parent(), candidate.file_name()) {
+        (Some(parent), Some(name)) => {
+            let parent = if parent.as_os_str().is_empty() {
+                Path::new(".")
+            } else {
+                parent
+            };
+            parent
+                .canonicalize()
+                .map_or_else(|_| candidate.to_path_buf(), |dir| dir.join(name))
+        }
+        _ => candidate.to_path_buf(),
+    }
+}
+
+/// Remove a temporary merge file, warning loudly if the cleanup itself fails.
+fn remove_merge_temp_file(tmp_path: &str) {
+    if let Err(err) = fs::remove_file(tmp_path)
+        && err.kind() != std::io::ErrorKind::NotFound
+    {
+        tracing::warn!(
+            tmp_path,
+            error = %err,
+            "Failed to remove temporary merged Parquet file"
+        );
+    }
+}
+
+/// Read every input file and write the merged result into `tmp_path`.
+///
+/// Each input's schema is validated before any batch is appended, so a foreign
+/// schema is rejected rather than smuggled into the merged output.
+fn merge_into_temp_file(tmp_path: &str, input_files: &[String]) -> Result<()> {
     let schema = Arc::new(create_schema());
-    let file = File::create(output_file)
-        .with_context(|| format!("Failed to create merged Parquet file: {output_file}"))?;
+    let file = File::create(tmp_path)
+        .with_context(|| format!("Failed to create temporary merged Parquet file: {tmp_path}"))?;
     let props = WriterProperties::builder().build();
     let mut writer = ArrowWriter::try_new(file, schema, Some(props))
         .context("Failed to create ArrowWriter for merge")?;
@@ -318,6 +355,7 @@ pub fn merge_parquet_files(output_file: &str, input_files: &[String]) -> Result<
         let builder =
             parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder::try_new(input_file)
                 .with_context(|| format!("Failed to create reader for {input_path}"))?;
+        validate_parquet_schema(&builder, input_path, ColumnProfile::Full)?;
         let reader = builder
             .build()
             .with_context(|| format!("Failed to build reader for {input_path}"))?;
@@ -335,4 +373,205 @@ pub fn merge_parquet_files(output_file: &str, input_files: &[String]) -> Result<
         .close()
         .context("Failed to close merged Parquet writer")?;
     Ok(())
+}
+
+/// Merge multiple discovery parquet files into a single Parquet file.
+/// Input files are appended in the provided order.
+///
+/// The merge is non-destructive (Issue #1900): every input is read and
+/// schema-validated into a sibling `{output_file}.tmp`, which is renamed onto
+/// `output_file` only once the merged writer has closed cleanly. Any failure
+/// removes the temporary file and leaves an existing destination untouched.
+///
+/// # Errors
+///
+/// Returns an error if `input_files` is empty, if any entry of `input_files`
+/// resolves to `output_file` (which would otherwise truncate an input), if any
+/// input is missing, unreadable, or carries a non-discovery schema, or if the
+/// temporary file cannot be written or renamed.
+pub fn merge_parquet_files(output_file: &str, input_files: &[String]) -> Result<()> {
+    if input_files.is_empty() {
+        return Err(anyhow::anyhow!(
+            "No discovery parquet files provided for merge"
+        ));
+    }
+
+    let output_resolved = resolve_for_alias_check(output_file);
+    for input_path in input_files {
+        if resolve_for_alias_check(input_path) == output_resolved {
+            anyhow::bail!(
+                "Merge output file '{output_file}' also appears in the input list as \
+                 '{input_path}'; refusing to merge a file onto itself"
+            );
+        }
+    }
+
+    let tmp_path = format!("{output_file}.tmp");
+    if let Err(err) = merge_into_temp_file(&tmp_path, input_files) {
+        remove_merge_temp_file(&tmp_path);
+        return Err(err);
+    }
+
+    if let Err(err) = fs::rename(&tmp_path, output_file) {
+        remove_merge_temp_file(&tmp_path);
+        return Err(anyhow::Error::new(err).context(format!(
+            "Failed to rename temporary file {tmp_path} to {output_file}"
+        )));
+    }
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use arrow::array::Int32Array;
+    use arrow::datatypes::Schema;
+    use tempfile::TempDir;
+
+    fn sample_records(obs_index: u32) -> Vec<DiscoverRecord> {
+        vec![
+            DiscoverRecord {
+                obs_index,
+                neuron_uuid: "neuron-a".to_string(),
+                value: Some(0.25),
+                activation: 0.5,
+                errors: vec![0.1, 0.2],
+            },
+            DiscoverRecord {
+                obs_index,
+                neuron_uuid: "neuron-b".to_string(),
+                value: None,
+                activation: -0.5,
+                errors: vec![],
+            },
+        ]
+    }
+
+    /// Write a Parquet file whose schema is not the discovery schema.
+    fn write_foreign_schema_parquet(path: &str) {
+        let schema = Arc::new(Schema::new(vec![
+            Field::new("alpha", DataType::Int32, false),
+            Field::new("beta", DataType::Int32, false),
+            Field::new("gamma", DataType::Int32, false),
+            Field::new("delta", DataType::Int32, false),
+            Field::new("epsilon", DataType::Int32, false),
+        ]));
+        let file = File::create(path).expect("create foreign parquet");
+        let mut writer = ArrowWriter::try_new(file, schema.clone(), None).expect("arrow writer");
+        let column: Arc<dyn arrow::array::Array> = Arc::new(Int32Array::from(vec![1, 2]));
+        let batch = RecordBatch::try_new(schema, vec![column; 5]).expect("foreign batch");
+        writer.write(&batch).expect("write foreign batch");
+        writer.close().expect("close foreign writer");
+    }
+
+    fn path_in(dir: &TempDir, name: &str) -> String {
+        dir.path().join(name).to_string_lossy().into_owned()
+    }
+
+    #[test]
+    fn merge_preserves_destination_when_input_missing() {
+        let dir = TempDir::new().expect("temp dir");
+        let destination = path_in(&dir, "merged.parquet");
+        let valid_input = path_in(&dir, "input_a.parquet");
+
+        write_records_to_parquet(&destination, &sample_records(0)).expect("seed destination");
+        write_records_to_parquet(&valid_input, &sample_records(1)).expect("write input");
+        let original = std::fs::read(&destination).expect("read destination");
+
+        let missing_input = path_in(&dir, "does_not_exist.parquet");
+        let err = merge_parquet_files(&destination, &[valid_input, missing_input])
+            .expect_err("merge must fail when an input is missing");
+        assert!(
+            err.to_string().contains("does_not_exist.parquet"),
+            "unexpected error: {err}"
+        );
+
+        assert_eq!(
+            std::fs::read(&destination).expect("re-read destination"),
+            original,
+            "destination must be byte-identical after a failed merge"
+        );
+        assert!(
+            !Path::new(&format!("{destination}.tmp")).exists(),
+            "temporary file must not be left behind"
+        );
+    }
+
+    #[test]
+    fn merge_rejects_foreign_schema_and_leaves_destination_untouched() {
+        let dir = TempDir::new().expect("temp dir");
+        let destination = path_in(&dir, "merged.parquet");
+        let foreign_input = path_in(&dir, "foreign.parquet");
+
+        write_records_to_parquet(&destination, &sample_records(0)).expect("seed destination");
+        write_foreign_schema_parquet(&foreign_input);
+        let original = std::fs::read(&destination).expect("read destination");
+
+        let err = merge_parquet_files(&destination, &[foreign_input])
+            .expect_err("merge must reject a non-discovery schema");
+        assert!(
+            err.to_string().contains("schema mismatch"),
+            "unexpected error: {err}"
+        );
+
+        assert_eq!(
+            std::fs::read(&destination).expect("re-read destination"),
+            original,
+            "destination must be unchanged after a schema rejection"
+        );
+        assert!(
+            !Path::new(&format!("{destination}.tmp")).exists(),
+            "temporary file must not be left behind"
+        );
+    }
+
+    #[test]
+    fn merge_rejects_output_aliasing_input() {
+        let dir = TempDir::new().expect("temp dir");
+        let destination = path_in(&dir, "merged.parquet");
+        let other_input = path_in(&dir, "input_a.parquet");
+
+        write_records_to_parquet(&destination, &sample_records(0)).expect("seed destination");
+        write_records_to_parquet(&other_input, &sample_records(1)).expect("write input");
+        let original = std::fs::read(&destination).expect("read destination");
+
+        let err = merge_parquet_files(&destination, &[other_input, destination.clone()])
+            .expect_err("merge must reject an output that aliases an input");
+        assert!(
+            err.to_string().contains("input list"),
+            "unexpected error: {err}"
+        );
+
+        assert_eq!(
+            std::fs::read(&destination).expect("re-read destination"),
+            original,
+            "aliased destination must not be truncated"
+        );
+        assert!(
+            !Path::new(&format!("{destination}.tmp")).exists(),
+            "temporary file must not be left behind"
+        );
+    }
+
+    #[test]
+    fn merge_writes_all_inputs_and_leaves_no_temp_file() {
+        let dir = TempDir::new().expect("temp dir");
+        let destination = path_in(&dir, "merged.parquet");
+        let first = path_in(&dir, "input_a.parquet");
+        let second = path_in(&dir, "input_b.parquet");
+
+        write_records_to_parquet(&first, &sample_records(0)).expect("write first");
+        write_records_to_parquet(&second, &sample_records(1)).expect("write second");
+
+        merge_parquet_files(&destination, &[first, second]).expect("merge succeeds");
+
+        let merged = crate::parquet_format::read_all_records_from_parquet(&destination)
+            .expect("read merged file");
+        assert_eq!(merged.len(), 4, "merged file must contain every input row");
+        assert!(
+            !Path::new(&format!("{destination}.tmp")).exists(),
+            "temporary file must not be left behind"
+        );
+    }
 }
