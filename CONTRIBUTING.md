@@ -95,8 +95,9 @@ so do not skip this step. `./quality.sh` performs these checks in order:
 
 1. `./quality/bash_syntax.sh` — `bash -n` syntax gate over every `.sh` file
    (Issue #1755); the same committed script CI runs on pull requests
-2. `shellcheck` over every `.sh` file (hard-fails if `shellcheck` is not
-   installed)
+2. `./quality/shellcheck.sh` — ShellCheck lint over every `.sh` file
+   (Issue #1898); the same committed script CI runs on pull requests
+   (hard-fails if `shellcheck` is not installed)
 3. `./scripts/check-pr-summary-location.sh` — PR summaries must stay in
    `docs/archive/pr-summaries/` (Issue #1613)
 4. `cargo deny check` (licence and dependency audit)
@@ -143,8 +144,10 @@ the gate runs on milestone sub-issue PRs too, not just the rollup into `Develop`
   dependency-source policy, enforced in CI since Issue #1870), and
   `dependency-review`
 - `shellcheck` (separate workflow `.github/workflows/shellcheck.yml`) — runs the
-  committed `quality/bash_syntax.sh` (`bash -n`) gate, then lints bash scripts
-  via ShellCheck (Issue #1755)
+  committed `quality/bash_syntax.sh` (`bash -n`) gate, then the committed
+  `quality/shellcheck.sh` lint gate (Issues #1755, #1898). The ShellCheck binary
+  is installed straight from upstream `koalaman/shellcheck` releases by
+  SHA-pinned `taiki-e/install-action` — no third-party wrapper action
 
 Every job that needs Rust installs it with the committed
 `./scripts/install-rust-toolchain.sh [TOOLCHAIN] [COMPONENT...]`, which drives

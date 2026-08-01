@@ -57,7 +57,7 @@ jobs:
         # `shellcheck: false` disables actionlint's bundled shellcheck
         # invocation on workflow `run:` blocks. Shell scripts under the
         # repo root are already linted by .github/workflows/shellcheck.yml
-        # (ludeeus/action-shellcheck); double-linting `run:` blocks here
+        # (quality/shellcheck.sh); double-linting `run:` blocks here
         # would duplicate that coverage and surface findings against
         # ci.yml.
         uses: raven-actions/actionlint@205b530c5d9fa8f44ae9ed59f341a0db994aa6f8 # v2.1.2

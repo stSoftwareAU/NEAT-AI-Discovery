@@ -4,9 +4,13 @@ name: ShellCheck
 #   1. `bash -n` syntax gate via the committed `quality/bash_syntax.sh`
 #      (Issue #1755) — bash has no compile step, so without this a syntax
 #      error can land on the default branch.
-#   2. ShellCheck lint (upstream: koalaman/shellcheck —
-#      https://github.com/koalaman/shellcheck). The ludeeus/action-shellcheck
-#      action wraps the official koalaman/shellcheck binary.
+#   2. ShellCheck lint via the committed `quality/shellcheck.sh` (Issue #1898)
+#      — the same gate ./quality.sh runs locally. The binary comes straight
+#      from upstream koalaman/shellcheck (https://github.com/koalaman/shellcheck)
+#      releases, installed by taiki-e/install-action. No third-party wrapper
+#      action sits in between: the previous ludeeus/action-shellcheck wrapper
+#      was unmaintained (last release Jan 2023, last push Jun 2024) and would
+#      never receive a fix if it broke.
 
 on:
   pull_request:
@@ -42,11 +46,16 @@ jobs:
         # (Issue #1755). Fails the build on any syntax error.
         shell: bash
         run: ./quality/bash_syntax.sh .
-      - name: Run ShellCheck (koalaman/shellcheck)
+      - name: Install ShellCheck (koalaman/shellcheck)
         # Pinned to a 40-char commit SHA (Issue #1215) to mitigate
         # supply-chain risk from mutable upstream branches. Update via
         # Renovate/Dependabot or by manually resolving the latest release.
-        uses: ludeeus/action-shellcheck@00cae500b08a931fb5698e11e79bfbd38e612a38 # 2.0.0
+        # The tool version is pinned too, so CI lints with a known binary.
+        uses: taiki-e/install-action@7be9fd86bd1707236395105d6e9329dd1511a7e1 # v2.79.0
         with:
-          scandir: .
-          severity: warning
+          tool: shellcheck@0.11.0
+      - name: Run ShellCheck (koalaman/shellcheck)
+        # Committed gate script — the same one ./quality.sh runs locally
+        # (Issue #1898), so local and CI enforce identical rules.
+        shell: bash
+        run: ./quality/shellcheck.sh .

@@ -502,7 +502,7 @@ jobs:
         git push "https://x-access-token:${ACTIONS_PUSH_TOKEN}@github.com/${REPOSITORY}.git" "HEAD:$HEAD_REF"
 
   # Shell script linting is handled by .github/workflows/shellcheck.yml
-  # (ludeeus/action-shellcheck), which is a strict superset of `bash -n`
+  # (quality/shellcheck.sh), which is a strict superset of `bash -n`
   # syntax checking. The previous `shell-checks` job duplicated that work
   # and was removed in #1158.
 
