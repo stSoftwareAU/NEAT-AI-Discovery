@@ -96,10 +96,16 @@ jobs:
           || true
 
     - name: Install Rust toolchain
-      # Pinned to a SHA from the action's `stable` branch (Issue #1216).
-      # That branch's action.yml defaults `toolchain` to `stable`, so the
-      # behaviour is identical to `@stable` but the ref is immutable.
-      uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+      # Driven by the runner's preinstalled rustup instead of
+      # the dtolnay rust-toolchain action (Issue #1891). The action's tarball is fetched
+      # from codeload.github.com during "Prepare all required actions", where
+      # the 100 s HttpClient timeout and 3-attempt retry policy are
+      # runner-internal and not tunable from a workflow — a stall there fails
+      # the job before any repository code runs. The committed script keeps the
+      # immutable-code property of the SHA pin (Issue #1216) by removing the
+      # third-party action from the critical path altogether.
+      shell: bash
+      run: ./scripts/install-rust-toolchain.sh
 
     - name: Install cargo-outdated
       # Pinned to a reviewed release and --locked so the plugin's own
@@ -260,10 +266,11 @@ jobs:
         df -h /
 
     - name: Install Rust toolchain
-      # Pinned to a SHA on the action's `stable` branch (Issue #1216).
-      uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
-      with:
-        components: rustfmt, clippy
+      # Driven by the runner's preinstalled rustup instead of
+      # the dtolnay rust-toolchain action (Issue #1891) — see the version-increment job
+      # above for the full rationale.
+      shell: bash
+      run: ./scripts/install-rust-toolchain.sh stable rustfmt clippy
 
     - name: Disk usage (before cache)
       run: |
@@ -459,10 +466,11 @@ jobs:
         fi
 
     - name: Install Rust toolchain
-      # Pinned to a SHA on the action's `stable` branch (Issue #1216).
-      uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
-      with:
-        components: rustfmt, clippy
+      # Driven by the runner's preinstalled rustup instead of
+      # the dtolnay rust-toolchain action (Issue #1891) — see the version-increment job
+      # above for the full rationale.
+      shell: bash
+      run: ./scripts/install-rust-toolchain.sh stable rustfmt clippy
 
     - name: Format Code
       run: cargo fmt
