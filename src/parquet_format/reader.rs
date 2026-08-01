@@ -87,7 +87,7 @@ const EXPECTED_COLUMNS: &[&str] = &["obs_index", "neuron_uuid", "value", "activa
 /// expected number of root columns for the requested projection profile.
 ///
 /// This is a metadata-only check with no performance impact on valid files.
-fn validate_parquet_schema(
+pub(crate) fn validate_parquet_schema(
     builder: &ParquetRecordBatchReaderBuilder<File>,
     file_path: &str,
     profile: ColumnProfile,
