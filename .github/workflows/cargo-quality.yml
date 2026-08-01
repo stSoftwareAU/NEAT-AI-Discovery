@@ -46,8 +46,15 @@ jobs:
           persist-credentials: false
 
       - name: Install Rust toolchain
-        # Pinned to a SHA on the action's `stable` branch (Issue #1216).
-        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        # Driven by the runner's preinstalled rustup instead of
+        # the dtolnay rust-toolchain action (Issue #1891). The action's tarball is fetched
+        # from codeload.github.com during "Prepare all required actions", where
+        # the 100 s timeout and 3-attempt retry are runner-internal and not
+        # tunable from a workflow. The committed script keeps the
+        # immutable-code property of the SHA pin (Issue #1216) by dropping the
+        # third-party action entirely.
+        shell: bash
+        run: ./scripts/install-rust-toolchain.sh
 
       # Coverage instrumentation and upload (Issue #1636).
       - name: Install cargo-llvm-cov
