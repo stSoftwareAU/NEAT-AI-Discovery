@@ -31,6 +31,13 @@
 //! than re-implementing the gate, so a change that weakens or breaks acceptance
 //! on the production profile changes the reported rate here.
 //!
+//! Feature gate (Issue #1877): this is test scaffolding, not shipped API, so it
+//! compiles only under the off-by-default `regression-harness` cargo feature.
+//! Release builds (`cargo build --release --lib`) drop it entirely — its
+//! fixture-reading entry points are not part of the cdylib/rlib surface. The
+//! acceptance functions it drives remain shipped and unconditional; only the
+//! harness around them is gated.
+//!
 //! Naming note: milestone #1736 refers to the deployed network by a private
 //! deployment name. The shipped-source private-name guards (Issues #1724/#1725)
 //! keep that token out of `.rs` sources and file names, so this harness uses

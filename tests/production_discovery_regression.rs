@@ -24,8 +24,17 @@
 //! deployment token. The shipped-source private-name guards (Issues #1724/#1725)
 //! forbid that token in `.rs` files and file names, so the file, module, and
 //! case use the concept-level "production discovery" naming instead.
+//!
+//! Feature gate (Issue #1877): the harness module it drives is compiled only
+//! under the off-by-default `regression-harness` feature, so this target
+//! declares `required-features = ["regression-harness"]` in `Cargo.toml`. The
+//! release cdylib/rlib therefore ships without the harness's disk-reading
+//! fixture-parsing entry points.
 
 use std::path::PathBuf;
+use std::process::Command;
+use std::sync::mpsc;
+use std::time::Duration;
 
 use neat_ai_discovery::analysis::production_discovery_regression::{
     DiscoveryRunBatch, PLATEAU_ACCEPTED_RUN_RATE, compute_batch_report,
@@ -49,6 +58,91 @@ fn fixture_path() -> PathBuf {
 fn load_batch() -> DiscoveryRunBatch {
     DiscoveryRunBatch::from_json_file(&fixture_path())
         .expect("committed run-batch fixture must load and parse")
+}
+
+/// Read the crate's own manifest metadata through `cargo metadata`, bounded so a
+/// wedged cargo fails the test rather than hanging an unattended run.
+fn crate_metadata() -> serde_json::Value {
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let output = Command::new(env!("CARGO"))
+            .args(["metadata", "--no-deps", "--format-version", "1", "--frozen"])
+            .current_dir(env!("CARGO_MANIFEST_DIR"))
+            .output();
+        let _ = tx.send(output);
+    });
+    let output = rx
+        .recv_timeout(Duration::from_secs(60))
+        .expect("cargo metadata must complete within 60s")
+        .expect("cargo metadata must run");
+    assert!(
+        output.status.success(),
+        "cargo metadata failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    serde_json::from_slice(&output.stdout).expect("cargo metadata must emit valid JSON")
+}
+
+fn this_package(metadata: &serde_json::Value) -> &serde_json::Value {
+    metadata["packages"]
+        .as_array()
+        .expect("metadata packages array")
+        .iter()
+        .find(|p| p["name"] == "neat_ai_discovery")
+        .expect("this crate must appear in its own metadata")
+}
+
+/// The harness feature must exist and stay **off by default**, so the release
+/// cdylib/rlib never compiles the fixture-reading harness module (Issue #1877).
+#[test]
+fn regression_harness_feature_is_off_by_default() {
+    let metadata = crate_metadata();
+    let features = &this_package(&metadata)["features"];
+
+    assert!(
+        features.get("regression-harness").is_some(),
+        "the crate must declare a regression-harness feature",
+    );
+
+    let default: Vec<String> = features
+        .get("default")
+        .and_then(|d| d.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default();
+    assert!(
+        !default.iter().any(|f| f == "regression-harness"),
+        "regression-harness must not be enabled by the default feature set, found: {default:?}",
+    );
+}
+
+/// This integration target must declare the feature it needs, so a default-feature
+/// `cargo test` skips it instead of failing to compile (Issue #1877).
+#[test]
+fn harness_test_target_requires_the_feature() {
+    let metadata = crate_metadata();
+    let target = this_package(&metadata)["targets"]
+        .as_array()
+        .expect("metadata targets array")
+        .iter()
+        .find(|t| t["name"] == "production_discovery_regression")
+        .expect("the harness test target must be declared in Cargo.toml");
+
+    let required: Vec<String> = target["required-features"]
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default();
+    assert!(
+        required.iter().any(|f| f == "regression-harness"),
+        "the harness test target must require the regression-harness feature, found: {required:?}",
+    );
 }
 
 /// The mandated harness case (Issue #1741).
