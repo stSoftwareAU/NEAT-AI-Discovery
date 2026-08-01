@@ -118,6 +118,14 @@ the gate runs on milestone sub-issue PRs too, not just the rollup into `Develop`
   committed `quality/bash_syntax.sh` (`bash -n`) gate, then lints bash scripts
   via ShellCheck (Issue #1755)
 
+Every job that needs Rust installs it with the committed
+`./scripts/install-rust-toolchain.sh [TOOLCHAIN] [COMPONENT...]`, which drives
+the runner's preinstalled `rustup` and retries transient failures. It replaced
+`dtolnay/rust-toolchain`, whose tarball was fetched from `codeload.github.com`
+during the runner's *Prepare all required actions* phase — a fetch with a fixed
+100 s timeout and a 3-attempt retry policy that a workflow cannot tune, so a
+codeload stall failed the job before any repository code ran (Issue #1891).
+
 **Do NOT modify `.github/workflows/ci.yml` without explicit approval.**
 
 ---
