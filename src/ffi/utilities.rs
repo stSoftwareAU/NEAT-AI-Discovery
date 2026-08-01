@@ -429,6 +429,22 @@ pub unsafe extern "C" fn cleanup_discovery_dir(
                     retryable,
                 }
             }
+            // A path rejected by the discovery-directory guard (Issue #1866)
+            // is a caller bug, not a transient fault: report it as
+            // non-retryable `invalid_input` so hosts do not retry it.
+            Err(e) if e.kind() == std::io::ErrorKind::InvalidInput => {
+                let typed = DiscoveryError::InvalidInput {
+                    detail: e.to_string(),
+                };
+                let kind = typed.error_kind();
+                CleanupDiscoveryDirOutput {
+                    success: false,
+                    already_gone: None,
+                    error: Some(typed.to_string()),
+                    error_kind: Some(kind),
+                    retryable: Some(kind.is_retryable()),
+                }
+            }
             Err(e) => {
                 let (err_msg, error_kind, retryable) =
                     error_fields_from_anyhow(&anyhow::anyhow!(e));

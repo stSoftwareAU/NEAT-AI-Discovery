@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+#### `append_discovery_records` no longer acknowledges a cancelled session (Issue #1876)
+
+`append_records` could return `Ok(records_in_batch)` for a session that
+`cancel_session` or the TTL sweep had already removed, reporting records as
+written moments before the session's `.parquet.tmp` file was deleted. Sessions
+now carry a lock-free cancellation tombstone that `append_records` checks after
+taking the per-session lock and again after its writes, so the call fails with
+`Session cancelled: <sessionId>` instead. Cancelling still never waits on an
+in-flight Parquet write.
+
 ### Removed
 
 #### `ModuleStarvationTracker` deleted rather than wired (Issue #1793)
@@ -110,6 +122,50 @@ Persisted suppression state could hold a creature in drought indefinitely.
   rejection per skipped neuron, surfaced through
   `zeroCandidateSummary.rejectionBreakdown` and fed to the starvation
   classifier as an upstream (starvation) reason.
+
+### Security
+
+#### Parquet decode is now bounded, not predicted (Issue #1869)
+
+The pre-load admission decision was `compressed_file_size × 3`, and the only
+memory-budget check ran *after* the allocation it was meant to prevent. Parquet's
+dictionary and RLE encodings routinely beat 3:1 on this schema's repeated neuron
+UUIDs, so a file projected at "300 MB, fits comfortably" could decode into many
+gigabytes and abort the host process.
+
+- `estimate_parquet_in_memory_bytes` now projects from the Parquet **footer** —
+  the exact decompressed row count and `errors` value count — with the old
+  `file_size × 3` heuristic kept only as a floor.
+- The reader charges every materialised record against a cumulative
+  `DecodeBudget` **inside** its batch loop, alongside the existing cancellation
+  and deadline checks, and fails loud with a typed `MemoryExhausted` error the
+  moment the ceiling is reached. The analysis phase forwards its
+  `max_analysis_memory_mb`; budget-free paths use
+  `NEAT_AI_DISCOVERY_MAX_PARQUET_DECODE_MB`, defaulting to half of total RAM.
+  This closes the `max_obs` gap — that limit caps distinct *observations*, so a
+  file whose rows all share one `obs_index` was unbounded even at `maxObs: 1`.
+- The snapshot exporter's dense `O(neurons × observations)` grid is checked
+  against the same ceiling before the first vector is allocated.
+
+#### Pre-commit gate no longer bypasses the dependency quarantine (Issue #1865)
+
+`./quality.sh` — the documented pre-commit step — ran `cargo upgrade
+--incompatible` followed by `cargo update`, force-upgrading every direct and
+transitive crate with no age check. That bypassed both the Renovate
+`minimumReleaseAge` window and the `VIBE_BUMP_QUARANTINE_HOURS` gate, so a crate
+poisoned minutes earlier was pulled in and its `build.rs` executed locally.
+
+- Removed the upgrade/update step from `quality.sh`: the quality gate verifies
+  the tree and never mutates its dependency graph. Bumps go through
+  `./bump-deps.sh` or Renovate.
+- `bump-deps.sh` now enforces the quarantine against the **resolved lockfile**,
+  not just the manifest requirement strings. `Cargo.lock` is diffed against its
+  pre-bump state, every in-quarantine change — transitive included — is pinned
+  back with `cargo update --precise`, and a newly-pulled package inside the
+  window fails the run loud (exit 8) because there is no earlier version to pin
+  back to. Unknown publish times fail closed.
+- `--no-network` now also skips the lockfile refresh: an offline re-resolve
+  cannot be age-checked.
 
 ### Changed
 

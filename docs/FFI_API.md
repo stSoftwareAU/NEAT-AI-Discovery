@@ -307,6 +307,16 @@ so the lock file is never absent while the directory still exists.
   { "success": true, "alreadyGone": false }
   ```
 
+- **Path validation** (Issue #1866): `tempDir` is recursively deleted, so it is
+  accepted only when it is positively identifiable as a discovery directory —
+  a path component contains `.discovery`, **or** the directory contains
+  `discovery.lock` or `discovery_data.parquet`. Paths containing `..`,
+  symlinked directories, and non-directories are refused. A rejected path
+  yields `{"success": false, "errorKind": "data_validation", "retryable": false}` and nothing is
+  removed. The check runs before any existence probe, so a non-existent path
+  outside a discovery root is also refused rather than reported as
+  `alreadyGone`. Every accepted removal logs its resolved canonical path at
+  `info!` level as an audit trail.
 - **Memory**: the returned pointer **must** be freed with `free_discovery_result`.
 
 ### Orphaned Directory Sweep (`clean_orphaned_discovery_dirs`, Issue #1100)
@@ -947,7 +957,7 @@ cancel to abort):
 | Symbol | Purpose | Validates `CreatureJson` |
 |--------|---------|--------------------------|
 | `start_discovery_session` | Start a new recording session; returns a `sessionId`. | yes (Issue #1188) |
-| `append_discovery_records` | Append a batch of observations to an open session; returns `recordsWritten`. | no — session captured at start |
+| `append_discovery_records` | Append a batch of observations to an open session; returns `recordsWritten`, or an error if the session was cancelled or TTL-swept (Issue #1876). | no — session captured at start |
 | `finish_discovery_session` | Finalise and close the Parquet file; returns `tempDir`, `file`, `totalRecords`. | no |
 | `cancel_discovery_session` | Cancel a session, cleaning up without finalising. | no |
 
@@ -1033,6 +1043,20 @@ Discovery assumes **forward-only** networks (no recurrent feedback). This is cri
 - **Synapse direction constraint**: For feed-forward creatures, synapses must point from an **earlier** neuron to a **later** neuron.
 - **Discovered neurons must be inserted, not appended**: When applying an add-neuron candidate, the new neuron must be inserted at the correct index.
 - **No "remembering" across samples**: Discovery explicitly does **not** support recurrent connections.
+
+### 🚧 Creature Input Bound (Issue #1867)
+
+Every entry point that accepts a `creature` also bounds `creature.input`:
+
+- The maximum accepted input-neuron count is **1,000,000**
+  (`MAX_CREATURE_INPUT_NEURONS`).
+- A larger count returns `success: false` with
+  `errorKind: "data_validation"` before any recording or analysis work starts.
+  The count sizes allocations in both pipelines, so an unbounded value would
+  abort the process rather than return an error.
+- The bound is absolute, **not** relative to `creature.neurons.length`: input
+  neurons are implied by the count and are not listed in `creature.neurons`
+  (the example payload above pairs `"input": 20` with a single listed neuron).
 
 ---
 

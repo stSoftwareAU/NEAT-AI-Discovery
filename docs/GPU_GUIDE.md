@@ -9,9 +9,10 @@ NEAT-AI-Discovery. For a high-level overview, see [README.md](../README.md).
 
 The GPU backend targets **wgpu 30 / naga 30 / pollster 1.0** (`Cargo.toml`). The
 29 → 30 migration is **complete** (Issue #1594); this note records the API
-breakages so a future major bump — which `quality.sh`'s
-`cargo upgrade --incompatible` step will surface again — is not re-derived from
-scratch (it was independently rediscovered in ~ten PRs before landing):
+breakages so a future major bump — which `bump-deps.sh`'s
+`cargo upgrade --incompatible` discovery step will surface again — is not
+re-derived from scratch (it was independently rediscovered in ~ten PRs before
+landing):
 
 - **`Buffer::get_mapped_range()` now returns `Result<BufferView, MapRangeError>`.**
   All six read-back paths in `src/analysis/gpu/*` unwrap it with `.context(...)?`
@@ -192,10 +193,25 @@ observations, activations, and errors for the same training index.
 
 ### 🐧 XDG_RUNTIME_DIR warnings on Linux
 
-The library automatically sets `XDG_RUNTIME_DIR` to a temporary directory if it's not
-already set. This is required by wgpu (WebGPU) on Linux systems using Wayland. The
-warnings are harmless and the library handles this automatically. On macOS, this
+The library sets `XDG_RUNTIME_DIR` to a temporary directory if it's not already set.
+This is required by wgpu (WebGPU) on Linux systems using Wayland. On macOS, this
 variable is not needed.
+
+The write only happens while the process is still **single-threaded** (Issue #1873):
+mutating the environment while another thread may call `getenv` is undefined
+behaviour, so the library checks `/proc/self/task` first and skips the write when
+other threads are already live, logging a warning instead. Because GPU
+initialisation is lazy, a multi-threaded host (Deno, a rayon pool) usually reaches
+it *after* threads exist — so **set `XDG_RUNTIME_DIR` in the host environment before
+starting the process** if you see Wayland/Mesa warnings:
+
+```bash
+export XDG_RUNTIME_DIR=/run/user/$(id -u)
+```
+
+The same applies to the Mesa variables written for `NEAT_AI_DISCOVERY_QUIET_GPU=1`
+(`EGL_LOG_LEVEL`, `MESA_GLSL_CACHE_DISABLE`, `MESA_DEBUG`) — export them yourself
+when the process is already multi-threaded at first GPU use.
 
 ### 🔐 EGL/DRI permission denied warnings on Linux
 

@@ -5,6 +5,7 @@
 
 mod candidates;
 mod cleanup;
+mod creature_bounds;
 mod error_classification;
 mod forward_only_validation;
 mod requests;
@@ -14,6 +15,7 @@ mod session;
 // Re-export all sub-module types to preserve the existing public API.
 pub use candidates::*;
 pub use cleanup::*;
+pub use creature_bounds::{MAX_CREATURE_INPUT_NEURONS, validate_creature_input_bounds};
 pub use error_classification::*;
 pub use forward_only_validation::validate_forward_only_synapses;
 pub use requests::*;

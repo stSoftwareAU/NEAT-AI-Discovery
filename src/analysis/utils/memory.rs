@@ -395,14 +395,41 @@ pub fn validate_parquet_memory_requirements(
 pub const PARQUET_MEMORY_MULTIPLIER: u64 = 3;
 
 /// Estimate the in-memory bytes required to fully pre-load a parquet file
-/// (Issue #1172).
+/// (Issue #1172, #1869).
 ///
-/// Returns `file_size × PARQUET_MEMORY_MULTIPLIER`. Returns `0` when the
-/// file's metadata cannot be read so the caller can treat the projection as
-/// unknown rather than aborting.
+/// The projection is the larger of:
+/// - the **footer-derived** cost — the exact decompressed row count times the
+///   per-record struct + UUID heap cost, plus the uncompressed column bytes
+///   (Issue #1869), and
+/// - the legacy `file_size × PARQUET_MEMORY_MULTIPLIER` heuristic, kept as a
+///   floor so the projection never drops below previous behaviour.
+///
+/// Deriving from the footer removes the dependence on the file's compression
+/// ratio: dictionary and RLE encodings routinely beat 3:1 on this schema's
+/// repeated UUIDs, so a compressed-size projection under-reports badly.
+///
+/// This remains an *estimate*, not a bound — the enforced bound is the
+/// cumulative decode budget the reader charges per record
+/// ([`crate::parquet_format::decode_budget::DecodeBudget`]). Returns `0` when
+/// neither the file's metadata nor its footer can be read, so the caller can
+/// treat the projection as unknown rather than aborting.
 pub fn estimate_parquet_in_memory_bytes(parquet_file: &str) -> u64 {
     let file_size = std::fs::metadata(parquet_file).map_or(0, |m| m.len());
-    file_size.saturating_mul(PARQUET_MEMORY_MULTIPLIER)
+    let compressed_projection = file_size.saturating_mul(PARQUET_MEMORY_MULTIPLIER);
+
+    match crate::parquet_format::footer::read_footer_stats(parquet_file) {
+        Ok(stats) => compressed_projection.max(stats.projected_in_memory_bytes()),
+        Err(e) => {
+            tracing::warn!(
+                target: "neat_ai_discovery::analysis::utils::memory",
+                parquet_file,
+                error = %e,
+                "parquet footer unreadable — falling back to the compressed-size \
+                 projection; the decode budget remains the enforced bound",
+            );
+            compressed_projection
+        }
+    }
 }
 
 /// Decide whether a projected parquet pre-load fits within OS-available

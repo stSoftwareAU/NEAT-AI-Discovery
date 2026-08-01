@@ -32,12 +32,25 @@ signal-hook = "0.4"  # Signal handling (SIGUSR1 for thread dumps)
 tracing = "0.1"  # Structured logging framework (Issue #575)
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }  # Subscriber with EnvFilter (Issue #575)
 
+[features]
+# Regression-test scaffolding, not shipped API (Issue #1877). Off by default so
+# the release cdylib/rlib omits the harness's disk-reading entry points; the
+# quality gates enable it via `--all-features`.
+regression-harness = []
+
 [dev-dependencies]
 tempfile = "3.27"
 serial_test = "4.0"
 criterion = { version = "0.8", default-features = false, features = ["rayon", "cargo_bench_support"] }
 proptest = "1.11"  # Property-based testing for mathematical functions (Issue #573)
 naga = { version = "30", features = ["wgsl-in"] }  # WGSL parse/validate for shader behaviour tests (Issue #1467)
+
+# Drives the feature-gated harness module, so it only builds when the feature
+# is on (Issue #1877). Without this, a default-feature `cargo test` fails to
+# compile the target with an unresolved-import error.
+[[test]]
+name = "production_discovery_regression"
+required-features = ["regression-harness"]
 
 [[bench]]
 name = "synapse_counts"

@@ -38,7 +38,8 @@ pub(super) use record_providers::LazyRecordProvider;
 
 use record_providers::{EagerRecordProvider, get_records_or_error};
 use removal_candidates::{
-    detect_constant_neuron_removals, functionally_constant_focus_uuids, identify_removal_candidates,
+    detect_constant_neuron_removals, effective_cost_of_growth, functionally_constant_focus_uuids,
+    identify_removal_candidates,
 };
 use score_calculation::{
     activation_frequency_from_records, average_absolute_error_from_records,
@@ -1241,8 +1242,14 @@ fn rank_selectable(
             .then_with(|| a.neuron_uuid.cmp(&b.neuron_uuid))
     });
 
-    // Identify removal candidates
-    let cost_of_growth_threshold = args.cost_of_growth.unwrap_or(DEFAULT_COST_OF_GROWTH);
+    // Identify removal candidates.
+    //
+    // Issue #1872: resolve the threshold through the #1783 validator rather than
+    // taking the host value raw. A non-finite or non-positive `costOfGrowth`
+    // makes `savings` NaN, and every removal gate is NaN-false, so the raw value
+    // emitted *every* ranked neuron as a removal candidate. The validator warns
+    // and substitutes `DEFAULT_COST_OF_GROWTH`.
+    let cost_of_growth_threshold = effective_cost_of_growth(args.cost_of_growth);
 
     // Issue #414: High-error exploratory ablation DISABLED
     //

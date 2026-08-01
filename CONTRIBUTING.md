@@ -58,6 +58,24 @@ Tests that mutate shared global state (environment variables, deadline overrides
 watchdog) are marked with `#[serial]` from the `serial_test` crate and will not
 run concurrently with each other. All other tests run in parallel (`--test-threads=2`).
 
+### 🔌 Cargo Features
+
+Test scaffolding must not ship in the release `cdylib`/`rlib`. Such modules live
+behind **off-by-default** cargo features, so `cargo build --release --lib` never
+compiles them (Issue #1877):
+
+| Feature | Gates | Consumer |
+|---------|-------|----------|
+| `regression-harness` | `src/analysis/production_discovery_regression.rs` | `tests/production_discovery_regression.rs` |
+
+Always run tests with `--all-features` (as `./quality.sh` and CI do) — a plain
+`cargo test` **skips** targets that declare `required-features`. To run a gated
+suite on its own, name the feature:
+
+```bash
+cargo test --features regression-harness --test production_discovery_regression
+```
+
 ---
 
 ## 💻 Development Workflow
@@ -81,18 +99,25 @@ so do not skip this step. `./quality.sh` performs these checks in order:
    installed)
 3. `./scripts/check-pr-summary-location.sh` — PR summaries must stay in
    `docs/archive/pr-summaries/` (Issue #1613)
-4. `cargo upgrade --incompatible` + `cargo update` (dependency upgrade)
-5. `cargo deny check` (licence and dependency audit)
-6. `cargo build` (debug, quick feedback)
-7. `cargo fmt --all` (auto-formatting)
-8. `cargo clippy --all-targets --all-features -- -D warnings`
-9. `cargo check --all-targets --all-features`
-10. `cargo test --lib --tests --all-features -- --test-threads=2`
-11. `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps` (documentation build)
-12. `cargo build --release --lib`
+4. `cargo deny check` (licence and dependency audit)
+5. `cargo build` (debug, quick feedback)
+6. `cargo fmt --all` (auto-formatting)
+7. `cargo clippy --all-targets --all-features -- -D warnings`
+8. `cargo check --all-targets --all-features`
+9. `cargo test --lib --tests --all-features -- --test-threads=2`
+10. `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps` (documentation build)
+11. `cargo build --release --lib`
 
 If any step fails, fix the issue and re-run. Do **not** commit code that fails
 `./quality.sh`.
+
+**The gate never upgrades dependencies** (Issue #1865). It used to run
+`cargo upgrade --incompatible` + `cargo update`, which pulled crates published
+minutes earlier and bypassed the 24h quarantine window. Bump dependencies with
+`./bump-deps.sh` — it age-checks every change to the resolved `Cargo.lock`,
+transitive packages included — or let Renovate raise the PR. `./bump-deps.sh`
+requires `cargo-deny`: its audit gate exits 9 rather than skipping when the tool
+is missing, so the bump can never pass unaudited (Issue #1870).
 
 **GPU tests are skipped in CI** (no GPU available). For full coverage, run
 `./quality.sh` locally before pushing.
@@ -113,7 +138,10 @@ the gate runs on milestone sub-issue PRs too, not just the rollup into `Develop`
 - `quality` — fmt check, Clippy, cargo check, doc build, tests, build
 - `spell-check` — runs codespell on the codebase
 - `validation` — checks required files and `Cargo.toml`
-- `security` — runs the security audit workflow
+- `security` — runs the security audit workflow: `cargo audit` (RustSec
+  advisories), `cargo deny check` (the `deny.toml` licence, ban and
+  dependency-source policy, enforced in CI since Issue #1870), and
+  `dependency-review`
 - `shellcheck` (separate workflow `.github/workflows/shellcheck.yml`) — runs the
   committed `quality/bash_syntax.sh` (`bash -n`) gate, then lints bash scripts
   via ShellCheck (Issue #1755)

@@ -27,7 +27,7 @@ use anyhow::{Result, anyhow};
 use std::thread;
 use std::time::Duration;
 
-use crate::analysis::utils::{ensure_xdg_runtime_dir, suppress_mesa_warnings_if_requested};
+use crate::analysis::utils::setup_gpu_environment;
 
 // =============================================================================
 // Constants
@@ -422,14 +422,10 @@ pub fn no_gpu_result(reason: &str) -> GpuAvailabilityResult {
 ///
 /// This is an internal helper used by `check_gpu_availability` and related functions.
 pub fn get_adapter_info_internal() -> Option<wgpu::AdapterInfo> {
-    // Suppress Mesa/libEGL warnings.
-    // SAFETY: This runs during early GPU initialisation, before any GPU/host
-    // thread that reads the process environment is spawned, so the
-    // no-concurrent-access precondition holds (see the platform module note).
-    unsafe {
-        suppress_mesa_warnings_if_requested();
-        ensure_xdg_runtime_dir();
-    }
+    // Suppress Mesa/libEGL warnings and set XDG_RUNTIME_DIR, but only while the
+    // process is observably single-threaded; otherwise the writes are skipped
+    // and logged rather than racing a concurrent getenv (Issue #1873).
+    setup_gpu_environment();
 
     let instance = create_wgpu_instance_safely()?;
     let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {

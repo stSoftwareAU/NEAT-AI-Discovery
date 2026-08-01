@@ -9,9 +9,20 @@ set -euo pipefail
 #   * External deps (crates.io, GitHub Actions, etc.) bump to the latest
 #     version published BEFORE the quarantine window — VIBE_BUMP_QUARANTINE_HOURS
 #     hours ago (default 24h). This dodges fast-flagged supply-chain attacks.
+#   * The window is enforced against the RESOLVED graph, not just the manifest
+#     requirement strings: after `cargo update` the lockfile is diffed against
+#     its pre-bump state and every in-quarantine change — transitive included —
+#     is pinned back with `cargo update --precise` (Issue #1865). A newly-pulled
+#     package inside the window has no earlier version to pin back to, so the
+#     run fails loud instead.
+#   * This script — not ./quality.sh — is the only path that bumps dependencies.
+#     The pre-commit quality gate verifies the tree and never mutates it.
 #
 # Audit gate: after bumping, `cargo deny check` must pass; any new advisory
-# fails the run. The Vibe Coder worker reverts the bump on non-zero exit.
+# fails the run. The Vibe Coder worker reverts the bump on non-zero exit. A
+# missing cargo-deny is a hard failure (exit 9), not a skip — the gate is the
+# only reader of deny.toml, so skipping it silently passed the licence, ban and
+# dependency-source policy (Issue #1870).
 #
 # Lockfile integrity: after Cargo.toml mutations we run `cargo update` and
 # then `cargo check --locked` to ensure the lockfile matches the registry.
@@ -30,6 +41,7 @@ set -euo pipefail
 #
 # Exit codes:
 #   0   clean (or no-op)
+#   9   cargo-deny is not installed — the audit gate cannot run
 #   non-zero  bump rejected (audit failed, lockfile mismatch, invalid input)
 
 # ── Helper functions (sourceable for tests) ───────────────────────────
@@ -125,6 +137,93 @@ bump_deps::compute_changed_deps() {
         NR == FNR { old[$1] = $2; next }
         ($1 in old) && (old[$1] != $2) { printf "%s\t%s\t%s\n", $1, old[$1], $2 }
     ' "$before" "$after"
+}
+
+# bump_deps::extract_lock_versions LOCKFILE
+# Print `name<TAB>version` for every [[package]] entry in LOCKFILE — direct
+# and transitive alike. The manifest gate only sees top-level requirement
+# strings, so this is the only view that covers the resolved graph an
+# attacker actually pivots through (Issue #1865).
+bump_deps::extract_lock_versions() {
+    local lockfile="$1"
+    if [[ ! -f "$lockfile" ]]; then
+        return 0
+    fi
+    awk '
+        /^\[\[package\]\]/ { in_pkg = 1; name = ""; next }
+        /^\[/ { in_pkg = 0; name = ""; next }
+        in_pkg && /^name[[:space:]]*=/ {
+            if (match($0, /"[^"]+"/)) {
+                name = substr($0, RSTART + 1, RLENGTH - 2)
+            }
+            next
+        }
+        in_pkg && /^version[[:space:]]*=/ {
+            if (name != "" && match($0, /"[^"]+"/)) {
+                printf "%s\t%s\n", name, substr($0, RSTART + 1, RLENGTH - 2)
+            }
+            next
+        }
+    ' "$lockfile"
+}
+
+# bump_deps::compute_new_deps BEFORE AFTER
+# Given two `name<TAB>version` listings, print `name<TAB>version` for every
+# package present in AFTER but absent from BEFORE. A newly-pulled transitive
+# package cannot be "reverted" to an earlier version, so it is age-checked
+# separately (Issue #1865).
+bump_deps::compute_new_deps() {
+    local before="$1"
+    local after="$2"
+    awk -F '\t' '
+        NR == FNR { old[$1] = $2; next }
+        !($1 in old) { printf "%s\t%s\n", $1, $2 }
+    ' "$before" "$after"
+}
+
+# bump_deps::plan_lock_quarantine BEFORE AFTER NOW_HOURS WINDOW_HOURS
+# Age-check every lockfile change between the BEFORE and AFTER listings
+# (both `name<TAB>version` files) and print one verdict line per package
+# that must not be accepted:
+#
+#   revert<TAB>name<TAB>old<TAB>new<TAB>age    pin back to the old version
+#   block<TAB>name<TAB>-<TAB>new<TAB>age       new package, cannot pin back
+#
+# `age` is either "<N>h" or "unknown". Packages published outside the
+# window produce no output. Unknown publish times fail closed: a version we
+# cannot date is never confirmed safe, so it is treated as in-quarantine.
+bump_deps::plan_lock_quarantine() {
+    local before="$1"
+    local after="$2"
+    local now_hours="$3"
+    local window="$4"
+    local name old new pub_epoch pub_hours
+
+    while IFS=$'\t' read -r name old new; do
+        [[ -z "$name" ]] && continue
+        pub_epoch="$(bump_deps::fetch_publish_epoch "$name" "$new" || true)"
+        if [[ -z "$pub_epoch" ]]; then
+            printf 'revert\t%s\t%s\t%s\tunknown\n' "$name" "$old" "$new"
+            continue
+        fi
+        pub_hours=$(( pub_epoch / 3600 ))
+        if ! bump_deps::is_quarantine_expired "$now_hours" "$pub_hours" "$window"; then
+            printf 'revert\t%s\t%s\t%s\t%sh\n' "$name" "$old" "$new" "$(( now_hours - pub_hours ))"
+        fi
+    done < <(bump_deps::compute_changed_deps "$before" "$after")
+
+    while IFS=$'\t' read -r name new; do
+        [[ -z "$name" ]] && continue
+        pub_epoch="$(bump_deps::fetch_publish_epoch "$name" "$new" || true)"
+        if [[ -z "$pub_epoch" ]]; then
+            printf 'block\t%s\t-\t%s\tunknown\n' "$name" "$new"
+            continue
+        fi
+        pub_hours=$(( pub_epoch / 3600 ))
+        if ! bump_deps::is_quarantine_expired "$now_hours" "$pub_hours" "$window"; then
+            printf 'block\t%s\t-\t%s\t%sh\n' "$name" "$new" "$(( now_hours - pub_hours ))"
+        fi
+    done < <(bump_deps::compute_new_deps "$before" "$after")
 }
 
 # bump_deps::fetch_publish_epoch NAME VERSION
@@ -240,6 +339,20 @@ bump_deps::current_epoch() {
     fi
 }
 
+# bump_deps::require_cargo_deny
+# Return 0 when cargo-deny is on PATH; otherwise print an error and return 1.
+# The audit gate is the only check that reads deny.toml, so a missing tool must
+# fail the run — skipping it silently passed the licence, ban and
+# dependency-source policy on any host without cargo-deny (Issue #1870).
+bump_deps::require_cargo_deny() {
+    if command -v cargo-deny >/dev/null 2>&1; then
+        return 0
+    fi
+    echo "ERROR: cargo-deny not installed — the audit gate cannot run and must not be skipped" >&2
+    echo "       Install it: cargo install --locked cargo-deny" >&2
+    return 1
+}
+
 # When sourced by the test suite we stop before parsing arguments / running.
 if [[ "${BUMP_DEPS_SOURCE_ONLY:-0}" == "1" ]]; then
     # shellcheck disable=SC2317  # `exit 0` is the fallback when not sourced.
@@ -276,7 +389,9 @@ quality.sh in the Vibe Coder worker.
 Options:
   --dry-run               Report planned bumps without modifying files.
   --no-network            Skip crates.io lookups (offline; quarantine treated
-                          as "do not bump" for affected deps).
+                          as "do not bump" for affected deps). The lockfile
+                          refresh is skipped too — a re-resolve cannot be
+                          age-checked without the registry (Issue #1865).
   --print-config          Print effective configuration and exit.
   --list-internal-deps    List stSoftwareAU/* internal deps and exit.
   -h, --help              Show this help and exit.
@@ -288,6 +403,10 @@ Environment:
 
 Exit codes:
   0  clean (or no-op)
+  8  bump rejected — a package inside the quarantine window could not be
+     pinned back (new transitive package, or --precise failed).
+  9  cargo-deny is not installed — the audit gate cannot run and is never
+     skipped (install: cargo install --locked cargo-deny).
   *  bump rejected — audit failure, lockfile drift, or bad input.
 USAGE
 }
@@ -365,6 +484,13 @@ echo "   quarantine_hours = $QUARANTINE_HOURS"
 echo "   dry_run          = $DRY_RUN"
 echo "   no_network       = $NO_NETWORK"
 echo ""
+
+# Snapshot the resolved graph BEFORE any mutation so phase 3 can age-check
+# every lockfile change — including transitive packages the manifest gate
+# never sees (Issue #1865).
+CARGO_LOCK="$PROJECT_ROOT/Cargo.lock"
+LOCK_BEFORE="$(mktemp)"
+bump_deps::extract_lock_versions "$CARGO_LOCK" > "$LOCK_BEFORE"
 
 # Phase 1: internal deps.
 INTERNAL_DEPS="$(bump_deps::list_internal_deps "$CARGO_MANIFEST")"
@@ -473,12 +599,71 @@ fi
 echo ""
 
 # Phase 3: lockfile refresh.
-if [[ "$DRY_RUN" -eq 0 && -f "$CARGO_MANIFEST" ]]; then
+LOCK_REVERTED=0
+if [[ "$DRY_RUN" -eq 0 && "$NO_NETWORK" -eq 1 ]]; then
+    echo "🔒 Lockfile refresh skipped (--no-network) — a re-resolve cannot be age-checked offline."
+    echo ""
+elif [[ "$DRY_RUN" -eq 0 && -f "$CARGO_MANIFEST" ]]; then
     echo "🔒 Refreshing Cargo.lock…"
     if ! cargo update 2>&1 | tail -20; then
         echo "ERROR: cargo update failed" >&2
         exit 5
     fi
+    echo ""
+
+    # Phase 3a: quarantine gate over the RESOLVED graph (Issue #1865).
+    # `cargo update` re-resolves transitive dependencies that the manifest
+    # gate in phase 2 never inspects — the exact surface recent registry
+    # compromises pivoted through. Diff the lockfile against the pre-bump
+    # snapshot and pin every in-quarantine change back with --precise.
+    echo "🛡️  Lockfile quarantine gate (window=${QUARANTINE_HOURS}h)…"
+    LOCK_AFTER="$(mktemp)"
+    bump_deps::extract_lock_versions "$CARGO_LOCK" > "$LOCK_AFTER"
+    LOCK_NOW_HOURS=$(( $(bump_deps::current_epoch) / 3600 ))
+    LOCK_PLAN="$(bump_deps::plan_lock_quarantine "$LOCK_BEFORE" "$LOCK_AFTER" "$LOCK_NOW_HOURS" "$QUARANTINE_HOURS")"
+    LOCK_BLOCKED=""
+    if [[ -n "$LOCK_PLAN" ]]; then
+        while IFS=$'\t' read -r VERDICT PKG_NAME PKG_OLD PKG_NEW PKG_AGE; do
+            [[ -z "$VERDICT" ]] && continue
+            case "$VERDICT" in
+                revert)
+                    echo "   🚧 $PKG_NAME $PKG_OLD → $PKG_NEW (publish age $PKG_AGE < ${QUARANTINE_HOURS}h) — pinning back"
+                    if ! cargo update -p "${PKG_NAME}@${PKG_NEW}" --precise "$PKG_OLD" >/dev/null 2>&1; then
+                        echo "ERROR: could not pin $PKG_NAME back to $PKG_OLD — refusing to accept an in-quarantine dependency" >&2
+                        exit 8
+                    fi
+                    LOCK_REVERTED=$(( LOCK_REVERTED + 1 ))
+                    QUARANTINED_DEPS="${QUARANTINED_DEPS} ${PKG_NAME}@${PKG_NEW}(${PKG_AGE},lock)"
+                    ;;
+                block)
+                    echo "   ⛔ $PKG_NAME@$PKG_NEW is a NEW package published $PKG_AGE ago — inside the quarantine window"
+                    LOCK_BLOCKED="${LOCK_BLOCKED} ${PKG_NAME}@${PKG_NEW}(${PKG_AGE})"
+                    ;;
+                *)
+                    echo "ERROR: unrecognised quarantine verdict '$VERDICT' for $PKG_NAME" >&2
+                    exit 8
+                    ;;
+            esac
+        done <<< "$LOCK_PLAN"
+    fi
+    if [[ -n "$LOCK_BLOCKED" ]]; then
+        echo "ERROR: new dependencies published inside the ${QUARANTINE_HOURS}h quarantine window:${LOCK_BLOCKED}" >&2
+        echo "       They are newly pulled, so there is no earlier version to pin back to." >&2
+        echo "       Re-run ./bump-deps.sh once the window has elapsed." >&2
+        exit 8
+    fi
+
+    # Confirm success positively: re-diff after pinning and fail loud if any
+    # in-quarantine package survived (absence of an error is not a pass).
+    bump_deps::extract_lock_versions "$CARGO_LOCK" > "$LOCK_AFTER"
+    LOCK_RECHECK="$(bump_deps::plan_lock_quarantine "$LOCK_BEFORE" "$LOCK_AFTER" "$LOCK_NOW_HOURS" "$QUARANTINE_HOURS")"
+    rm -f "$LOCK_AFTER"
+    if [[ -n "$LOCK_RECHECK" ]]; then
+        echo "ERROR: lockfile still contains in-quarantine packages after pinning:" >&2
+        echo "$LOCK_RECHECK" >&2
+        exit 8
+    fi
+    echo "   lockfile quarantine gate OK (pinned back=$LOCK_REVERTED)"
     echo ""
 
     # Phase 3b: lockfile integrity — registry hashes must match.
@@ -495,30 +680,30 @@ fi
 # Phase 4: audit gate.
 AUDIT_RUN=0
 if [[ "$DRY_RUN" -eq 0 ]]; then
-    if command -v cargo-deny >/dev/null 2>&1; then
-        echo "📜 Running audit gate (cargo deny check)…"
-        if ! cargo deny check 2>&1 | tee /tmp/bump-deps-deny.log; then
-            OFFENDER="$(grep -oE '[a-zA-Z0-9_-]+ v[0-9][^ ]*' /tmp/bump-deps-deny.log | head -1 || true)"
-            if [[ -n "$OFFENDER" ]]; then
-                echo "ERROR: audit gate failed (offending crate: $OFFENDER)" >&2
-            else
-                echo "ERROR: audit gate failed (cargo deny check rejected the bumped tree)" >&2
-            fi
-            exit 7
-        fi
-        AUDIT_RUN=1
-        echo ""
-    else
-        echo "⚠️  cargo-deny not installed — audit gate skipped (install: cargo install cargo-deny)"
+    if ! bump_deps::require_cargo_deny; then
+        exit 9
     fi
+    echo "📜 Running audit gate (cargo deny check)…"
+    if ! cargo deny check 2>&1 | tee /tmp/bump-deps-deny.log; then
+        OFFENDER="$(grep -oE '[a-zA-Z0-9_-]+ v[0-9][^ ]*' /tmp/bump-deps-deny.log | head -1 || true)"
+        if [[ -n "$OFFENDER" ]]; then
+            echo "ERROR: audit gate failed (offending crate: $OFFENDER)" >&2
+        else
+            echo "ERROR: audit gate failed (cargo deny check rejected the bumped tree)" >&2
+        fi
+        exit 7
+    fi
+    AUDIT_RUN=1
+    echo ""
 fi
 
 # Phase 5: summary.
+rm -f "$LOCK_BEFORE"
 if [[ "$EXTERNAL_BUMPED" -eq 1 || "$INTERNAL_COUNT" -gt 0 ]]; then
     if [[ "$DRY_RUN" -eq 1 ]]; then
         echo "✅ bump-deps: would bump (internal=$INTERNAL_COUNT external=$EXTERNAL_BUMPED, dry-run)"
     else
-        echo "✅ bump-deps: bumped (internal=$INTERNAL_COUNT external=$EXTERNAL_BUMPED, quarantined=$EXTERNAL_REVERTED, audit_run=$AUDIT_RUN)"
+        echo "✅ bump-deps: bumped (internal=$INTERNAL_COUNT external=$EXTERNAL_BUMPED, quarantined=$EXTERNAL_REVERTED, lock_pinned_back=$LOCK_REVERTED, audit_run=$AUDIT_RUN)"
     fi
 else
     if [[ "$DRY_RUN" -eq 1 ]]; then
@@ -528,7 +713,7 @@ else
             echo "✅ bump-deps: no bumps (dry-run)"
         fi
     else
-        echo "✅ bump-deps: no bumps (quarantined=$EXTERNAL_REVERTED)"
+        echo "✅ bump-deps: no bumps (quarantined=$EXTERNAL_REVERTED, lock_pinned_back=$LOCK_REVERTED, audit_run=$AUDIT_RUN)"
     fi
 fi
 if [[ -n "$QUARANTINED_DEPS" ]]; then

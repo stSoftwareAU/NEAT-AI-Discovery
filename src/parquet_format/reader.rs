@@ -8,6 +8,7 @@ use std::collections::{HashMap, HashSet};
 use std::fs::File;
 
 use crate::DiscoveryError;
+use crate::parquet_format::decode_budget::DecodeBudget;
 use crate::types::DiscoverRecord;
 use std::time::SystemTime;
 
@@ -202,6 +203,25 @@ pub fn read_all_records_grouped_by_neuron_with_deadline_and_profile(
     deadline: Option<SystemTime>,
     profile: ColumnProfile,
 ) -> Result<HashMap<String, Vec<DiscoverRecord>>> {
+    read_all_records_grouped_by_neuron_bounded(file_path, deadline, profile, None)
+}
+
+/// Read all discovery records grouped by neuron UUID, bounding the decode with
+/// a cumulative byte budget (Issue #1869).
+///
+/// `budget_mb` is the caller's memory budget (the analysis phase forwards its
+/// `max_analysis_memory_mb`). When it is `None` the ceiling falls back to
+/// `NEAT_AI_DISCOVERY_MAX_PARQUET_DECODE_MB`, then to half of total system RAM.
+/// Every materialised record is charged inside the batch loop, so a file whose
+/// decoded size far exceeds its compressed size aborts with a typed
+/// memory-exhaustion error part-way through rather than after the allocation
+/// has already been made.
+pub fn read_all_records_grouped_by_neuron_bounded(
+    file_path: &str,
+    deadline: Option<SystemTime>,
+    profile: ColumnProfile,
+    budget_mb: Option<u64>,
+) -> Result<HashMap<String, Vec<DiscoverRecord>>> {
     // Check deadline before starting
     if let Some(dl) = deadline
         && SystemTime::now() >= dl
@@ -224,6 +244,8 @@ pub fn read_all_records_grouped_by_neuron_with_deadline_and_profile(
 
     let include_errors = profile.includes_errors();
     let mut grouped_records: HashMap<String, Vec<DiscoverRecord>> = HashMap::new();
+    // Issue #1869: the bound that actually holds — charged per record below.
+    let mut budget = DecodeBudget::resolve(budget_mb);
 
     for (batch_count, batch_result) in reader.enumerate() {
         // Issue #1047: Check cancellation flag at each batch boundary so
@@ -333,6 +355,8 @@ pub fn read_all_records_grouped_by_neuron_with_deadline_and_profile(
                 Vec::new()
             };
 
+            budget.charge_record(uuid.len(), errors.len(), file_path)?;
+
             let record = DiscoverRecord::new(obs_index, uuid.clone(), value, activation, errors);
             grouped_records.entry(uuid).or_default().push(record);
         }
@@ -373,6 +397,8 @@ pub fn read_records_from_parquet_with_profile(
 
     let include_errors = profile.includes_errors();
     let mut records = Vec::new();
+    // Issue #1869: bound the retained rows even though most are filtered out.
+    let mut budget = DecodeBudget::resolve(None);
 
     for batch_result in reader {
         let batch = batch_result.context("Failed to read record batch")?;
@@ -448,6 +474,8 @@ pub fn read_records_from_parquet_with_profile(
                     Vec::new()
                 };
 
+                budget.charge_record(uuid.len(), errors.len(), file_path)?;
+
                 records.push(DiscoverRecord::new(
                     obs_index,
                     uuid.to_string(),
@@ -499,6 +527,21 @@ pub fn read_records_from_parquet_with_limit_and_profile(
     max_obs: Option<u32>,
     profile: ColumnProfile,
 ) -> Result<Vec<DiscoverRecord>> {
+    read_records_from_parquet_with_limit_and_budget(file_path, max_obs, profile, None)
+}
+
+/// Read discovery records with an observation limit, column projection and a
+/// cumulative decode budget (Issue #1869).
+///
+/// `max_obs` caps distinct **observations**, not rows: a file whose rows all
+/// share one `obs_index` is unbounded even at `max_obs = 1`. The decode budget
+/// is the bound that holds regardless of how the rows are distributed.
+pub fn read_records_from_parquet_with_limit_and_budget(
+    file_path: &str,
+    max_obs: Option<u32>,
+    profile: ColumnProfile,
+    budget_mb: Option<u64>,
+) -> Result<Vec<DiscoverRecord>> {
     // Edge case: treat max_obs=0 as "return no rows".
     if matches!(max_obs, Some(0)) {
         return Ok(Vec::new());
@@ -520,6 +563,8 @@ pub fn read_records_from_parquet_with_limit_and_profile(
     let include_errors = profile.includes_errors();
     let mut records = Vec::new();
     let mut accepted_obs_indices: HashSet<u32> = HashSet::new();
+    // Issue #1869: max_obs bounds observations, not rows — this bounds bytes.
+    let mut budget = DecodeBudget::resolve(budget_mb);
 
     for batch_result in reader {
         let batch = batch_result.context("Failed to read record batch")?;
@@ -615,6 +660,8 @@ pub fn read_records_from_parquet_with_limit_and_profile(
             } else {
                 Vec::new()
             };
+
+            budget.charge_record(uuid.len(), errors.len(), file_path)?;
 
             records.push(DiscoverRecord::new(
                 obs_index,

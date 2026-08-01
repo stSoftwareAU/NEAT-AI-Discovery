@@ -20,8 +20,7 @@ use crate::analysis::samples::{HelpfulSample, ReluStats};
 
 use crate::analysis::utils::{
     DEFAULT_GPU_BATCH_SIZE, HIGH_PERF_GPU_BATCH_SIZE, LOW_MEMORY_GPU_BATCH_SIZE, MemoryTier,
-    check_system_memory_requirements, detect_memory_tier, ensure_xdg_runtime_dir, get_memory_info,
-    suppress_mesa_warnings_if_requested,
+    check_system_memory_requirements, detect_memory_tier, get_memory_info, setup_gpu_environment,
 };
 
 /// Maximum allocation size (256 MB) for a single GPU batch operation.
@@ -265,15 +264,10 @@ impl GpuAnalyzer {
         }
 
         // Suppress Mesa/libEGL warnings if requested and set XDG_RUNTIME_DIR
-        // (required by wgpu on Linux/Wayland). Both use `Once` internally for
-        // thread-safe one-time initialisation.
-        // SAFETY: This runs before any GPU init and thus before any thread that
-        // reads the process environment is spawned, so the no-concurrent-access
-        // precondition holds (see the platform module note).
-        unsafe {
-            suppress_mesa_warnings_if_requested();
-            ensure_xdg_runtime_dir();
-        }
+        // (required by wgpu on Linux/Wayland). The writes only happen while the
+        // process is observably single-threaded; otherwise they are skipped and
+        // logged rather than racing a concurrent getenv (Issue #1873).
+        setup_gpu_environment();
 
         // Use safe instance creation to avoid panics from EGL/GL backend probing on Linux
         let Some(instance) = create_wgpu_instance_safely() else {
@@ -352,15 +346,10 @@ impl GpuAnalyzer {
     /// Create a new `GpuAnalyzer` with all pipelines initialised (~100ms; reuse the instance).
     pub fn new() -> Result<Self> {
         // Suppress Mesa/libEGL warnings if requested and set XDG_RUNTIME_DIR
-        // (required by wgpu on Linux/Wayland). Both use `Once` internally for
-        // thread-safe one-time initialisation.
-        // SAFETY: This runs before any GPU init and thus before any thread that
-        // reads the process environment is spawned, so the no-concurrent-access
-        // precondition holds (see the platform module note).
-        unsafe {
-            suppress_mesa_warnings_if_requested();
-            ensure_xdg_runtime_dir();
-        }
+        // (required by wgpu on Linux/Wayland). The writes only happen while the
+        // process is observably single-threaded; otherwise they are skipped and
+        // logged rather than racing a concurrent getenv (Issue #1873).
+        setup_gpu_environment();
 
         // Use safe instance creation to avoid panics from EGL/GL backend probing on Linux
         let instance = create_wgpu_instance_safely().ok_or_else(|| {

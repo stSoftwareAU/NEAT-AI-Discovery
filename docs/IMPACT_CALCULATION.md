@@ -378,6 +378,18 @@ including the `rank_focus_neurons` FFI request, rejects it with a WARN naming
 both the offending value and the substituted default, then proceeds on the
 default (Issue #1807). Note that a JSON number outside `f32` range reaches the
 criterion as `±∞` (`1e39`) or `0.0` (`1e-60`), so it is rejected the same way.
+Issue #1872 closed the last gap in "every entry point": the record-derived
+`rank_focus_neurons` path took the host value raw, and because a NaN `savings`
+makes every removal gate NaN-false it emitted **every** ranked neuron as a
+removal candidate.
+
+A neuron whose own **contribution** (`impact` or `activation_weighted_impact`)
+is non-finite is likewise **never** a removal candidate, on either path — the
+structural one since Issue #1804, the record-derived one since Issue #1872. A
+contribution that cannot be reasoned about must not license a destructive edit;
+because the candidate sort uses `total_cmp`, which orders a positive `NaN` above
+`+∞`, an unguarded NaN neuron ranked *first*. A genuine `0.0` contribution stays
+prunable.
 
 Removal candidates are sorted by `activation_weighted_impact` ascending (lowest
 first = safest to remove). Each candidate also includes `removalSavings`
