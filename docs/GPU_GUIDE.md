@@ -543,8 +543,43 @@ kill -USR1 <pid>
 
 **On Linux**, this prints:
 - Deadlock detection results
-- Signal handler thread backtrace
 - Instructions for using `gdb` to get full thread dumps
+- Set `NEAT_AI_DISCOVERY_SAMPLE_PROGRAM` to name a sampler if you have one
+
+#### The dump degrades, it never disappears (Issue #1934)
+
+`sample` can itself hang on a wedged GPU driver — which is exactly when the dump
+matters. The handler is bounded (killed after 5 s, plus a 500 ms grace) and
+always prints an **in-process state block** that needs no external tool: PID,
+elapsed run time, GPU circuit-breaker state, abandoned-thread count, the last
+watchdog heartbeat, and every outstanding GPU request with how long its caller
+has been waiting. On a wedged GPU that state is usually more actionable than a
+backtrace.
+
+The closing banner names what was actually captured, so an empty dump can never
+be mistaken for a clean one:
+
+```text
+END THREAD DUMP - full dump                # sample completed, output read
+END THREAD DUMP - partial dump             # sample was killed, partial output recovered
+END THREAD DUMP - no backtraces captured   # state block only
+```
+
+```mermaid
+flowchart LR
+    S[kill -USR1] --> D[deadlock check]
+    D --> C{external sampler}
+    C -->|exit 0, output read| F["full dump"]
+    C -->|killed, partial output| P["partial dump"]
+    C -->|hung / failed / no output| N["no backtraces captured"]
+    F --> B[in-process state block]
+    P --> B
+    N --> B
+    B --> E[END THREAD DUMP - &lt;banner&gt;]
+```
+
+Grep field reports for `no backtraces captured` to find dumps where only the
+state block survived.
 
 ### 🐕 Hang Watchdog (unattended machines)
 
