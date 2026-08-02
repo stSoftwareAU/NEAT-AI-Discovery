@@ -332,6 +332,26 @@ If the process crashes mid-recording:
 - Already-written batches are preserved in the temporary file until cleanup
   occurs.
 
+### Failed Finalisation Is Retryable
+
+A `finish_discovery_session` that fails while flushing or renaming — a transient
+`ENOSPC`, `EXDEV`, or `EACCES` — keeps the complete `.parquet.tmp` file on disk
+and leaves the session registered, so calling `finish_discovery_session` again
+with the same session ID retries the rename (Issue #1902). The failure is logged
+at `error` level naming the retained path. Only an abandoned session — one
+cancelled, TTL-swept, or dropped without a finish attempt — has its
+`.parquet.tmp` deleted, as does the empty-session guard below.
+
+```mermaid
+flowchart TD
+    A[finish_discovery_session] --> B{records written?}
+    B -- no --> C[remove session<br/>delete .parquet.tmp] --> D[error: No records were written]
+    B -- yes --> E[flush writer, rename .tmp → .parquet]
+    E -- failed --> F[keep session + .parquet.tmp<br/>log error with retained path] --> G[retry finish_discovery_session]
+    G --> E
+    E -- succeeded --> H[remove session, return file]
+```
+
 ### Empty Session Guard
 
 Calling `finish_discovery_session` without appending any records returns an
