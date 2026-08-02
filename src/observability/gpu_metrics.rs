@@ -41,6 +41,7 @@ pub struct GpuMetrics {
     gpu_busy_time_us: AtomicU64,
     effective_batch_size: AtomicUsize,
     batch_size_reductions: AtomicUsize,
+    stale_skipped: AtomicUsize,
 }
 
 impl GpuMetrics {
@@ -53,6 +54,7 @@ impl GpuMetrics {
             gpu_busy_time_us: AtomicU64::new(0),
             effective_batch_size: AtomicUsize::new(0),
             batch_size_reductions: AtomicUsize::new(0),
+            stale_skipped: AtomicUsize::new(0),
         }
     }
 
@@ -120,6 +122,23 @@ impl GpuMetrics {
         self.batch_size_reductions.load(Ordering::Relaxed)
     }
 
+    /// Record a work request skipped without invoking the analyser (Issue #1929).
+    ///
+    /// Unlike the throughput counters this is recorded unconditionally, not only
+    /// under `NEAT_AI_DISCOVERY_GPU_METRICS=1`: a sustained rise is the
+    /// production signal that the queue is backing up with abandoned requests,
+    /// and it costs one relaxed atomic on a path that is already rare.
+    #[inline]
+    pub fn record_stale_skip(&self) {
+        self.stale_skipped.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Get the number of stale requests skipped without analysis (Issue #1929).
+    #[inline]
+    pub fn stale_skipped(&self) -> usize {
+        self.stale_skipped.load(Ordering::Relaxed)
+    }
+
     /// Calculate GPU utilisation as a percentage.
     ///
     /// Returns the percentage of time the GPU was busy vs total time
@@ -147,6 +166,7 @@ impl GpuMetrics {
             utilisation_percent = format_args!("{:.1}", self.utilisation_percent()),
             batch_size_reductions = reductions,
             effective_batch_size = effective,
+            stale_skipped = self.stale_skipped(),
             "GPU metrics"
         );
     }

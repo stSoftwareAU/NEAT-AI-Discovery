@@ -338,6 +338,29 @@ sequenceDiagram
     W-->>C: results, or a real error before T elapses
 ```
 
+**Stale request skipping** (Issue #1929): a submitter that times out drops its
+liveness guard, so the GPU thread can tell — before it starts work — that nobody
+is left to receive the result. On dequeue the worker skips any request whose
+caller has gone (dropped silently) or whose own `GpuTimeBudget` expired while it
+queued (returned to the still-waiting caller as an error, rather than letting it
+sit out its full timeout). The device-lost retry loop re-checks liveness before
+every attempt, so an abandoned request never costs a `GpuAnalyzer`
+re-initialisation or a back-off sleep. Skips are counted as `stale_skipped` in
+`global_gpu_metrics()` and printed by `NEAT_AI_DISCOVERY_GPU_METRICS=1`; a
+sustained rise alongside `GPU work queue full - send timed out` means the queue
+is backing up with dead entries.
+
+```mermaid
+flowchart LR
+    D[Dequeue request] --> S{Stale?}
+    S -- caller gone --> X[Drop silently<br/>count stale_skipped]
+    S -- budget expired --> E[Send error to caller<br/>count stale_skipped]
+    S -- no --> G[Evaluate on GPU]
+    G -- device lost --> R{Caller still live?}
+    R -- no --> A[Abandon recovery<br/>count stale_skipped]
+    R -- yes --> T[Re-init + retry, up to the retry limit]
+```
+
 **Causes and solutions:**
 - **GPU driver hang**: Restart the process. If persistent, restart the machine.
 - **GPU memory exhaustion**: Reduce `NEAT_AI_DISCOVERY_GPU_BATCH_SIZE` (try 256 or 128).
