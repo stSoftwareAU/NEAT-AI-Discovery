@@ -100,6 +100,17 @@ pub struct AnalyzeParallelInput {
     pub max_neuron_candidates: Option<usize>,
     #[serde(default)]
     pub analysis_deadline_ms: Option<u64>,
+    /// Run the synapse-discovery phase (Issue #1937).
+    ///
+    /// `None` (absent) and `Some(true)` both run the phase. `Some(false)`
+    /// skips it entirely — no GPU work is submitted for it and every
+    /// synapse-specific output field is omitted from the response.
+    #[serde(default)]
+    pub include_synapse_analysis: Option<bool>,
+    /// Run the neuron-discovery phase (Issue #1937). Mirrors
+    /// [`Self::include_synapse_analysis`] for the neuron phase.
+    #[serde(default)]
+    pub include_neuron_analysis: Option<bool>,
     /// Optional RNG seed to make analysis ordering reproducible.
     ///
     /// When `None`, the library uses non-deterministic randomness. This is
