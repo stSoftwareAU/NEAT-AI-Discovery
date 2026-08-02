@@ -380,6 +380,7 @@ The first sign that the GPU is wedged now trips a one-way, process-wide breaker:
 |----------------|------|
 | A GPU thread did not exit within `GPU_SHUTDOWN_TIMEOUT_SECS` and was abandoned | `Drop for GpuWorkQueue` |
 | A batch submission timed out — the queue never accepted it, or the GPU never answered | every `submit_*`/`evaluate_*` entry point |
+| The GPU thread published no progress for `NEAT_AI_DISCOVERY_GPU_STALL_WINDOW_SECS` while a submitter waited | the bounded submitter wait (Issue #1933) |
 | GPU initialisation timed out after `GPU_INIT_TIMEOUT_SECS` | `GpuWorkQueue::new()` |
 
 Once tripped, for the rest of the process: `GpuWorkQueue::new()` returns an error
@@ -415,6 +416,47 @@ stateDiagram-v2
         and the abandoned-thread count.
         Only a process restart clears it.
     end note
+```
+
+### GPU-thread liveness heartbeat (Issue #1933)
+
+The batch timeout alone made the **first** detection cost up to five minutes of a
+one-hour run budget, and the verdict was indistinguishable from "the GPU is slow
+but progressing". The GPU thread now publishes a monotonically increasing
+progress counter at every observable step, and a submitter waits in a bounded
+loop that watches it:
+
+| Step | Where it beats |
+|------|----------------|
+| Request dequeued | `run_work_loop` |
+| Sub-batch submitted | helpful / harmful chunk loops |
+| Buffer map completed | `wait_for_buffer_map` / `wait_for_buffer_maps_batch` |
+| Device poll returned idle | `poll_device_until_idle` |
+| Request completed | `run_work_loop` |
+
+No progress for `NEAT_AI_DISCOVERY_GPU_STALL_WINDOW_SECS` (default 30, range
+1–600, `0` disables) declares the GPU wedged in seconds rather than minutes. A
+beat is published only when a step **completes**, never from inside a poll loop,
+so a spinning driver cannot fake liveness; conversely, a long kernel that keeps
+advancing the counter resets the window and is never flagged. The absolute batch
+timeout remains as the backstop for a heartbeat that cannot be updated at all.
+
+```mermaid
+sequenceDiagram
+    participant S as Submitter
+    participant H as Heartbeat (AtomicU64)
+    participant G as GPU thread
+    S->>G: submit batch
+    loop every poll interval (window / 10)
+        S->>H: read ticks
+        alt ticks advanced
+            G-->>H: beat (dequeue / submit / map / idle)
+            Note over S: still progressing — reset the stall clock
+        else silent past the stall window
+            Note over S: GPU wedged — trip the breaker, fail now
+        end
+    end
+    G-->>S: results (normal path)
 ```
 
 ### What the analyses do once the breaker trips (Issue #1931)

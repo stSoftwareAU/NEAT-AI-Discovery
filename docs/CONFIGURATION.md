@@ -29,6 +29,7 @@ default rather than aborting.
 | `NEAT_AI_DISCOVERY_GPU_BATCH_SIZE` | auto | Override GPU batch size (64–4096). |
 | `NEAT_AI_DISCOVERY_GPU_TIMING` | off | Enable GPU kernel profiling. |
 | `NEAT_AI_DISCOVERY_QUIET_GPU` | off | Suppress Mesa/libEGL debug output. |
+| `NEAT_AI_DISCOVERY_GPU_STALL_WINDOW_SECS` | 30 | How long a submitter tolerates **no GPU-thread progress** before declaring the device wedged (Issue #1933). The GPU thread publishes a liveness heartbeat at every observable step (request dequeued, sub-batch submitted, buffer map completed, device poll returning idle, request completed); a submitter waits in a bounded loop and gives up within this window instead of burning the full 60–300s batch timeout. A slow-but-advancing GPU keeps resetting the window and is never flagged. Accepted range `1–600`; `0` disables the guard, leaving the absolute batch timeout as the only bound; invalid values fall back to the default. Raise it on a genuinely slow machine. |
 | `NEAT_AI_DISCOVERY_GPU_RETRY_LIMIT` | 3 | Maximum consecutive device-lost recovery attempts on the GPU work queue before the pass fails. Accepted range `0–10`; out-of-range or invalid values fall back to the default. |
 | `NEAT_AI_DISCOVERY_ZERO_COPY` | auto-detect | Force-enable (`1`/`true`) or force-disable (`0`/`false`) zero-copy GPU buffers, overriding hardware auto-detection. Unset lets the library decide from the adapter. |
 

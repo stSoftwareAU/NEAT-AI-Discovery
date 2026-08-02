@@ -53,6 +53,9 @@ pub enum GpuTripReason {
     BatchTimeout,
     /// GPU queue creation timed out waiting for the analyser to initialise.
     InitTimeout,
+    /// The GPU thread published no progress for the configured stall window
+    /// while a submitter was waiting on it (Issue #1933).
+    HeartbeatStall,
 }
 
 /// Sentinel for "not tripped".
@@ -60,6 +63,7 @@ const REASON_UNTRIPPED: u8 = 0;
 const REASON_ABANDONED_THREAD: u8 = 1;
 const REASON_BATCH_TIMEOUT: u8 = 2;
 const REASON_INIT_TIMEOUT: u8 = 3;
+const REASON_HEARTBEAT_STALL: u8 = 4;
 
 impl GpuTripReason {
     /// Stable discriminant used for the atomic representation.
@@ -68,6 +72,7 @@ impl GpuTripReason {
             Self::AbandonedThread => REASON_ABANDONED_THREAD,
             Self::BatchTimeout => REASON_BATCH_TIMEOUT,
             Self::InitTimeout => REASON_INIT_TIMEOUT,
+            Self::HeartbeatStall => REASON_HEARTBEAT_STALL,
         }
     }
 
@@ -77,6 +82,7 @@ impl GpuTripReason {
             REASON_ABANDONED_THREAD => Some(Self::AbandonedThread),
             REASON_BATCH_TIMEOUT => Some(Self::BatchTimeout),
             REASON_INIT_TIMEOUT => Some(Self::InitTimeout),
+            REASON_HEARTBEAT_STALL => Some(Self::HeartbeatStall),
             _ => None,
         }
     }
@@ -89,6 +95,9 @@ impl GpuTripReason {
             }
             Self::BatchTimeout => "a GPU batch submission timed out",
             Self::InitTimeout => "GPU initialisation timed out",
+            Self::HeartbeatStall => {
+                "the GPU thread stopped publishing progress while a submitter waited"
+            }
         }
     }
 }
