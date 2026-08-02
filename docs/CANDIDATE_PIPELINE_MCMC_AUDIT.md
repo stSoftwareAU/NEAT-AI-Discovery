@@ -36,7 +36,7 @@ identifies where the analogy breaks down.
 | **Prediction calibration** | `candidate_scoring.rs:557` — `SYNAPSE_PREDICTION_CALIBRATION = 0.001` | — (no MCMC analogue) | Per-type multiplicative correction for 100–10,000× overestimation. Calibration, not sampling |
 | **Impact discounting** | `post_processing.rs` — `apply_impact_to_helpful()` | — (no MCMC analogue) | Structural network-topology weighting (distance to outputs) |
 | **Diversification** | `deadline.rs:342` — `shuffle_within_top_k(DIVERSIFY_TOP_K=64)` | Chain mixing / exploration | Shuffles top-64 candidates for diversity across runs — closest to MCMC exploration, but applied post-hoc to a sorted list rather than as part of a chain's transition kernel |
-| **Ranking & truncation** | `post_processing.rs:386–453` | — (no MCMC analogue) | Sort by `expected_creature_score_gain`, truncate to `max_candidates`. Pure optimisation ranking |
+| **Ranking & truncation** | `post_processing.rs:386–453` | — (no MCMC analogue) | Sort by the reliability-weighted rank score (`ranking_score.rs`, Issue #1924 — improved-sample share banded, `expected_creature_score_gain` breaking ties within a band), truncate to `max_candidates`. Pure optimisation ranking |
 | **Convergence diagnostics** | None | R-hat, ESS, trace plots | **Completely absent**. No chain state is maintained across invocations. Each analysis call is independent |
 
 ## 3. Why This Is Not MCMC

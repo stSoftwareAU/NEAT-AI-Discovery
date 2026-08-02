@@ -398,7 +398,9 @@ widened with records recovered from git history. Pass `--no-history` to study
 the working tree alone.
 
 See [docs/analysis/candidates-cache-study-1920.md](docs/analysis/candidates-cache-study-1920.md)
-for the first run's findings.
+for the first run's findings, and
+[docs/analysis/neuron-ranking-score-1924.md](docs/analysis/neuron-ranking-score-1924.md)
+for the add-neuron ranking change those findings produced.
 
 ### 🔀 Fuzz Testing
 
@@ -573,6 +575,7 @@ graph TD
 | [docs/CANDIDATE_PIPELINE_MCMC_AUDIT.md](docs/CANDIDATE_PIPELINE_MCMC_AUDIT.md) | MCMC applicability audit for candidate selection pipeline |
 | [docs/DROUGHT_PLAYBOOK.md](docs/DROUGHT_PLAYBOOK.md) | Operator playbook for diagnosing "no successful candidates" droughts (suppression layers, regimes, env vars) |
 | [docs/analysis/candidates-cache-study-1920.md](docs/analysis/candidates-cache-study-1920.md) | Findings from the production candidates-cache study: candidate volume and gain-size predictors |
+| [docs/analysis/neuron-ranking-score-1924.md](docs/analysis/neuron-ranking-score-1924.md) | The reliability-weighted add-neuron rank score, and the before/after correlation that accepts it |
 | [CodeWiki](https://codewiki.google/github.com/stsoftwareau/neat-ai-discovery) | AI-powered documentation and code exploration |
 
 ## 📄 Licence

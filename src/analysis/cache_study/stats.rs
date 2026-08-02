@@ -137,6 +137,16 @@ const PREDICTORS: &[PredictorSpec] = &[
         extract: improved_share,
         log_scale: false,
     },
+    // Issue #1924: the value `add-neurons` candidates are now ranked on,
+    // recomputed from each record's own `expectedCreatureScoreGain` and
+    // improved share by the production scorer. The acceptance measure —
+    // `r vs success` for the ranking field — is therefore measured on the same
+    // arithmetic discovery ranks with.
+    PredictorSpec {
+        label: "neuronCandidate.rankScore",
+        extract: rank_score,
+        log_scale: false,
+    },
     PredictorSpec {
         label: "expectedErrorReduction",
         extract: |e| e.record.expected_error_reduction,
@@ -153,6 +163,20 @@ const PREDICTORS: &[PredictorSpec] = &[
         log_scale: false,
     },
 ];
+
+/// The production add-neuron rank score for a cached record (Issue #1924).
+///
+/// Returns `None` when the record carries no `neuronCandidate` prediction or
+/// no sample counts — a missing predictor must not be scored as zero.
+fn rank_score(entry: &CorpusEntry) -> Option<f64> {
+    let gain = entry
+        .record
+        .request_number(&["neuronCandidate", "expectedCreatureScoreGain"])?;
+    let share = improved_share(entry)?;
+    Some(crate::analysis::neuron::ranking_score::neuron_rank_score(
+        gain, share,
+    ))
+}
 
 fn improved_share(entry: &CorpusEntry) -> Option<f64> {
     let improved = entry
