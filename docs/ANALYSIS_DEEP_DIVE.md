@@ -863,9 +863,14 @@ candidates.
 As a production guard rail, add-neuron candidates are only returned when
 their parameters are within sensible bounds:
 
-- **incomingWeight**: |w| ≤ 20
-- **bias**: |b| ≤ 10
-- **outgoingWeight**: |w| ≤ 0.1 (already clamped by the optimiser)
+- **incomingWeight**: |w| ≤ 5
+- **bias**: |b| ≤ 2
+- **outgoingWeight**: |w| ≤ 0.01 (already clamped by the optimiser)
+
+Issue #888 tightened all three from their original values after the production
+discovery cache showed the wider ranges produced the "Extreme" pattern that
+almost always fails. Non-linear activations compress their output range, so
+they are allowed a larger outgoing ceiling of 0.03 (Issue #905).
 
 ### 🚫 IDENTITY neuron filtering
 

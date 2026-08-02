@@ -217,7 +217,7 @@ checklist for adding a new cost to NEAT-AI, see
 | [Remove Low-Impact](#remove-low-impact-neurons) | `neuron/` | — | `removeNeuron` | 🟢 Active |
 | [Remove Harmful Synapse](#remove-harmful-synapse) | `synapse/` | #416 | `removeSynapse` | 🟢 Active |
 | [Remove Neuron (Error)](#remove-neuron-high-error) | `focus/` | #414 | `removeNeuron` | ⛔ Disabled |
-| [Batch-Successful Grouping](#batch-successful-grouping) | `recommendation/batch_successful/` | #965 | `coordinatedStructural` (multiple) | 🟢 Active |
+| [Batch-Successful Grouping](#batch-successful-grouping) | `recommendation/batch_successful/` | #965 | `coordinatedStructural` (multiple) | ⛔ Disabled by default |
 
 ### 🏷️ Status Legend
 
@@ -228,7 +228,7 @@ checklist for adding a new cost to NEAT-AI, see
 | 🟠 Not tested | Rust produces candidates but NEAT-AI does not test them yet |
 | ⚠️ Low volume | Working but rarely suggested |
 | 🔴 Not working | Being tested but 0% success rate |
-| ⛔ Disabled | Permanently disabled due to fundamental flaw |
+| ⛔ Disabled | Off in the shipped defaults — either permanently disabled due to a fundamental flaw, or gated behind an opt-in environment variable |
 
 ---
 
@@ -871,7 +871,7 @@ operations.
 
 **Purpose**: Identifies hidden neurons whose activations are consistently
 near-zero but above the dead-neuron threshold. These neurons sit in the
-"twilight zone" between truly dead (< 1e-6) and meaningfully active (> 1e-3)
+"twilight zone" between truly dead (< 1e-6) and meaningfully active (> 0.04)
 — they contribute virtually nothing to the network's output yet still consume
 complexity budget. Removing them simplifies the creature without meaningful
 accuracy loss.
@@ -882,9 +882,12 @@ with a tiered confidence approach.
 **Detection criteria**:
 
 1. **Mean absolute activation** between the dead threshold (1e-6) and
-   the low-impact ceiling (1e-3).
+   the low-impact ceiling (0.04). Issue #892 widened the ceiling after
+   production evidence showed successful `remove-low-impact` candidates with
+   mean activation up to ~0.04.
 2. **Low activation variance**: The neuron is consistently near-zero, not
-   sporadically spiking.
+   sporadically spiking. The absolute standard-deviation ceiling widened with
+   it (Issue #892) and is now 0.02.
 3. **Hidden neurons only**: Output and input neurons are excluded.
 4. **Sufficient samples**: At least `MIN_DISCOVERY_SAMPLE_COUNT` records.
 
@@ -1698,7 +1701,7 @@ target neuron.
     "neuronCandidate": {
       "incomingWeight": 0.35,
       "outgoingWeight": 0.01,
-      "bias": 10,
+      "bias": 1.2,
       "squash": "ABSOLUTE",
       "expectedCreatureScoreGain": 0.000010214326
     }
@@ -1735,9 +1738,15 @@ handled this by searching over multiple weight candidates, but the add-synapse
 path used only the single linear-model weight.
 
 **Fix**: For saturating target activations, the add-synapse path now searches
-over 9 weight candidates (scaled versions of the linear-model weight), matching
-the approach used by add-neuron candidates. The candidate with the best
-predicted improvement is selected.
+over multiple weight candidates (variations on the linear-model weight),
+matching the approach used by add-neuron candidates. The candidate with the
+best predicted improvement is selected.
+
+**Weight search** (Issue #1019): once a target type has accumulated
+`ADAPTIVE_PROPOSAL_MIN_HISTORY` outcomes, the live path samples
+`ADAPTIVE_PROPOSAL_CANDIDATE_COUNT` = 12 weights from an adaptive proposal
+distribution centred on the linear-model weight. The fixed 9-variant grid is
+only the no-history **fallback**.
 
 **Current status**: 🟡 Fixed (Issue #413) — awaiting production validation.
 Target: 15–20% success rate (up from 10%).
@@ -1757,7 +1766,11 @@ complexity.
 **How it works**:
 
 1. Rust computes each neuron's `activation_weighted_impact`.
-2. Neurons with impact < `costOfGrowth` (default: 1e-7) are candidates.
+2. The neuron is a candidate when its **boosted** complexity savings beat that
+   impact by at least the noise floor. The criterion lives in one place —
+   [docs/FOCUS_SELECTION.md § 4.1](FOCUS_SELECTION.md#41-removal-is-the-near-opposite-axis-to-focus-issue-1767)
+   — and is not restated here. A sole-op `RemoveNeuron` must additionally clear
+   the net-gain rule (`src/analysis/remove_neuron_net_gain.rs`, Issue #1812).
 3. Removing these neurons reduces complexity without meaningful accuracy loss.
 
 **Example success**:
@@ -1768,7 +1781,7 @@ complexity.
   "rustRequest": {
     "removalCandidate": {
       "impact": 1.1132797e-10,
-      "reason": "Impact 2.14e-11 < costOfGrowth (1.00e-7), 2 synapses, saves 1.20e-7"
+      "reason": "Removal improves score: saves 1.20e-7 (boosted 1.5×) > impact 2.14e-11 (net +1.20e-7), 2 synapses, costOfGrowth=1.00e-7"
     }
   }
 }
@@ -1834,7 +1847,7 @@ neurons).
 2. These neurons were presumed to be destabilising the network.
 3. Removing them was predicted to improve the overall score.
 
-**Current status**: 🔴 **DISABLED** (Issue #414)
+**Current status**: ⛔ **Disabled** (Issue #414)
 
 Production data showed a 0% success rate (0 successes from 2 attempts). The
 fundamental assumption was flawed:
@@ -1973,6 +1986,14 @@ Groups multiple individually high-confidence candidates into combined operations
 for batch application. Unlike epistatic pair detection (which finds synergistic
 pairs that individually fail), this module batches proven winners for combined
 testing.
+
+**Current status**: ⛔ **Disabled by default** (Issue #1059). The module
+recorded zero production successes, so dispatch is gated on
+`batch_successful_enabled()` and the module is skipped unless
+`NEAT_AI_DISCOVERY_BATCH_SUCCESSFUL=1` is set. See
+[docs/CONFIGURATION.md](CONFIGURATION.md) for the environment variable. The
+detection strategy below describes the module as it behaves once re-enabled for
+experimentation.
 
 **Detection strategy**:
 
