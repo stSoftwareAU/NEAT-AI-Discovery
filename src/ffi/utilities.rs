@@ -470,6 +470,10 @@ pub unsafe extern "C" fn cleanup_discovery_dir(
 /// `NotFound` errors are suppressed because the async cleanup actor may have
 /// removed the directory between the orphan check and the removal call.
 ///
+/// The lock is re-read immediately before each removal (Issue #1903), so a
+/// directory a session claimed mid-sweep is left in place and reported under
+/// `claimed` rather than `removed`.
+///
 /// Input JSON:
 /// ```json
 /// { "baseDir": "/path/to/.discovery" }
@@ -477,7 +481,7 @@ pub unsafe extern "C" fn cleanup_discovery_dir(
 ///
 /// Output JSON:
 /// ```json
-/// { "success": true, "removed": 2, "alreadyGone": 0, "removalErrors": [] }
+/// { "success": true, "removed": 2, "alreadyGone": 0, "claimed": 0, "removalErrors": [] }
 /// ```
 ///
 /// # Safety
@@ -520,6 +524,7 @@ pub unsafe extern "C" fn clean_orphaned_discovery_dirs(
                     success: false,
                     removed: None,
                     already_gone: None,
+                    claimed: None,
                     removal_errors: None,
                     error: Some(typed.to_string()),
                     error_kind: Some(kind),
@@ -542,6 +547,7 @@ pub unsafe extern "C" fn clean_orphaned_discovery_dirs(
                     success: true,
                     removed: Some(result.removed),
                     already_gone: Some(result.already_gone),
+                    claimed: Some(result.claimed),
                     removal_errors,
                     error: None,
                     error_kind,
@@ -555,6 +561,7 @@ pub unsafe extern "C" fn clean_orphaned_discovery_dirs(
                     success: false,
                     removed: None,
                     already_gone: None,
+                    claimed: None,
                     removal_errors: None,
                     error: Some(err_msg),
                     error_kind,
