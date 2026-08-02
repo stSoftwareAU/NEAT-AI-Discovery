@@ -8,6 +8,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+#### `remove-low-impact` ranks on a live activation-weighted signal (Issue #1923)
+
+The structural removal path built every candidate with `mean_activation: 0.0`
+and a reason string calling the activation-weighted gate "deferred to analysis";
+nothing downstream ever resolved the deferral. The #1920 cache study measured
+the cost — `removalCandidate.impact` correlated with realised gain at r = −0.036
+and `meanActivation` had zero variance across all 67 cached records, so the
+strategy behind 79% of realised gain picked arbitrarily from its eligible pool.
+The gate now resolves in the same call, from a two-column
+(`neuron_uuid` + `activation`) streaming Parquet pass that materialises no
+records and runs only after focus selection is fixed, so it does not reintroduce
+the Issue #1766 focus stall. Candidates are ranked on
+`removalSavings − activationWeightedImpact`, and Issue #892's active-neuron gate
+is now reachable on this path. When records cannot be read the fields stay
+unmeasured, the `reason` says so, a WARN is emitted, and unmeasured candidates
+rank below every measured one.
+
 #### `append_discovery_records` no longer acknowledges a cancelled session (Issue #1876)
 
 `append_records` could return `Ok(records_in_batch)` for a session that

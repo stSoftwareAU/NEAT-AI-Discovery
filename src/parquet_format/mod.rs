@@ -5,6 +5,7 @@
 //! - `writer` — Parquet writing and serialisation
 //! - `reader` — Parquet reading and deserialisation
 
+pub mod activation_summary;
 pub mod decode_budget;
 pub mod footer;
 mod reader;
@@ -13,6 +14,7 @@ pub mod shared_records;
 mod writer;
 
 // Re-export public API at the parquet_format level for backward compatibility
+pub use activation_summary::{ActivationSummary, read_mean_abs_activation_by_neuron};
 pub use reader::{
     ColumnProfile, read_all_records_from_parquet, read_all_records_grouped_by_neuron,
     read_all_records_grouped_by_neuron_bounded, read_all_records_grouped_by_neuron_with_deadline,

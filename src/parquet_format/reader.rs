@@ -26,14 +26,22 @@ pub enum ColumnProfile {
     /// Core analysis columns without errors: `obs_index`, `neuron_uuid`, `value`, `activation`.
     /// Records returned with this profile have an empty `errors` vec.
     WithoutErrors,
+    /// `neuron_uuid` + `activation` only (Issue #1923).
+    ///
+    /// The narrowest profile in the crate: enough to aggregate per-neuron
+    /// activation statistics without materialising a single `DiscoverRecord`.
+    /// It cannot be used with the record readers — only with
+    /// [`crate::parquet_format::read_mean_abs_activation_by_neuron`].
+    ActivationOnly,
 }
 
 impl ColumnProfile {
     /// Root column indices for the discovery Parquet schema.
-    fn root_indices(self) -> Vec<usize> {
+    pub(crate) fn root_indices(self) -> Vec<usize> {
         match self {
             Self::Full => vec![0, 1, 2, 3, 4],
             Self::WithoutErrors => vec![0, 1, 2, 3],
+            Self::ActivationOnly => vec![1, 3],
         }
     }
 
@@ -52,7 +60,7 @@ impl ColumnProfile {
 /// This distinguishes external deletion (e.g., host cleaned up temp directory)
 /// from other I/O errors such as corruption or permission issues, allowing
 /// callers to return partial results instead of crashing.
-fn open_parquet_file(file_path: &str) -> Result<File> {
+pub(crate) fn open_parquet_file(file_path: &str) -> Result<File> {
     // Reject .parquet.tmp files — these are incomplete writes (Issue #1085)
     if file_path.ends_with(".parquet.tmp") {
         tracing::warn!(
@@ -122,11 +130,12 @@ pub(crate) fn validate_parquet_schema(
 
     // The discovery schema has 5 root columns (errors has a nested child, so
     // the Parquet schema may report 6 columns). Check that we have at least
-    // the minimum required columns for the requested profile.
-    let required_count = match profile {
-        ColumnProfile::Full => 5,
-        ColumnProfile::WithoutErrors => 4,
-    };
+    // the minimum required columns for the requested profile — the highest root
+    // index it projects must exist (Issue #1923: profiles are no longer
+    // guaranteed to be a leading prefix of the schema).
+    let root_indices = profile.root_indices();
+    let max_index = root_indices.iter().copied().max().unwrap_or(0);
+    let required_count = max_index + 1;
 
     if num_columns < required_count {
         return Err(DiscoveryError::Io {
@@ -138,10 +147,6 @@ pub(crate) fn validate_parquet_schema(
         }
         .into());
     }
-
-    // Verify that the root column indices we need exist in the schema
-    let root_indices = profile.root_indices();
-    let max_index = root_indices.iter().copied().max().unwrap_or(0);
 
     // Use the Arrow schema from the builder to check column names
     let arrow_schema = builder.schema();
@@ -158,15 +163,13 @@ pub(crate) fn validate_parquet_schema(
         .into());
     }
 
-    // Check that column names match expected names
-    let columns_to_check = match profile {
-        ColumnProfile::Full => EXPECTED_COLUMNS,
-        ColumnProfile::WithoutErrors => &EXPECTED_COLUMNS[..4],
-    };
-
+    // Check that column names match expected names. The expected name for a
+    // projected root index is simply the discovery schema's name at that index,
+    // so this holds for any subset — prefix or not (Issue #1923).
     let expected_schema = create_schema();
 
-    for (idx, expected_name) in root_indices.iter().zip(columns_to_check.iter()) {
+    for idx in &root_indices {
+        let expected_name = &EXPECTED_COLUMNS[*idx];
         let actual_field = arrow_schema.field(*idx);
         let actual_name = actual_field.name();
         if actual_name != *expected_name {

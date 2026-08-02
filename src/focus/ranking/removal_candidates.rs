@@ -162,8 +162,9 @@ pub(crate) struct RemovalCandidateOutcome {
     pub savings_below_impact_rejections: u32,
     /// Number of neurons dropped because they were still actively contributing
     /// (mean activation above [`REMOVAL_MEAN_ACTIVATION_THRESHOLD`] with
-    /// meaningful impact — Issue #892, counted from Issue #1808). Always `0` on
-    /// the structure-only path, which has no activations to measure.
+    /// meaningful impact — Issue #892, counted from Issue #1808). `0` out of the
+    /// structure-only triage, which has no activations to measure; Issue #1923's
+    /// gate resolver then fills it in from the measured activations.
     pub active_neuron_rejections: u32,
     /// Number of neurons that entered triage, whatever their verdict.
     pub considered: u32,
@@ -180,7 +181,7 @@ impl RemovalCandidateOutcome {
     /// Enforce the conservation invariant at every construction site, so a new
     /// drop path that forgets its counter trips immediately in dev and test
     /// rather than under-reporting to consumers (Issue #1808).
-    fn assert_conserved(&self) {
+    pub(super) fn assert_conserved(&self) {
         debug_assert_eq!(
             u32::try_from(self.candidates.len()).unwrap_or(u32::MAX) + self.total_rejections(),
             self.considered,
@@ -512,14 +513,23 @@ fn structural_removal_verdict(
         outgoing_synapses: outgoing,
         removal_savings: boosted_savings,
         // Structural first-pass estimate; the activation-weighted value is
-        // refined in the analysis phase.
+        // refined by the gate resolver (Issue #1923).
         expected_error_reduction: contribution,
         reason: format!(
-            "Structural removal (Issue #1767): saves {savings:.2e} (boosted {REMOVAL_CANDIDATE_BOOST:.1}×) > structural impact {contribution:.2e} (net +{net_improvement:.2e}), {} synapses, costOfGrowth={growth_cost:.2e}; activation-weighted gate deferred to analysis",
+            "Structural removal (Issue #1767): saves {savings:.2e} (boosted {REMOVAL_CANDIDATE_BOOST:.1}×) > structural impact {contribution:.2e} (net +{net_improvement:.2e}), {} synapses, costOfGrowth={growth_cost:.2e}; {ACTIVATION_GATE_PENDING}",
             incoming + outgoing,
         ),
     }))
 }
+
+/// Reason-string clause marking a structural candidate whose activation-weighted
+/// gate has not been resolved yet (Issue #1923).
+///
+/// [`resolve_activation_weighted_gate`](super::activation_weighting::resolve_activation_weighted_gate)
+/// replaces this clause with the measured outcome. If it survives to the wire,
+/// the gate genuinely did not run — the reason string says so rather than
+/// presenting an unmeasured `meanActivation` of `0.0` as a measurement.
+pub(super) const ACTIVATION_GATE_PENDING: &str = "activation-weighted gate pending";
 
 /// Identify removal candidates from creature **structure alone** — the
 /// near-opposite axis to focus selection (Issue #1767).
@@ -537,12 +547,18 @@ fn structural_removal_verdict(
 /// reintroduces the focus-time parquet dependency that caused the ~2h focus stall
 /// (#1766), and is `O(neurons + synapses)` — comfortably under the seconds bar.
 ///
-/// The activation-weighted gates that genuinely need records — the
-/// mean-activation guard and constant-neuron variance folding — are deliberately
-/// **not** applied here; they run later in the analysis phase after the focus set
-/// is fixed. To mark them as not-yet-measured this triage sets `mean_activation`
-/// and `activation_weighted_impact` to `0.0`; `expected_error_reduction` carries
-/// the structural contribution as a first-pass estimate, refined in analysis.
+/// The activation-weighted gates that genuinely need records are **not** applied
+/// here. This triage marks them not-yet-measured by setting `mean_activation`
+/// and `activation_weighted_impact` to `0.0` and tagging the reason string with
+/// [`ACTIVATION_GATE_PENDING`]; `expected_error_reduction` carries the
+/// structural contribution as a first-pass estimate.
+///
+/// Issue #1923: that pending marker is resolved by
+/// [`identify_removal_candidates_for_focus`](super::identify_removal_candidates_for_focus),
+/// which runs this triage and then measures the surviving candidates from a
+/// projected activation-only parquet pass. Callers wanting the ranked, gated
+/// result should use that entry point; this function alone leaves the
+/// activation-weighted signal dead, which is the defect #1923 fixed.
 ///
 /// Only **hidden** neurons are considered: outputs (seeded at impact `1.0`) and
 /// inputs / constants are never removal targets.
@@ -568,7 +584,19 @@ pub(crate) fn identify_structural_removal_candidates(
     creature: &CreatureJson,
     cost_of_growth: Option<f32>,
 ) -> RemovalCandidateOutcome {
-    let growth_cost = effective_cost_of_growth(cost_of_growth);
+    identify_structural_removal_candidates_at(creature, effective_cost_of_growth(cost_of_growth))
+}
+
+/// [`identify_structural_removal_candidates`] with an **already-validated**
+/// `growth_cost` (Issue #1923).
+///
+/// The activation-weighted gate resolver needs the same validated value to
+/// denominate its noise floor, and validating once means a nonsense host
+/// `costOfGrowth` is warned about once, not twice.
+pub(super) fn identify_structural_removal_candidates_at(
+    creature: &CreatureJson,
+    growth_cost: f32,
+) -> RemovalCandidateOutcome {
     let impacts = crate::focus::impact::compute_impacts_public(creature);
     let synapse_counts = SynapseCounts::new(creature);
     // Issue #1814: denominated in units of the *validated* `costOfGrowth`, so
@@ -627,8 +655,8 @@ pub(crate) fn identify_structural_removal_candidates(
         candidates,
         noise_floor_rejections,
         savings_below_impact_rejections,
-        // Never measured on the structure-only path — the mean-activation gate
-        // needs records and stays in the analysis phase.
+        // Not measurable here — the mean-activation gate needs records, so it
+        // runs in the Issue #1923 resolver, which adds to this counter.
         active_neuron_rejections: 0,
         considered,
     };

@@ -105,7 +105,7 @@ Focus and removal are **opposite axes over the same structural impact map**:
 | Concern | Structural criterion | Parquet at focus time |
 |---------|----------------------|-----------------------|
 | **Focus** | **High** structural impact — weighted-random draw, outputs seed at `1.0` (§2) | **Never** |
-| **Removal** | Near-**opposite**: **low** structural contribution vs the complexity **savings** of pruning the neuron and its synapses | **Never** — activation-weighted gates deferred to analysis |
+| **Removal** | Near-**opposite**: **low** structural contribution vs the complexity **savings** of pruning the neuron and its synapses | Not while **choosing** the candidate set; an activation-only pass then measures the survivors (§4.2) |
 
 [`identify_structural_removal_candidates`](../src/focus/ranking/removal_candidates.rs)
 flags a **hidden** neuron for removal when the boosted complexity savings of
@@ -141,7 +141,7 @@ always equals the hidden neurons considered. Both gates report through the same
 | `boostedSavings > contribution` and margin ≥ noise floor | a `removalCandidates[]` entry |
 | `boostedSavings ≤ contribution` | `removal_savings_below_impact` |
 | margin < noise floor | `removal_below_noise_floor` |
-| mean activation above threshold (record-derived path only) | `removal_active_neuron` |
+| mean activation above threshold | `removal_active_neuron` |
 
 ```mermaid
 flowchart LR
@@ -159,21 +159,54 @@ flowchart LR
 `hidden_neurons_considered`, so the structure-only adapter and the shipped FFI
 path can no longer diverge on what they report.
 
-### 4.2 Activation-weighted gates stay in the analysis phase
+### 4.2 The activation-weighted gate resolves after selection (Issue #1923)
 
-The gates that genuinely need records run **later**, after the focus set is
-fixed — never as a prerequisite of picking focus neurons:
+Structural triage picks the candidate **set**; it cannot rank it. Until #1923
+every candidate shipped with `meanActivation: 0.0`, a hard-coded value the
+reason string called "deferred to analysis" — and nothing downstream ever
+resolved the deferral. The #1920 cache study measured the cost:
+`removalCandidate.impact` correlated with realised gain at **r = −0.036**, and
+`meanActivation` had **zero variance** across all 67 cached records, so
+`remove-low-impact` — 53% of every cached candidate and 79% of all realised gain
+— picked arbitrarily from its eligible pool.
 
-- The **mean-activation guard** and the record-derived
-  `activationWeightedImpact = structuralImpact × meanActivation` refinement.
-- **Constant-neuron folding** (`constantNeuronRemovals`, #306), which folds a
-  near-zero-variance neuron into downstream biases and therefore needs recorded
-  activation variance.
+The gate now resolves in the same pass, **after** selection is complete:
 
-On the structure-only focus path each surfaced removal candidate reports
-`meanActivation = 0` and `activationWeightedImpact = 0` to mark those fields as
-**not yet measured**; `impact` carries the structural contribution and
-`expectedErrorReduction` is a structural first-pass estimate refined in analysis.
+```mermaid
+flowchart LR
+    C["creature topology"] --> S["focus selection<br/>(structure only, §3)"]
+    C --> T["structural removal triage<br/>(§4.1, no parquet)"]
+    T --> W["activation-only parquet pass<br/>neuron_uuid + activation, no records materialised"]
+    W --> G{"gate:<br/>meanActivation ≤ 0.04?<br/>savings &gt; awi ≥ noiseFloor?"}
+    G -- no --> B["rejectionBreakdown"]
+    G -- yes --> R["removalCandidates[]<br/>ranked by savings − awi"]
+```
+
+- The measurement pass projects **two** columns and materialises **no**
+  `DiscoverRecord`s, so it never decodes the `errors` list that dominates the
+  file — it is not the multi-GB record warm §3 removed. It runs strictly after
+  the focus set is fixed and is bounded by the shared discovery deadline, so it
+  cannot delay or alter focus selection.
+- `activationWeightedImpact = impact × meanActivation` is now live, and
+  candidates are ranked on `removalSavings − activationWeightedImpact` —
+  the same criterion the record-derived path uses.
+- `expectedErrorReduction` carries the activation-weighted contribution the
+  removal gives up (#117), not a structural first-pass estimate.
+
+**Constant-neuron folding** (`constantNeuronRemovals`, #306) still stays off
+this path: it needs recorded activation *variance* and per-record bias folding,
+not a single aggregate, so it remains in the analysis phase.
+
+#### When the gate cannot resolve
+
+An unreadable parquet, or a candidate with no recorded rows, leaves
+`meanActivation` / `activationWeightedImpact` at `0.0` — but never silently:
+
+- the candidate's `reason` says `activation-weighted gate pending — unresolved:
+  <error>` or `— no recorded activation samples`;
+- an I/O failure also emits a WARN naming the file and the error; and
+- unmeasured candidates rank **below** every measured one, so a zero that means
+  "not measured" can never be mistaken for the best available removal.
 
 ## 5. What the FFI surfaces
 

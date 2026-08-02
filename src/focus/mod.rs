@@ -71,5 +71,7 @@ pub use ranking::{
     rank_focus_neurons_with_descriptor_and_deadline, rank_focus_neurons_with_history,
     rank_focus_neurons_with_history_and_descriptor, triage_removal_candidates,
 };
-// Issue #1767: structure-only removal triage (near-opposite axis to focus).
-pub(crate) use ranking::identify_structural_removal_candidates;
+// Issue #1767: structure-only removal triage (near-opposite axis to focus),
+// wrapped by Issue #1923's activation-weighted gate resolution — together they
+// are the removal triage the FFI focus path runs.
+pub(crate) use ranking::identify_removal_candidates_for_focus;

@@ -10,9 +10,12 @@
 //! - `score_calculation` — Individual neuron ranking score computation
 //! - `removal_candidates` — Removal candidate identification and constant neuron removal
 //! - `removal_triage` — Structure-only removal triage, no parquet (Issue #1767)
+//! - `activation_weighting` — Resolves the activation-weighted removal gate the
+//!   structural triage defers (Issue #1923)
 //! - `reconstruction` — Reconstruction-mismatch focus signal (Issue #1634)
 
 #![allow(clippy::cast_possible_truncation)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
+mod activation_weighting;
 mod reconstruction;
 pub(super) mod record_providers;
 mod removal_candidates;
@@ -22,9 +25,11 @@ mod score_calculation;
 // Re-export public API — all items remain accessible via `crate::focus::ranking::*`
 pub use record_providers::RecordProvider;
 pub use removal_candidates::{RemovalCandidate, SynapseCounts, calculate_removal_savings};
-// Issue #1767: structure-only removal triage helper — re-exported so `focus/mod.rs`
-// (and the FFI layer) can reach it via `crate::focus::ranking::*`.
-pub(crate) use removal_candidates::identify_structural_removal_candidates;
+// Issue #1923: the shipped focus entry point — Issue #1767's structure-only
+// triage plus the activation-weighted gate that triage used to defer
+// indefinitely. Re-exported so `focus/mod.rs` (and the FFI layer) can reach it
+// via `crate::focus::ranking::*`.
+pub(crate) use activation_weighting::identify_removal_candidates_for_focus;
 pub use removal_triage::{
     StructuralRemovalCandidate, StructuralRemovalTriage, triage_removal_candidates,
 };
