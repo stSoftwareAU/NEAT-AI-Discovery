@@ -409,6 +409,45 @@ stateDiagram-v2
     end note
 ```
 
+### What the analyses do once the breaker trips (Issue #1931)
+
+Stopping GPU work is only half the answer — the analyses still have the rest of
+the run's budget to spend. They **skip** the GPU work and exit normally with a
+signalled partial result, mirroring the cancellation path, rather than
+propagating the breaker error and discarding the CPU-side accounting:
+
+| Entry point | Returns |
+|-------------|---------|
+| `analyze_all` | `Ok(AnalyzeAllResult { gpu_wedged: true, synapse: None, neuron: None, .. })` |
+| `analyze_neurons_with_cache` | `Ok(AnalyzeNeuronsResult)` with no candidates and `metadata.gpu_wedged` |
+| `analyze_synapses_with_cache` | `Ok(AnalyzeSynapsesResult)` with no candidates and `metadata.gpu_wedged` |
+
+The CPU-side bookkeeping that does not depend on GPU results still runs, so the
+run's accounting stays correct: neuron fingerprints, the fingerprint cache
+hit/miss counts, the module outcome tracker, and the pass rejection breakdown —
+which records one `gpu_wedged` count per focus neuron that was never evaluated.
+
+There is **no CPU fallback** for these analyses (Issue #1419 removed that false
+claim), so the result is genuinely empty. `AnalysisOutcome::from_result` maps a
+wedged pass to `EnvironmentallyDisabled { reason: GpuWedged }` — surfaced over
+FFI as `environmentalGates.environmentallyDisabled: "gpuWedged"` — so drought,
+cooldown and starvation accounting exclude it instead of counting it as search
+exhaustion. `GpuWedged` is distinct from `GpuUnavailable`: the host *has* a
+usable GPU that stopped responding mid-run, and the remedy is an external
+process restart rather than a hardware or driver change.
+
+The skip is announced **once per run**, not once per analysis attempt:
+
+```text
+WARN GPU analyses skipped for the rest of this run because the GPU is wedged —
+     there is no CPU fallback, so these results are genuinely empty rather than
+     a zero-candidate success. An external process restart is required to use
+     the GPU again.
+```
+
+Its absence while the breaker is tripping means the skip path regressed;
+repeated identical warnings mean the once-per-run latch regressed.
+
 **Causes and solutions:**
 - **GPU driver hang**: Restart the process. If persistent, restart the machine.
 - **GPU memory exhaustion**: Reduce `NEAT_AI_DISCOVERY_GPU_BATCH_SIZE` (try 256 or 128).

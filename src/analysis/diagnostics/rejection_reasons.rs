@@ -139,6 +139,14 @@ pub const REJECTION_NO_TARGET_RECORDS: &str = "no_target_records";
 /// full budget on a guaranteed-empty pass.
 pub const REJECTION_INSUFFICIENT_RECORDING: &str = "insufficient_recording";
 
+/// Analysis was skipped because the GPU circuit breaker had tripped — the GPU
+/// is wedged for the life of this process (Issue #1930, #1931).
+///
+/// One count is recorded per focus neuron that was never evaluated. There is no
+/// CPU fallback for these analyses (Issue #1419), so the pass is genuinely
+/// empty; this reason is what stops it reading as a zero-candidate success.
+pub const REJECTION_GPU_WEDGED: &str = "gpu_wedged";
+
 /// Target had no upstream neurons eligible for analysis.
 pub const REJECTION_NO_ELIGIBLE_SOURCES: &str = "no_eligible_sources";
 
@@ -378,6 +386,7 @@ pub const ALL_REJECTION_REASONS: &[&str] = &[
     REJECTION_BELOW_THRESHOLD,
     REJECTION_NO_TARGET_RECORDS,
     REJECTION_INSUFFICIENT_RECORDING,
+    REJECTION_GPU_WEDGED,
     REJECTION_NO_ELIGIBLE_SOURCES,
     REJECTION_INPUT_NEURON_FILTERED,
     REJECTION_HIDDEN_NEURON_FILTERED,
@@ -564,6 +573,11 @@ fn friendly_reason(reason: &str) -> String {
         REJECTION_INSUFFICIENT_RECORDING => {
             "insufficient Parquet recording for the selected focus neurons \
              (record phase likely timed out)"
+                .to_string()
+        }
+        REJECTION_GPU_WEDGED => {
+            "GPU wedged — the circuit breaker tripped, so no GPU work was attempted \
+             (there is no CPU fallback; restart the process)"
                 .to_string()
         }
         REJECTION_NO_ELIGIBLE_SOURCES => "no eligible upstream sources".to_string(),

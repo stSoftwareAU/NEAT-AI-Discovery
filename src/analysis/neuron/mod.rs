@@ -110,13 +110,24 @@ pub fn analyze_neurons(input: &AnalyzeNeuronsInput) -> Result<AnalyzeNeuronsResu
     analyze_neurons_with_cache(input, cache)
 }
 
-/// Internal neuron analysis function that accepts a pre-built cache.
-/// This allows sharing the cache between synapse and neuron analysis
-/// in `analyze_all`.
-pub(crate) fn analyze_neurons_with_cache(
+/// Neuron analysis against a pre-built cache.
+///
+/// This allows sharing the cache between synapse and neuron analysis in
+/// `analyze_all`. Public so external tests can exercise the GPU-wedged skip
+/// path without a GPU (Issue #1931).
+pub fn analyze_neurons_with_cache(
     input: &AnalyzeNeuronsInput,
     cache: Arc<RecordCache>,
 ) -> Result<AnalyzeNeuronsResult> {
+    // Issue #1931: the GPU is wedged for the life of this process, so skip the
+    // GPU work and return a signalled empty result rather than erroring — there
+    // is no CPU fallback (Issue #1419), so this pass is genuinely empty.
+    if crate::analysis::gpu::breaker::gpu_wedged_skip_reason().is_some() {
+        return Ok(crate::analysis::gpu_wedged::neuron_wedged_result(
+            &input.focus_neurons,
+        ));
+    }
+
     let deadline = build_deadline(input.analysis_deadline_ms);
     let gpu_queue = Arc::new(
         GpuWorkQueue::new()

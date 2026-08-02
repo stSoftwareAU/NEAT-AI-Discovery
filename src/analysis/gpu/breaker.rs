@@ -31,7 +31,7 @@
 //! The abandoned-thread count deliberately stays in the one place production
 //! reads it from: [`global_gpu_metrics()`].
 
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
 use anyhow::{Result, anyhow};
 
@@ -105,6 +105,9 @@ impl std::fmt::Display for GpuTripReason {
 #[derive(Debug)]
 pub struct GpuCircuitBreaker {
     reason: AtomicU8,
+    /// Latch for [`Self::warn_analyses_skipped`] — one warn per run, not one
+    /// per analysis attempt (Issue #1931).
+    skip_warned: AtomicBool,
 }
 
 impl GpuCircuitBreaker {
@@ -112,6 +115,7 @@ impl GpuCircuitBreaker {
     pub const fn new() -> Self {
         Self {
             reason: AtomicU8::new(REASON_UNTRIPPED),
+            skip_warned: AtomicBool::new(false),
         }
     }
 
@@ -183,6 +187,35 @@ impl GpuCircuitBreaker {
         }
     }
 
+    /// Announce **once per run** that the analyses are skipping their GPU work
+    /// (Issue #1931).
+    ///
+    /// [`Self::trip`] explains why the GPU was declared wedged; this explains
+    /// what the analyses did about it. It is separate because the trip happens
+    /// once, deep inside the queue, whereas the skip is decided at every
+    /// analysis entry point — without this latch a run would emit one identical
+    /// warning per analysis attempt.
+    ///
+    /// There is no CPU fallback for these analyses (Issue #1419), so a skipped
+    /// pass is genuinely empty rather than a zero-candidate success.
+    pub fn warn_analyses_skipped(&self, reason: GpuTripReason) {
+        if self.skip_warned.swap(true, Ordering::AcqRel) {
+            tracing::debug!(
+                reason = reason.as_str(),
+                "GPU analyses skipped — already warned once this run"
+            );
+            return;
+        }
+        tracing::warn!(
+            reason = reason.as_str(),
+            abandoned_gpu_threads = abandoned_gpu_thread_count(),
+            "GPU analyses skipped for the rest of this run because the GPU is wedged — \
+             there is no CPU fallback, so these results are genuinely empty rather than a \
+             zero-candidate success. An external process restart is required to use the \
+             GPU again."
+        );
+    }
+
     /// The error every suppressed GPU entry point returns: the original trip
     /// reason plus the abandoned-thread count.
     fn error(&self, reason: GpuTripReason) -> anyhow::Error {
@@ -202,6 +235,7 @@ impl GpuCircuitBreaker {
     /// that trip the breaker are not order-dependent.
     pub fn reset(&self) {
         self.reason.store(REASON_UNTRIPPED, Ordering::Release);
+        self.skip_warned.store(false, Ordering::Release);
         global_gpu_metrics().reset_abandoned_threads();
     }
 }
@@ -259,6 +293,19 @@ pub fn record_abandoned_gpu_thread() {
 /// Fail immediately if the process-wide breaker has tripped.
 pub fn check_gpu_breaker() -> Result<()> {
     global_gpu_breaker().check()
+}
+
+/// The reason the analyses must skip their GPU work, or `None` while the GPU is
+/// healthy (Issue #1931).
+///
+/// Announces the skip exactly once per run as a side effect, so every analysis
+/// entry point can call this unconditionally without flooding the log.
+#[must_use]
+pub fn gpu_wedged_skip_reason() -> Option<GpuTripReason> {
+    let breaker = global_gpu_breaker();
+    let reason = breaker.trip_reason()?;
+    breaker.warn_analyses_skipped(reason);
+    Some(reason)
 }
 
 /// Clear the process-wide breaker (testing only).
@@ -328,6 +375,7 @@ mod tests {
     fn reset_restores_the_closed_state() {
         let breaker = breaker();
         breaker.trip(GpuTripReason::AbandonedThread);
+        breaker.warn_analyses_skipped(GpuTripReason::AbandonedThread);
         assert!(breaker.is_tripped());
 
         breaker.reset();
@@ -335,6 +383,25 @@ mod tests {
         assert!(!breaker.is_tripped(), "reset must close the breaker");
         assert!(breaker.trip_reason().is_none());
         assert!(breaker.check().is_ok());
+        assert!(
+            !breaker.skip_warned.load(Ordering::Acquire),
+            "reset must re-arm the skip warning so tests are not order-dependent"
+        );
+    }
+
+    /// The skip warning latches after the first call — the log-level assertion
+    /// lives in `tests/issue_1931_gpu_breaker_partial_result.rs`, which captures
+    /// the emitted events.
+    #[test]
+    fn the_skip_warning_latches_after_the_first_call() {
+        let breaker = breaker();
+        breaker.trip(GpuTripReason::BatchTimeout);
+
+        assert!(!breaker.skip_warned.load(Ordering::Acquire));
+        breaker.warn_analyses_skipped(GpuTripReason::BatchTimeout);
+        assert!(breaker.skip_warned.load(Ordering::Acquire));
+        breaker.warn_analyses_skipped(GpuTripReason::BatchTimeout);
+        assert!(breaker.skip_warned.load(Ordering::Acquire));
     }
 
     /// Reason codes must round-trip through the atomic representation, and the

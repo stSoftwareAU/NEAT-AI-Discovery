@@ -129,12 +129,24 @@ pub fn analyze_synapses(input: &AnalyzeSynapsesInput) -> Result<AnalyzeSynapsesR
     analyze_synapses_with_cache(input, cache)
 }
 
-/// Internal synapse analysis with shared cache.
-/// This is called by `analyze_all` to share the cache between synapse and neuron analysis.
-pub(crate) fn analyze_synapses_with_cache(
+/// Synapse analysis against a pre-built cache.
+///
+/// Shares the cache between synapse and neuron analysis in `analyze_all`.
+/// Public so external tests can exercise the GPU-wedged skip path without a
+/// GPU (Issue #1931).
+pub fn analyze_synapses_with_cache(
     input: &AnalyzeSynapsesInput,
     cache: Arc<RecordCache>,
 ) -> Result<AnalyzeSynapsesResult> {
+    // Issue #1931: the GPU is wedged for the life of this process, so skip the
+    // GPU work and return a signalled empty result rather than erroring — there
+    // is no CPU fallback (Issue #1419), so this pass is genuinely empty.
+    if crate::analysis::gpu::breaker::gpu_wedged_skip_reason().is_some() {
+        return Ok(crate::analysis::gpu_wedged::synapse_wedged_result(
+            &input.focus_neurons,
+        ));
+    }
+
     // Create GPU queue for this analysis.
     // Issue #953: Propagate the analysis deadline so GpuEvaluator trait calls use
     // adaptive timeouts, preventing liveness stalls on slow GPU responses.

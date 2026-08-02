@@ -57,6 +57,7 @@ pub mod evaluation_drops;
 pub mod failure_cache_handshake;
 pub mod fingerprint_skip_escape;
 pub mod gpu;
+pub mod gpu_wedged;
 pub mod insufficient_recording;
 pub mod merge_redundant_neuron;
 pub mod module_tiering;
@@ -193,6 +194,10 @@ pub use neuron::analyze_neurons_with_cache_and_gpu_queue;
 pub use synapse::analyze_synapses;
 // Re-export benchmark helper functions for use in benches/
 pub use synapse::analyze_synapses_with_cache_and_gpu_queue;
+// Issue #1931: the shared-cache entry points are public so external tests can
+// exercise the GPU-wedged skip path without a GPU.
+pub use neuron::analyze_neurons_with_cache;
+pub use synapse::analyze_synapses_with_cache;
 pub use synapse::deterministic_coordinated_neuron_uuid;
 
 #[cfg(test)]

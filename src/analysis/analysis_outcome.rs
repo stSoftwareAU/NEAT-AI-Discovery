@@ -34,6 +34,13 @@ pub enum EnvironmentalDisableReason {
     MemoryPressure,
     /// No compatible GPU adapter was found on this host (Issue #988).
     GpuUnavailable,
+    /// The GPU was found but has wedged: the circuit breaker tripped, so the
+    /// GPU analyses were skipped for the rest of the run (Issue #1930, #1931).
+    ///
+    /// Distinct from [`Self::GpuUnavailable`] — the host *has* a usable GPU, it
+    /// stopped responding mid-run — and the remedy differs: an external process
+    /// restart, not a hardware or driver change.
+    GpuWedged,
 }
 
 impl EnvironmentalDisableReason {
@@ -44,6 +51,7 @@ impl EnvironmentalDisableReason {
             Self::MemoryGated => "memory_gated",
             Self::MemoryPressure => "memory_pressure",
             Self::GpuUnavailable => "gpu_unavailable",
+            Self::GpuWedged => "gpu_wedged",
         }
     }
 }
@@ -74,11 +82,17 @@ impl AnalysisOutcome {
     /// Classify a successful [`AnalyzeAllResult`].
     ///
     /// The environmental gates that produce an `Ok` result are the memory
-    /// budget (Issue #1028) and CRITICAL memory pressure (Issue #1099). Any
-    /// other `Ok` result is [`Self::Completed`] with its genuine candidate
-    /// count — even when that count is zero (true search exhaustion).
+    /// budget (Issue #1028), CRITICAL memory pressure (Issue #1099) and a
+    /// wedged GPU (Issue #1931). Any other `Ok` result is [`Self::Completed`]
+    /// with its genuine candidate count — even when that count is zero (true
+    /// search exhaustion).
     #[must_use]
     pub fn from_result(result: &AnalyzeAllResult) -> Self {
+        // Issue #1931: checked first — a wedged GPU never evaluated the
+        // creature, so its empty result carries no exhaustion signal at all.
+        if result.gpu_wedged {
+            return Self::gpu_wedged();
+        }
         Self::from_pass_flags(
             result.memory_budget_exceeded,
             result.memory_pressure_cancelled,
@@ -116,6 +130,15 @@ impl AnalysisOutcome {
     pub fn gpu_unavailable() -> Self {
         Self::EnvironmentallyDisabled {
             reason: EnvironmentalDisableReason::GpuUnavailable,
+        }
+    }
+
+    /// Outcome for a pass whose GPU analyses were skipped because the GPU
+    /// circuit breaker had tripped (Issue #1931).
+    #[must_use]
+    pub fn gpu_wedged() -> Self {
+        Self::EnvironmentallyDisabled {
+            reason: EnvironmentalDisableReason::GpuWedged,
         }
     }
 
