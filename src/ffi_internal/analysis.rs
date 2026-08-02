@@ -395,7 +395,6 @@ pub fn analyze_parallel_internal(input_json: &str) -> Result<String> {
             Ok(serde_json::to_string(&output)?)
         }
         Err(e) => {
-            let (err_msg, error_kind, retryable) = error_fields_from_anyhow(&e);
             // Issue #1421: the GPU-unavailable early return is an environmental
             // gate, not search exhaustion — surface it as such so the host
             // excludes it from drought / cooldown / starvation accounting.
@@ -413,33 +412,11 @@ pub fn analyze_parallel_internal(input_json: &str) -> Result<String> {
                 }
                 _ => None,
             };
+            // Issue #1932: one place builds the failure shape, so a wedged GPU
+            // reaches the host as `errorKind: "gpu_wedged"`, `retryable: false`.
             let output = AnalyzeParallelOutput {
-                success: false,
-                schema_version: SCHEMA_VERSION.to_string(),
-                helpful_synapses: None,
-                harmful_synapses: None,
-                synapse_diagnostics: None,
-                synapse_gpu_used: None,
-                synapse_metadata: None,
-                helpful_neurons: None,
-                synapse_weight_updates: None,
-                coordinated_structural_candidates: None,
-                candidate_clusters: None,
-                neuron_diagnostics: None,
-                neuron_gpu_used: None,
-                neuron_metadata: None,
-                neuron_fingerprints: None,
-                fingerprint_cache_hits: None,
-                fingerprint_cache_misses: None,
-                module_outcome_tracker: None,
-                memory_budget_exceeded: None,
-                cancelled: None,
-                memory_pressure_cancelled: None,
                 environmentally_disabled,
-                zero_candidate_summary: None,
-                error: Some(err_msg),
-                error_kind,
-                retryable,
+                ..AnalyzeParallelOutput::failure(&e)
             };
             Ok(serde_json::to_string(&output)?)
         }

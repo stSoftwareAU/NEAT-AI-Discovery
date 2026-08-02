@@ -75,6 +75,46 @@ pub(crate) fn start_from_env(initial_stage: &str) -> Option<Watchdog> {
     Some(wd)
 }
 
+/// Longest a thread-dump reader will wait for the watchdog state locks.
+///
+/// The dump must degrade rather than block, so contention is reported instead
+/// of waited on (Issue #1934).
+const SNAPSHOT_LOCK_TIMEOUT: Duration = Duration::from_millis(50);
+
+/// What the thread dump can say about the heartbeat.
+///
+/// `Contended` is distinct from `Inactive` on purpose: "nobody is beating" and
+/// "somebody is holding the lock" are very different diagnoses on a wedge.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum HeartbeatSnapshot {
+    /// A watchdog is running and last beat `age` ago in `stage`.
+    Active { stage: String, age: Duration },
+    /// No watchdog is running for the current operation.
+    Inactive,
+    /// The state could not be read without blocking.
+    Contended,
+}
+
+/// Read the current heartbeat without ever blocking (Issue #1934).
+pub(crate) fn heartbeat_snapshot() -> HeartbeatSnapshot {
+    let Some(guard) = ACTIVE.try_lock_for(SNAPSHOT_LOCK_TIMEOUT) else {
+        return HeartbeatSnapshot::Contended;
+    };
+    let Some(state) = guard.as_ref() else {
+        return HeartbeatSnapshot::Inactive;
+    };
+    let age = Duration::from_millis(
+        monotonic_ms().saturating_sub(state.last_beat_ms.load(Ordering::Relaxed)),
+    );
+    let Some(stage) = state.stage.try_lock_for(SNAPSHOT_LOCK_TIMEOUT) else {
+        return HeartbeatSnapshot::Contended;
+    };
+    HeartbeatSnapshot::Active {
+        stage: stage.clone(),
+        age,
+    }
+}
+
 /// Test-only global lock to prevent parallel tests from racing on the global ACTIVE state.
 #[cfg(test)]
 static TEST_SERIAL: LazyLock<parking_lot::Mutex<()>> =

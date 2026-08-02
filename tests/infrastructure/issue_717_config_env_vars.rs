@@ -487,3 +487,97 @@ fn config_focus_unused_observations_enabled() {
     // SAFETY: serialised via #[serial] — no concurrent env access.
     unsafe { std::env::remove_var("NEAT_AI_DISCOVERY_FOCUS_UNUSED_OBSERVATIONS") };
 }
+
+// =============================================================================
+// GPU stall window (Issue #1933)
+// =============================================================================
+
+use neat_ai_discovery::analysis::gpu::heartbeat::{
+    DEFAULT_GPU_STALL_WINDOW_SECS, GPU_STALL_WINDOW_ENV, MAX_GPU_STALL_WINDOW_SECS,
+    MIN_GPU_STALL_WINDOW_SECS,
+};
+use std::time::Duration;
+
+#[test]
+#[serial]
+fn config_gpu_stall_window_default() {
+    // SAFETY: serialised via #[serial] — no concurrent env access.
+    unsafe { std::env::remove_var(GPU_STALL_WINDOW_ENV) };
+
+    assert_eq!(
+        neat_ai_discovery::config::gpu_stall_window(),
+        Duration::from_secs(DEFAULT_GPU_STALL_WINDOW_SECS),
+        "The stall window defaults to the documented value"
+    );
+}
+
+#[test]
+#[serial]
+fn config_gpu_stall_window_custom_value() {
+    // SAFETY: serialised via #[serial] — no concurrent env access.
+    unsafe { std::env::set_var(GPU_STALL_WINDOW_ENV, "45") };
+
+    assert_eq!(
+        neat_ai_discovery::config::gpu_stall_window(),
+        Duration::from_secs(45),
+        "A slow-but-healthy machine can raise the window"
+    );
+
+    // SAFETY: serialised via #[serial] — no concurrent env access.
+    unsafe { std::env::remove_var(GPU_STALL_WINDOW_ENV) };
+}
+
+#[test]
+#[serial]
+fn config_gpu_stall_window_clamps_out_of_range_values() {
+    // SAFETY: serialised via #[serial] — no concurrent env access.
+    unsafe { std::env::set_var(GPU_STALL_WINDOW_ENV, "99999") };
+    assert_eq!(
+        neat_ai_discovery::config::gpu_stall_window(),
+        Duration::from_secs(MAX_GPU_STALL_WINDOW_SECS),
+        "An over-large window clamps to the maximum"
+    );
+
+    // SAFETY: serialised via #[serial] — no concurrent env access.
+    unsafe { std::env::set_var(GPU_STALL_WINDOW_ENV, "1") };
+    assert_eq!(
+        neat_ai_discovery::config::gpu_stall_window(),
+        Duration::from_secs(MIN_GPU_STALL_WINDOW_SECS),
+        "The minimum window is honoured"
+    );
+
+    // SAFETY: serialised via #[serial] — no concurrent env access.
+    unsafe { std::env::remove_var(GPU_STALL_WINDOW_ENV) };
+}
+
+#[test]
+#[serial]
+fn config_gpu_stall_window_zero_disables_the_guard() {
+    // SAFETY: serialised via #[serial] — no concurrent env access.
+    unsafe { std::env::set_var(GPU_STALL_WINDOW_ENV, "0") };
+
+    assert_eq!(
+        neat_ai_discovery::config::gpu_stall_window(),
+        Duration::ZERO,
+        "Zero leaves the absolute batch timeout as the only bound"
+    );
+
+    // SAFETY: serialised via #[serial] — no concurrent env access.
+    unsafe { std::env::remove_var(GPU_STALL_WINDOW_ENV) };
+}
+
+#[test]
+#[serial]
+fn config_gpu_stall_window_invalid_falls_back_to_default() {
+    // SAFETY: serialised via #[serial] — no concurrent env access.
+    unsafe { std::env::set_var(GPU_STALL_WINDOW_ENV, "not-a-number") };
+
+    assert_eq!(
+        neat_ai_discovery::config::gpu_stall_window(),
+        Duration::from_secs(DEFAULT_GPU_STALL_WINDOW_SECS),
+        "An unparsable value falls back to the default"
+    );
+
+    // SAFETY: serialised via #[serial] — no concurrent env access.
+    unsafe { std::env::remove_var(GPU_STALL_WINDOW_ENV) };
+}

@@ -27,6 +27,7 @@ use anyhow::{Result, anyhow};
 use std::thread;
 use std::time::Duration;
 
+use crate::analysis::gpu::heartbeat::{beat_buffer_mapped, beat_device_idle};
 use crate::analysis::utils::setup_gpu_environment;
 
 // =============================================================================
@@ -255,7 +256,12 @@ pub fn poll_device_until_idle(device: &wgpu::Device, timeout: Duration, label: &
     let start = Instant::now();
     loop {
         match device.poll(wgpu::PollType::Poll) {
-            Ok(status) if status.is_queue_empty() => return Ok(()),
+            Ok(status) if status.is_queue_empty() => {
+                // Issue #1933: only a drained queue is progress — beating inside
+                // the poll loop would let a wedged driver fake liveness.
+                beat_device_idle();
+                return Ok(());
+            }
             Ok(_) => {} // Queue not empty yet; keep polling.
             Err(e) => return Err(anyhow!("GPU device poll error ({label}): {e}")),
         }
@@ -286,7 +292,11 @@ pub fn wait_for_buffer_map(
     let start = Instant::now();
     loop {
         match receiver.try_recv() {
-            Ok(Ok(())) => return Ok(()),
+            Ok(Ok(())) => {
+                // Issue #1933: a completed mapping is real GPU progress.
+                beat_buffer_mapped();
+                return Ok(());
+            }
             Ok(Err(err)) => return Err(anyhow!("Buffer mapping failed: {err}")),
             Err(std::sync::mpsc::TryRecvError::Disconnected) => {
                 return Err(anyhow!("GPU callback channel disconnected"));
@@ -342,7 +352,11 @@ pub fn wait_for_buffer_maps_batch(
                 continue;
             }
             match receiver.try_recv() {
-                Ok(result) => done[i] = Some(result),
+                Ok(result) => {
+                    // Issue #1933: each completed mapping is a progress step.
+                    beat_buffer_mapped();
+                    done[i] = Some(result);
+                }
                 Err(std::sync::mpsc::TryRecvError::Empty) => {}
                 Err(std::sync::mpsc::TryRecvError::Disconnected) => {
                     return Err(anyhow!("Buffer {i} callback channel disconnected"));

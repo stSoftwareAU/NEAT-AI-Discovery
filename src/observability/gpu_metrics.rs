@@ -41,6 +41,8 @@ pub struct GpuMetrics {
     gpu_busy_time_us: AtomicU64,
     effective_batch_size: AtomicUsize,
     batch_size_reductions: AtomicUsize,
+    stale_skipped: AtomicUsize,
+    abandoned_threads: AtomicUsize,
 }
 
 impl GpuMetrics {
@@ -53,6 +55,8 @@ impl GpuMetrics {
             gpu_busy_time_us: AtomicU64::new(0),
             effective_batch_size: AtomicUsize::new(0),
             batch_size_reductions: AtomicUsize::new(0),
+            stale_skipped: AtomicUsize::new(0),
+            abandoned_threads: AtomicUsize::new(0),
         }
     }
 
@@ -120,6 +124,50 @@ impl GpuMetrics {
         self.batch_size_reductions.load(Ordering::Relaxed)
     }
 
+    /// Record a work request skipped without invoking the analyser (Issue #1929).
+    ///
+    /// Unlike the throughput counters this is recorded unconditionally, not only
+    /// under `NEAT_AI_DISCOVERY_GPU_METRICS=1`: a sustained rise is the
+    /// production signal that the queue is backing up with abandoned requests,
+    /// and it costs one relaxed atomic on a path that is already rare.
+    #[inline]
+    pub fn record_stale_skip(&self) {
+        self.stale_skipped.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Get the number of stale requests skipped without analysis (Issue #1929).
+    #[inline]
+    pub fn stale_skipped(&self) -> usize {
+        self.stale_skipped.load(Ordering::Relaxed)
+    }
+
+    /// Record a GPU thread abandoned because it would not exit (Issue #1930).
+    ///
+    /// Like `record_stale_skip`, this is recorded unconditionally rather than
+    /// only under `NEAT_AI_DISCOVERY_GPU_METRICS=1`: an abandoned thread leaks
+    /// a `wgpu` device for the life of the process, so the count is the
+    /// numerical form of the "GPU thread did not exit" warning. With the
+    /// circuit breaker in place it must never exceed 1 per process.
+    #[inline]
+    pub fn record_abandoned_thread(&self) {
+        self.abandoned_threads.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Get the number of abandoned GPU threads (Issue #1930).
+    #[inline]
+    pub fn abandoned_threads(&self) -> usize {
+        self.abandoned_threads.load(Ordering::Relaxed)
+    }
+
+    /// Reset the abandoned-thread count to zero (testing only, Issue #1930).
+    ///
+    /// Paired with `reset_gpu_breaker()` so tests that trip the breaker are not
+    /// order-dependent. Production never resets this counter.
+    #[inline]
+    pub fn reset_abandoned_threads(&self) {
+        self.abandoned_threads.store(0, Ordering::Relaxed);
+    }
+
     /// Calculate GPU utilisation as a percentage.
     ///
     /// Returns the percentage of time the GPU was busy vs total time
@@ -147,6 +195,8 @@ impl GpuMetrics {
             utilisation_percent = format_args!("{:.1}", self.utilisation_percent()),
             batch_size_reductions = reductions,
             effective_batch_size = effective,
+            stale_skipped = self.stale_skipped(),
+            abandoned_threads = self.abandoned_threads(),
             "GPU metrics"
         );
     }

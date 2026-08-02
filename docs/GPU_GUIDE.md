@@ -303,9 +303,15 @@ The library includes automatic timeout protection for GPU operations. If the GPU
 unresponsive, you'll see an error like:
 
 ```
-GPU helpful batch evaluation timed out after 150s. The GPU may be unresponsive.
-Consider reducing batch size or restarting.
+GPU wedged: GPU helpful batch evaluation timed out after 150s (abandoned GPU threads: 0).
+The GPU will not answer for the remainder of this process — retrying or extending the
+deadline cannot recover it; restart the worker externally.
 ```
+
+That failure crosses the FFI boundary as `"errorKind": "gpu_wedged"`,
+`"retryable": false` (Issue #1932), so the host stops extending the analysis
+deadline instead of reading the timeout wording as "retry with longer". See
+[FFI_API.md § Wedged GPU](FFI_API.md#-wedged-gpu--errorkind-gpu_wedged-issue-1932).
 
 **Adaptive timeout architecture** (v0.1.166):
 - **Minimum GPU batch timeout**: 60 seconds
@@ -313,6 +319,226 @@ Consider reducing batch size or restarting.
 - **Deadline-aware**: When analysis has a deadline, uses up to half remaining time
 - **Non-blocking work submission**: `send_timeout()` prevents deadlock if GPU hangs
 - **Shutdown timeout**: 12 seconds max (2s send + 10s exit wait)
+
+**Per-request time budget** (Issue #1928): each work request carries the
+submitter's timeout into the GPU thread as a `GpuTimeBudget`. Every inner wait
+(buffer mapping, device polling) is capped by the budget remaining at that
+moment, recomputed for each sub-batch, and the budget expires 5 seconds
+(`GPU_BUFFER_MAP_TIMEOUT_MARGIN_SECS`) before the caller's timeout does. So the
+worker always errors out first and returns that error through the response
+channel, instead of the caller giving up on a GPU thread still inside the
+driver. Requests submitted without a deadline fall back to the fixed
+`GPU_BUFFER_MAP_TIMEOUT_SECS` (295s) inner wait.
+
+```mermaid
+sequenceDiagram
+    participant C as Caller (submitter)
+    participant Q as GPU work queue
+    participant W as GPU thread
+    C->>Q: request + GpuTimeBudget (T − 5s)
+    C->>C: recv_timeout(T)
+    loop each sub-batch
+        W->>W: budget.check() — abort if exhausted
+        W->>W: wait_for_buffer_maps_batch(budget.remaining())
+    end
+    W-->>C: results, or a real error before T elapses
+```
+
+**Stale request skipping** (Issue #1929): a submitter that times out drops its
+liveness guard, so the GPU thread can tell — before it starts work — that nobody
+is left to receive the result. On dequeue the worker skips any request whose
+caller has gone (dropped silently) or whose own `GpuTimeBudget` expired while it
+queued (returned to the still-waiting caller as an error, rather than letting it
+sit out its full timeout). The device-lost retry loop re-checks liveness before
+every attempt, so an abandoned request never costs a `GpuAnalyzer`
+re-initialisation or a back-off sleep. Skips are counted as `stale_skipped` in
+`global_gpu_metrics()` and printed by `NEAT_AI_DISCOVERY_GPU_METRICS=1`; a
+sustained rise alongside `GPU work queue full - send timed out` means the queue
+is backing up with dead entries.
+
+```mermaid
+flowchart LR
+    D[Dequeue request] --> S{Stale?}
+    S -- caller gone --> X[Drop silently<br/>count stale_skipped]
+    S -- budget expired --> E[Send error to caller<br/>count stale_skipped]
+    S -- no --> G[Evaluate on GPU]
+    G -- device lost --> R{Caller still live?}
+    R -- no --> A[Abandon recovery<br/>count stale_skipped]
+    R -- yes --> T[Re-init + retry, up to the retry limit]
+```
+
+**Process-wide circuit breaker** (Issue #1930): the library used to have no
+memory that the GPU had already wedged. Each analysis called
+`GpuWorkQueue::new()`, spawning a fresh GPU thread — and therefore a fresh
+`wgpu` device, buffer pool and command buffers — against the same dead hardware,
+then sat out another 60–300s batch timeout before failing. One reported run
+abandoned three GPU threads and burned ~30 minutes that way.
+
+The first sign that the GPU is wedged now trips a one-way, process-wide breaker:
+
+| Trip condition | Site |
+|----------------|------|
+| A GPU thread did not exit within `GPU_SHUTDOWN_TIMEOUT_SECS` and was abandoned | `Drop for GpuWorkQueue` |
+| A batch submission timed out — the queue never accepted it, or the GPU never answered | every `submit_*`/`evaluate_*` entry point |
+| The GPU thread published no progress for `NEAT_AI_DISCOVERY_GPU_STALL_WINDOW_SECS` while a submitter waited | the bounded submitter wait (Issue #1933) |
+| GPU initialisation timed out after `GPU_INIT_TIMEOUT_SECS` | `GpuWorkQueue::new()` |
+
+Once tripped, for the rest of the process: `GpuWorkQueue::new()` returns an error
+instead of spawning another thread, and every submission returns that error
+immediately instead of starting a new multi-minute wait. The error carries the
+original trip reason and the abandoned-thread count. Every one of those sites
+returns the typed `DiscoveryError::GpuWedged` (Issue #1932), so the host is told
+`retryable: false` rather than being invited to extend the deadline. The trip is logged **once**
+at `warn`; every suppressed call afterwards logs at `debug` only, so a wedged GPU
+cannot flood the log.
+
+The breaker keys off those explicit sites, never off error-message matching:
+`is_device_lost_error()` matches "driver may be unresponsive" but not the
+batch-timeout wording "The GPU may be unresponsive", so string matching would
+miss the very failure this exists to stop.
+
+Recovery is deliberately out of scope — nothing self-restarts. The abandoned
+thread count is published as `abandoned_threads` in `global_gpu_metrics()`
+(printed by `NEAT_AI_DISCOVERY_GPU_METRICS=1`); with the breaker in place it must
+never exceed 1 per process. Two or more `GPU thread did not exit` warnings in one
+run, or any GPU submission after the breaker warn, means the breaker regressed.
+
+```mermaid
+stateDiagram-v2
+    [*] --> Closed
+    Closed --> Tripped: thread abandoned after shutdown timeout
+    Closed --> Tripped: batch send/response timeout
+    Closed --> Tripped: init timeout
+    Closed --> Closed: GPU work proceeds normally
+    Tripped --> Tripped: new()/submit_* return the breaker error at once (debug log)
+    note right of Tripped
+        One warn on entry, carrying the reason
+        and the abandoned-thread count.
+        Only a process restart clears it.
+    end note
+```
+
+### GPU-thread liveness heartbeat (Issue #1933)
+
+The batch timeout alone made the **first** detection cost up to five minutes of a
+one-hour run budget, and the verdict was indistinguishable from "the GPU is slow
+but progressing". The GPU thread now publishes a monotonically increasing
+progress counter at every observable step, and a submitter waits in a bounded
+loop that watches it:
+
+| Step | Where it beats |
+|------|----------------|
+| Request dequeued | `run_work_loop` |
+| Sub-batch submitted | helpful / harmful chunk loops |
+| Buffer map completed | `wait_for_buffer_map` / `wait_for_buffer_maps_batch` |
+| Device poll returned idle | `poll_device_until_idle` |
+| Request completed | `run_work_loop` |
+
+No progress for `NEAT_AI_DISCOVERY_GPU_STALL_WINDOW_SECS` (default 30, range
+1–600, `0` disables) declares the GPU wedged in seconds rather than minutes. A
+beat is published only when a step **completes**, never from inside a poll loop,
+so a spinning driver cannot fake liveness; conversely, a long kernel that keeps
+advancing the counter resets the window and is never flagged. The absolute batch
+timeout remains as the backstop for a heartbeat that cannot be updated at all.
+
+```mermaid
+sequenceDiagram
+    participant S as Submitter
+    participant H as Heartbeat (AtomicU64)
+    participant G as GPU thread
+    S->>G: submit batch
+    loop every poll interval (window / 10)
+        S->>H: read ticks
+        alt ticks advanced
+            G-->>H: beat (dequeue / submit / map / idle)
+            Note over S: still progressing — reset the stall clock
+        else silent past the stall window
+            Note over S: GPU wedged — trip the breaker, fail now
+        end
+    end
+    G-->>S: results (normal path)
+```
+
+### What the analyses do once the breaker trips (Issue #1931)
+
+Stopping GPU work is only half the answer — the analyses still have the rest of
+the run's budget to spend. They **skip** the GPU work and exit normally with a
+signalled partial result, mirroring the cancellation path, rather than
+propagating the breaker error and discarding the CPU-side accounting:
+
+| Entry point | Returns |
+|-------------|---------|
+| `analyze_all` | `Ok(AnalyzeAllResult { gpu_wedged: true, synapse: None, neuron: None, .. })` |
+| `analyze_neurons_with_cache` | `Ok(AnalyzeNeuronsResult)` with no candidates and `metadata.gpu_wedged` |
+| `analyze_synapses_with_cache` | `Ok(AnalyzeSynapsesResult)` with no candidates and `metadata.gpu_wedged` |
+
+The CPU-side bookkeeping that does not depend on GPU results still runs, so the
+run's accounting stays correct: neuron fingerprints, the fingerprint cache
+hit/miss counts, the module outcome tracker, and the pass rejection breakdown —
+which records one `gpu_wedged` count per focus neuron that was never evaluated.
+
+There is **no CPU fallback** for these analyses (Issue #1419 removed that false
+claim), so the result is genuinely empty. `AnalysisOutcome::from_result` maps a
+wedged pass to `EnvironmentallyDisabled { reason: GpuWedged }` — surfaced over
+FFI as `environmentalGates.environmentallyDisabled: "gpuWedged"` — so drought,
+cooldown and starvation accounting exclude it instead of counting it as search
+exhaustion. `GpuWedged` is distinct from `GpuUnavailable`: the host *has* a
+usable GPU that stopped responding mid-run, and the remedy is an external
+process restart rather than a hardware or driver change.
+
+The skip is announced **once per run**, not once per analysis attempt:
+
+```text
+WARN GPU analyses skipped for the rest of this run because the GPU is wedged —
+     there is no CPU fallback, so these results are genuinely empty rather than
+     a zero-candidate success. An external process restart is required to use
+     the GPU again.
+```
+
+Its absence while the breaker is tripping means the skip path regressed;
+repeated identical warnings mean the once-per-run latch regressed.
+
+### How the wedged-GPU defences are tested (Issue #1935)
+
+The wedge itself only ever reproduced on one Apple M2 Ultra, so every defence
+above is verified against a **fake GPU** instead: a test double implementing the
+`RequestEvaluator` seam the GPU thread drives. The production work loop, the
+production bounded wait and the production breaker all run unchanged — only the
+device is fake — so the whole suite runs on CI machines with no GPU at all, in
+about three seconds.
+
+| Behaviour | What it models | What it proves |
+|-----------|----------------|----------------|
+| `Completes` | a healthy device | an abandoned request never reaches it (#1929) |
+| `CompletesAfter` | a slow device that answers inside the window | the guard does not fire on slowness (#1933) |
+| `BeatsThenCompletes` | a long evaluation that keeps publishing progress | progress resets the stall clock (#1933) |
+| `BeatsWithoutCompleting` | progress forever, no answer | the absolute timeout is still the backstop (#1933) |
+| `NeverAnswers` | the Issue #1926 wedge | the stall verdict trips the breaker (#1930, #1932, #1933) |
+| `WedgesUntilBudgetExpires` | a wedged device with budgeted inner waits | the worker gives up before its caller (#1928) |
+
+```mermaid
+flowchart LR
+    C[Caller<br/>wait_for_gpu_response] -->|request| L[run_work_loop<br/>production]
+    L -->|evaluate| F[FakeGpuEvaluator<br/>selectable behaviour]
+    F -.->|beats or silence| H[(GpuHeartbeat)]
+    H --> C
+    C -->|verdict| B[(GpuCircuitBreaker<br/>isolated per test)]
+    B --> A[analyze_all → Ok + gpu_wedged]
+```
+
+The tests live beside the code they guard —
+`src/analysis/gpu/queue/fake_evaluator.rs` (the double),
+`src/analysis/gpu/queue/wedge_tests.rs` (loop and wait behaviour) and
+`tests/issue_1935_wedged_gpu_harness.rs` (the sequence through the public API).
+Two invariants keep them honest:
+
+- **Nothing may hang.** Every blocking behaviour is bounded by a harness cap and
+  a release flag, and every timing assertion carries an explicit upper bound, so
+  a harness bug fails an assertion rather than wedging CI.
+- **Nothing may leak a tripped breaker.** The in-crate tests own an isolated
+  `GpuCircuitBreaker` and reset it; the integration binary resets the
+  process-wide one on the way in and out, even on panic. A test that only passes
+  with `--test-threads=1` is a regression signal, not an environment quirk.
 
 **Causes and solutions:**
 - **GPU driver hang**: Restart the process. If persistent, restart the machine.
@@ -359,8 +585,43 @@ kill -USR1 <pid>
 
 **On Linux**, this prints:
 - Deadlock detection results
-- Signal handler thread backtrace
 - Instructions for using `gdb` to get full thread dumps
+- Set `NEAT_AI_DISCOVERY_SAMPLE_PROGRAM` to name a sampler if you have one
+
+#### The dump degrades, it never disappears (Issue #1934)
+
+`sample` can itself hang on a wedged GPU driver — which is exactly when the dump
+matters. The handler is bounded (killed after 5 s, plus a 500 ms grace) and
+always prints an **in-process state block** that needs no external tool: PID,
+elapsed run time, GPU circuit-breaker state, abandoned-thread count, the last
+watchdog heartbeat, and every outstanding GPU request with how long its caller
+has been waiting. On a wedged GPU that state is usually more actionable than a
+backtrace.
+
+The closing banner names what was actually captured, so an empty dump can never
+be mistaken for a clean one:
+
+```text
+END THREAD DUMP - full dump                # sample completed, output read
+END THREAD DUMP - partial dump             # sample was killed, partial output recovered
+END THREAD DUMP - no backtraces captured   # state block only
+```
+
+```mermaid
+flowchart LR
+    S[kill -USR1] --> D[deadlock check]
+    D --> C{external sampler}
+    C -->|exit 0, output read| F["full dump"]
+    C -->|killed, partial output| P["partial dump"]
+    C -->|hung / failed / no output| N["no backtraces captured"]
+    F --> B[in-process state block]
+    P --> B
+    N --> B
+    B --> E[END THREAD DUMP - &lt;banner&gt;]
+```
+
+Grep field reports for `no backtraces captured` to find dumps where only the
+state block survived.
 
 ### 🐕 Hang Watchdog (unattended machines)
 

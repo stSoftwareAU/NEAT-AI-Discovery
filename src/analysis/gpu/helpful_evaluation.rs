@@ -9,9 +9,9 @@ use anyhow::{Context, Result};
 use std::sync::mpsc;
 use std::time::Duration;
 
-use crate::analysis::gpu::device::{
-    GPU_BUFFER_MAP_TIMEOUT_SECS, poll_device_until_idle, wait_for_buffer_maps_batch,
-};
+use crate::analysis::gpu::budget::GpuTimeBudget;
+use crate::analysis::gpu::device::{poll_device_until_idle, wait_for_buffer_maps_batch};
+use crate::analysis::gpu::heartbeat::beat_sub_batch_submitted;
 use crate::analysis::gpu::pipeline_builder::{STANDARD_BINDINGS, build_compute_pipeline};
 use crate::analysis::gpu::shaders::{
     GPU_REDUCTION_THRESHOLD, HELPFUL_REDUCE_SHADER, HELPFUL_SHADER, WORKGROUP_SIZE,
@@ -207,6 +207,20 @@ impl GpuAnalyzer {
         &self,
         samples_batch: &[&[HelpfulSample]],
     ) -> Result<Vec<HelpfulStats>> {
+        self.evaluate_helpful_batch_with_budget(samples_batch, GpuTimeBudget::unbounded())
+    }
+
+    /// Batch evaluate helpful operations within a caller-supplied time budget
+    /// (Issue #1928).
+    ///
+    /// Every inner wait is capped by the budget remaining at that moment, so
+    /// the total time spent here cannot exceed the submitter's timeout no
+    /// matter how many sub-batches the input splits into.
+    pub fn evaluate_helpful_batch_with_budget(
+        &self,
+        samples_batch: &[&[HelpfulSample]],
+        budget: GpuTimeBudget,
+    ) -> Result<Vec<HelpfulStats>> {
         if samples_batch.is_empty() {
             return Ok(Vec::new());
         }
@@ -295,6 +309,11 @@ impl GpuAnalyzer {
         };
 
         for batch_chunk in samples_batch.chunks(effective_batch_size) {
+            // Issue #1928: refuse to start another sub-batch once the caller's
+            // budget is gone — the error goes back through the response
+            // channel and the GPU thread stays joinable.
+            budget.check("helpful batch sub-batch")?;
+
             let mut empty_flags = Vec::with_capacity(batch_chunk.len());
             // Per non-empty sample set, in chunk order:
             // (slot index, copy size in bytes, element count to sum, used reduction).
@@ -410,6 +429,9 @@ impl GpuAnalyzer {
             // Submit single command buffer for entire batch - reduces Metal driver overhead
             if !used.is_empty() {
                 queue.submit(Some(encoder.finish()));
+                // Issue #1933: a submitted sub-batch is observable progress, so
+                // a long multi-chunk batch is never mistaken for a wedged GPU.
+                beat_sub_batch_submitted();
             }
 
             // OPTIMISATION: Map ALL buffers first, then poll ONCE for all.
@@ -427,7 +449,10 @@ impl GpuAnalyzer {
             }
 
             // Event-driven wait: poll non-blocking, check all callback channels
-            wait_for_buffer_maps_batch(device, &map_receivers, GPU_BUFFER_MAP_TIMEOUT_SECS)
+            // Issue #1928: the wait is bounded by the budget left for this
+            // request, recomputed each iteration so the sub-batches cannot sum
+            // to more than the caller's timeout.
+            wait_for_buffer_maps_batch(device, &map_receivers, budget.remaining_secs())
                 .context("Helpful batch buffer mapping failed")?;
 
             // Now read all the mapped data (buffers are already mapped)
@@ -478,7 +503,7 @@ impl GpuAnalyzer {
             // Avoid an unbounded wait - bail out with an error if the driver is wedged.
             poll_device_until_idle(
                 device,
-                Duration::from_secs(5),
+                budget.capped(Duration::from_secs(5)),
                 "post-helpful-batch command buffer release",
             )?;
         }

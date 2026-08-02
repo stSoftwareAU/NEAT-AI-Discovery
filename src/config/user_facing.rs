@@ -57,6 +57,33 @@ pub fn gpu_retry_limit() -> u32 {
     })
 }
 
+/// Get the GPU-thread no-progress stall window (Issue #1933).
+///
+/// Set `NEAT_AI_DISCOVERY_GPU_STALL_WINDOW_SECS` to the number of seconds a
+/// submitter tolerates with no GPU-thread progress before declaring the device
+/// wedged. Default: 30. Values are clamped to 1–600; `0` disables the guard,
+/// leaving the absolute batch timeout as the only bound. Unparsable values fall
+/// back to the default.
+pub fn gpu_stall_window() -> Duration {
+    use crate::analysis::gpu::heartbeat::{
+        DEFAULT_GPU_STALL_WINDOW_SECS, GPU_STALL_WINDOW_ENV, MAX_GPU_STALL_WINDOW_SECS,
+        MIN_GPU_STALL_WINDOW_SECS,
+    };
+
+    let secs = std::env::var(GPU_STALL_WINDOW_ENV)
+        .ok()
+        .and_then(|val| val.trim().parse::<u64>().ok())
+        .map_or(DEFAULT_GPU_STALL_WINDOW_SECS, |secs| {
+            if secs == 0 {
+                0
+            } else {
+                secs.clamp(MIN_GPU_STALL_WINDOW_SECS, MAX_GPU_STALL_WINDOW_SECS)
+            }
+        });
+
+    Duration::from_secs(secs)
+}
+
 /// Get the watchdog stall timeout.
 ///
 /// Set `NEAT_AI_DISCOVERY_WATCHDOG_STALL_SECS` to a positive number to enable.
@@ -1093,7 +1120,17 @@ pub fn max_wall_clock_minutes() -> u64 {
 /// Set `NEAT_AI_DISCOVERY_SAMPLE_PROGRAM` to override.
 /// Default: `"sample"`.
 pub fn sample_program() -> String {
-    std::env::var("NEAT_AI_DISCOVERY_SAMPLE_PROGRAM").unwrap_or_else(|_| "sample".to_string())
+    sample_program_override().unwrap_or_else(|| "sample".to_string())
+}
+
+/// The explicit `NEAT_AI_DISCOVERY_SAMPLE_PROGRAM` override, if any.
+///
+/// Off macOS there is no `sample` binary, so the thread dump only attempts an
+/// external sampler when one has been named explicitly (Issue #1934).
+pub fn sample_program_override() -> Option<String> {
+    std::env::var("NEAT_AI_DISCOVERY_SAMPLE_PROGRAM")
+        .ok()
+        .filter(|v| !v.trim().is_empty())
 }
 
 // =============================================================================

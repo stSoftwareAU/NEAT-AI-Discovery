@@ -10,7 +10,8 @@ use bytemuck::Zeroable;
 use std::sync::mpsc;
 use wgpu::util::DeviceExt;
 
-use crate::analysis::gpu::device::{GPU_BUFFER_MAP_TIMEOUT_SECS, wait_for_buffer_map};
+use crate::analysis::gpu::budget::GpuTimeBudget;
+use crate::analysis::gpu::device::wait_for_buffer_map;
 use crate::analysis::gpu::pipeline_builder::{STANDARD_BINDINGS, build_compute_pipeline};
 use crate::analysis::gpu::shaders::{RELU_SHADER, WORKGROUP_SIZE};
 use crate::analysis::samples::{
@@ -53,6 +54,17 @@ impl GpuAnalyzer {
         &self,
         samples: &[HelpfulSample],
         threshold: f32,
+    ) -> Result<(ReluStats, ReluStats, f32)> {
+        self.evaluate_relu_gpu_with_budget(samples, threshold, GpuTimeBudget::unbounded())
+    }
+
+    /// GPU-accelerated `ReLU` evaluation within a caller-supplied time budget
+    /// (Issue #1928).
+    pub fn evaluate_relu_gpu_with_budget(
+        &self,
+        samples: &[HelpfulSample],
+        threshold: f32,
+        budget: GpuTimeBudget,
     ) -> Result<(ReluStats, ReluStats, f32)> {
         if samples.is_empty() {
             return Ok((
@@ -174,7 +186,8 @@ impl GpuAnalyzer {
         });
 
         // Event-driven wait: poll non-blocking, check callback channel
-        wait_for_buffer_map(device, &receiver, GPU_BUFFER_MAP_TIMEOUT_SECS)
+        // Issue #1928: bounded by the budget remaining for this request.
+        wait_for_buffer_map(device, &receiver, budget.remaining_secs())
             .context("ReLU buffer mapping failed")?;
 
         let data = buffer_slice

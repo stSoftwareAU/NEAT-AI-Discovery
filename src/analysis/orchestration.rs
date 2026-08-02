@@ -128,6 +128,24 @@ fn pass_breakdown_with_fingerprint_skips(fingerprint_cache_hits: usize) -> Rejec
     breakdown
 }
 
+/// The pass breakdown for a run whose GPU analyses were skipped because the GPU
+/// is wedged (Issue #1931).
+///
+/// One `gpu_wedged` count per focus neuron that survived the fingerprint cache
+/// and was still never evaluated, so the pass reads as an environmental failure
+/// rather than search exhaustion.
+fn pass_breakdown_with_gpu_wedged(
+    fingerprint_cache_hits: usize,
+    skipped_focus_neurons: usize,
+) -> RejectionBreakdown {
+    let mut breakdown = pass_breakdown_with_fingerprint_skips(fingerprint_cache_hits);
+    breakdown.record_many_u32(
+        rejection_reasons::REJECTION_GPU_WEDGED,
+        u32::try_from(skipped_focus_neurons).unwrap_or(u32::MAX),
+    );
+    breakdown
+}
+
 /// Extract a human-readable message from a panic payload (Issue #1087).
 fn format_panic_payload(payload: &Box<dyn std::any::Any + Send>) -> String {
     if let Some(s) = payload.downcast_ref::<&str>() {
@@ -438,6 +456,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
             memory_budget_exceeded: false,
             cancelled: false,
             memory_pressure_cancelled: false,
+            gpu_wedged: false,
             neuron_fingerprints: Some(current_fingerprints),
             fingerprint_cache_hits,
             fingerprint_cache_misses,
@@ -462,6 +481,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
             memory_budget_exceeded: false,
             cancelled: false,
             memory_pressure_cancelled: false,
+            gpu_wedged: false,
             neuron_fingerprints: Some(current_fingerprints),
             fingerprint_cache_hits,
             fingerprint_cache_misses,
@@ -483,11 +503,37 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
             memory_budget_exceeded: true,
             cancelled: false,
             memory_pressure_cancelled: false,
+            gpu_wedged: false,
             neuron_fingerprints: Some(current_fingerprints),
             fingerprint_cache_hits,
             fingerprint_cache_misses,
             module_outcome_tracker: input.module_outcome_tracker.clone().unwrap_or_default(),
             pass_rejection_breakdown: pass_breakdown_with_fingerprint_skips(fingerprint_cache_hits),
+        });
+    }
+
+    // Issue #1931: the GPU circuit breaker (Issue #1930) has tripped, so the
+    // GPU analyses cannot run for the rest of this process. Skip them and exit
+    // normally with a signalled partial result rather than propagating an error
+    // that would discard the CPU-side accounting below and read to the host as
+    // one more failed attempt. Checked before `gpu_is_available()` because a
+    // wedged device usually still enumerates as an adapter.
+    if super::gpu::breaker::gpu_wedged_skip_reason().is_some() {
+        return Ok(AnalyzeAllResult {
+            synapse: None,
+            neuron: None,
+            memory_budget_exceeded: false,
+            cancelled: false,
+            memory_pressure_cancelled: false,
+            gpu_wedged: true,
+            neuron_fingerprints: Some(current_fingerprints),
+            fingerprint_cache_hits,
+            fingerprint_cache_misses,
+            module_outcome_tracker: input.module_outcome_tracker.clone().unwrap_or_default(),
+            pass_rejection_breakdown: pass_breakdown_with_gpu_wedged(
+                fingerprint_cache_hits,
+                effective_focus_neurons.len(),
+            ),
         });
     }
 
@@ -512,6 +558,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
             memory_budget_exceeded: false,
             cancelled: true,
             memory_pressure_cancelled: true,
+            gpu_wedged: false,
             neuron_fingerprints: Some(current_fingerprints),
             fingerprint_cache_hits,
             fingerprint_cache_misses,
@@ -611,6 +658,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
                 memory_budget_exceeded: false,
                 cancelled: true,
                 memory_pressure_cancelled: crate::cancellation::is_memory_pressure_cancelled(),
+                gpu_wedged: false,
                 neuron_fingerprints: Some(current_fingerprints),
                 fingerprint_cache_hits,
                 fingerprint_cache_misses,
@@ -643,6 +691,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
             memory_budget_exceeded: true,
             cancelled: false,
             memory_pressure_cancelled: false,
+            gpu_wedged: false,
             neuron_fingerprints: Some(current_fingerprints),
             fingerprint_cache_hits,
             fingerprint_cache_misses,
@@ -661,6 +710,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
             memory_budget_exceeded: false,
             cancelled: true,
             memory_pressure_cancelled: true,
+            gpu_wedged: false,
             neuron_fingerprints: Some(current_fingerprints),
             fingerprint_cache_hits,
             fingerprint_cache_misses,
@@ -717,6 +767,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
                 memory_budget_exceeded: false,
                 cancelled: false,
                 memory_pressure_cancelled: false,
+                gpu_wedged: false,
                 neuron_fingerprints: Some(current_fingerprints),
                 fingerprint_cache_hits,
                 fingerprint_cache_misses,
@@ -799,6 +850,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
                 memory_budget_exceeded: false,
                 cancelled: true,
                 memory_pressure_cancelled: crate::cancellation::is_memory_pressure_cancelled(),
+                gpu_wedged: false,
                 neuron_fingerprints: Some(current_fingerprints),
                 fingerprint_cache_hits,
                 fingerprint_cache_misses,
@@ -1594,6 +1646,7 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
         memory_budget_exceeded,
         cancelled: crate::cancellation::is_cancelled(),
         memory_pressure_cancelled: crate::cancellation::is_memory_pressure_cancelled(),
+        gpu_wedged: false,
         neuron_fingerprints: Some(current_fingerprints),
         fingerprint_cache_hits,
         fingerprint_cache_misses,

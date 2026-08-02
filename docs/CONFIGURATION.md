@@ -29,6 +29,7 @@ default rather than aborting.
 | `NEAT_AI_DISCOVERY_GPU_BATCH_SIZE` | auto | Override GPU batch size (64–4096). |
 | `NEAT_AI_DISCOVERY_GPU_TIMING` | off | Enable GPU kernel profiling. |
 | `NEAT_AI_DISCOVERY_QUIET_GPU` | off | Suppress Mesa/libEGL debug output. |
+| `NEAT_AI_DISCOVERY_GPU_STALL_WINDOW_SECS` | 30 | How long a submitter tolerates **no GPU-thread progress** before declaring the device wedged (Issue #1933). The GPU thread publishes a liveness heartbeat at every observable step (request dequeued, sub-batch submitted, buffer map completed, device poll returning idle, request completed); a submitter waits in a bounded loop and gives up within this window instead of burning the full 60–300s batch timeout. A slow-but-advancing GPU keeps resetting the window and is never flagged. Accepted range `1–600`; `0` disables the guard, leaving the absolute batch timeout as the only bound; invalid values fall back to the default. Raise it on a genuinely slow machine. |
 | `NEAT_AI_DISCOVERY_GPU_RETRY_LIMIT` | 3 | Maximum consecutive device-lost recovery attempts on the GPU work queue before the pass fails. Accepted range `0–10`; out-of-range or invalid values fall back to the default. |
 | `NEAT_AI_DISCOVERY_ZERO_COPY` | auto-detect | Force-enable (`1`/`true`) or force-disable (`0`/`false`) zero-copy GPU buffers, overriding hardware auto-detection. Unset lets the library decide from the adapter. |
 
@@ -138,7 +139,7 @@ default rather than aborting.
 | `NEAT_AI_DISCOVERY_GPU_METRICS` | off | Print GPU metrics to stderr when set to any value (convention `=1`). |
 | `NEAT_AI_DISCOVERY_CALIBRATION_MISS_THRESHOLD` | 10.0 | `actual/expected` ratio above which prediction-vs-actual calibration mismatches are logged via `tracing::warn!`. Must be finite and `> 1.0`; invalid values fall back to the default so the log channel cannot be silenced by a malformed value. |
 | `NEAT_AI_DISCOVERY_STRICT_CANDIDATE_RECONCILIATION` | on for debug builds, off for release builds | Trip a `debug_assert!` when a discovery pass cannot account for every considered candidate (Issue #1802), so a newly-added silent drop path fails CI. Set to `0` to force warn-only. The `unaccounted_drop` rejection-breakdown entry and the `tracing::warn!` naming the surface and delta are emitted regardless, so a mismatch is never silent. See [docs/analysis/candidate-reconciliation-1802.md](analysis/candidate-reconciliation-1802.md). |
-| `NEAT_AI_DISCOVERY_SAMPLE_PROGRAM` | `sample` | Path override for the macOS `sample` binary used for thread-dump diagnostics. Diagnostics/tooling only — not a discovery-tuning knob. |
+| `NEAT_AI_DISCOVERY_SAMPLE_PROGRAM` | `sample` on macOS, none elsewhere | Path override for the `sample` binary used for thread-dump diagnostics. Off macOS no sampler is attempted unless this names one (Issue #1934). Diagnostics/tooling only — not a discovery-tuning knob. |
 
 ## Related guides
 
