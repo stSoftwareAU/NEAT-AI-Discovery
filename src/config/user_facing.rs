@@ -1120,7 +1120,17 @@ pub fn max_wall_clock_minutes() -> u64 {
 /// Set `NEAT_AI_DISCOVERY_SAMPLE_PROGRAM` to override.
 /// Default: `"sample"`.
 pub fn sample_program() -> String {
-    std::env::var("NEAT_AI_DISCOVERY_SAMPLE_PROGRAM").unwrap_or_else(|_| "sample".to_string())
+    sample_program_override().unwrap_or_else(|| "sample".to_string())
+}
+
+/// The explicit `NEAT_AI_DISCOVERY_SAMPLE_PROGRAM` override, if any.
+///
+/// Off macOS there is no `sample` binary, so the thread dump only attempts an
+/// external sampler when one has been named explicitly (Issue #1934).
+pub fn sample_program_override() -> Option<String> {
+    std::env::var("NEAT_AI_DISCOVERY_SAMPLE_PROGRAM")
+        .ok()
+        .filter(|v| !v.trim().is_empty())
 }
 
 // =============================================================================

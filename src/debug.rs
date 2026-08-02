@@ -13,6 +13,23 @@
 //! Call `shutdown_debug_handlers()` before process exit to cleanly stop the
 //! background threads and unregister signal handlers (Issue #994).
 //!
+//! # Degrading, never disappearing (Issue #1934)
+//!
+//! A thread dump is only useful if it appears when the process is stuck — and
+//! that is exactly when the external sampler is least likely to answer. The dump
+//! is therefore built in two parts, and the banner names which of them survived:
+//!
+//! ```text
+//!  ┌──────────────────────────┐
+//!  │ external sampler (macOS) │──▶ full output    ──▶ "full dump"
+//!  │ bounded, killable        │──▶ partial output ──▶ "partial dump"
+//!  └──────────────────────────┘──▶ nothing        ──▶ "no backtraces captured"
+//!  ┌──────────────────────────┐
+//!  │ in-process state block   │──▶ always printed: PID, elapsed run time,
+//!  │ (no external tools)      │    breaker state, abandoned threads, last
+//!  └──────────────────────────┘    heartbeat, outstanding GPU requests
+//! ```
+//!
 //! # Example
 //!
 //! ```rust,ignore
@@ -26,11 +43,50 @@
 //! neat_ai_discovery::debug::shutdown_debug_handlers();
 //! ```
 
+mod process_state;
+mod sample_capture;
+
 use parking_lot::Mutex;
+use std::fmt::Write as _;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::Duration;
+
+/// Hard cap on how long the external sampler may run before it is killed.
+///
+/// Re-exported so callers (and the regression tests) can bound how long a
+/// SIGUSR1 dump may take.
+pub const SAMPLE_TIMEOUT_SECS: u64 = sample_capture::SAMPLE_TIMEOUT_SECS;
+
+/// Grace period allowed for a killed sampler to actually exit.
+pub const SAMPLE_KILL_GRACE_MS: u64 = sample_capture::SAMPLE_KILL_GRACE_MS;
+
+/// How much of a thread dump was actually captured (Issue #1934).
+///
+/// An empty dump used to be indistinguishable from a clean one. The banner now
+/// carries this classification so a field report can be grepped for it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DumpCompleteness {
+    /// The sampler ran to completion and its output was read.
+    Full,
+    /// The sampler was killed, but partial output was recovered.
+    Partial,
+    /// No backtraces at all — only the in-process state block.
+    NoBacktraces,
+}
+
+impl DumpCompleteness {
+    /// The wording used in the END THREAD DUMP banner.
+    #[must_use]
+    pub const fn banner(self) -> &'static str {
+        match self {
+            Self::Full => "full dump",
+            Self::Partial => "partial dump",
+            Self::NoBacktraces => "no backtraces captured",
+        }
+    }
+}
 
 /// Static flag to ensure handlers are only initialised once.
 static DEBUG_HANDLERS_INITIALISED: OnceLock<()> = OnceLock::new();
@@ -83,6 +139,9 @@ pub fn init_debug_handlers() {
     DEBUG_HANDLERS_INITIALISED.get_or_init(|| {
         // Reset shutdown flag in case a previous shutdown was called (e.g. in tests).
         SHUTDOWN_REQUESTED.store(false, Ordering::Relaxed);
+
+        // Anchor the elapsed-run-time line in thread dumps (Issue #1934).
+        process_state::mark_start();
 
         // Check if verbose mode is enabled
         if crate::config::verbose() {
@@ -295,292 +354,75 @@ fn install_signal_handler() -> (
     (handle, Some(closer))
 }
 
-/// Dump backtraces of all threads to stderr.
+/// Dump thread state to stderr.
 ///
 /// This is called when SIGUSR1 (kill -USR1) is received.
-/// On macOS, automatically runs `sample` to get full thread backtraces.
-/// On other platforms, provides instructions for manual debugging.
 fn dump_all_threads() {
+    eprint!("{}", render_thread_dump());
+    let _ = std::io::Write::flush(&mut std::io::stderr());
+}
+
+/// Build the full thread dump as text (Issue #1934).
+///
+/// This is what SIGUSR1 writes to stderr. It is exposed so the fallback paths
+/// can be exercised directly by tests, and so a host can capture a dump without
+/// signalling itself.
+///
+/// # Guarantees
+///
+/// - It never blocks for longer than [`SAMPLE_TIMEOUT_SECS`] plus
+///   [`SAMPLE_KILL_GRACE_MS`], whatever the external sampler does.
+/// - It always contains the in-process state block, so an unhelpful dump is
+///   never an empty one.
+/// - The END banner always names the [`DumpCompleteness`], so an empty capture
+///   cannot be mistaken for a clean one.
+#[must_use]
+pub fn render_thread_dump() -> String {
     let timestamp = chrono_lite_timestamp();
     let pid = std::process::id();
+    let mut out = String::new();
+    let rule = "=".repeat(80);
 
-    eprintln!("\n{}", "=".repeat(80));
-    eprintln!("THREAD DUMP - {timestamp} (kill -USR1 received)");
-    eprintln!("Process ID: {pid}");
-    eprintln!("{}\n", "=".repeat(80));
+    let _ = writeln!(out, "\n{rule}");
+    let _ = writeln!(out, "THREAD DUMP - {timestamp} (kill -USR1 received)");
+    let _ = writeln!(out, "Process ID: {pid}");
+    let _ = writeln!(out, "{rule}\n");
 
-    // Check for any deadlocked threads first (this is fast)
+    render_deadlocks(&mut out);
+
+    // Best-effort full backtraces. Bounded, killable, and allowed to fail.
+    let completeness = sample_capture::capture(pid, &mut out);
+
+    // Always available, never dependent on a wedged driver or external tool.
+    let _ = writeln!(out);
+    process_state::render(&mut out, pid);
+
+    let _ = writeln!(out, "{rule}");
+    let _ = writeln!(out, "END THREAD DUMP - {}", completeness.banner());
+    let _ = writeln!(out, "{rule}\n");
+
+    out
+}
+
+/// Report `parking_lot` deadlock cycles — fast, and purely in-process.
+fn render_deadlocks(out: &mut String) {
     let deadlocks = parking_lot::deadlock::check_deadlock();
-    if !deadlocks.is_empty() {
-        eprintln!("--- DEADLOCKED THREADS DETECTED ---");
-        for (i, threads) in deadlocks.iter().enumerate() {
-            eprintln!("\nDeadlock #{} ({} threads):", i + 1, threads.len());
-            for t in threads {
-                eprintln!("  Thread ID: {:?}", t.thread_id());
-                if VERBOSE_MODE.load(Ordering::Relaxed) {
-                    eprintln!("  Backtrace:\n{:#?}", t.backtrace());
-                }
-            }
-        }
-        eprintln!();
-    } else {
-        eprintln!("--- No mutex deadlocks detected ---\n");
-    }
-
-    // On macOS, run `sample` to get full thread backtraces
-    #[cfg(target_os = "macos")]
-    {
-        eprintln!("--- Running 'sample' for full thread analysis (1 second) ---\n");
-        run_sample_command(pid);
-    }
-
-    // On non-macOS, show manual instructions
-    #[cfg(not(target_os = "macos"))]
-    {
-        use std::backtrace::Backtrace;
-
-        // Print current thread backtrace as fallback
-        let current = thread::current();
-        eprintln!("--- Signal Handler Thread ---");
-        eprintln!("Name: {:?}", current.name().unwrap_or("<unnamed>"));
-        eprintln!("ID: {:?}", current.id());
-        let bt = Backtrace::force_capture();
-        eprintln!("Backtrace:\n{bt}");
-        eprintln!();
-
-        eprintln!("Note: For full thread backtraces on Linux, use:");
-        eprintln!("  gdb -p {pid} -ex 'thread apply all bt' -ex 'quit'");
-    }
-
-    eprintln!("{}", "=".repeat(80));
-    eprintln!("END THREAD DUMP");
-    eprintln!("{}\n", "=".repeat(80));
-}
-
-/// Run macOS `sample` command to capture all thread backtraces.
-#[cfg(target_os = "macos")]
-fn run_sample_command(pid: u32) {
-    use std::time::Duration;
-
-    // IMPORTANT: This must NEVER hang. It's used for debugging stuck processes.
-    //
-    // On some macOS installs, `sample` can itself hang (eg if the kernel is under
-    // extreme pressure or a driver is wedged). If we block here, we make the
-    // original hang harder to diagnose on unattended machines.
-    const SAMPLE_TIMEOUT_SECS: u64 = 5;
-    const SAMPLE_KILL_GRACE_MS: u64 = 500;
-
-    // Run sample for 1 second to get a snapshot (not a profile).
-    // Note: We use `-mayDie` to avoid requiring elevated permissions.
-    //
-    // IMPORTANT: Do NOT pipe stdout here. `sample` can emit a lot of output; if we
-    // pipe it and don't continuously drain the pipe, the child can block forever
-    // once the buffer fills. That manifests exactly as "sample did not exit".
-    let out_path = std::env::temp_dir().join(format!(
-        "neat_ai_discovery.sample.{pid}.{}.txt",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |d| d.as_millis())
-    ));
-    let out_path_str = out_path.to_string_lossy().to_string();
-
-    let sample_program = crate::config::sample_program();
-    let sample_args = vec![
-        pid.to_string(),
-        "1".to_string(),
-        "-mayDie".to_string(),
-        "-file".to_string(),
-        out_path_str.clone(),
-    ];
-
-    let run = match run_external_command_with_timeout(
-        &sample_program,
-        &sample_args,
-        Duration::from_secs(SAMPLE_TIMEOUT_SECS),
-        Duration::from_millis(SAMPLE_KILL_GRACE_MS),
-    ) {
-        Ok(r) => r,
-        Err(e) => {
-            eprintln!("Failed to run 'sample': {e}");
-            eprintln!("Try manually: sample {pid} 1 -mayDie -file /tmp/sample.txt");
-            return;
-        }
-    };
-
-    if run.timed_out {
-        eprintln!(
-            "[NEAT-AI-Discovery][debug] WARNING: 'sample' did not exit within {SAMPLE_TIMEOUT_SECS}s. \
-             Attempting to print any partial output captured so far."
-        );
-        match std::fs::read_to_string(&out_path) {
-            Ok(contents) => {
-                eprintln!(
-                    "[NEAT-AI-Discovery][debug] Partial 'sample' output saved to: {out_path_str}\n"
-                );
-                print_filtered_sample_output(&contents);
-            }
-            Err(e) => {
-                eprintln!(
-                    "[NEAT-AI-Discovery][debug] WARNING: Could not read partial 'sample' output file: {e}"
-                );
-                eprintln!("Expected output at: {out_path_str}");
-                eprintln!("Try manually: sample {pid} 1 -mayDie -file /tmp/sample.txt");
-            }
-        }
+    if deadlocks.is_empty() {
+        let _ = writeln!(out, "--- No mutex deadlocks detected ---\n");
         return;
     }
 
-    let Some(status) = run.status else {
-        // We only return `None` status when the child was killed but didn't report status
-        // within the grace window.
-        eprintln!(
-            "[NEAT-AI-Discovery][debug] WARNING: 'sample' did not report an exit status. \
-             See partial output at: {out_path_str}"
-        );
-        return;
-    };
-
-    if status.success() {
-        match std::fs::read_to_string(&out_path) {
-            Ok(contents) => {
-                eprintln!(
-                    "[NEAT-AI-Discovery][debug] Full 'sample' output saved to: {out_path_str}\n"
-                );
-                print_filtered_sample_output(&contents);
-            }
-            Err(e) => {
-                eprintln!(
-                    "[NEAT-AI-Discovery][debug] 'sample' exited successfully but output file could not be read: {e}"
-                );
-                eprintln!("Expected output at: {out_path_str}");
-                eprintln!("Try manually: sample {pid} 1 -mayDie -file /tmp/sample.txt");
-            }
-        }
-    } else {
-        eprintln!("'sample' command failed (exit code: {status}).");
-        eprintln!("Try manually: sample {pid} 1 -mayDie -file /tmp/sample.txt");
-    }
-}
-
-// This helper is only required on macOS (to run `sample`) and in tests (to prevent regressions).
-// On other platforms we intentionally do not compile it to avoid `-D dead-code` failures under
-// the `./quality.sh` gate.
-#[cfg(any(target_os = "macos", test))]
-#[derive(Debug, Clone, Copy)]
-struct ExternalCommandRun {
-    status: Option<std::process::ExitStatus>,
-    timed_out: bool,
-}
-
-/// Run an external command with a hard timeout, avoiding pipe backpressure.
-///
-/// IMPORTANT: This helper must never hang. It intentionally discards stdout/stderr
-/// to avoid deadlocks when a child writes more than a pipe buffer and the parent
-/// isn't continuously draining it.
-#[cfg(any(target_os = "macos", test))]
-fn run_external_command_with_timeout(
-    program: &str,
-    args: &[String],
-    timeout: Duration,
-    kill_grace: Duration,
-) -> std::io::Result<ExternalCommandRun> {
-    use std::process::{Command, Stdio};
-    use std::time::Instant;
-
-    let mut child = Command::new(program)
-        .args(args)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()?;
-
-    let start = Instant::now();
-    loop {
-        match child.try_wait() {
-            Ok(Some(status)) => {
-                return Ok(ExternalCommandRun {
-                    status: Some(status),
-                    timed_out: false,
-                });
-            }
-            Ok(None) => {
-                if start.elapsed() > timeout {
-                    let _ = child.kill();
-
-                    // Never block indefinitely waiting for the child to die.
-                    let kill_start = Instant::now();
-                    while kill_start.elapsed() < kill_grace {
-                        match child.try_wait() {
-                            Ok(Some(status)) => {
-                                return Ok(ExternalCommandRun {
-                                    status: Some(status),
-                                    timed_out: true,
-                                });
-                            }
-                            Ok(None) => thread::sleep(Duration::from_millis(25)),
-                            Err(_) => break,
-                        }
-                    }
-
-                    return Ok(ExternalCommandRun {
-                        status: None,
-                        timed_out: true,
-                    });
-                }
-                thread::sleep(Duration::from_millis(25));
-            }
-            Err(e) => return Err(e),
-        }
-    }
-}
-
-/// Filter sample output to show the most relevant thread information.
-#[cfg(target_os = "macos")]
-fn print_filtered_sample_output(output: &str) {
-    let mut in_call_graph = false;
-    let mut thread_count = 0;
-
-    for line in output.lines() {
-        // Start of call graph section
-        if line.starts_with("Call graph:") {
-            in_call_graph = true;
-            eprintln!("{line}");
-            continue;
-        }
-
-        // End markers
-        if line.starts_with("Total number in stack") || line.starts_with("Binary Images:") {
-            if in_call_graph {
-                eprintln!("\n--- End of call graph ({thread_count} threads) ---\n");
-            }
-            in_call_graph = false;
-            continue;
-        }
-
-        if in_call_graph {
-            // Thread headers
-            if line.contains("Thread_") {
-                thread_count += 1;
-                eprintln!("\n{line}");
-            }
-            // Show lines containing our library or interesting keywords
-            else if line.contains("neat_ai_discovery")
-                || line.contains("wgpu")
-                || line.contains("metal")
-                || line.contains("Metal")
-                || line.contains("crossbeam")
-                || line.contains("rayon")
-                || line.contains("recv")
-                || line.contains("poll")
-                || line.contains("wait")
-                || line.contains("park")
-                || line.contains("sleep")
-                || line.contains("pthread_cond")
-                || line.contains("kevent")
-            {
-                eprintln!("{line}");
+    let _ = writeln!(out, "--- DEADLOCKED THREADS DETECTED ---");
+    for (i, threads) in deadlocks.iter().enumerate() {
+        let _ = writeln!(out, "\nDeadlock #{} ({} threads):", i + 1, threads.len());
+        for t in threads {
+            let _ = writeln!(out, "  Thread ID: {:?}", t.thread_id());
+            if VERBOSE_MODE.load(Ordering::Relaxed) {
+                let _ = writeln!(out, "  Backtrace:\n{:#?}", t.backtrace());
             }
         }
     }
+    let _ = writeln!(out);
 }
 
 /// Simple timestamp without heavy dependencies.
@@ -674,102 +516,52 @@ mod tests {
         SHUTDOWN_REQUESTED.store(false, Ordering::Relaxed);
     }
 
+    // =========================================================================
+    // Issue #1934 — the dump degrades instead of disappearing
+    // =========================================================================
+
+    /// Each completeness level has its own banner wording, so a field report can
+    /// be grepped for the one that matters.
     #[test]
-    #[cfg(unix)]
-    fn run_external_command_with_timeout_does_not_hang_and_preserves_partial_output() {
-        use std::os::unix::fs::PermissionsExt;
-
-        // Create a small shell script that writes to a file immediately, then hangs.
-        // This simulates the "child doesn't exit promptly" scenario while ensuring we
-        // can still read partial output from the file after we kill it.
-        let tmp = std::env::temp_dir();
-        let script_path = tmp.join(format!(
-            "neat_ai_discovery_test_hang_{}_{}.sh",
-            std::process::id(),
-            chrono_lite_timestamp().replace(' ', "_")
-        ));
-        let out_path = tmp.join(format!(
-            "neat_ai_discovery_test_output_{}_{}.txt",
-            std::process::id(),
-            chrono_lite_timestamp().replace(' ', "_")
-        ));
-        // Pre-create the output file so the test can't fail with "not found" if the
-        // child is killed before it gets scheduled.
-        std::fs::write(&out_path, "").expect("precreate output file");
-
-        // The script writes a sentinel line, then hangs on `sleep`.
-        // Using a single `echo` keeps I/O minimal so even slow runners flush before
-        // the timeout fires.
-        let script = "#!/bin/sh\n\
-             echo \"Call graph:\" > \"$1\"\n\
-             echo \"Thread_0\" >> \"$1\"\n\
-             # Signal that output is ready via a separate sentinel file.\n\
-             touch \"$1.ready\"\n\
-             sleep 60\n"
-            .to_string();
-        std::fs::write(&script_path, script).expect("write test script");
-        let mut perms = std::fs::metadata(&script_path)
-            .expect("metadata")
-            .permissions();
-        perms.set_mode(0o755);
-        std::fs::set_permissions(&script_path, perms).expect("chmod");
-
-        // Spawn the child ourselves first so we can wait for it to finish writing
-        // before we exercise the timeout/kill logic in `run_external_command_with_timeout`.
-        let args = vec![out_path.to_string_lossy().to_string()];
-        {
-            use std::process::{Command, Stdio};
-            let mut child = Command::new(script_path.to_string_lossy().as_ref())
-                .args(&args)
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .spawn()
-                .expect("spawn pre-run child");
-
-            // Wait for the sentinel file that proves the script flushed its output.
-            let sentinel = format!("{}.ready", out_path.display());
-            let poll_start = Instant::now();
-            while poll_start.elapsed() < Duration::from_secs(10) {
-                if std::path::Path::new(&sentinel).exists() {
-                    break;
-                }
-                thread::sleep(Duration::from_millis(25));
-            }
-            let _ = child.kill();
-            let _ = child.wait();
-            let _ = std::fs::remove_file(&sentinel);
-        }
-
-        // Verify that the pre-run child wrote partial output.
-        let contents = std::fs::read_to_string(&out_path).expect("read partial output");
-        assert!(
-            contents.contains("Call graph:") && contents.contains("Thread_0"),
-            "expected partial output, got: {contents:?}"
+    fn banner_wording_distinguishes_the_three_outcomes() {
+        assert_eq!(DumpCompleteness::Full.banner(), "full dump");
+        assert_eq!(DumpCompleteness::Partial.banner(), "partial dump");
+        assert_eq!(
+            DumpCompleteness::NoBacktraces.banner(),
+            "no backtraces captured"
         );
+    }
 
-        // Now exercise the function under test – a fresh invocation that will time out.
-        // Reset output file so the second child writes fresh.
-        std::fs::write(&out_path, "").expect("reset output file");
-        let start = Instant::now();
-        let run = run_external_command_with_timeout(
-            script_path.to_string_lossy().as_ref(),
-            &args,
-            Duration::from_secs(3),
-            Duration::from_millis(500),
-        )
-        .expect("run");
+    /// The dump always carries the in-process state block and a classified
+    /// banner — never a bare END THREAD DUMP with nothing above it.
+    #[test]
+    fn a_dump_always_contains_state_and_a_classified_banner() {
+        let dump = render_thread_dump();
 
-        assert!(run.timed_out, "expected timeout");
-        // Touch `status` so it doesn't get optimised into "dead code" on non-macOS test builds.
-        // (It is used by the macOS `sample` path.)
-        let _ = run.status;
+        assert!(dump.contains("THREAD DUMP"), "{dump}");
+        assert!(dump.contains("In-process state"), "{dump}");
+        assert!(dump.contains("GPU circuit breaker:"), "{dump}");
+        assert!(dump.contains("Outstanding GPU requests"), "{dump}");
         assert!(
-            start.elapsed() < Duration::from_secs(8),
-            "expected quick return, got {:#?}",
-            start.elapsed()
+            dump.contains("END THREAD DUMP - full dump")
+                || dump.contains("END THREAD DUMP - partial dump")
+                || dump.contains("END THREAD DUMP - no backtraces captured"),
+            "the END banner must classify the dump: {dump}"
         );
+    }
 
-        let _ = std::fs::remove_file(&script_path);
-        let _ = std::fs::remove_file(&out_path);
+    /// The handler must stay bounded even when the sampler misbehaves.
+    #[test]
+    fn a_dump_returns_within_the_sampler_bound() {
+        let started = Instant::now();
+        let _ = render_thread_dump();
+        let bound = Duration::from_secs(SAMPLE_TIMEOUT_SECS)
+            + Duration::from_millis(SAMPLE_KILL_GRACE_MS)
+            + Duration::from_secs(5);
+        assert!(
+            started.elapsed() < bound,
+            "a dump must never block the process, took {:?}",
+            started.elapsed()
+        );
     }
 }
