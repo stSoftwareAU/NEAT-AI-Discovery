@@ -936,6 +936,78 @@ pub fn min_expected_gain_floor_for_synapses() -> f32 {
 }
 
 // =============================================================================
+// Add-Neuron Rank Score (Issue #1924)
+// =============================================================================
+
+/// Number of reliability bands add-neuron candidates are ranked into
+/// (Issue #1924).
+///
+/// The candidates-cache study (`docs/analysis/candidates-cache-study-1920.md`,
+/// finding B) measured `expectedCreatureScoreGain` against the success
+/// indicator at **r = −0.608** over the 13 cached `add-neurons` records: the
+/// largest predictions are exactly the ones that fail, so ranking on the
+/// estimate alone actively selects losers. `improvedCount / totalCount` — the
+/// share of samples a candidate improves — is the only field in that corpus
+/// that correlates *positively* with success (r = +0.466).
+///
+/// The rank score therefore buckets that share into bands and orders by band
+/// first, using the expected gain only to break ties **within** a band. This
+/// constant is the gain-versus-reliability knob:
+///
+/// - `1` — a single band, so the ordering collapses back to gain-descending
+///   (the pre-#1924 behaviour, kept as an escape hatch).
+/// - larger values — narrower bands, so reliability decides more comparisons
+///   and gain decides fewer.
+///
+/// Overridable via `NEAT_AI_DISCOVERY_NEURON_RANKING_BANDS`.
+///
+/// ## Valid Range
+/// Must be >= 1. Values above ~100 make bands narrower than the sampling noise
+/// in `improvedCount / totalCount` and reduce the score to raw gain order.
+pub const NEURON_RANKING_RELIABILITY_BANDS: u32 = 10;
+
+/// Minimum permitted band count after env-var override clamping.
+pub const MIN_NEURON_RANKING_RELIABILITY_BANDS: u32 = 1;
+
+/// Maximum permitted band count after env-var override clamping.
+pub const MAX_NEURON_RANKING_RELIABILITY_BANDS: u32 = 1000;
+
+/// Expected-gain value at which the within-band tie-break saturates
+/// (Issue #1924).
+///
+/// The cached `add-neurons` predictions span `1.6e-7 … 1.1e-2`, while every
+/// realised `scoreDelta` in the whole corpus sits at or below `2.35e-5`. Above
+/// `1e-3` the estimates are pure over-confidence — the four largest predictions
+/// all lost score — so a prediction beyond this reference earns no *additional*
+/// rank credit. It still outranks a smaller prediction in the same band via the
+/// gain tie-break; it simply cannot buy its way past a more reliable candidate.
+///
+/// ## Valid Range
+/// Must be > 0.0. Values below the realised delta band (~1e-5) would saturate
+/// candidates that are still discriminable.
+pub const NEURON_RANKING_GAIN_REFERENCE: f32 = 1e-3;
+
+/// Return the effective add-neuron reliability band count (Issue #1924).
+///
+/// Reads `NEAT_AI_DISCOVERY_NEURON_RANKING_BANDS` at call time so operators can
+/// retune the gain-versus-reliability trade-off as the cache corpus grows,
+/// without recompiling. Values outside
+/// `[MIN_NEURON_RANKING_RELIABILITY_BANDS,
+/// MAX_NEURON_RANKING_RELIABILITY_BANDS]` are clamped; unparsable or missing
+/// values fall back to [`NEURON_RANKING_RELIABILITY_BANDS`].
+#[must_use]
+pub fn neuron_ranking_reliability_bands() -> u32 {
+    std::env::var("NEAT_AI_DISCOVERY_NEURON_RANKING_BANDS")
+        .ok()
+        .and_then(|v| v.trim().parse::<u32>().ok())
+        .unwrap_or(NEURON_RANKING_RELIABILITY_BANDS)
+        .clamp(
+            MIN_NEURON_RANKING_RELIABILITY_BANDS,
+            MAX_NEURON_RANKING_RELIABILITY_BANDS,
+        )
+}
+
+// =============================================================================
 // Bypass-Weight Floor for Hidden-Neuron Collapse (Issue #1270)
 // =============================================================================
 

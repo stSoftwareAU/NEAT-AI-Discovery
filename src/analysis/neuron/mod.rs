@@ -10,11 +10,13 @@
 //! - `preparation` — Focus target filtering, neuron type maps, source ordering
 //! - `evaluation` — GPU-based candidate evaluation (`ReLU`, activation specs)
 //! - `post_processing` — Impact discounting, sorting, filtering, result assembly
+//! - `ranking_score` — Reliability-weighted candidate ordering (Issue #1924)
 
 #![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 mod evaluation;
 pub(crate) mod post_processing;
 pub(crate) mod preparation;
+pub mod ranking_score;
 
 use crate::{AnalyzeNeuronsInput, CandidateNeuronJson};
 use anyhow::{Context, Result};

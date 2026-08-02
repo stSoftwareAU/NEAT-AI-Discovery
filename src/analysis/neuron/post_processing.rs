@@ -98,11 +98,12 @@ pub(crate) fn build_neuron_results(
     // (`candidates_below_gain_floor_total`).
     let _floor_dropped = apply_min_expected_gain_floor_for_neurons(&mut helpful_results);
 
-    // Sort by expected creature score gain (highest first) - Issue #128
-    helpful_results.sort_by(|a, b| {
-        b.expected_creature_score_gain
-            .total_cmp(&a.expected_creature_score_gain)
-    });
+    // Order best-first. Issue #128 sorted on `expected_creature_score_gain`
+    // alone; Issue #1924 replaced that key with the reliability-weighted rank
+    // score after the candidates-cache study measured the raw estimate at
+    // r = −0.608 against success — the biggest predictions were the ones that
+    // failed. Gain now only breaks ties inside a reliability band.
+    super::ranking_score::sort_candidates_by_rank(&mut helpful_results);
 
     // Production experiment: pair "extreme" candidates with a conservative variant.
     // Issue #1163: pass the per-variant calibration so each variant's
@@ -374,12 +375,13 @@ pub fn apply_min_expected_gain_floor_for_neurons(
 
 /// Enforce squash diversity within each target neuron (Issue #1141).
 ///
-/// Sorts `candidates` by `expected_creature_score_gain` descending (NaN-safe
-/// via `total_cmp`), then retains only the highest-gain candidate for each
-/// distinct `(target_neuron_uuid, squash)` pair. Lower-gain candidates whose
-/// squash matches that of an already-retained candidate for the same target
-/// are dropped. Returns the number of candidates dropped so callers can
-/// record it in the rejection breakdown.
+/// Sorts `candidates` by
+/// [`neuron_rank_score`](super::ranking_score::neuron_rank_score) descending
+/// (NaN-safe via `total_cmp`), then retains only the highest-ranked candidate
+/// for each distinct `(target_neuron_uuid, squash)` pair. Lower-ranked
+/// candidates whose squash matches that of an already-retained candidate for
+/// the same target are dropped. Returns the number of candidates dropped so
+/// callers can record it in the rejection breakdown.
 ///
 /// This filter runs before [`apply_per_target_cap`] so the remaining
 /// per-target budget is spent on genuinely distinct squash proposals rather
@@ -391,13 +393,10 @@ pub(crate) fn apply_same_target_squash_diversity(
         return 0;
     }
 
-    // Sort by gain descending so retained candidates per (target, squash) are
-    // the highest-gain ones. `total_cmp` provides a total order including NaN
-    // and ties break deterministically.
-    candidates.sort_by(|a, b| {
-        b.expected_creature_score_gain
-            .total_cmp(&a.expected_creature_score_gain)
-    });
+    // Sort by rank score descending (Issue #1924) so retained candidates per
+    // (target, squash) are the highest-ranked ones, with gain breaking ties
+    // inside a reliability band.
+    super::ranking_score::sort_candidates_by_rank(candidates);
 
     let original_len = candidates.len();
     let mut seen: HashSet<(String, String)> = HashSet::new();
@@ -414,14 +413,16 @@ pub(crate) fn apply_same_target_squash_diversity(
 /// Cap add-neuron candidates per target neuron within a single discovery
 /// batch (Issue #1140).
 ///
-/// Sorts `candidates` by `expected_creature_score_gain` descending (NaN-safe
-/// via `total_cmp`), applies the cross-target diversity spread (Issue #1193),
-/// then retains only the top-K candidates per `target_neuron_uuid`, where K
-/// is [`max_add_neuron_candidates_per_target`]. The retained candidates start
-/// with up to [`min_distinct_targets_per_batch`] distinct targets (in
-/// gain-descending order) followed by the remaining candidates in gain-
-/// descending order. Returns the number of candidates dropped by the cap so
-/// callers can record it in the rejection breakdown.
+/// Sorts `candidates` by
+/// [`neuron_rank_score`](super::ranking_score::neuron_rank_score) descending
+/// (NaN-safe via `total_cmp`, Issue #1924), applies the cross-target diversity
+/// spread (Issue #1193), then retains only the top-K candidates per
+/// `target_neuron_uuid`, where K is [`max_add_neuron_candidates_per_target`].
+/// The retained candidates start with up to
+/// [`min_distinct_targets_per_batch`] distinct targets (in rank order)
+/// followed by the remaining candidates in rank order. Returns the number of
+/// candidates dropped by the cap so callers can record it in the rejection
+/// breakdown.
 #[cfg(test)]
 pub(crate) fn apply_per_target_cap(candidates: &mut Vec<CandidateNeuronJson>) -> usize {
     apply_per_target_cap_with_priority(candidates, None)
@@ -444,13 +445,10 @@ pub(crate) fn apply_per_target_cap_with_priority(
         return 0;
     }
 
-    // Sort by gain descending so that retained candidates per target are the
-    // highest-gain ones. `total_cmp` provides a total order including NaN,
-    // breaking ties deterministically.
-    candidates.sort_by(|a, b| {
-        b.expected_creature_score_gain
-            .total_cmp(&a.expected_creature_score_gain)
-    });
+    // Sort by rank score descending (Issue #1924) so that retained candidates
+    // per target are the highest-ranked ones, with gain breaking ties inside a
+    // reliability band.
+    super::ranking_score::sort_candidates_by_rank(candidates);
 
     // Issue #1193 / #1319: reorder so the top of the list covers at least
     // `MIN_DISTINCT_TARGETS_PER_BATCH` distinct targets when the pool supports
@@ -519,19 +517,18 @@ fn build_one_hot_class_priority(
 
 /// Cross-target diversity spread (Issue #1193).
 ///
-/// Assumes `candidates` is already sorted by `expected_creature_score_gain`
-/// descending. When the pool contains at least
-/// [`min_distinct_targets_per_batch`] distinct target neurons, reorders so
-/// the top of the list contains the highest-gain candidate from each of the
-/// first `min_distinct_targets_per_batch` distinct targets, followed by the
-/// remaining candidates in their original gain-descending order. When the
-/// pool has fewer distinct targets than the spread requires, falls through
-/// without reordering.
+/// Assumes `candidates` is already sorted in rank order (Issue #1924 —
+/// previously `expected_creature_score_gain` descending). When the pool
+/// contains at least [`min_distinct_targets_per_batch`] distinct target
+/// neurons, reorders so the top of the list contains the highest-ranked
+/// candidate from each of the first `min_distinct_targets_per_batch` distinct
+/// targets, followed by the remaining candidates in their original rank order.
+/// When the pool has fewer distinct targets than the spread requires, falls
+/// through without reordering.
 ///
 /// The reorder is a stable partition: candidates kept "in front" appear in
-/// the gain-rank order at which their target was first encountered, and
-/// candidates pushed to the rear remain in gain-rank order relative to each
-/// other.
+/// the rank order at which their target was first encountered, and candidates
+/// pushed to the rear remain in rank order relative to each other.
 pub(crate) fn apply_distinct_target_spread(candidates: &mut Vec<CandidateNeuronJson>) {
     let min_distinct = crate::analysis::constants::min_distinct_targets_per_batch();
     if candidates.len() <= 1 || min_distinct <= 1 {
@@ -1128,5 +1125,61 @@ mod tests {
             .map(|c| c.target_neuron_uuid.as_str())
             .collect();
         assert_eq!(legacy_view, new_view);
+    }
+
+    /// Issue #1924: the per-target cap keeps the candidate that improves the
+    /// most samples, not the one with the largest — and, per the cache study,
+    /// least trustworthy — prediction.
+    #[test]
+    #[serial]
+    fn per_target_cap_keeps_the_reliable_candidate_over_the_over_confident_one() {
+        let mut over_confident = test_candidate_with_squash("target-A", 1.063e-2, "ReLU6");
+        over_confident.improved_count = 174;
+        over_confident.total_count = 315;
+        let mut reliable = test_candidate_with_squash("target-A", 1.576e-7, "ArcTan");
+        reliable.improved_count = 204;
+        reliable.total_count = 204;
+
+        let mut candidates = vec![over_confident, reliable];
+        // SAFETY: env access is serialised via `#[serial]`.
+        unsafe {
+            std::env::set_var("NEAT_AI_DISCOVERY_MAX_ADD_NEURON_PER_TARGET", "1");
+        }
+        let dropped = apply_per_target_cap(&mut candidates);
+        // SAFETY: env access is serialised via `#[serial]`.
+        unsafe {
+            std::env::remove_var("NEAT_AI_DISCOVERY_MAX_ADD_NEURON_PER_TARGET");
+        }
+
+        assert_eq!(dropped, 1, "the cap of 1 must drop one candidate");
+        assert_eq!(
+            candidates[0].squash, "ArcTan",
+            "the candidate improving every sample must survive the cap"
+        );
+    }
+
+    /// Issue #1924: squash diversity keeps the highest-ranked candidate per
+    /// (target, squash), which is now the most reliable one rather than the
+    /// largest prediction.
+    #[test]
+    #[serial]
+    fn squash_diversity_keeps_the_reliable_duplicate() {
+        let mut over_confident = test_candidate_with_squash("target-A", 1.063e-2, "ReLU6");
+        over_confident.improved_count = 174;
+        over_confident.total_count = 315;
+        over_confident.source_neuron_uuid = "over-confident".to_string();
+        let mut reliable = test_candidate_with_squash("target-A", 1.576e-7, "ReLU6");
+        reliable.improved_count = 204;
+        reliable.total_count = 204;
+        reliable.source_neuron_uuid = "reliable".to_string();
+
+        let mut candidates = vec![over_confident, reliable];
+        let dropped = apply_same_target_squash_diversity(&mut candidates);
+
+        assert_eq!(dropped, 1, "the duplicate (target, squash) must be dropped");
+        assert_eq!(
+            candidates[0].source_neuron_uuid, "reliable",
+            "the retained duplicate must be the more reliable candidate"
+        );
     }
 }
