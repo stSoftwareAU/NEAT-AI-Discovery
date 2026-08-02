@@ -361,6 +361,54 @@ flowchart LR
     R -- yes --> T[Re-init + retry, up to the retry limit]
 ```
 
+**Process-wide circuit breaker** (Issue #1930): the library used to have no
+memory that the GPU had already wedged. Each analysis called
+`GpuWorkQueue::new()`, spawning a fresh GPU thread — and therefore a fresh
+`wgpu` device, buffer pool and command buffers — against the same dead hardware,
+then sat out another 60–300s batch timeout before failing. One reported run
+abandoned three GPU threads and burned ~30 minutes that way.
+
+The first sign that the GPU is wedged now trips a one-way, process-wide breaker:
+
+| Trip condition | Site |
+|----------------|------|
+| A GPU thread did not exit within `GPU_SHUTDOWN_TIMEOUT_SECS` and was abandoned | `Drop for GpuWorkQueue` |
+| A batch submission timed out — the queue never accepted it, or the GPU never answered | every `submit_*`/`evaluate_*` entry point |
+| GPU initialisation timed out after `GPU_INIT_TIMEOUT_SECS` | `GpuWorkQueue::new()` |
+
+Once tripped, for the rest of the process: `GpuWorkQueue::new()` returns an error
+instead of spawning another thread, and every submission returns that error
+immediately instead of starting a new multi-minute wait. The error carries the
+original trip reason and the abandoned-thread count. The trip is logged **once**
+at `warn`; every suppressed call afterwards logs at `debug` only, so a wedged GPU
+cannot flood the log.
+
+The breaker keys off those explicit sites, never off error-message matching:
+`is_device_lost_error()` matches "driver may be unresponsive" but not the
+batch-timeout wording "The GPU may be unresponsive", so string matching would
+miss the very failure this exists to stop.
+
+Recovery is deliberately out of scope — nothing self-restarts. The abandoned
+thread count is published as `abandoned_threads` in `global_gpu_metrics()`
+(printed by `NEAT_AI_DISCOVERY_GPU_METRICS=1`); with the breaker in place it must
+never exceed 1 per process. Two or more `GPU thread did not exit` warnings in one
+run, or any GPU submission after the breaker warn, means the breaker regressed.
+
+```mermaid
+stateDiagram-v2
+    [*] --> Closed
+    Closed --> Tripped: thread abandoned after shutdown timeout
+    Closed --> Tripped: batch send/response timeout
+    Closed --> Tripped: init timeout
+    Closed --> Closed: GPU work proceeds normally
+    Tripped --> Tripped: new()/submit_* return the breaker error at once (debug log)
+    note right of Tripped
+        One warn on entry, carrying the reason
+        and the abandoned-thread count.
+        Only a process restart clears it.
+    end note
+```
+
 **Causes and solutions:**
 - **GPU driver hang**: Restart the process. If persistent, restart the machine.
 - **GPU memory exhaustion**: Reduce `NEAT_AI_DISCOVERY_GPU_BATCH_SIZE` (try 256 or 128).

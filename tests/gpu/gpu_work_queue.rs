@@ -9,6 +9,10 @@
 //! 1. Analysis functions work correctly with the shared queue
 //! 2. Results are equivalent to the previous per-thread analyzer approach
 //! 3. The queue handles concurrent requests from multiple focus neurons
+//!
+//! Every test here drives a real GPU queue, so it is `#[serial]` (Issue #1930):
+//! the circuit-breaker tests in this binary trip and reset the process-wide
+//! breaker, which would otherwise refuse a concurrent submission here.
 
 #![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use neat_ai_discovery::analysis::{GpuAnalyzer, analyze_neurons, analyze_synapses};
@@ -17,6 +21,7 @@ use neat_ai_discovery::types::DiscoverRecord;
 use neat_ai_discovery::{
     AnalyzeNeuronsInput, AnalyzeSynapsesInput, CreatureJson, NeuronJson, SynapseJson,
 };
+use serial_test::serial;
 use tempfile::tempdir;
 
 /// Skip test if no GPU available
@@ -32,6 +37,7 @@ macro_rules! skip_without_gpu {
 /// Test that synapse analysis works correctly with the GPU work queue.
 /// This tests the full integration path through the shared queue.
 #[test]
+#[serial]
 fn synapse_analysis_works_with_gpu_work_queue() {
     skip_without_gpu!();
 
@@ -102,6 +108,7 @@ fn synapse_analysis_works_with_gpu_work_queue() {
 
 /// Test that neuron analysis works correctly with the GPU work queue.
 #[test]
+#[serial]
 fn neuron_analysis_works_with_gpu_work_queue() {
     skip_without_gpu!();
 
@@ -173,6 +180,7 @@ fn neuron_analysis_works_with_gpu_work_queue() {
 /// Test that multiple focus neurons are processed correctly with the shared queue.
 /// This verifies that the queue handles concurrent work from multiple threads.
 #[test]
+#[serial]
 fn multiple_focus_neurons_work_with_shared_queue() {
     skip_without_gpu!();
 
@@ -296,6 +304,7 @@ fn multiple_focus_neurons_work_with_shared_queue() {
 
 /// Test that harmful synapse detection works with the GPU work queue.
 #[test]
+#[serial]
 fn harmful_synapse_detection_works_with_queue() {
     skip_without_gpu!();
 
