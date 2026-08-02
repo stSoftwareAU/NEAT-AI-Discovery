@@ -380,6 +380,26 @@ cargo bench --bench <bench_name>
 ./scripts/fuzz-ci.sh 60         # 60s per target
 ```
 
+### 📊 Studying the Candidates Cache
+
+The production discovery cache holds one JSON record per candidate the
+controller evaluated, filed under `success|failures/<model-hash>/<strategy>/`.
+The `study_candidates_cache` example turns that corpus into a Markdown report
+covering **volume** (records per day, model hash and strategy) and **gain size**
+(which record fields correlate with a bigger `scoreDelta`):
+
+```bash
+cargo run --example study_candidates_cache -- /path/to/discovery-cache-checkout
+```
+
+The live tree only holds the current model hash — periodic "Clean up OLD
+discovery caches" commits delete earlier ones — so by default the corpus is
+widened with records recovered from git history. Pass `--no-history` to study
+the working tree alone.
+
+See [docs/analysis/candidates-cache-study-1920.md](docs/analysis/candidates-cache-study-1920.md)
+for the first run's findings.
+
 ### 🔀 Fuzz Testing
 
 The `fuzz/` directory contains [cargo-fuzz](https://rust-fuzz.github.io/book/cargo-fuzz.html)
@@ -552,6 +572,7 @@ graph TD
 | [docs/BENCHMARKS.md](docs/BENCHMARKS.md) | Benchmark regression tracking and comparison workflow |
 | [docs/CANDIDATE_PIPELINE_MCMC_AUDIT.md](docs/CANDIDATE_PIPELINE_MCMC_AUDIT.md) | MCMC applicability audit for candidate selection pipeline |
 | [docs/DROUGHT_PLAYBOOK.md](docs/DROUGHT_PLAYBOOK.md) | Operator playbook for diagnosing "no successful candidates" droughts (suppression layers, regimes, env vars) |
+| [docs/analysis/candidates-cache-study-1920.md](docs/analysis/candidates-cache-study-1920.md) | Findings from the production candidates-cache study: candidate volume and gain-size predictors |
 | [CodeWiki](https://codewiki.google/github.com/stsoftwareau/neat-ai-discovery) | AI-powered documentation and code exploration |
 
 ## 📄 Licence

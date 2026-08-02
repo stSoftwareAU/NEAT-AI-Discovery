@@ -22,6 +22,7 @@
 //! - `samples/` - Sample data structures and GPU formats
 //! - `constants/` - Central discovery thresholds and constants (thematic sub-modules)
 //! - `cache/` - Record caching for parquet files (Issue #565)
+//! - `cache_study/` - Study of the production discovery candidates cache (Issue #1920)
 //! - `streaming.rs` - Streaming parquet loading with block-based caching
 //! - `discovery_dispatch.rs` - Generic discovery module dispatch pattern
 //! - `candidate_clustering.rs` - Candidate clustering to reduce redundant ablation tests
@@ -33,6 +34,7 @@
 pub mod activation;
 pub mod analysis_outcome;
 pub mod cache;
+pub mod cache_study;
 pub mod candidate_clustering;
 pub mod candidate_compression;
 pub mod candidate_diversity;
