@@ -919,8 +919,8 @@ is unchanged throughout — this is observability only. Full design notes:
 #### Module-Level Skips (Issue #1925)
 
 Every drop above is per *candidate*. Four gates suppress a **whole discovery
-module**, so no candidate is ever formed for them to count — and until Issue
-#1925 all four were log-only. A module that was never asked was
+module**, so no candidate is ever formed for them to count — and before this
+change all four were log-only. A module that was never asked was
 indistinguishable in the response from one that ran and found nothing, which is
 exactly the question the #1920 cache study could not answer about the 57% of
 production runs that cache nothing.
