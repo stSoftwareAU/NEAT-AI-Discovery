@@ -3,6 +3,24 @@
 Part of milestone #1736 — *Discovery finds very few successful candidates for
 the large converged production network*.
 
+> **Point-in-time study, as at 2026-07-25 — partly superseded by #1800.** Two
+> claims below no longer describe shipped behaviour:
+>
+> - **The "HOLD" verdict** (the summary at the top and the flowchart's
+>   `O -.-> HOLD` edge) recorded the converged production profile landing in
+>   `ProposalRichOverRejected`. **Superseded:** #1800 folds failure-cache
+>   suppression into the classifier input and lets a dominant-upstream majority
+>   override the formed-proposal floor, so the same pass now classifies
+>   `CandidateStarved` and widening *is* recommended — see
+>   [`pr-summary-1800.md`](../archive/pr-summaries/pr-summary-1800.md).
+> - **The wiring** described under *Where it is wired* is now
+>   `starvation_classifier_breakdown`, which merges both surfaces, the pass-level
+>   breakdown and failure-cache suppression before classifying.
+>
+> The three-bucket partition and the gating *decision* itself are unchanged. For
+> the current reason set and classification see
+> [`docs/FFI_API.md`](../FFI_API.md).
+
 ## Why this is a *decision*, not a blind widening
 
 The sibling diagnosis (`docs/analysis/rejection-diagnosis-1737.md`, Issue #1737)
@@ -82,3 +100,7 @@ the wasted widening the diagnosis identified.
 synapse+neuron `RejectionBreakdown` and surviving-candidate count for the pass,
 then gates `handshake.novelty_escalation_active` through it before surfacing the
 signal to the host.
+
+**Superseded by #1800** — that combined breakdown is now built by
+`starvation_classifier_breakdown`, which additionally folds in the pass-level
+breakdown and the failure-cache suppression count before `classify` runs.
