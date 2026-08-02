@@ -41,6 +41,7 @@ pub mod breaker;
 pub mod budget;
 pub mod device;
 pub mod harmful_evaluation;
+pub mod heartbeat;
 pub mod helpful_evaluation;
 pub(crate) mod pipeline_builder;
 pub mod queue;
@@ -66,6 +67,12 @@ pub use breaker::{
     GpuCircuitBreaker, GpuTripReason, abandoned_gpu_thread_count, check_gpu_breaker,
     global_gpu_breaker, gpu_breaker_trip_reason, is_gpu_breaker_tripped,
     record_abandoned_gpu_thread, reset_gpu_breaker, trip_gpu_breaker,
+};
+
+// Re-export the GPU-thread liveness heartbeat (Issue #1933)
+pub use heartbeat::{
+    DEFAULT_GPU_STALL_WINDOW_SECS, GPU_STALL_WINDOW_ENV, GpuHeartbeat, HeartbeatWatch,
+    MAX_GPU_STALL_WINDOW_SECS, MIN_GPU_STALL_WINDOW_SECS, global_gpu_heartbeat,
 };
 
 // Re-export analyzer module contents

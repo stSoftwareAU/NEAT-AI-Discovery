@@ -4,14 +4,15 @@
 //! including both synchronous (blocking) and asynchronous (future-based) submission.
 
 use anyhow::{Result, anyhow};
-use crossbeam_channel::bounded;
+use crossbeam_channel::{Receiver, bounded};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use super::staleness::caller_liveness_pair;
 use super::{GpuFuture, GpuWorkQueue, GpuWorkRequest};
 use crate::analysis::gpu::breaker::{GpuCircuitBreaker, GpuTripReason, gpu_wedged_error};
 use crate::analysis::gpu::budget::GpuTimeBudget;
+use crate::analysis::gpu::heartbeat::{GpuHeartbeat, HeartbeatWatch, global_gpu_heartbeat};
 use crate::analysis::samples::{
     HarmfulStats, HelpfulSample, HelpfulStats, ReluOrientation, ReluStats,
 };
@@ -44,6 +45,122 @@ pub fn batch_timeout_error(
 ) -> anyhow::Error {
     breaker.trip(GpuTripReason::BatchTimeout);
     gpu_wedged_error(format!("GPU {operation} timed out after {timeout_secs}s"))
+}
+
+/// Error for a GPU thread that stopped publishing progress (Issue #1933).
+///
+/// This is the fast verdict the heartbeat exists for: instead of sitting out the
+/// whole 60–300s batch timeout, the submitter declares the device wedged as soon
+/// as the GPU thread has been silent for the stall window.
+pub fn heartbeat_stall_error(
+    breaker: &GpuCircuitBreaker,
+    operation: &str,
+    idle: Duration,
+    window: Duration,
+) -> anyhow::Error {
+    breaker.trip(GpuTripReason::HeartbeatStall);
+    gpu_wedged_error(format!(
+        "GPU {operation} abandoned after {idle_secs:.1}s with no GPU-thread progress \
+         (stall window {window_secs}s); the GPU is wedged",
+        idle_secs = idle.as_secs_f64(),
+        window_secs = window.as_secs(),
+    ))
+}
+
+/// How a bounded wait for a GPU response ended (Issue #1933).
+#[derive(Debug)]
+pub enum GpuWaitOutcome<T> {
+    /// The GPU thread answered — successfully or with an evaluation error.
+    Answered(Result<T>),
+    /// The GPU thread published no progress for the stall window.
+    Stalled {
+        /// How long the heartbeat had been silent when the wait gave up.
+        idle: Duration,
+        /// The configured stall window that was exceeded.
+        window: Duration,
+    },
+    /// The absolute batch timeout expired — the backstop for a heartbeat that
+    /// cannot be updated at all.
+    TimedOut,
+    /// The GPU thread dropped the response sender.
+    Disconnected,
+}
+
+/// Wait for a GPU response, giving up early once the GPU thread goes silent.
+///
+/// The wait wakes every [`HeartbeatWatch::poll_interval`] and checks both the
+/// response channel and the heartbeat, so a wedged device is detected within the
+/// stall window instead of costing the caller its whole `timeout`. The absolute
+/// `timeout` remains as the backstop.
+pub fn wait_for_gpu_response<T>(
+    response_rx: &Receiver<Result<T>>,
+    timeout: Duration,
+    heartbeat: &GpuHeartbeat,
+    stall_window: Duration,
+) -> GpuWaitOutcome<T> {
+    let deadline = Instant::now() + timeout;
+    let mut watch = HeartbeatWatch::new(heartbeat, stall_window);
+    let interval = watch.poll_interval();
+
+    loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return GpuWaitOutcome::TimedOut;
+        }
+
+        match response_rx.recv_timeout(interval.min(remaining)) {
+            Ok(result) => return GpuWaitOutcome::Answered(result),
+            Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
+                if let Some(idle) = watch.stalled_for() {
+                    return GpuWaitOutcome::Stalled {
+                        idle,
+                        window: watch.stall_window(),
+                    };
+                }
+            }
+            Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
+                return GpuWaitOutcome::Disconnected;
+            }
+        }
+    }
+}
+
+/// Resolve a bounded wait into the caller's result, tripping the breaker on
+/// either wedged-GPU verdict (Issue #1933).
+pub(crate) fn resolve_gpu_wait<T>(
+    outcome: GpuWaitOutcome<T>,
+    breaker: &GpuCircuitBreaker,
+    operation: &str,
+    timeout_secs: u64,
+) -> Result<T> {
+    match outcome {
+        GpuWaitOutcome::Answered(result) => result,
+        GpuWaitOutcome::Stalled { idle, window } => {
+            Err(heartbeat_stall_error(breaker, operation, idle, window))
+        }
+        GpuWaitOutcome::TimedOut => Err(batch_timeout_error(breaker, operation, timeout_secs)),
+        GpuWaitOutcome::Disconnected => Err(anyhow!(
+            "GPU response channel closed unexpectedly — \
+             the GPU thread may have exited or panicked"
+        )),
+    }
+}
+
+/// Wait for a submitted request on the global heartbeat with the configured
+/// stall window (Issue #1933).
+pub(crate) fn await_gpu_response<T>(
+    response_rx: &Receiver<Result<T>>,
+    timeout: Duration,
+    breaker: &GpuCircuitBreaker,
+    operation: &str,
+) -> Result<T> {
+    let outcome = wait_for_gpu_response(
+        response_rx,
+        timeout,
+        global_gpu_heartbeat(),
+        crate::config::gpu_stall_window(),
+    );
+    resolve_gpu_wait(outcome, breaker, operation, timeout.as_secs())
 }
 
 impl GpuWorkQueue {
@@ -173,18 +290,15 @@ impl GpuWorkQueue {
             }
         }
 
-        // Wait for the response with timeout
-        match response_rx.recv_timeout(timeout) {
-            Ok(result) => result,
-            Err(crossbeam_channel::RecvTimeoutError::Timeout) => Err(batch_timeout_error(
-                self.breaker,
-                "helpful batch evaluation",
-                timeout_secs,
-            )),
-            Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
-                Err(anyhow!("GPU response channel closed unexpectedly"))
-            }
-        }
+        // Issue #1933: bounded wait — a GPU thread that stops publishing
+        // progress is declared wedged within the stall window rather than
+        // costing this caller the whole batch timeout.
+        await_gpu_response(
+            &response_rx,
+            timeout,
+            self.breaker,
+            "helpful batch evaluation",
+        )
     }
 
     /// Submit a batch of harmful evaluations and wait for results.
@@ -235,17 +349,15 @@ impl GpuWorkQueue {
             }
         }
 
-        match response_rx.recv_timeout(timeout) {
-            Ok(result) => result,
-            Err(crossbeam_channel::RecvTimeoutError::Timeout) => Err(batch_timeout_error(
-                self.breaker,
-                "harmful batch evaluation",
-                timeout_secs,
-            )),
-            Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
-                Err(anyhow!("GPU response channel closed unexpectedly"))
-            }
-        }
+        // Issue #1933: bounded wait — a GPU thread that stops publishing
+        // progress is declared wedged within the stall window rather than
+        // costing this caller the whole batch timeout.
+        await_gpu_response(
+            &response_rx,
+            timeout,
+            self.breaker,
+            "harmful batch evaluation",
+        )
     }
 
     /// Submit a `ReLU` evaluation and wait for results.
@@ -303,17 +415,10 @@ impl GpuWorkQueue {
             }
         }
 
-        match response_rx.recv_timeout(timeout) {
-            Ok(result) => result,
-            Err(crossbeam_channel::RecvTimeoutError::Timeout) => Err(batch_timeout_error(
-                self.breaker,
-                "ReLU evaluation",
-                timeout_secs,
-            )),
-            Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
-                Err(anyhow!("GPU response channel closed unexpectedly"))
-            }
-        }
+        // Issue #1933: bounded wait — a GPU thread that stops publishing
+        // progress is declared wedged within the stall window rather than
+        // costing this caller the whole batch timeout.
+        await_gpu_response(&response_rx, timeout, self.breaker, "ReLU evaluation")
     }
 
     /// Submit an activation evaluation and wait for results.
@@ -372,17 +477,10 @@ impl GpuWorkQueue {
             }
         }
 
-        match response_rx.recv_timeout(timeout) {
-            Ok(result) => result,
-            Err(crossbeam_channel::RecvTimeoutError::Timeout) => Err(batch_timeout_error(
-                self.breaker,
-                "activation evaluation",
-                timeout_secs,
-            )),
-            Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
-                Err(anyhow!("GPU response channel closed unexpectedly"))
-            }
-        }
+        // Issue #1933: bounded wait — a GPU thread that stops publishing
+        // progress is declared wedged within the stall window rather than
+        // costing this caller the whole batch timeout.
+        await_gpu_response(&response_rx, timeout, self.breaker, "activation evaluation")
     }
 
     /// Submit a batched activation evaluation and wait for results.
@@ -452,17 +550,15 @@ impl GpuWorkQueue {
             }
         }
 
-        match response_rx.recv_timeout(timeout) {
-            Ok(result) => result,
-            Err(crossbeam_channel::RecvTimeoutError::Timeout) => Err(batch_timeout_error(
-                self.breaker,
-                "batched activation evaluation",
-                timeout_secs,
-            )),
-            Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
-                Err(anyhow!("GPU response channel closed unexpectedly"))
-            }
-        }
+        // Issue #1933: bounded wait — a GPU thread that stops publishing
+        // progress is declared wedged within the stall window rather than
+        // costing this caller the whole batch timeout.
+        await_gpu_response(
+            &response_rx,
+            timeout,
+            self.breaker,
+            "batched activation evaluation",
+        )
     }
 }
 
@@ -739,6 +835,135 @@ mod tests {
             "a batch timeout must trip the breaker"
         );
         assert_eq!(breaker.trip_reason(), Some(GpuTripReason::BatchTimeout));
+    }
+
+    // =========================================================================
+    // Issue #1933 — the bounded wait detects a wedged GPU within the stall
+    // window instead of sitting out the whole batch timeout
+    // =========================================================================
+
+    /// A GPU thread that stops publishing progress is declared wedged within
+    /// the stall window, not after `calculate_gpu_batch_timeout()`.
+    #[test]
+    fn stalled_heartbeat_trips_within_window() {
+        // The sender stays alive, so only the stall guard can end this wait.
+        let (_response_tx, response_rx) = bounded::<Result<Vec<HelpfulStats>>>(1);
+        let heartbeat = GpuHeartbeat::new();
+        let window = Duration::from_millis(200);
+        let batch_timeout = calculate_gpu_batch_timeout(&None);
+
+        let started = Instant::now();
+        let outcome = wait_for_gpu_response(&response_rx, batch_timeout, &heartbeat, window);
+        let elapsed = started.elapsed();
+
+        match outcome {
+            GpuWaitOutcome::Stalled { idle, window: w } => {
+                assert!(idle >= window, "the reported idle time covers the window");
+                assert_eq!(w, window, "the verdict reports the configured window");
+            }
+            other => panic!("expected a stalled verdict, got {other:?}"),
+        }
+        assert!(
+            elapsed >= window,
+            "the guard must not fire before the window elapses, fired after {elapsed:?}"
+        );
+        assert!(
+            elapsed < Duration::from_secs(5) && elapsed < batch_timeout,
+            "detection must cost seconds, not the {batch_timeout:?} batch timeout \
+             (took {elapsed:?})"
+        );
+    }
+
+    /// A slow-but-progressing GPU must never be flagged: a synthetic evaluator
+    /// advances the heartbeat at intervals inside the window and still answers.
+    #[test]
+    fn slow_but_advancing_heartbeat_does_not_trip() {
+        let (response_tx, response_rx) = bounded::<Result<Vec<HelpfulStats>>>(1);
+        let heartbeat = Arc::new(GpuHeartbeat::new());
+        let worker_heartbeat = Arc::clone(&heartbeat);
+
+        // Five slow steps at 60ms — each well inside the 250ms window, and
+        // together far longer than the window itself.
+        let worker = std::thread::spawn(move || {
+            for _ in 0..5 {
+                std::thread::sleep(Duration::from_millis(60));
+                worker_heartbeat.beat("synthetic_step");
+            }
+            let _ = response_tx.send(Ok(vec![HelpfulStats::default()]));
+        });
+
+        let outcome = wait_for_gpu_response(
+            &response_rx,
+            Duration::from_secs(30),
+            &heartbeat,
+            Duration::from_millis(250),
+        );
+        worker.join().expect("synthetic evaluator thread panicked");
+
+        match outcome {
+            GpuWaitOutcome::Answered(Ok(stats)) => assert_eq!(stats.len(), 1),
+            other => panic!("a slow but advancing GPU must not be flagged, got {other:?}"),
+        }
+    }
+
+    /// The absolute timeout stays as the backstop for the case where the
+    /// heartbeat itself cannot be updated — here, the guard is disabled.
+    #[test]
+    fn the_absolute_timeout_remains_the_backstop() {
+        let (_response_tx, response_rx) = bounded::<Result<Vec<HelpfulStats>>>(1);
+        let heartbeat = GpuHeartbeat::new();
+        let timeout = Duration::from_millis(300);
+
+        let started = Instant::now();
+        let outcome = wait_for_gpu_response(&response_rx, timeout, &heartbeat, Duration::ZERO);
+
+        assert!(
+            matches!(outcome, GpuWaitOutcome::TimedOut),
+            "with the guard disabled the wait ends at the absolute timeout"
+        );
+        assert!(
+            started.elapsed() >= timeout,
+            "the backstop must wait out the full timeout"
+        );
+    }
+
+    /// A dropped GPU thread is still reported as a disconnect, not a stall.
+    #[test]
+    fn a_dropped_sender_is_reported_as_disconnected() {
+        let (response_tx, response_rx) = bounded::<Result<Vec<HelpfulStats>>>(1);
+        drop(response_tx);
+        let heartbeat = GpuHeartbeat::new();
+
+        let outcome = wait_for_gpu_response(
+            &response_rx,
+            Duration::from_secs(30),
+            &heartbeat,
+            Duration::from_millis(200),
+        );
+
+        assert!(matches!(outcome, GpuWaitOutcome::Disconnected));
+    }
+
+    /// A stall verdict is a wedged-GPU verdict: it trips the breaker with its
+    /// own reason so the rest of the run stops submitting.
+    #[test]
+    fn a_heartbeat_stall_trips_the_breaker_as_a_wedged_gpu() {
+        let breaker = GpuCircuitBreaker::new();
+        assert!(!breaker.is_tripped(), "starts closed");
+
+        let outcome: GpuWaitOutcome<Vec<HelpfulStats>> = GpuWaitOutcome::Stalled {
+            idle: Duration::from_secs(31),
+            window: Duration::from_secs(30),
+        };
+        let err = resolve_gpu_wait(outcome, &breaker, "helpful batch evaluation", 300)
+            .expect_err("a stalled wait must fail");
+
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("no GPU-thread progress") && msg.contains("stall window 30s"),
+            "the error must name the stall window: {msg}"
+        );
+        assert_eq!(breaker.trip_reason(), Some(GpuTripReason::HeartbeatStall));
     }
 
     /// A queue that will not accept work within the caller's whole timeout is

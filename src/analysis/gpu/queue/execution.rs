@@ -32,6 +32,10 @@ use super::recovery::{
 use super::staleness::{StaleReason, has_live_receiver, stale_reason};
 use super::{GpuWorkQueue, GpuWorkRequest};
 use crate::analysis::gpu::analyzer::{GpuAnalyzer, GpuEvaluator};
+use crate::analysis::gpu::heartbeat::{
+    GpuHeartbeat, STEP_RECOVERY_ATTEMPT, STEP_REQUEST_COMPLETED, STEP_REQUEST_DEQUEUED,
+    global_gpu_heartbeat,
+};
 use crate::analysis::samples::{HelpfulSample, ReluStats};
 use crate::observability::{global_gpu_metrics, gpu_metrics_enabled};
 
@@ -284,15 +288,24 @@ impl GpuWorkQueue {
     ///   - Batch count and samples processed
     ///   - GPU busy time (time spent executing GPU operations)
     pub(super) fn gpu_thread_loop(analyzer: GpuAnalyzer, work_rx: Receiver<GpuWorkRequest>) {
-        Self::run_work_loop(analyzer, work_rx, &GpuAnalyzerFactory);
+        Self::run_work_loop(
+            analyzer,
+            work_rx,
+            &GpuAnalyzerFactory,
+            global_gpu_heartbeat(),
+        );
     }
 
     /// The loop body, parameterised over the evaluator so it can be driven
     /// without a GPU in tests (Issue #1929).
+    ///
+    /// Issue #1933: every observable step publishes a beat on `heartbeat`, so a
+    /// waiting submitter can tell a wedged device from a slow one in seconds.
     pub(super) fn run_work_loop<E: RequestEvaluator, F: EvaluatorFactory<E>>(
         mut analyzer: E,
         work_rx: Receiver<GpuWorkRequest>,
         factory: &F,
+        heartbeat: &GpuHeartbeat,
     ) {
         let track_metrics = gpu_metrics_enabled();
         let retry_limit = get_gpu_retry_limit();
@@ -329,6 +342,8 @@ impl GpuWorkQueue {
 
             let label = request_label(&request);
             let request_start = Instant::now();
+            // Issue #1933: first observable step of this request.
+            heartbeat.beat(STEP_REQUEST_DEQUEUED);
             tracing::debug!(request_type = label, "GPU queue: dequeued work item");
 
             // Issue #1929: never hand an abandoned or already-expired request to
@@ -342,6 +357,8 @@ impl GpuWorkQueue {
             match execute_request(&analyzer, &request, track_metrics) {
                 Ok(()) => {
                     let elapsed = request_start.elapsed();
+                    // Issue #1933: the request's result is on its way back.
+                    heartbeat.beat(STEP_REQUEST_COMPLETED);
                     let count = completed_count.fetch_add(1, Ordering::Relaxed) + 1;
 
                     // Issue #953: Warn when a single GPU request takes too long,
@@ -442,6 +459,9 @@ impl GpuWorkQueue {
                              waiting {delay_ms}ms before re-initialising GpuAnalyzer"
                         );
                         std::thread::sleep(Duration::from_millis(delay_ms));
+                        // Issue #1933: recovery is progress — a thread that is
+                        // re-initialising the device is not wedged.
+                        heartbeat.beat(STEP_RECOVERY_ATTEMPT);
 
                         let init_result = factory.create(is_oom.then_some(effective_batch_size));
 
@@ -461,6 +481,7 @@ impl GpuWorkQueue {
                                             batch_size = analyzer.batch_size(),
                                             "GPU work item succeeded after recovery"
                                         );
+                                        heartbeat.beat(STEP_REQUEST_COMPLETED);
                                         recovered = true;
                                         break;
                                     }
@@ -725,6 +746,118 @@ mod tests {
         let request = GpuWorkRequest::Shutdown;
         // Must not panic
         send_error_to_request(&request, "should be ignored");
+    }
+
+    // =========================================================================
+    // Issue #1933 — the loop publishes a liveness heartbeat at every step
+    // =========================================================================
+
+    /// Stub evaluator standing in for the device path: it publishes the same
+    /// progress steps the real evaluation publishes (sub-batch submitted,
+    /// buffer map completed, device poll returning idle).
+    struct DeviceStepEvaluator;
+
+    impl RequestEvaluator for DeviceStepEvaluator {
+        fn batch_size(&self) -> usize {
+            1024
+        }
+
+        fn evaluate_helpful_batch(
+            &self,
+            _samples_batch: &[&[HelpfulSample]],
+            _budget: GpuTimeBudget,
+        ) -> Result<Vec<HelpfulStats>> {
+            crate::analysis::gpu::heartbeat::beat_sub_batch_submitted();
+            crate::analysis::gpu::heartbeat::beat_buffer_mapped();
+            crate::analysis::gpu::heartbeat::beat_device_idle();
+            Ok(vec![HelpfulStats::default()])
+        }
+
+        fn evaluate_harmful_batch(
+            &self,
+            _samples_batch: &[(&[HelpfulSample], f32)],
+            _budget: GpuTimeBudget,
+        ) -> Result<Vec<HarmfulStats>> {
+            unreachable!("only the helpful path is exercised here")
+        }
+
+        fn evaluate_relu(
+            &self,
+            _samples: &[HelpfulSample],
+            _threshold: f32,
+            _budget: GpuTimeBudget,
+        ) -> Result<(ReluStats, ReluStats, f32)> {
+            unreachable!("only the helpful path is exercised here")
+        }
+
+        fn evaluate_activation(
+            &self,
+            _samples: &[HelpfulSample],
+            _activation_type: u32,
+            _orientation: f32,
+            _scale: f32,
+            _budget: GpuTimeBudget,
+        ) -> Result<(f32, f32, f32, u32)> {
+            unreachable!("only the helpful path is exercised here")
+        }
+
+        fn evaluate_activations_batched(
+            &self,
+            _samples: &[HelpfulSample],
+            _activation_configs: &[(u32, f32, f32)],
+            _budget: GpuTimeBudget,
+        ) -> Result<Vec<(f32, f32, f32, u32)>> {
+            unreachable!("only the helpful path is exercised here")
+        }
+    }
+
+    /// The loop never re-initialises in this test, so the factory must not be
+    /// called.
+    struct UnusedFactory;
+
+    impl EvaluatorFactory<DeviceStepEvaluator> for UnusedFactory {
+        fn create(&self, _batch_size_override: Option<usize>) -> Result<DeviceStepEvaluator> {
+            unreachable!("no device-lost error is raised in this test")
+        }
+    }
+
+    /// Issue #1933: processing one request advances the shared heartbeat across
+    /// every instrumented step — dequeue, sub-batch submit, buffer map,
+    /// poll-idle return, and completion. If a refactor drops an update site,
+    /// this fails before any runtime symptom appears.
+    #[test]
+    fn the_work_loop_publishes_progress_at_every_step() {
+        let heartbeat = crate::analysis::gpu::heartbeat::global_gpu_heartbeat();
+        let before = heartbeat.ticks();
+
+        let (work_tx, work_rx) = bounded::<GpuWorkRequest>(2);
+        let (response_tx, response_rx) = bounded::<Result<Vec<HelpfulStats>>>(1);
+        let (caller_guard, liveness) = caller_liveness_pair();
+
+        work_tx
+            .send(GpuWorkRequest::HelpfulBatch {
+                samples: vec![std::sync::Arc::new(vec![])],
+                response_tx,
+                budget: GpuTimeBudget::unbounded(),
+                liveness,
+            })
+            .expect("request enqueued");
+        work_tx
+            .send(GpuWorkRequest::Shutdown)
+            .expect("shutdown enqueued");
+
+        GpuWorkQueue::run_work_loop(DeviceStepEvaluator, work_rx, &UnusedFactory, heartbeat);
+        drop(caller_guard);
+
+        assert!(
+            response_rx.try_recv().is_ok(),
+            "the request was evaluated and answered"
+        );
+        assert!(
+            heartbeat.ticks() >= before + 5,
+            "all five progress steps must publish a beat (saw {} new ticks)",
+            heartbeat.ticks() - before
+        );
     }
 
     /// Verify that `request_label` returns correct labels for all variants.

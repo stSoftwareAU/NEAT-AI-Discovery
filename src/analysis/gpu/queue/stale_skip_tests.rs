@@ -18,6 +18,7 @@ use super::executor::{EvaluatorFactory, RequestEvaluator};
 use super::staleness::{CallerGuard, caller_liveness_pair};
 use super::{GpuWorkQueue, GpuWorkRequest};
 use crate::analysis::gpu::budget::GpuTimeBudget;
+use crate::analysis::gpu::heartbeat::GpuHeartbeat;
 use crate::analysis::samples::{
     HarmfulStats, HelpfulSample, HelpfulStats, ReluOrientation, ReluStats,
 };
@@ -212,7 +213,7 @@ fn stale_request_skipped_without_analysis() {
     let evaluator = CountingEvaluator::new(StubOutcome::Succeed);
     let calls = evaluator.counter();
     let factory = CountingFactory::new();
-    GpuWorkQueue::run_work_loop(evaluator, work_rx, &factory);
+    GpuWorkQueue::run_work_loop(evaluator, work_rx, &factory, &GpuHeartbeat::new());
 
     assert_eq!(
         calls.load(Ordering::Relaxed),
@@ -247,7 +248,7 @@ fn device_lost_retry_aborts_on_dead_receiver() {
     let evaluator = CountingEvaluator::abandoning(StubOutcome::DeviceLost, submitted.guard);
     let calls = evaluator.counter();
     let factory = CountingFactory::new();
-    GpuWorkQueue::run_work_loop(evaluator, work_rx, &factory);
+    GpuWorkQueue::run_work_loop(evaluator, work_rx, &factory, &GpuHeartbeat::new());
 
     assert_eq!(
         calls.load(Ordering::Relaxed),
@@ -275,7 +276,7 @@ fn device_lost_retry_still_runs_for_live_caller() {
 
     let evaluator = CountingEvaluator::new(StubOutcome::DeviceLost);
     let factory = CountingFactory::new();
-    GpuWorkQueue::run_work_loop(evaluator, work_rx, &factory);
+    GpuWorkQueue::run_work_loop(evaluator, work_rx, &factory, &GpuHeartbeat::new());
 
     assert_eq!(
         factory.create_count(),
@@ -309,7 +310,7 @@ fn stale_skip_counted_in_metrics() {
     let evaluator = CountingEvaluator::new(StubOutcome::Succeed);
     let calls = evaluator.counter();
     let factory = CountingFactory::new();
-    GpuWorkQueue::run_work_loop(evaluator, work_rx, &factory);
+    GpuWorkQueue::run_work_loop(evaluator, work_rx, &factory, &GpuHeartbeat::new());
 
     assert_eq!(
         calls.load(Ordering::Relaxed),
@@ -342,7 +343,7 @@ fn expired_budget_request_fails_loudly_without_analysis() {
     let evaluator = CountingEvaluator::new(StubOutcome::Succeed);
     let calls = evaluator.counter();
     let factory = CountingFactory::new();
-    GpuWorkQueue::run_work_loop(evaluator, work_rx, &factory);
+    GpuWorkQueue::run_work_loop(evaluator, work_rx, &factory, &GpuHeartbeat::new());
 
     assert_eq!(
         calls.load(Ordering::Relaxed),

@@ -57,6 +57,33 @@ pub fn gpu_retry_limit() -> u32 {
     })
 }
 
+/// Get the GPU-thread no-progress stall window (Issue #1933).
+///
+/// Set `NEAT_AI_DISCOVERY_GPU_STALL_WINDOW_SECS` to the number of seconds a
+/// submitter tolerates with no GPU-thread progress before declaring the device
+/// wedged. Default: 30. Values are clamped to 1–600; `0` disables the guard,
+/// leaving the absolute batch timeout as the only bound. Unparsable values fall
+/// back to the default.
+pub fn gpu_stall_window() -> Duration {
+    use crate::analysis::gpu::heartbeat::{
+        DEFAULT_GPU_STALL_WINDOW_SECS, GPU_STALL_WINDOW_ENV, MAX_GPU_STALL_WINDOW_SECS,
+        MIN_GPU_STALL_WINDOW_SECS,
+    };
+
+    let secs = std::env::var(GPU_STALL_WINDOW_ENV)
+        .ok()
+        .and_then(|val| val.trim().parse::<u64>().ok())
+        .map_or(DEFAULT_GPU_STALL_WINDOW_SECS, |secs| {
+            if secs == 0 {
+                0
+            } else {
+                secs.clamp(MIN_GPU_STALL_WINDOW_SECS, MAX_GPU_STALL_WINDOW_SECS)
+            }
+        });
+
+    Duration::from_secs(secs)
+}
+
 /// Get the watchdog stall timeout.
 ///
 /// Set `NEAT_AI_DISCOVERY_WATCHDOG_STALL_SECS` to a positive number to enable.

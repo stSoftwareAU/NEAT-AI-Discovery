@@ -13,6 +13,7 @@ use wgpu::util::DeviceExt;
 
 use crate::analysis::gpu::budget::GpuTimeBudget;
 use crate::analysis::gpu::device::{poll_device_until_idle, wait_for_buffer_maps_batch};
+use crate::analysis::gpu::heartbeat::beat_sub_batch_submitted;
 use crate::analysis::gpu::pipeline_builder::{STANDARD_BINDINGS, build_compute_pipeline};
 use crate::analysis::gpu::shaders::{
     GPU_REDUCTION_THRESHOLD, HARMFUL_REDUCE_SHADER, HARMFUL_SHADER, WORKGROUP_SIZE,
@@ -358,6 +359,9 @@ impl GpuAnalyzer {
             // Submit single command buffer for entire batch - reduces Metal driver overhead
             if !batch_staging_buffers.is_empty() {
                 queue.submit(Some(encoder.finish()));
+                // Issue #1933: a submitted sub-batch is observable progress, so
+                // a long multi-chunk batch is never mistaken for a wedged GPU.
+                beat_sub_batch_submitted();
             }
 
             // OPTIMISATION: Map ALL buffers first, then poll ONCE for all.

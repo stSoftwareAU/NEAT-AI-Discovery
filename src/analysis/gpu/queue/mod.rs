@@ -92,27 +92,20 @@ impl<T> GpuFuture<T> {
     ///
     /// This should be called after performing any overlapping CPU work.
     pub(crate) fn collect(self) -> Result<T> {
-        let timeout_secs = self.timeout.as_secs();
-        let outcome = self.response_rx.recv_timeout(self.timeout);
+        // Issue #1933: the async counterpart of the blocking bounded wait — a
+        // silent GPU thread is declared wedged within the stall window, with the
+        // absolute timeout still the backstop. Issue #1930: either verdict trips
+        // the breaker.
+        let outcome = self::submission::await_gpu_response(
+            &self.response_rx,
+            self.timeout,
+            self.breaker,
+            "batch evaluation",
+        );
         // Issue #1929: stop advertising liveness the moment we stop waiting, so
         // the worker skips this request if it has not started it yet.
         drop(self.caller_guard);
-        match outcome {
-            Ok(result) => result,
-            // Issue #1930: the async counterpart of the blocking batch timeout —
-            // it trips the breaker for the same reason.
-            Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
-                Err(self::submission::batch_timeout_error(
-                    self.breaker,
-                    "batch evaluation",
-                    timeout_secs,
-                ))
-            }
-            Err(crossbeam_channel::RecvTimeoutError::Disconnected) => Err(anyhow::anyhow!(
-                "GPU response channel closed unexpectedly — \
-                 the GPU thread may have exited or panicked"
-            )),
-        }
+        outcome
     }
 }
 
