@@ -150,7 +150,9 @@ for (const trainingRecord of trainingData) {
   pendingObservations.push({
     obsIndex: trainingRecord.index,
     neuronData: neuronData.map((item) => ({
-      neuronUuid: item.uuid,
+      // The nested key is snake_case on the wire — the enclosing
+      // observation is camelCase, but NeuronData is not renamed.
+      neuron_uuid: item.uuid,
       activation: item.activation,
       value: item.value,
       errors: item.errors,
@@ -211,7 +213,7 @@ function flushBatch(
     {
       "obsIndex": 0,
       "neuronData": [
-        { "neuronUuid": "hidden-1", "activation": 0.5, "value": 0.4, "errors": [0.1] }
+        { "neuron_uuid": "hidden-1", "activation": 0.5, "value": 0.4, "errors": [0.1] }
       ],
       "inputs": [0.1, 0.2, 0.3]
     }
