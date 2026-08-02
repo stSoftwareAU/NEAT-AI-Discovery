@@ -8,6 +8,13 @@ successful-candidate rate down.
 It is **diagnostic only** — no production behaviour is changed. Every fault
 named here is handed to a follow-up issue.
 
+> **Point-in-time study, as at 2026-07-29.** This is a historical record, not a
+> live reference, and the campaign it launched (#1777–#1818) has since fixed most
+> of what it names. The prose is left as written; each superseded claim carries an
+> inline **Superseded** annotation naming the issue that closed it. For current
+> behaviour read [`docs/DROUGHT_PLAYBOOK.md`](../DROUGHT_PLAYBOOK.md) and
+> [`docs/FFI_API.md`](../FFI_API.md).
+
 ## Headline
 
 **Three of the four behaviours the issue asks about are now correct.**
@@ -268,6 +275,18 @@ so `current_epoch` is permanently `0` and `is_in_cooldown` (`:224`) evaluates
 `0 < failure_epoch + cooldown` → always true; cooldowns would never expire if
 the tracker were ever populated.
 
+> **Superseded — the whole of B1.** `CandidateOutcomeCache` was **deleted** by
+> **#1792** and `ModuleStarvationTracker` by **#1793**, rather than being wired:
+> neither had a nameable writer (see AGENTS.md § *Dead Levers*). The
+> `TargetFailureTracker` went the other way and is now **wired** — **#1790**
+> advances the epoch exactly once per pass at the head of `analyze_all` (so
+> cooldowns do expire) and **#1791** records the per-target failures and
+> successes. The bolded claim above — *"in production the drought reset clears
+> nothing"* — has therefore been **false since #1791**: the reset's one remaining
+> input is populated and the hatch clears real cooldowns. **#1794** additionally
+> made an ineffective reset log loudly as a no-op instead of stamping its
+> one-shot tombstone.
+
 ### B2 — Persisted state with no expiry
 
 - **`previous_neuron_fingerprints`** (host-supplied across runs,
@@ -288,6 +307,12 @@ the tracker were ever populated.
   `failure_cache_handshake.rs:84-93` treats `None` fields as **wildcards**, so a
   single target-agnostic `coordinated-structural` entry suppresses every
   coordinated candidate indefinitely.
+
+> **Superseded — the `FailureCacheEntry` half.** **#1781** added the `ageEpochs`
+> field (alias `epochsSinceRecorded`), so an entry can now be expired and only a
+> demonstrably fresh entry earns wildcard reach — see
+> [`docs/FFI_API.md`](../FFI_API.md) § *failure cache*. The
+> `previous_neuron_fingerprints` half above stands as written.
 
 ### B3 — Silent drops invisible to the rejection breakdown
 
@@ -311,6 +336,17 @@ so failure-cache suppression — the very evidence of starvation — is invisibl
 the classifier that decides whether to bypass it. Combined with
 `DEFAULT_MIN_FORMED_PROPOSALS = 4`, essentially any pass with ≥ 4 gate-side
 rejections permanently disables the bypass.
+
+> **Superseded — the silent drops and the ordering fault.** All five drop paths
+> in the table now increment `rejectionBreakdown`, wired one per issue across
+> **#1796–#1801**, with **#1802** adding the fail-loud `considered ==
+> accounted` reconciliation so the *next* silent drop cannot be added quietly —
+> the current reason set and its three-bucket classification are documented in
+> [`docs/FFI_API.md`](../FFI_API.md). The ordering fault is fixed by **#1800**:
+> `starvation_classifier_breakdown` folds `duplicate_of_failure_cache` into the
+> classifier input before `classify` runs, and a dominant-upstream majority now
+> overrides the formed-proposal floor, so failure-cache suppression can reach
+> `CandidateStarved` instead of being invisible.
 
 Finally, `discovery_mode.rs:292-294` reverts Conservative to Normal after 20
 consecutive failures, which clears `tiering_escalation_active`
