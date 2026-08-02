@@ -132,7 +132,10 @@ When requirements aren't met, `check_gpu_available()` returns `gpuAvailable: fal
 with a descriptive `reason` plus a structured capability verdict — `errorKind`
 (`gpu_permanent`, `gpu_transient`, or `memory_exhausted`) and `retryable` — so the
 caller can branch on a permanent skip versus a transient retry **before** starting
-a pass (Issue #1419). NEAT-AI's evolution process continues normally — only the
+a pass (Issue #1419). A GPU that wedges *mid-run* is reported separately as
+`errorKind: "gpu_wedged"` with `retryable: false` — no retry or longer deadline
+can recover it, so the worker must be restarted externally (Issue #1932; see
+[docs/FFI_API.md](docs/FFI_API.md#-wedged-gpu--errorkind-gpu_wedged-issue-1932)). NEAT-AI's evolution process continues normally — only the
 discovery optimisation is skipped. There is no CPU fallback: callers must not
 advertise one, since a GPU-less host would otherwise run every pass to a
 guaranteed `0 candidates` result indistinguishable from genuine search exhaustion.

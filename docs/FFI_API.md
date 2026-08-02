@@ -451,6 +451,54 @@ suitable GPU, controllers must disable discovery entirely.
   to avoid panics from EGL initialisation errors on systems without proper GPU
   drivers.
 
+### 🧯 Wedged GPU — `"errorKind": "gpu_wedged"` (Issue #1932)
+
+A GPU that is **present but no longer answering** is reported with its own kind
+so the host stops treating it as a deadline problem:
+
+```json
+{
+  "success": false,
+  "schemaVersion": "2",
+  "error": "GPU wedged: GPU helpful batch evaluation timed out after 300s (abandoned GPU threads: 1). The GPU will not answer for the remainder of this process — retrying or extending the deadline cannot recover it; restart the worker externally.",
+  "errorKind": "gpu_wedged",
+  "retryable": false
+}
+```
+
+- **`retryable` is always `false`.** Unlike `"timeout"` — which means "retryable
+  with a longer deadline" — a wedged GPU answers nothing for the rest of the
+  process. Extending the analysis deadline or issuing a fresh analysis only
+  burns another 60–300 s per attempt.
+- **Host action**: stop scheduling discovery for this process and let the
+  supervisor restart the worker. The library never self-recovers — the
+  process-wide circuit breaker (Issue #1930) is one-way by design.
+- **Sources**: every GPU circuit-breaker trip site — a batch submission that the
+  GPU never answered, a work queue that never accepted the request, a GPU
+  initialisation that never completed, and every call suppressed afterwards by
+  the tripped breaker.
+- **`abandoned GPU threads: N`** in the message is the process-wide count of GPU
+  threads that would not exit and were leaked. With the breaker in place it must
+  never exceed 1 per process.
+
+Kinds this does **not** change:
+
+| `errorKind` | `retryable` | Meaning |
+|-------------|-------------|---------|
+| `gpu_permanent` | `false` | No usable GPU on this host — skip discovery entirely |
+| `gpu_transient` | `true` | Device lost / driver reset — a fresh attempt may succeed |
+| `gpu_wedged` | `false` | Device present but wedged for this process — restart the worker |
+| `timeout` | `true` | A genuine deadline overrun — a longer deadline may succeed |
+
+```mermaid
+flowchart TD
+    F[GPU failure] --> K{errorKind}
+    K -- gpu_transient --> R[Retry the pass]
+    K -- timeout --> D[Extend the deadline and retry]
+    K -- gpu_permanent --> S[Skip discovery on this host]
+    K -- gpu_wedged --> X[Stop this process's discovery<br/>restart the worker externally]
+```
+
 ---
 
 ## 📋 JSON Interface

@@ -120,6 +120,46 @@ pub struct AnalyzeParallelOutput {
     pub retryable: Option<bool>,
 }
 
+impl AnalyzeParallelOutput {
+    /// Failure response carrying the classified error (Issue #1932).
+    ///
+    /// Every result field is absent, so the host sees one shape for every failed
+    /// pass and branches on `errorKind`/`retryable` — notably
+    /// `"errorKind": "gpu_wedged"`, `"retryable": false`, which no retry or
+    /// longer deadline can recover.
+    pub fn failure(error: &anyhow::Error) -> Self {
+        let (message, error_kind, retryable) = crate::ffi_types::error_fields_from_anyhow(error);
+        Self {
+            success: false,
+            schema_version: crate::ffi_types::SCHEMA_VERSION.to_string(),
+            helpful_synapses: None,
+            harmful_synapses: None,
+            synapse_diagnostics: None,
+            synapse_gpu_used: None,
+            synapse_metadata: None,
+            helpful_neurons: None,
+            synapse_weight_updates: None,
+            coordinated_structural_candidates: None,
+            candidate_clusters: None,
+            neuron_diagnostics: None,
+            neuron_gpu_used: None,
+            neuron_metadata: None,
+            neuron_fingerprints: None,
+            fingerprint_cache_hits: None,
+            fingerprint_cache_misses: None,
+            module_outcome_tracker: None,
+            memory_budget_exceeded: None,
+            cancelled: None,
+            memory_pressure_cancelled: None,
+            environmentally_disabled: None,
+            zero_candidate_summary: None,
+            error: Some(message),
+            error_kind,
+            retryable,
+        }
+    }
+}
+
 /// Consolidated diagnostic for a discovery pass that returned zero candidates
 /// (Issue #1446).
 ///

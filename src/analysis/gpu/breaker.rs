@@ -33,8 +33,9 @@
 
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 
+use crate::ffi_types::DiscoveryError;
 use crate::observability::global_gpu_metrics;
 
 /// Why the GPU circuit breaker tripped.
@@ -219,12 +220,7 @@ impl GpuCircuitBreaker {
     /// The error every suppressed GPU entry point returns: the original trip
     /// reason plus the abandoned-thread count.
     fn error(&self, reason: GpuTripReason) -> anyhow::Error {
-        let abandoned = abandoned_gpu_thread_count();
-        anyhow!(
-            "GPU circuit breaker tripped: {reason} (abandoned GPU threads: {abandoned}). \
-             Refusing further GPU work for the life of this process — restart the process \
-             to use the GPU again."
-        )
+        gpu_wedged_error(format!("GPU circuit breaker tripped: {reason}"))
     }
 
     /// Clear the breaker and the abandoned-thread count (testing only).
@@ -244,6 +240,21 @@ impl Default for GpuCircuitBreaker {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Build the typed wedged-GPU error every trip site returns (Issue #1932).
+///
+/// The typed [`DiscoveryError::GpuWedged`] is what makes the failure
+/// non-retryable at the FFI boundary: it classifies as
+/// [`DiscoveryErrorKind::GpuWedged`](crate::ffi_types::DiscoveryErrorKind::GpuWedged),
+/// so the host stops extending the deadline instead of reading the timeout
+/// wording as "retry with longer". The abandoned-thread count is stamped from
+/// the same counter [`global_gpu_metrics()`] publishes.
+pub fn gpu_wedged_error(detail: impl Into<String>) -> anyhow::Error {
+    anyhow::Error::new(DiscoveryError::GpuWedged {
+        detail: detail.into(),
+        abandoned_threads: abandoned_gpu_thread_count(),
+    })
 }
 
 /// The one breaker production uses.
@@ -369,6 +380,20 @@ mod tests {
         let breaker = breaker();
         breaker.record_abandoned_thread();
         assert_eq!(breaker.trip_reason(), Some(GpuTripReason::AbandonedThread));
+    }
+
+    /// Issue #1932: the suppressed-call error is typed, so the FFI boundary
+    /// classifies it as wedged (non-retryable) instead of as a plain timeout.
+    #[test]
+    fn a_suppressed_call_returns_a_typed_wedged_error() {
+        use crate::ffi_types::{DiscoveryErrorKind, classify_anyhow_error};
+
+        let breaker = breaker();
+        breaker.trip(GpuTripReason::BatchTimeout);
+
+        let err = breaker.check().expect_err("work is refused");
+        assert_eq!(classify_anyhow_error(&err), DiscoveryErrorKind::GpuWedged);
+        assert!(!DiscoveryErrorKind::GpuWedged.is_retryable());
     }
 
     #[test]

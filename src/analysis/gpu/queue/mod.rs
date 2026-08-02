@@ -50,7 +50,9 @@ mod executor;
 pub(crate) mod recovery;
 mod scheduling;
 mod staleness;
-mod submission;
+/// Work submission. Public so the wedged-GPU trip-site error constructors
+/// (Issue #1932) can be exercised from integration tests.
+pub mod submission;
 
 #[cfg(test)]
 mod stale_skip_tests;
