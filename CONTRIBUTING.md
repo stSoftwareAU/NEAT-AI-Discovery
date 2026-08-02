@@ -260,6 +260,54 @@ overrides, watchdog) are marked with `#[serial]` from the `serial_test` crate.
 GPU-dependent tests include `skip_without_gpu!()` and are skipped automatically
 on machines without a GPU.
 
+### Guard Wiring at the Shipped Entry Point (Issues #1795, #1806, #1815)
+
+**A unit test that builds its own subject cannot detect a missing production
+caller.** This is the root diagnosis of the whole #1780 bug class: every
+suppression store had thorough unit tests that constructed the store directly,
+so `TargetFailureTracker` stayed green with zero production writers, the whole
+#1767 removal-triage suite pinned a `focus::` helper that nothing in `src/`
+called, and two independently green units shipped with the composition between
+them broken (#1815).
+
+A unit test proves a component *can* work. It says nothing about whether the
+shipped path *reaches* it. So:
+
+- **Drive the shipped entry point** — the FFI function
+  (`rank_focus_neurons`, `analyze_parallel`, …) or the real pass entry point
+  (`analyze_all`), not a `pub(crate)` helper. This is the **#1806 convention**:
+  when a guard needs a crate-private helper, reach it *through* the FFI entry
+  point rather than widening the crate export or moving the suite in-tree.
+- **Assert on the FFI response shape** — the serialised keys
+  (`removalCandidates`, `rejectionBreakdown`, the stable reason keys), not an
+  intermediate vector. An intermediate-vector refactor must not be able to keep
+  the guard green while the candidate is dropped downstream.
+- **Never make an API public just to test it** (see Test Organisation above) —
+  driving the shipped path is what replaces the test-only export.
+- **Guard the composition, not only the units.** When two units each pass, add
+  the end-to-end case that asserts what happens when they are composed.
+
+### An Assertion That Holds Either Way Is Not Coverage (Issue #1799)
+
+A test whose assertion is true whether or not the path under test fires proves
+nothing. Two quality-skip tests passed vacuously for exactly this reason: their
+fixtures targeted a single neuron, the per-target coordinated cap (Issue #1271)
+silently shrank the candidate set below the threshold under test, and quality
+skipping never fired — while `total <= N` and "stats are recorded" both stayed
+green.
+
+**Pin a positive precondition** so the test fails loudly when the path stops
+firing:
+
+- Assert the path was actually reached — e.g. `considered > 0`, a non-empty
+  candidate list, or a counter that only the path under test increments.
+- Assert on the **reason key**, not just a count, so a renamed or mis-keyed
+  reason is caught.
+- Assert the fixture still satisfies its own preconditions (≥ N hidden neurons,
+  non-empty candidate set) so the suite cannot pass on a hollowed-out fixture.
+- Watch for caps and floors that can silently shrink a fixture below the
+  threshold it was built to cross.
+
 ---
 
 ## ⚙️ Environment Variables — One Source of Truth

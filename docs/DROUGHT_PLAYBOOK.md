@@ -316,6 +316,28 @@ Notes:
       D --> E[No tombstone — lever stays armed for the streak]
   ```
 
+- **A poisoned mutex must not silently skip the reset (Issue #1875).**
+  `if let Ok(guard) = …lock()` with no `else` arm is the same silent no-op in a
+  different disguise: a panic anywhere else in the process poisons
+  `global_tracker()`, and from then on `maybe_perform_drought_reset` /
+  `rearm_drought_reset` are skipped and the drought diagnostic degrades to "no
+  tracker" — with **zero log output**. Every lock on the target-failure tracker
+  therefore recovers the poison rather than dropping the work:
+
+  ```rust
+  let mut tracker = global_tracker()
+      .lock()
+      .unwrap_or_else(std::sync::PoisonError::into_inner);
+  ```
+
+  This is safe **because of what the lock guards**: counters mutated by
+  infallible HashMap and arithmetic operations, so a poisoned guard is still
+  internally consistent. The convention applies to counter-only shared state
+  (the tracker, `advance_global_epoch`, both `apply_target_cooldown` sites, the
+  drought-reset call sites and the diagnostic snapshot). It does **not**
+  generalise to state whose invariant can be left half-updated by a panic
+  mid-mutation — there, recovering the poison would hide real corruption.
+
 - Adaptive target-cooldown relaxation is tracked under **Issue #1204** and is
   not yet shipped. Until it lands the target cooldown thresholds remain
   static (`TARGET_COOLDOWN_FAILURES`, `TARGET_COOLDOWN_EPOCHS`); the operator
