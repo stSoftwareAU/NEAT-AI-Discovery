@@ -9,6 +9,14 @@
 //! re-initialise the `GpuAnalyzer` and retry the failed work item. The retry
 //! limit is configurable via the `NEAT_AI_DISCOVERY_GPU_RETRY_LIMIT` environment
 //! variable (default: 3).
+//!
+//! ## Stale request skipping (Issue #1929)
+//!
+//! A dequeued request whose caller has already gone (dropped receiver) or whose
+//! own time budget has expired is skipped before the analyser is touched, and
+//! the device-lost retry loop aborts as soon as the caller disappears — no
+//! re-initialisation, no back-off sleeps for work nobody will collect. See
+//! [`super::staleness`].
 
 #![allow(clippy::cast_possible_truncation)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use anyhow::Result;
@@ -16,10 +24,12 @@ use crossbeam_channel::{Receiver, RecvTimeoutError};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
+use super::executor::{EvaluatorFactory, GpuAnalyzerFactory, RequestEvaluator};
 use super::recovery::{
     DEFAULT_BACKOFF_INITIAL_MS, DEFAULT_BACKOFF_MAX_MS, MINIMUM_GPU_BATCH_SIZE, backoff_delay_ms,
     get_gpu_retry_limit, is_device_lost_error, is_memory_exhaustion_error,
 };
+use super::staleness::{StaleReason, has_live_receiver, stale_reason};
 use super::{GpuWorkQueue, GpuWorkRequest};
 use crate::analysis::gpu::analyzer::{GpuAnalyzer, GpuEvaluator};
 use crate::analysis::samples::{HelpfulSample, ReluStats};
@@ -50,8 +60,8 @@ fn request_label(request: &GpuWorkRequest) -> &'static str {
 /// Execute a single GPU work request, returning the result via the embedded
 /// response channel. Returns `Err` only for device-lost errors that should
 /// trigger recovery; normal evaluation errors are sent back to the caller.
-fn execute_request(
-    analyzer: &GpuAnalyzer,
+fn execute_request<E: RequestEvaluator>(
+    analyzer: &E,
     request: &GpuWorkRequest,
     track_metrics: bool,
 ) -> Result<(), anyhow::Error> {
@@ -60,6 +70,7 @@ fn execute_request(
             samples,
             response_tx,
             budget,
+            ..
         } => {
             let sample_count: usize = samples.iter().map(|s| s.len()).sum();
             let start = if track_metrics {
@@ -72,7 +83,7 @@ fn execute_request(
             // GPU thread never takes ownership, so refcount sharing is safe.
             let samples_refs: Vec<&[HelpfulSample]> =
                 samples.iter().map(|s| s.as_slice()).collect();
-            let result = analyzer.evaluate_helpful_batch_with_budget(&samples_refs, *budget);
+            let result = analyzer.evaluate_helpful_batch(&samples_refs, *budget);
 
             if let Some(start) = start {
                 let metrics = global_gpu_metrics();
@@ -94,6 +105,7 @@ fn execute_request(
             samples_with_weights,
             response_tx,
             budget,
+            ..
         } => {
             let sample_count: usize = samples_with_weights.iter().map(|(v, _)| v.len()).sum();
             let start = if track_metrics {
@@ -106,7 +118,7 @@ fn execute_request(
                 .iter()
                 .map(|(samples, weight)| (samples.as_slice(), *weight))
                 .collect();
-            let result = analyzer.evaluate_harmful_batch_with_budget(&batch_refs, *budget);
+            let result = analyzer.evaluate_harmful_batch(&batch_refs, *budget);
 
             if let Some(start) = start {
                 let metrics = global_gpu_metrics();
@@ -129,6 +141,7 @@ fn execute_request(
             threshold,
             response_tx,
             budget,
+            ..
         } => {
             let sample_count = samples.len();
             let start = if track_metrics {
@@ -137,7 +150,7 @@ fn execute_request(
                 None
             };
 
-            let result = analyzer.evaluate_relu_gpu_with_budget(samples, *threshold, *budget);
+            let result = analyzer.evaluate_relu(samples, *threshold, *budget);
 
             if let Some(start) = start {
                 let metrics = global_gpu_metrics();
@@ -162,6 +175,7 @@ fn execute_request(
             scale,
             response_tx,
             budget,
+            ..
         } => {
             let sample_count = samples.len();
             let start = if track_metrics {
@@ -170,7 +184,7 @@ fn execute_request(
                 None
             };
 
-            let result = analyzer.evaluate_activation_gpu_with_budget(
+            let result = analyzer.evaluate_activation(
                 samples,
                 *activation_type,
                 *orientation,
@@ -199,6 +213,7 @@ fn execute_request(
             activation_configs,
             response_tx,
             budget,
+            ..
         } => {
             let sample_count = samples.len();
             let config_count = activation_configs.len();
@@ -208,11 +223,8 @@ fn execute_request(
                 None
             };
 
-            let result = analyzer.evaluate_activations_batched_gpu_with_budget(
-                samples,
-                activation_configs,
-                *budget,
-            );
+            let result =
+                analyzer.evaluate_activations_batched(samples, activation_configs, *budget);
 
             if let Some(start) = start {
                 let metrics = global_gpu_metrics();
@@ -237,6 +249,27 @@ fn execute_request(
     Ok(())
 }
 
+/// Discard a request the worker must not spend GPU time on (Issue #1929).
+///
+/// A dropped receiver is dropped silently — nobody is left to hear about it.
+/// An expired budget is reported as a real error so the still-waiting caller
+/// fails immediately instead of blocking until its own timeout elapses.
+fn skip_stale_request(request: &GpuWorkRequest, reason: StaleReason, label: &str) {
+    global_gpu_metrics().record_stale_skip();
+    tracing::debug!(
+        request_type = label,
+        reason = reason.as_str(),
+        "GPU queue: skipping stale work item without invoking the analyser"
+    );
+    if reason == StaleReason::BudgetExpired {
+        send_error_to_request(
+            request,
+            "GPU time budget expired while the request waited in the work queue — \
+             abandoned without evaluation to keep the queue moving.",
+        );
+    }
+}
+
 impl GpuWorkQueue {
     /// The main loop for the GPU thread.
     /// Processes work requests until shutdown is requested.
@@ -250,7 +283,17 @@ impl GpuWorkQueue {
     /// When `NEAT_AI_DISCOVERY_GPU_METRICS=1` is set, this loop tracks:
     ///   - Batch count and samples processed
     ///   - GPU busy time (time spent executing GPU operations)
-    pub(super) fn gpu_thread_loop(mut analyzer: GpuAnalyzer, work_rx: Receiver<GpuWorkRequest>) {
+    pub(super) fn gpu_thread_loop(analyzer: GpuAnalyzer, work_rx: Receiver<GpuWorkRequest>) {
+        Self::run_work_loop(analyzer, work_rx, &GpuAnalyzerFactory);
+    }
+
+    /// The loop body, parameterised over the evaluator so it can be driven
+    /// without a GPU in tests (Issue #1929).
+    pub(super) fn run_work_loop<E: RequestEvaluator, F: EvaluatorFactory<E>>(
+        mut analyzer: E,
+        work_rx: Receiver<GpuWorkRequest>,
+        factory: &F,
+    ) {
         let track_metrics = gpu_metrics_enabled();
         let retry_limit = get_gpu_retry_limit();
         let completed_count = AtomicU64::new(0);
@@ -287,6 +330,14 @@ impl GpuWorkQueue {
             let label = request_label(&request);
             let request_start = Instant::now();
             tracing::debug!(request_type = label, "GPU queue: dequeued work item");
+
+            // Issue #1929: never hand an abandoned or already-expired request to
+            // the analyser — the result could not be delivered anyway, and the
+            // GPU time it would consume belongs to live submitters.
+            if let Some(reason) = stale_reason(&request) {
+                skip_stale_request(&request, reason, label);
+                continue;
+            }
 
             match execute_request(&analyzer, &request, track_metrics) {
                 Ok(()) => {
@@ -359,7 +410,23 @@ impl GpuWorkQueue {
                     }
 
                     let mut recovered = false;
+                    let mut abandoned = false;
                     for attempt in 1..=retry_limit {
+                        // Issue #1929: re-check before every attempt. Recovery
+                        // costs a device re-initialisation plus a back-off
+                        // sleep; none of it is worth spending once the caller
+                        // has gone.
+                        if !has_live_receiver(&request) {
+                            global_gpu_metrics().record_stale_skip();
+                            tracing::debug!(
+                                request_type = label,
+                                attempt = attempt,
+                                "GPU recovery abandoned — caller dropped its receiver"
+                            );
+                            abandoned = true;
+                            break;
+                        }
+
                         let delay_ms = backoff_delay_ms(
                             attempt,
                             DEFAULT_BACKOFF_INITIAL_MS,
@@ -376,11 +443,7 @@ impl GpuWorkQueue {
                         );
                         std::thread::sleep(Duration::from_millis(delay_ms));
 
-                        let init_result = if is_oom {
-                            GpuAnalyzer::new_with_batch_size(effective_batch_size)
-                        } else {
-                            GpuAnalyzer::new()
-                        };
+                        let init_result = factory.create(is_oom.then_some(effective_batch_size));
 
                         match init_result {
                             Ok(new_analyzer) => {
@@ -420,7 +483,7 @@ impl GpuWorkQueue {
                         }
                     }
 
-                    if !recovered {
+                    if !recovered && !abandoned {
                         tracing::warn!(
                             retry_limit = retry_limit,
                             "GPU recovery exhausted all {retry_limit} attempts — \
@@ -532,6 +595,8 @@ mod tests {
     use crate::analysis::samples::{HarmfulStats, HelpfulStats};
     use crossbeam_channel::bounded;
 
+    use super::super::staleness::caller_liveness_pair;
+
     /// Verify that the GPU thread exits cleanly when the sender is dropped
     /// without sending a `Shutdown` request (Issue #1082). The
     /// `recv_timeout()` detects the disconnected channel and breaks the loop.
@@ -574,6 +639,7 @@ mod tests {
             samples: vec![],
             response_tx: tx,
             budget: GpuTimeBudget::unbounded(),
+            liveness: caller_liveness_pair().1,
         };
         // Must not panic — the receiver is gone
         send_error_to_request(&request, "test error");
@@ -587,6 +653,7 @@ mod tests {
             samples_with_weights: vec![],
             response_tx: tx,
             budget: GpuTimeBudget::unbounded(),
+            liveness: caller_liveness_pair().1,
         };
         send_error_to_request(&request, "test error");
     }
@@ -600,6 +667,7 @@ mod tests {
             threshold: 0.0,
             response_tx: tx,
             budget: GpuTimeBudget::unbounded(),
+            liveness: caller_liveness_pair().1,
         };
         send_error_to_request(&request, "test error");
     }
@@ -615,6 +683,7 @@ mod tests {
             scale: 1.0,
             response_tx: tx,
             budget: GpuTimeBudget::unbounded(),
+            liveness: caller_liveness_pair().1,
         };
         send_error_to_request(&request, "test error");
     }
@@ -628,6 +697,7 @@ mod tests {
             activation_configs: vec![],
             response_tx: tx,
             budget: GpuTimeBudget::unbounded(),
+            liveness: caller_liveness_pair().1,
         };
         send_error_to_request(&request, "test error");
     }
@@ -641,6 +711,7 @@ mod tests {
             samples: vec![],
             response_tx: tx,
             budget: GpuTimeBudget::unbounded(),
+            liveness: caller_liveness_pair().1,
         };
         send_error_to_request(&request, "recovery failed");
         let result = rx.recv().expect("should receive error");
@@ -665,6 +736,7 @@ mod tests {
                 samples: vec![],
                 response_tx: tx,
                 budget: GpuTimeBudget::unbounded(),
+                liveness: caller_liveness_pair().1,
             }),
             "helpful_batch"
         );
@@ -675,6 +747,7 @@ mod tests {
                 samples_with_weights: vec![],
                 response_tx: tx,
                 budget: GpuTimeBudget::unbounded(),
+                liveness: caller_liveness_pair().1,
             }),
             "harmful_batch"
         );
@@ -686,6 +759,7 @@ mod tests {
                 threshold: 0.0,
                 response_tx: tx,
                 budget: GpuTimeBudget::unbounded(),
+                liveness: caller_liveness_pair().1,
             }),
             "relu_eval"
         );
@@ -699,6 +773,7 @@ mod tests {
                 scale: 1.0,
                 response_tx: tx,
                 budget: GpuTimeBudget::unbounded(),
+                liveness: caller_liveness_pair().1,
             }),
             "activation_eval"
         );
@@ -710,6 +785,7 @@ mod tests {
                 activation_configs: vec![],
                 response_tx: tx,
                 budget: GpuTimeBudget::unbounded(),
+                liveness: caller_liveness_pair().1,
             }),
             "activation_batch_eval"
         );

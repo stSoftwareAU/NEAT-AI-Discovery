@@ -41,12 +41,19 @@
 //!
 //! - `submission` — Work item submission and batching
 //! - `execution` — GPU execution loop and result collection
+//! - `executor` — The evaluator seam the loop drives (Issue #1929)
 //! - `scheduling` — Work scheduling, initialisation, and shutdown
+//! - `staleness` — Abandoned/expired request detection (Issue #1929)
 
 mod execution;
+mod executor;
 pub(crate) mod recovery;
 mod scheduling;
+mod staleness;
 mod submission;
+
+#[cfg(test)]
+mod stale_skip_tests;
 
 use anyhow::Result;
 use crossbeam_channel::{Receiver, Sender};
@@ -54,6 +61,7 @@ use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::time::{Duration, SystemTime};
 
+use self::staleness::{CallerGuard, CallerLiveness};
 use crate::analysis::gpu::budget::GpuTimeBudget;
 use crate::analysis::samples::{HarmfulStats, HelpfulSample, HelpfulStats, ReluStats};
 
@@ -69,6 +77,9 @@ use crate::analysis::samples::{HarmfulStats, HelpfulSample, HelpfulStats, ReluSt
 pub(crate) struct GpuFuture<T> {
     pub(super) response_rx: Receiver<Result<T>>,
     pub(super) timeout: Duration,
+    /// Keeps the worker's liveness handle alive until the future is collected
+    /// or dropped (Issue #1929).
+    pub(super) caller_guard: CallerGuard,
 }
 
 impl<T> GpuFuture<T> {
@@ -77,7 +88,11 @@ impl<T> GpuFuture<T> {
     /// This should be called after performing any overlapping CPU work.
     pub(crate) fn collect(self) -> Result<T> {
         let timeout_secs = self.timeout.as_secs();
-        match self.response_rx.recv_timeout(self.timeout) {
+        let outcome = self.response_rx.recv_timeout(self.timeout);
+        // Issue #1929: stop advertising liveness the moment we stop waiting, so
+        // the worker skips this request if it has not started it yet.
+        drop(self.caller_guard);
+        match outcome {
             Ok(result) => result,
             Err(crossbeam_channel::RecvTimeoutError::Timeout) => Err(anyhow::anyhow!(
                 "GPU batch evaluation timed out after {timeout_secs}s. \
@@ -111,6 +126,8 @@ pub(crate) enum GpuWorkRequest {
         response_tx: Sender<Result<Vec<HelpfulStats>>>,
         /// Time this request may spend in the worker (Issue #1928).
         budget: GpuTimeBudget,
+        /// Whether the submitter is still waiting (Issue #1929).
+        liveness: CallerLiveness,
     },
     /// Batch of harmful synapse evaluations.
     /// Each item is (samples, weight) pair.
@@ -123,6 +140,8 @@ pub(crate) enum GpuWorkRequest {
         response_tx: Sender<Result<Vec<HarmfulStats>>>,
         /// Time this request may spend in the worker (Issue #1928).
         budget: GpuTimeBudget,
+        /// Whether the submitter is still waiting (Issue #1929).
+        liveness: CallerLiveness,
     },
     /// `ReLU` activation evaluation for neuron candidates.
     ReluEval {
@@ -131,6 +150,8 @@ pub(crate) enum GpuWorkRequest {
         response_tx: Sender<Result<(ReluStats, ReluStats, f32)>>,
         /// Time this request may spend in the worker (Issue #1928).
         budget: GpuTimeBudget,
+        /// Whether the submitter is still waiting (Issue #1929).
+        liveness: CallerLiveness,
     },
     /// General activation function evaluation for neuron candidates.
     ActivationEval {
@@ -141,6 +162,8 @@ pub(crate) enum GpuWorkRequest {
         response_tx: Sender<Result<(f32, f32, f32, u32)>>,
         /// Time this request may spend in the worker (Issue #1928).
         budget: GpuTimeBudget,
+        /// Whether the submitter is still waiting (Issue #1929).
+        liveness: CallerLiveness,
     },
     /// Batched activation function evaluation for multiple configs.
     /// Issue #201: Reduces GPU round-trips by evaluating multiple activation
@@ -152,6 +175,8 @@ pub(crate) enum GpuWorkRequest {
         response_tx: Sender<Result<Vec<(f32, f32, f32, u32)>>>,
         /// Time this request may spend in the worker (Issue #1928).
         budget: GpuTimeBudget,
+        /// Whether the submitter is still waiting (Issue #1929).
+        liveness: CallerLiveness,
     },
     /// Request to shut down the GPU thread.
     Shutdown,
@@ -203,6 +228,7 @@ mod tests {
     use crossbeam_channel::bounded;
 
     use crate::analysis::gpu::analyzer::GpuEvaluator;
+    use crate::analysis::gpu::queue::staleness::caller_liveness_pair;
     use crate::analysis::gpu::shaders::GPU_SHUTDOWN_TIMEOUT_SECS;
 
     /// Test that the `GpuWorkQueue` module exports all expected types.
@@ -331,6 +357,7 @@ mod tests {
             samples: vec![],
             response_tx: tx,
             budget: GpuTimeBudget::unbounded(),
+            liveness: caller_liveness_pair().1,
         };
 
         let (tx, _rx) = bounded::<Result<Vec<HarmfulStats>>>(1);
@@ -338,6 +365,7 @@ mod tests {
             samples_with_weights: vec![],
             response_tx: tx,
             budget: GpuTimeBudget::unbounded(),
+            liveness: caller_liveness_pair().1,
         };
 
         let (tx, _rx) = bounded::<Result<(ReluStats, ReluStats, f32)>>(1);
@@ -346,6 +374,7 @@ mod tests {
             threshold: 0.0,
             response_tx: tx,
             budget: GpuTimeBudget::unbounded(),
+            liveness: caller_liveness_pair().1,
         };
 
         let (tx, _rx) = bounded::<Result<(f32, f32, f32, u32)>>(1);
@@ -356,6 +385,7 @@ mod tests {
             scale: 1.0,
             response_tx: tx,
             budget: GpuTimeBudget::unbounded(),
+            liveness: caller_liveness_pair().1,
         };
 
         let _shutdown = GpuWorkRequest::Shutdown;

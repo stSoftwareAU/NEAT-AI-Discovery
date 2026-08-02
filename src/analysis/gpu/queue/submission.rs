@@ -8,6 +8,7 @@ use crossbeam_channel::bounded;
 use std::sync::Arc;
 use std::time::Duration;
 
+use super::staleness::caller_liveness_pair;
 use super::{GpuFuture, GpuWorkQueue, GpuWorkRequest};
 use crate::analysis::gpu::budget::GpuTimeBudget;
 use crate::analysis::samples::{
@@ -32,9 +33,11 @@ impl GpuWorkQueue {
             if tx.send(Ok(Vec::new())).is_err() {
                 tracing::trace!("GPU queue: receiver dropped for empty helpful batch");
             }
+            let (caller_guard, _) = caller_liveness_pair();
             return Ok(GpuFuture {
                 response_rx: rx,
                 timeout: Duration::from_secs(1),
+                caller_guard,
             });
         }
 
@@ -44,6 +47,9 @@ impl GpuWorkQueue {
         // Issue #1928: the worker's inner waits share this request's budget,
         // which expires a safety margin before the caller stops waiting.
         let budget = GpuTimeBudget::from_caller_timeout(timeout);
+        // Issue #1929: the guard lives exactly as long as this caller waits, so
+        // the worker can tell an abandoned request from a live one.
+        let (caller_guard, liveness) = caller_liveness_pair();
 
         tracing::debug!(
             batch_count = samples.len(),
@@ -54,6 +60,7 @@ impl GpuWorkQueue {
                 samples,
                 response_tx,
                 budget,
+                liveness,
             },
             timeout,
         ) {
@@ -72,6 +79,7 @@ impl GpuWorkQueue {
         Ok(GpuFuture {
             response_rx,
             timeout,
+            caller_guard,
         })
     }
 
@@ -101,6 +109,9 @@ impl GpuWorkQueue {
         // Issue #1928: the worker's inner waits share this request's budget,
         // which expires a safety margin before the caller stops waiting.
         let budget = GpuTimeBudget::from_caller_timeout(timeout);
+        // Issue #1929: the guard lives exactly as long as this caller waits, so
+        // the worker can tell an abandoned request from a live one.
+        let (_caller_guard, liveness) = caller_liveness_pair();
 
         tracing::debug!(
             batch_count = samples.len(),
@@ -113,6 +124,7 @@ impl GpuWorkQueue {
                 samples,
                 response_tx,
                 budget,
+                liveness,
             },
             timeout,
         ) {
@@ -159,6 +171,9 @@ impl GpuWorkQueue {
         // Issue #1928: the worker's inner waits share this request's budget,
         // which expires a safety margin before the caller stops waiting.
         let budget = GpuTimeBudget::from_caller_timeout(timeout);
+        // Issue #1929: the guard lives exactly as long as this caller waits, so
+        // the worker can tell an abandoned request from a live one.
+        let (_caller_guard, liveness) = caller_liveness_pair();
 
         tracing::debug!(
             batch_count = samples_with_weights.len(),
@@ -170,6 +185,7 @@ impl GpuWorkQueue {
                 samples_with_weights,
                 response_tx,
                 budget,
+                liveness,
             },
             timeout,
         ) {
@@ -221,6 +237,9 @@ impl GpuWorkQueue {
         // Issue #1928: the worker's inner waits share this request's budget,
         // which expires a safety margin before the caller stops waiting.
         let budget = GpuTimeBudget::from_caller_timeout(timeout);
+        // Issue #1929: the guard lives exactly as long as this caller waits, so
+        // the worker can tell an abandoned request from a live one.
+        let (_caller_guard, liveness) = caller_liveness_pair();
 
         tracing::debug!(
             sample_count = samples.len(),
@@ -233,6 +252,7 @@ impl GpuWorkQueue {
                 threshold,
                 response_tx,
                 budget,
+                liveness,
             },
             timeout,
         ) {
@@ -282,6 +302,9 @@ impl GpuWorkQueue {
         // Issue #1928: the worker's inner waits share this request's budget,
         // which expires a safety margin before the caller stops waiting.
         let budget = GpuTimeBudget::from_caller_timeout(timeout);
+        // Issue #1929: the guard lives exactly as long as this caller waits, so
+        // the worker can tell an abandoned request from a live one.
+        let (_caller_guard, liveness) = caller_liveness_pair();
 
         tracing::debug!(
             sample_count = samples.len(),
@@ -297,6 +320,7 @@ impl GpuWorkQueue {
                 scale,
                 response_tx,
                 budget,
+                liveness,
             },
             timeout,
         ) {
@@ -359,6 +383,9 @@ impl GpuWorkQueue {
         // Issue #1928: the worker's inner waits share this request's budget,
         // which expires a safety margin before the caller stops waiting.
         let budget = GpuTimeBudget::from_caller_timeout(timeout);
+        // Issue #1929: the guard lives exactly as long as this caller waits, so
+        // the worker can tell an abandoned request from a live one.
+        let (_caller_guard, liveness) = caller_liveness_pair();
 
         tracing::debug!(
             sample_count = samples.len(),
@@ -372,6 +399,7 @@ impl GpuWorkQueue {
                 activation_configs: activation_configs.to_vec(),
                 response_tx,
                 budget,
+                liveness,
             },
             timeout,
         ) {
