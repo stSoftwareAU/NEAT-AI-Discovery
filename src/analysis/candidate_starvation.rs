@@ -112,6 +112,11 @@ pub const UPSTREAM_REJECTION_REASONS: &[&str] = &[
     reasons::REJECTION_ZERO_SOURCE_VARIANCE,
     reasons::REJECTION_NO_TARGET_RECORDS,
     reasons::REJECTION_INSUFFICIENT_RECORDING,
+    // Issue #1931: a pass skipped because the GPU is wedged never evaluated a
+    // single candidate, so nothing could reach the gate. It is an environmental
+    // failure rather than genuine starvation, but it is unambiguously
+    // generation-side.
+    reasons::REJECTION_GPU_WEDGED,
     reasons::REJECTION_NO_ELIGIBLE_SOURCES,
     reasons::REJECTION_INPUT_NEURON_FILTERED,
     reasons::REJECTION_HIDDEN_NEURON_FILTERED,

@@ -231,6 +231,8 @@ pub(crate) fn build_neuron_results(
             creature_drought_alarm: None,
             // Issue #1444: populated by orchestration's fail-fast gate only.
             insufficient_recording: None,
+            // Issue #1931: a pass that reached result assembly ran its GPU work.
+            gpu_wedged: false,
             // Issue #1791: set by `analyze_neurons_*` from the preparation
             // phase's real `apply_target_cooldown` return value.
             target_cooldown_skipped: 0,

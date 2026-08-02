@@ -140,8 +140,10 @@ creature has no improving move"* and corrupts every downstream mitigation.
 The FFI response distinguishes the two:
 
 - `environmentallyDisabled` on `AnalyzeParallelOutput` is set to
-  `"memoryGated"`, `"memoryPressure"`, or `"gpuUnavailable"` when the pass was
-  gated. It is **absent** for a genuine pass (including a genuine empty one).
+  `"memoryGated"`, `"memoryPressure"`, `"gpuUnavailable"`, or `"gpuWedged"`
+  (Issue #1931 — the GPU circuit breaker tripped mid-run, so the GPU analyses
+  were skipped; restart the process) when the pass was gated. It is **absent**
+  for a genuine pass (including a genuine empty one).
 - A distinct `tracing::warn!` fires — `Issue #1421: discovery pass
   environmentally disabled` with a `reason=` field — separate from the
   `Issue #1202` drought warn.

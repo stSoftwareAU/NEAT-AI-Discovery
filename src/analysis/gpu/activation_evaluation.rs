@@ -10,9 +10,8 @@ use bytemuck::Zeroable;
 use std::sync::mpsc;
 use wgpu::util::DeviceExt;
 
-use crate::analysis::gpu::device::{
-    GPU_BUFFER_MAP_TIMEOUT_SECS, wait_for_buffer_map, wait_for_buffer_maps_batch,
-};
+use crate::analysis::gpu::budget::GpuTimeBudget;
+use crate::analysis::gpu::device::{wait_for_buffer_map, wait_for_buffer_maps_batch};
 use crate::analysis::gpu::pipeline_builder::{STANDARD_BINDINGS, build_compute_pipeline};
 use crate::analysis::gpu::shaders::{
     ACTIVATION_REDUCE_SHADER, ACTIVATION_SHADER, GPU_REDUCTION_THRESHOLD, WORKGROUP_SIZE,
@@ -79,6 +78,25 @@ impl GpuAnalyzer {
         activation_type: u32,
         orientation: f32,
         scale: f32,
+    ) -> Result<(f32, f32, f32, u32)> {
+        self.evaluate_activation_gpu_with_budget(
+            samples,
+            activation_type,
+            orientation,
+            scale,
+            GpuTimeBudget::unbounded(),
+        )
+    }
+
+    /// GPU-accelerated activation evaluation within a caller-supplied time
+    /// budget (Issue #1928).
+    pub fn evaluate_activation_gpu_with_budget(
+        &self,
+        samples: &[HelpfulSample],
+        activation_type: u32,
+        orientation: f32,
+        scale: f32,
+        budget: GpuTimeBudget,
     ) -> Result<(f32, f32, f32, u32)> {
         // Returns: (sum_activation_sq, sum_error_activation, total_baseline_error_sq, improved_count)
         if samples.is_empty() {
@@ -280,7 +298,8 @@ impl GpuAnalyzer {
         });
 
         // Event-driven wait: poll non-blocking, check callback channel
-        wait_for_buffer_map(device, &receiver, GPU_BUFFER_MAP_TIMEOUT_SECS)
+        // Issue #1928: bounded by the budget remaining for this request.
+        wait_for_buffer_map(device, &receiver, budget.remaining_secs())
             .context("Activation buffer mapping failed")?;
 
         let data = buffer_slice
@@ -364,6 +383,21 @@ impl GpuAnalyzer {
         &self,
         samples: &[HelpfulSample],
         activation_configs: &[(u32, f32, f32)],
+    ) -> Result<Vec<(f32, f32, f32, u32)>> {
+        self.evaluate_activations_batched_gpu_with_budget(
+            samples,
+            activation_configs,
+            GpuTimeBudget::unbounded(),
+        )
+    }
+
+    /// Batched activation evaluation within a caller-supplied time budget
+    /// (Issue #1928).
+    pub fn evaluate_activations_batched_gpu_with_budget(
+        &self,
+        samples: &[HelpfulSample],
+        activation_configs: &[(u32, f32, f32)],
+        budget: GpuTimeBudget,
     ) -> Result<Vec<(f32, f32, f32, u32)>> {
         // Handle edge cases
         if activation_configs.is_empty() {
@@ -636,7 +670,8 @@ impl GpuAnalyzer {
             .collect();
 
         // Wait for ALL buffers to be mapped with a single polling loop
-        wait_for_buffer_maps_batch(device, &receivers, GPU_BUFFER_MAP_TIMEOUT_SECS)
+        // Issue #1928: bounded by the budget remaining for this request.
+        wait_for_buffer_maps_batch(device, &receivers, budget.remaining_secs())
             .context("Batched activation buffer mapping failed")?;
 
         // Process all results
