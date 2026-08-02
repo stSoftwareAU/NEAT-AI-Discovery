@@ -11,12 +11,24 @@
 use std::collections::HashMap;
 
 use neat_ai_discovery::analysis::EnvironmentalDisableReason;
+use neat_ai_discovery::analysis::candidate_starvation::{GenerationSignals, StarvationClass};
 use neat_ai_discovery::analysis::diagnostics::RejectionBreakdown;
 use neat_ai_discovery::analysis::diagnostics::rejection_reasons::{
     REJECTION_NO_SAMPLES, REJECTION_NO_TARGET_RECORDS,
 };
 use neat_ai_discovery::analysis::shared::{NeuronAnalysisMetadata, SynapseAnalysisMetadata};
 use neat_ai_discovery::{EnvironmentalGatesJson, build_zero_candidate_summary};
+
+/// Issue #1925: the summary now also carries the starvation classification and
+/// the counts behind it. These fixtures exercise the rejection-breakdown
+/// merging, so a barren, nothing-formed pass is the honest stand-in.
+fn signals() -> GenerationSignals {
+    GenerationSignals::default()
+}
+
+fn class() -> StarvationClass {
+    StarvationClass::CandidateStarved
+}
 
 fn gates() -> EnvironmentalGatesJson {
     EnvironmentalGatesJson {
@@ -39,8 +51,14 @@ fn no_target_records_fixture_sets_dominant_reason() {
         .rejection_breakdown
         .record_many_u32(REJECTION_NO_SAMPLES, 1);
 
-    let summary =
-        build_zero_candidate_summary(Some(&synapse), None, &RejectionBreakdown::new(), gates());
+    let summary = build_zero_candidate_summary(
+        Some(&synapse),
+        None,
+        &RejectionBreakdown::new(),
+        gates(),
+        signals(),
+        class(),
+    );
 
     assert_eq!(
         summary.dominant_rejection_reason.as_deref(),
@@ -82,6 +100,8 @@ fn merges_synapse_and_neuron_breakdowns() {
         Some(&neuron),
         &RejectionBreakdown::new(),
         gates(),
+        signals(),
+        class(),
     );
 
     assert_eq!(
@@ -110,8 +130,14 @@ fn environmental_gates_are_surfaced() {
         environmentally_disabled: Some(EnvironmentalDisableReason::MemoryGated),
     };
 
-    let summary =
-        build_zero_candidate_summary(Some(&synapse), None, &RejectionBreakdown::new(), env_gates);
+    let summary = build_zero_candidate_summary(
+        Some(&synapse),
+        None,
+        &RejectionBreakdown::new(),
+        env_gates,
+        signals(),
+        class(),
+    );
 
     assert!(summary.environmental_gates.memory_budget_exceeded);
     assert_eq!(
@@ -132,8 +158,14 @@ fn serialises_with_camel_case_field_names() {
         .rejection_breakdown
         .record_many_u32(REJECTION_NO_TARGET_RECORDS, 4);
 
-    let summary =
-        build_zero_candidate_summary(Some(&synapse), None, &RejectionBreakdown::new(), gates());
+    let summary = build_zero_candidate_summary(
+        Some(&synapse),
+        None,
+        &RejectionBreakdown::new(),
+        gates(),
+        signals(),
+        class(),
+    );
     let value: serde_json::Value =
         serde_json::to_value(&summary).expect("summary serialises to JSON");
 

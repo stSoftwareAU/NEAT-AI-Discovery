@@ -258,6 +258,11 @@ pub fn analyze_parallel_internal(input_json: &str) -> Result<String> {
                     neuron.as_ref().map(|n| &n.metadata),
                     &result.pass_rejection_breakdown,
                     environmental_gates,
+                    // Issue #1925: the classification and its counts were
+                    // already computed above to gate novelty escalation; a
+                    // barren pass now reports them instead of discarding them.
+                    starvation_signals,
+                    starvation_class,
                 );
                 // Emit a single structured WARN naming the dominant reason for
                 // genuinely-empty passes. Environmentally-gated passes already
@@ -272,6 +277,12 @@ pub fn analyze_parallel_internal(input_json: &str) -> Result<String> {
                             .drought_diagnostic
                             .as_ref()
                             .map(|d| d.consecutive_failures),
+                        // Issue #1925: which failure mode, and how many
+                        // proposals were ever formed — the two facts that say
+                        // whether the pass was starved or over-rejected.
+                        starvation_class = summary.starvation_class,
+                        proposals_formed = summary.generation_signals.proposals_formed,
+                        upstream_rejections = summary.generation_signals.upstream_rejections,
                         "Issue #1446: discovery pass produced 0 candidates — \
                          zeroCandidateSummary attached"
                     );

@@ -463,6 +463,11 @@ pub struct DiscoveryModuleStatsJson {
     /// Whether this module is currently gated (skipped) due to low success
     /// rate (Issue #1060).
     pub gated: bool,
+    /// Stable rejection reason naming why this module was never run, when it
+    /// was not (Issue #1925). Absent when the module ran — `candidates_produced`
+    /// then reports what it actually found.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skipped: Option<String>,
 }
 
 /// Apply module boost factors to coordinated structural candidate expected gains (Issue #792).

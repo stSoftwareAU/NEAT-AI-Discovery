@@ -916,6 +916,69 @@ weight-update candidate whose clamped delta collapsed to a no-op). Drop behaviou
 is unchanged throughout — this is observability only. Full design notes:
 [docs/analysis/candidate-reconciliation-1802.md](analysis/candidate-reconciliation-1802.md).
 
+#### Module-Level Skips (Issue #1925)
+
+Every drop above is per *candidate*. Four gates suppress a **whole discovery
+module**, so no candidate is ever formed for them to count — and before this
+change all four were log-only. A module that was never asked was
+indistinguishable in the response from one that ran and found nothing, which is
+exactly the question the #1920 cache study could not answer about the 57% of
+production runs that cache nothing.
+
+| Gate | Stable reason | Cause |
+|------|---------------|-------|
+| Module gate (Issue #1060) | `module_gated_low_success` | Historical Bayesian success rate below `MODULE_GATE_THRESHOLD` (0.005). |
+| Deadline (Issue #1029) | `module_deadline_skipped` | The analysis deadline passed before the module's turn. |
+| Panic guard (Issue #1087) | `module_panicked` | The detection closure panicked and was caught. |
+| Creature-scale tiering (Issue #1547) | `module_tiered_out` | Expensive-tier module dropped on a creature above the hidden-neuron threshold. |
+
+**The unit is modules, not candidates** — a module that never ran has no
+candidate count to report — matching the existing per-target convention of
+`target_cooldown_skipped` and `fingerprint_unchanged`. Each skipped module also
+names its own reason in `discoveryModuleStats`:
+
+```json
+{
+  "synapseMetadata": {
+    "rejectionBreakdown": { "module_tiered_out": 7, "module_gated_low_success": 1 },
+    "discoveryModuleStats": [
+      { "moduleName": "multi-hop analysis", "candidatesProduced": 0, "skipped": "module_tiered_out" }
+    ]
+  }
+}
+```
+
+```mermaid
+flowchart LR
+    S["48 discovery module specs"] --> T{"tiered out?<br/>(large creature)"}
+    T -->|yes| K1["module_tiered_out++"]
+    T -->|no| G{"gated by<br/>success rate?"}
+    G -->|yes| K2["module_gated_low_success++"]
+    G -->|no| D{"deadline passed?"}
+    D -->|yes| K3["module_deadline_skipped++"]
+    D -->|no| R["detect()"]
+    R -->|panicked| K4["module_panicked++"]
+    R -->|ran| C["candidates → gain gates"]
+    K1 --> B["rejectionBreakdown<br/>+ discoveryModuleStats.skipped"]
+    K2 --> B
+    K3 --> B
+    K4 --> B
+    B --> CL["candidate_starvation::classify<br/>(upstream — never proposed)"]
+```
+
+All four are classified as **upstream** rejections: the module never proposed,
+so its silence cannot be evidence that the accept gate over-rejected. Gating,
+tiering, deadline and panic behaviour are all unchanged — this is observability
+only.
+
+`module_gated_low_success` is worth watching specifically: the gate is a
+**ratchet**. A gated module generates nothing, so it earns no new ablation
+attempts, so its success rate cannot recover and it stays gated for the life of
+the tracker. That is the mechanism behind "their rates are unproven precisely
+because they are never asked for" in Issue #1925 — this count is what makes it
+measurable. See
+[docs/analysis/module-skip-attribution-1925.md](analysis/module-skip-attribution-1925.md).
+
 ### Zero-Candidate Summary (Issue #1446)
 
 When a discovery pass produces **no candidates of any kind** (no helpful or
@@ -951,6 +1014,15 @@ drought streak, so the outcome is visible in logs as well as in the response.
       "memoryPressureCancelled": false,
       "cancelled": false,
       "environmentallyDisabled": null
+    },
+    "starvationClass": "candidateStarved",
+    "generationSignals": {
+      "accepted": 0,
+      "gateSideRejections": 2,
+      "upstreamRejections": 6,
+      "abundanceRejections": 0,
+      "reachingGate": 2,
+      "proposalsFormed": 2
     }
   }
 }
@@ -967,6 +1039,14 @@ drought streak, so the outcome is visible in logs as well as in the response.
 | `environmentalGates.memoryPressureCancelled` | `true` when analysis was cancelled under CRITICAL system memory pressure. |
 | `environmentalGates.cancelled` | `true` when the host requested graceful cancellation via `cancel_analysis()`. |
 | `environmentalGates.environmentallyDisabled` | `"memoryGated"`, `"memoryPressure"`, or `"gpuUnavailable"` when the pass was gated before evaluating the creature (Issue #1421); omitted otherwise. A gated pass is **not** evidence of search exhaustion. |
+| `starvationClass` | Which failure mode the barren pass is in (Issue #1925): `"candidateStarved"` — few proposals were ever formed, so generation is the bottleneck; `"proposalRichOverRejected"` — proposals reached the accept gate and lost there; `"healthy"` — accepting normally (not reachable on a zero-candidate pass). Computed since Issue #1739 to gate novelty escalation; now reported rather than discarded. |
+| `generationSignals` | The counts behind `starvationClass` (Issue #1925). Every recorded rejection falls into exactly one of the three buckets. |
+| `generationSignals.accepted` | Candidates returned to the host — always `0` here by definition. |
+| `generationSignals.gateSideRejections` | Candidates rejected *at* the expected-gain / acceptance gate. |
+| `generationSignals.upstreamRejections` | Candidates — and, for module-level skips, whole modules — dropped *before* reaching the gate. |
+| `generationSignals.abundanceRejections` | Candidates formed but capped or truncated as surplus. |
+| `generationSignals.reachingGate` | `accepted + gateSideRejections`. |
+| `generationSignals.proposalsFormed` | `reachingGate + abundanceRejections` — proposals the generator provably formed. A barren pass with `proposalsFormed: 0` was starved upstream; one with a large `proposalsFormed` was over-rejected at the gate. |
 
 ### Neuron Identity Contract (Issue #952)
 

@@ -154,6 +154,58 @@ pub struct ZeroCandidateSummary {
     /// tell a memory / GPU / cancellation-gated pass apart from genuine search
     /// exhaustion.
     pub environmental_gates: EnvironmentalGatesJson,
+    /// Which failure mode this barren pass is in (Issue #1925).
+    ///
+    /// `"candidateStarved"` — few proposals were ever formed, so generation is
+    /// the bottleneck; `"proposalRichOverRejected"` — proposals reached the
+    /// accept gate and lost there; `"healthy"` — the pass was accepting
+    /// normally (only reachable on a pass that returned candidates, so it does
+    /// not appear here in practice). The classification was computed on every
+    /// pass since Issue #1739 to gate novelty escalation, but was never
+    /// surfaced — an operator looking at a barren run could see *which reason*
+    /// dominated without being told *which of the two failure modes* it meant.
+    pub starvation_class: &'static str,
+    /// The counts behind [`ZeroCandidateSummary::starvation_class`]
+    /// (Issue #1925).
+    pub generation_signals: GenerationSignalsJson,
+}
+
+/// The accepted / gate-side / upstream / abundance split that the starvation
+/// classifier reads, surfaced for operators (Issue #1925).
+///
+/// Each rejection reason belongs to exactly one of the three rejection buckets
+/// (pinned exhaustively by `candidate_starvation`'s partition test), so these
+/// four numbers account for every recorded rejection in the pass.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GenerationSignalsJson {
+    /// Candidates returned to the host (survived the Rust accept gate).
+    pub accepted: u32,
+    /// Candidates rejected *at* the expected-gain / acceptance gate.
+    pub gate_side_rejections: u32,
+    /// Candidates (and, for module-level skips, whole modules) dropped
+    /// *before* reaching the gate.
+    pub upstream_rejections: u32,
+    /// Candidates formed but capped or truncated as surplus.
+    pub abundance_rejections: u32,
+    /// `accepted + gateSideRejections`.
+    pub reaching_gate: u32,
+    /// `reachingGate + abundanceRejections` — proposals the generator provably
+    /// formed.
+    pub proposals_formed: u32,
+}
+
+impl From<analysis::candidate_starvation::GenerationSignals> for GenerationSignalsJson {
+    fn from(signals: analysis::candidate_starvation::GenerationSignals) -> Self {
+        Self {
+            accepted: signals.accepted,
+            gate_side_rejections: signals.gate_side_rejections,
+            upstream_rejections: signals.upstream_rejections,
+            abundance_rejections: signals.abundance_rejections,
+            reaching_gate: signals.reaching_gate(),
+            proposals_formed: signals.proposals_formed(),
+        }
+    }
 }
 
 /// Host-environment gate flags surfaced inside [`ZeroCandidateSummary`]
@@ -191,6 +243,8 @@ pub fn build_zero_candidate_summary(
     neuron_metadata: Option<&analysis::shared::NeuronAnalysisMetadata>,
     pass_breakdown: &analysis::diagnostics::RejectionBreakdown,
     environmental_gates: EnvironmentalGatesJson,
+    signals: analysis::candidate_starvation::GenerationSignals,
+    starvation_class: analysis::candidate_starvation::StarvationClass,
 ) -> ZeroCandidateSummary {
     let mut merged = analysis::diagnostics::RejectionBreakdown::new();
     if let Some(s) = synapse_metadata {
@@ -215,6 +269,8 @@ pub fn build_zero_candidate_summary(
         drought_diagnostic,
         creature_drought_alarm,
         environmental_gates,
+        starvation_class: starvation_class.as_str(),
+        generation_signals: signals.into(),
     }
 }
 

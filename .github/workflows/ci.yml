@@ -537,5 +537,5 @@ jobs:
           --check-filenames \
           --check-hidden \
           --skip "./target,./.git,./tests/data" \
-          --ignore-words-list "renderD,nknown,MAPE,OT,ND,MOT"
+          --ignore-words-list "renderD,nknown,MAPE,OT,ND,MOT,BU"
 

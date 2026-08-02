@@ -295,6 +295,47 @@ pub const REJECTION_MODULE_SKIPPED_QUALITY_SATISFIED: &str = "module_skipped_qua
 /// gate-side verdict and must be visible rather than silent.
 pub const REJECTION_DEGENERATE_WEIGHT_UPDATE: &str = "degenerate_weight_update";
 
+/// A whole discovery module was never run because its historical Bayesian
+/// success rate sat below `MODULE_GATE_THRESHOLD` (Issue #1060, counted from
+/// Issue #1925).
+///
+/// **Unit: modules, not candidates.** A module that never ran produced no
+/// candidates to count, so — like [`REJECTION_TARGET_COOLDOWN_SKIPPED`] and
+/// [`REJECTION_FINGERPRINT_UNCHANGED`] — one count is recorded per suppressed
+/// module.
+///
+/// This is the reason behind the starved-strategy tail in the #1920 cache study
+/// (Issue #1925): the gate is a **ratchet**. A gated module generates nothing,
+/// so it earns no new ablation attempts, so its success rate can never recover
+/// and it stays gated for the life of the tracker. Until this count existed the
+/// suppression was invisible — the module simply contributed nothing and no
+/// diagnostic said why.
+pub const REJECTION_MODULE_GATED_LOW_SUCCESS: &str = "module_gated_low_success";
+
+/// A whole discovery module was never run because the analysis deadline had
+/// already passed when its turn came (Issue #1029, counted from Issue #1925).
+///
+/// **Unit: modules, not candidates.** A pass that runs out of budget starves
+/// every module after the cut, which reads identically to search exhaustion
+/// unless it is counted.
+pub const REJECTION_MODULE_DEADLINE_SKIPPED: &str = "module_deadline_skipped";
+
+/// A discovery module's detection closure panicked and was caught (Issue #1087,
+/// counted from Issue #1925).
+///
+/// **Unit: modules, not candidates.** The panic is converted to an empty result
+/// so sibling modules survive; without this count that conversion is
+/// indistinguishable from a module that legitimately found nothing.
+pub const REJECTION_MODULE_PANICKED: &str = "module_panicked";
+
+/// A whole discovery module was filtered out of the dispatch set by
+/// creature-scale tiering (Issue #1547, counted from Issue #1925).
+///
+/// **Unit: modules, not candidates.** On a production-scale creature every
+/// expensive-tier module is dropped on each non-escalation pass, which is the
+/// largest single block of never-asked-for strategies in a barren run.
+pub const REJECTION_MODULE_TIERED_OUT: &str = "module_tiered_out";
+
 /// A candidate entered disposition but no drop path or accept path recorded a
 /// verdict for it (Issue #1802).
 ///
@@ -353,6 +394,10 @@ pub const ALL_REJECTION_REASONS: &[&str] = &[
     REJECTION_TARGET_COOLDOWN_SKIPPED,
     REJECTION_MODULE_SKIPPED_QUALITY_SATISFIED,
     REJECTION_DEGENERATE_WEIGHT_UPDATE,
+    REJECTION_MODULE_GATED_LOW_SUCCESS,
+    REJECTION_MODULE_DEADLINE_SKIPPED,
+    REJECTION_MODULE_PANICKED,
+    REJECTION_MODULE_TIERED_OUT,
     REJECTION_UNACCOUNTED_DROP,
 ];
 
@@ -572,6 +617,21 @@ fn friendly_reason(reason: &str) -> String {
         REJECTION_DEGENERATE_WEIGHT_UPDATE => {
             "weight-update delta collapsed to a no-op after clamping".to_string()
         }
+        REJECTION_MODULE_GATED_LOW_SUCCESS => format!(
+            "discovery module(s) never run — historical success rate below the {} module gate",
+            crate::analysis::constants::MODULE_GATE_THRESHOLD
+        ),
+        REJECTION_MODULE_DEADLINE_SKIPPED => {
+            "discovery module(s) never run — the analysis deadline had already passed".to_string()
+        }
+        REJECTION_MODULE_PANICKED => {
+            "discovery module(s) panicked during detection (caught, treated as empty)".to_string()
+        }
+        REJECTION_MODULE_TIERED_OUT => format!(
+            "expensive discovery module(s) tiered out — creature above the {} hidden-neuron \
+             tiering threshold",
+            crate::config::module_tiering_hidden_neuron_threshold()
+        ),
         REJECTION_UNACCOUNTED_DROP => {
             "unaccounted drop — a candidate left the pass with no recorded verdict (Issue #1802)"
                 .to_string()

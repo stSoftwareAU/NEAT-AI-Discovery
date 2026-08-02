@@ -10,6 +10,9 @@
 //! 2. `fingerprint_unchanged` — a whole-pass drop is counted in the rejection
 //!    breakdown and surfaces as the dominant reason of `zeroCandidateSummary`.
 
+use neat_ai_discovery::analysis::candidate_starvation::{
+    GenerationSignals, StarvationClass, signals_from_breakdown,
+};
 use neat_ai_discovery::analysis::diagnostics::RejectionBreakdown;
 use neat_ai_discovery::analysis::diagnostics::rejection_reasons::{
     ALL_REJECTION_REASONS, REJECTION_FINGERPRINT_UNCHANGED,
@@ -93,7 +96,18 @@ fn whole_pass_fingerprint_drop_is_visible_in_the_zero_candidate_summary() {
     let mut pass_breakdown = RejectionBreakdown::new();
     pass_breakdown.record_many_u32(REJECTION_FINGERPRINT_UNCHANGED, 6);
 
-    let summary = build_zero_candidate_summary(None, None, &pass_breakdown, gates());
+    // Issue #1925: the summary also carries the starvation verdict, derived
+    // from the same breakdown — a whole-pass fingerprint drop is upstream, so
+    // the pass reads as starved rather than over-rejected.
+    let signals: GenerationSignals = signals_from_breakdown(&pass_breakdown, 0);
+    let summary = build_zero_candidate_summary(
+        None,
+        None,
+        &pass_breakdown,
+        gates(),
+        signals,
+        StarvationClass::CandidateStarved,
+    );
 
     assert_eq!(
         summary.dominant_rejection_reason.as_deref(),
