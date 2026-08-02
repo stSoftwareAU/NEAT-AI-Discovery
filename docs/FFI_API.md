@@ -52,6 +52,30 @@ flowchart TD
 
 ---
 
+## 🛡️ Discovery Parquet Schema Validation (Issue #1901)
+
+Every read path (`read_discovery_records_ffi`, the analysis loaders, and each
+`merge_discovery_parquet` input) validates the file's Arrow schema before a
+single row is decoded. Per column, the validator checks the **name**, the
+**`DataType`**, and **nullability** against the writer's schema:
+
+| Column | Type | Nullable |
+|--------|------|----------|
+| `obs_index` | `UInt32` | no |
+| `neuron_uuid` | `Utf8` | no |
+| `value` | `Float32` | **yes** — nulls decode to `None` |
+| `activation` | `Float32` | no |
+| `errors` | `List<Float32>` (non-null elements) | no |
+
+A file declaring any non-null column as nullable is rejected outright: Arrow's
+`value()` returns the physical buffer contents for a null slot, so a null
+`neuron_uuid` would decode as `""` (forming a bogus neuron group) and a null
+`activation` as `0.0` (indistinguishable from a genuine zero in MSE/MAE
+scoring). A discovery Parquet with null activations is not partially usable, so
+the whole file fails loudly rather than silently substituting defaults.
+
+---
+
 ## 🧠 Rust-side Memory Usage (Issue #1027)
 
 The Rust library allocates memory outside V8's heap, making it invisible to
