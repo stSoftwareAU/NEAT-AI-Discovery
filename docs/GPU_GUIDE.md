@@ -498,6 +498,48 @@ WARN GPU analyses skipped for the rest of this run because the GPU is wedged —
 Its absence while the breaker is tripping means the skip path regressed;
 repeated identical warnings mean the once-per-run latch regressed.
 
+### How the wedged-GPU defences are tested (Issue #1935)
+
+The wedge itself only ever reproduced on one Apple M2 Ultra, so every defence
+above is verified against a **fake GPU** instead: a test double implementing the
+`RequestEvaluator` seam the GPU thread drives. The production work loop, the
+production bounded wait and the production breaker all run unchanged — only the
+device is fake — so the whole suite runs on CI machines with no GPU at all, in
+about three seconds.
+
+| Behaviour | What it models | What it proves |
+|-----------|----------------|----------------|
+| `Completes` | a healthy device | an abandoned request never reaches it (#1929) |
+| `CompletesAfter` | a slow device that answers inside the window | the guard does not fire on slowness (#1933) |
+| `BeatsThenCompletes` | a long evaluation that keeps publishing progress | progress resets the stall clock (#1933) |
+| `BeatsWithoutCompleting` | progress forever, no answer | the absolute timeout is still the backstop (#1933) |
+| `NeverAnswers` | the Issue #1926 wedge | the stall verdict trips the breaker (#1930, #1932, #1933) |
+| `WedgesUntilBudgetExpires` | a wedged device with budgeted inner waits | the worker gives up before its caller (#1928) |
+
+```mermaid
+flowchart LR
+    C[Caller<br/>wait_for_gpu_response] -->|request| L[run_work_loop<br/>production]
+    L -->|evaluate| F[FakeGpuEvaluator<br/>selectable behaviour]
+    F -.->|beats or silence| H[(GpuHeartbeat)]
+    H --> C
+    C -->|verdict| B[(GpuCircuitBreaker<br/>isolated per test)]
+    B --> A[analyze_all → Ok + gpu_wedged]
+```
+
+The tests live beside the code they guard —
+`src/analysis/gpu/queue/fake_evaluator.rs` (the double),
+`src/analysis/gpu/queue/wedge_tests.rs` (loop and wait behaviour) and
+`tests/issue_1935_wedged_gpu_harness.rs` (the sequence through the public API).
+Two invariants keep them honest:
+
+- **Nothing may hang.** Every blocking behaviour is bounded by a harness cap and
+  a release flag, and every timing assertion carries an explicit upper bound, so
+  a harness bug fails an assertion rather than wedging CI.
+- **Nothing may leak a tripped breaker.** The in-crate tests own an isolated
+  `GpuCircuitBreaker` and reset it; the integration binary resets the
+  process-wide one on the way in and out, even on panic. A test that only passes
+  with `--test-threads=1` is a regression signal, not an environment quirk.
+
 **Causes and solutions:**
 - **GPU driver hang**: Restart the process. If persistent, restart the machine.
 - **GPU memory exhaustion**: Reduce `NEAT_AI_DISCOVERY_GPU_BATCH_SIZE` (try 256 or 128).

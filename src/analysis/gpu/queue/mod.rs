@@ -54,8 +54,14 @@ mod staleness;
 /// (Issue #1932) can be exercised from integration tests.
 pub mod submission;
 
+/// Deterministic wedged-GPU test double (Issue #1935).
+#[cfg(test)]
+mod fake_evaluator;
 #[cfg(test)]
 mod stale_skip_tests;
+/// Regression tests for the Issue #1926 wedged-GPU defences (Issue #1935).
+#[cfg(test)]
+mod wedge_tests;
 
 use anyhow::Result;
 use crossbeam_channel::{Receiver, Sender};

@@ -59,6 +59,24 @@ real data, so the dead layer was removed instead of duplicated.
 
 ### Added
 
+#### Deterministic wedged-GPU test harness (Issue #1935)
+
+The Issue #1926 wedge only ever reproduced on one Apple M2 Ultra, so nothing in
+the suite could express "the GPU never answers" and every sibling fix risked
+shipping unverified. A fake `RequestEvaluator` with selectable behaviours
+(completes, completes after a delay, publishes progress then completes,
+publishes progress forever, never answers, or wedges until its time budget
+expires) now drives the **production** work loop, bounded wait and circuit
+breaker with no `wgpu` device involved, so the defences are verified on
+GPU-less CI in about three seconds. Each sibling has at least one regression
+test that fails without its fix: the worker giving up before its caller
+(#1928), abandoned requests never reaching the device (#1929), the first wedge
+stopping every later submission and the next GPU thread (#1930), `analyze_all`
+returning a signalled partial result with its CPU-side accounting intact
+(#1931), the typed non-retryable error (#1932), and stall detection firing for
+"no progress" but never for "slow but progressing" (#1933). See
+[`docs/GPU_GUIDE.md`](docs/GPU_GUIDE.md#how-the-wedged-gpu-defences-are-tested-issue-1935).
+
 #### Fail-loud candidate reconciliation on every pass (Issue #1802)
 
 Issues #1796–#1801 wired the six silent drop paths the #1782 diagnosis found into
