@@ -441,6 +441,8 @@ fn merge_ordering_compression_before_discovery() {
                 detected_count: 1,
                 candidates: vec![make_candidate(3.0)],
             }),
+            // Issue #1925: the module ran, so it carries no skip reason.
+            skip_reason: None,
         }],
     };
     merge_discovery_module_results(&mut syn, discovery_results, None, false, &mut tracker);

@@ -128,6 +128,14 @@ pub const UPSTREAM_REJECTION_REASONS: &[&str] = &[
     // removed from the focus order before analysis, so no proposal for them
     // could ever reach the gate.
     reasons::REJECTION_TARGET_COOLDOWN_SKIPPED,
+    // Issue #1925: a discovery module that never ran proposed nothing, so every
+    // module-level skip is generation-side evidence. The unit is modules rather
+    // than candidates — a suppressed module's candidate count is unknowable —
+    // which understates starvation slightly and can never overstate it.
+    reasons::REJECTION_MODULE_GATED_LOW_SUCCESS,
+    reasons::REJECTION_MODULE_DEADLINE_SKIPPED,
+    reasons::REJECTION_MODULE_PANICKED,
+    reasons::REJECTION_MODULE_TIERED_OUT,
     // Issue #1802: an unaccounted drop has, by definition, no recorded gate
     // verdict, so it cannot be counted as evidence the gate over-rejected. It
     // is only ever non-zero when a drop path went unaccounted for.
@@ -252,6 +260,21 @@ pub enum StarvationClass {
     /// converged production profile — widening cannot help and would only add
     /// noise.
     ProposalRichOverRejected,
+}
+
+impl StarvationClass {
+    /// Stable camelCase name for the FFI response (Issue #1925).
+    ///
+    /// Downstream tooling keys off these strings, so treat them as wire
+    /// contract: add variants rather than renaming existing ones.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            StarvationClass::Healthy => "healthy",
+            StarvationClass::CandidateStarved => "candidateStarved",
+            StarvationClass::ProposalRichOverRejected => "proposalRichOverRejected",
+        }
+    }
 }
 
 /// Classify a discovery pass from its generation signals.

@@ -38,7 +38,9 @@ use super::constants::{
 };
 use super::diagnostics::rejection_reasons::{
     REJECTION_BELOW_EXPECTED_GAIN_FLOOR, REJECTION_BUDGET_TRUNCATED,
-    REJECTION_COORDINATED_TARGET_CAP_EXCEEDED, REJECTION_MODULE_SKIPPED_QUALITY_SATISFIED,
+    REJECTION_COORDINATED_TARGET_CAP_EXCEEDED, REJECTION_MODULE_DEADLINE_SKIPPED,
+    REJECTION_MODULE_GATED_LOW_SUCCESS, REJECTION_MODULE_PANICKED,
+    REJECTION_MODULE_SKIPPED_QUALITY_SATISFIED, REJECTION_MODULE_TIERED_OUT,
 };
 use super::module_weights::{DiscoveryModuleStatsJson, ModuleOutcomeTracker};
 use super::shared;
@@ -516,12 +518,66 @@ pub struct DiscoveryModuleSpec {
     pub detect_fn: Box<dyn FnOnce() -> Option<DiscoveryDetectionResult> + Send>,
 }
 
+/// Why a discovery module produced no detection result at all (Issue #1925).
+///
+/// A module that ran and legitimately found nothing carries `None` — this enum
+/// is only ever set when the module was **never asked**. Keeping the two apart
+/// is the whole point: before Issue #1925 both landed in the response as an
+/// absent module, so a barren run could not distinguish search exhaustion from
+/// wholesale suppression of the strategies that would have proposed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModuleSkipReason {
+    /// Gated by a historical Bayesian success rate below `MODULE_GATE_THRESHOLD`
+    /// (Issue #1060).
+    GatedLowSuccess,
+    /// The analysis deadline had passed before the module's turn (Issue #1029).
+    DeadlinePassed,
+    /// The detection closure panicked and was caught (Issue #1087).
+    Panicked,
+    /// Filtered out of the dispatch set by creature-scale tiering (Issue #1547).
+    TieredOut,
+}
+
+impl ModuleSkipReason {
+    /// The stable rejection reason name this skip is counted under.
+    #[must_use]
+    pub fn rejection_reason(self) -> &'static str {
+        match self {
+            ModuleSkipReason::GatedLowSuccess => REJECTION_MODULE_GATED_LOW_SUCCESS,
+            ModuleSkipReason::DeadlinePassed => REJECTION_MODULE_DEADLINE_SKIPPED,
+            ModuleSkipReason::Panicked => REJECTION_MODULE_PANICKED,
+            ModuleSkipReason::TieredOut => REJECTION_MODULE_TIERED_OUT,
+        }
+    }
+}
+
 /// A single module's detection output, paired with its metadata for the merge phase.
 pub struct DiscoveryModuleDetectionEntry {
     pub module_name: String,
     pub phase_name: &'static str,
     pub max_candidates: usize,
     pub result: Option<DiscoveryDetectionResult>,
+    /// Set when the module was never run (Issue #1925). `None` means the module
+    /// ran — `result` then distinguishes "found candidates" from "found none".
+    pub skip_reason: Option<ModuleSkipReason>,
+}
+
+impl DiscoveryModuleDetectionEntry {
+    /// Build an entry for a module that was never run (Issue #1925).
+    #[must_use]
+    pub fn skipped(
+        module_name: String,
+        phase_name: &'static str,
+        skip_reason: ModuleSkipReason,
+    ) -> Self {
+        Self {
+            module_name,
+            phase_name,
+            max_candidates: 0,
+            result: None,
+            skip_reason: Some(skip_reason),
+        }
+    }
 }
 
 /// Collected detection results from all discovery modules (Issue #1004).
@@ -601,6 +657,10 @@ pub fn detect_discovery_modules_parallel(
                     phase_name: spec.phase_name,
                     max_candidates: spec.max_candidates,
                     result: None,
+                    // Issue #1925: a gated module never proposes, so the merge
+                    // phase must be able to say so rather than leaving the
+                    // suppression invisible in the response.
+                    skip_reason: Some(ModuleSkipReason::GatedLowSuccess),
                 };
             }
 
@@ -616,11 +676,13 @@ pub fn detect_discovery_modules_parallel(
                     phase_name: spec.phase_name,
                     max_candidates: spec.max_candidates,
                     result: None,
+                    skip_reason: Some(ModuleSkipReason::DeadlinePassed),
                 };
             }
 
             // Issue #1087: Wrap detection closure with catch_unwind so a panic
             // in one module does not corrupt results from sibling modules.
+            let mut skip_reason = None;
             let result = match std::panic::catch_unwind(AssertUnwindSafe(|| (spec.detect_fn)())) {
                 Ok(r) => r,
                 Err(panic_payload) => {
@@ -637,6 +699,9 @@ pub fn detect_discovery_modules_parallel(
                         "Discovery module panicked — caught and converted to empty result \
                          (Issue #1087)"
                     );
+                    // Issue #1925: an empty result from a panic is not the same
+                    // fact as an empty result from a module that ran cleanly.
+                    skip_reason = Some(ModuleSkipReason::Panicked);
                     None
                 }
             };
@@ -645,6 +710,7 @@ pub fn detect_discovery_modules_parallel(
                 phase_name: spec.phase_name,
                 max_candidates: spec.max_candidates,
                 result,
+                skip_reason,
             }
         })
         .collect();
@@ -731,7 +797,20 @@ pub fn merge_discovery_module_results(
                 success_rate: historical.success_rate(),
                 soft_failures: historical.soft_failures,
                 gated,
+                skipped: entry.skip_reason.map(|r| r.rejection_reason().to_string()),
             });
+
+        // Issue #1925: a module that was never run proposed nothing, and until
+        // now that suppression left no trace in the response — a barren pass
+        // looked identical whether the strategies had been tried and failed or
+        // never asked at all. One count per suppressed module (the unit is
+        // modules, not candidates: a module that never ran has no candidate
+        // count to report).
+        if let Some(reason) = entry.skip_reason {
+            syn.metadata
+                .rejection_breakdown
+                .record(reason.rejection_reason());
+        }
 
         // Issue #1074: Quality-based module skipping — once enough high-quality
         // candidates have been accumulated, skip merging results from remaining

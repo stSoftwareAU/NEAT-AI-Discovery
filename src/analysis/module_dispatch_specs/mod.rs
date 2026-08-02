@@ -143,7 +143,7 @@ pub(crate) fn prepare_and_detect_discovery_modules(
     // escalation, drop expensive-tier modules before dispatch so post-processing
     // budget is not spent on super-linear scans. Escalation passes keep the full
     // set (and log that they did, so a missing re-enable is diagnosable).
-    apply_module_tiering(&mut modules, hidden_neurons.len(), mode_decision);
+    let tiered_out = apply_module_tiering(&mut modules, hidden_neurons.len(), mode_decision);
 
     // Issue #967: Allocate candidate budgets based on module success rates.
     let config = CandidateBudgetConfig::default();
@@ -155,7 +155,23 @@ pub(crate) fn prepare_and_detect_discovery_modules(
         }
     }
 
-    discovery_dispatch::detect_discovery_modules_parallel(modules, deadline, Some(tracker))
+    let mut results =
+        discovery_dispatch::detect_discovery_modules_parallel(modules, deadline, Some(tracker));
+
+    // Issue #1925: tiered-out modules are removed before dispatch, so without
+    // this they vanish from the response entirely — the largest single block of
+    // never-asked-for strategies on a production-scale creature, previously
+    // visible only in a log line. Re-attach them as skipped entries so the merge
+    // phase counts them and `discoveryModuleStats` still lists them.
+    results.entries.extend(tiered_out.into_iter().map(|spec| {
+        discovery_dispatch::DiscoveryModuleDetectionEntry::skipped(
+            spec.module_name,
+            spec.phase_name,
+            discovery_dispatch::ModuleSkipReason::TieredOut,
+        )
+    }));
+
+    results
 }
 
 /// Filter expensive-tier discovery modules out of the dispatch set on large
@@ -168,32 +184,40 @@ pub(crate) fn prepare_and_detect_discovery_modules(
 /// documented diagnostic signal. Emission is delegated to
 /// [`super::module_tiering::log_tiering_decision`] so the streak length, rolling
 /// success rate and resulting module count travel together (Issue #1803).
+///
+/// Returns the specs that were tiered out, so the caller can re-attach them as
+/// skipped detection entries and the drop stays countable rather than
+/// log-only (Issue #1925).
 fn apply_module_tiering(
     modules: &mut Vec<discovery_dispatch::DiscoveryModuleSpec>,
     hidden_neuron_count: usize,
     mode_decision: &super::discovery_mode::ModeDecision,
-) {
+) -> Vec<discovery_dispatch::DiscoveryModuleSpec> {
     use super::module_tiering;
 
     let threshold = crate::config::module_tiering_hidden_neuron_threshold();
     let escalation_active = mode_decision.module_escalation_active;
-    let mut skipped: Vec<String> = Vec::new();
+    let mut tiered_out: Vec<discovery_dispatch::DiscoveryModuleSpec> = Vec::new();
 
     if module_tiering::tiering_applies(hidden_neuron_count, threshold, escalation_active) {
-        modules.retain(|m| {
-            let skip = module_tiering::should_skip_module(
-                &m.module_name,
+        let mut kept: Vec<discovery_dispatch::DiscoveryModuleSpec> =
+            Vec::with_capacity(modules.len());
+        for spec in modules.drain(..) {
+            if module_tiering::should_skip_module(
+                &spec.module_name,
                 hidden_neuron_count,
                 threshold,
                 escalation_active,
-            );
-            if skip {
-                skipped.push(m.module_name.clone());
+            ) {
+                tiered_out.push(spec);
+            } else {
+                kept.push(spec);
             }
-            !skip
-        });
+        }
+        *modules = kept;
     }
 
+    let skipped: Vec<String> = tiered_out.iter().map(|s| s.module_name.clone()).collect();
     module_tiering::log_tiering_decision(
         mode_decision,
         hidden_neuron_count,
@@ -201,6 +225,8 @@ fn apply_module_tiering(
         modules.len(),
         &skipped,
     );
+
+    tiered_out
 }
 
 /// Synthesise cross-detection candidates for co-flagged neurons (Issue #963).
@@ -511,6 +537,53 @@ mod tests {
                 "Module spec {i} has empty phase_name"
             );
         }
+    }
+
+    /// Issue #1925: tiering must hand the dropped specs back rather than
+    /// discarding them, so the caller can re-attach them as skipped entries and
+    /// the suppression is counted instead of being log-only.
+    #[test]
+    fn tiering_returns_the_specs_it_removed() {
+        use super::super::discovery_mode::{DiscoveryMode, ModeDecision};
+
+        let mut modules: Vec<discovery_dispatch::DiscoveryModuleSpec> =
+            ["multi-hop analysis", "dead neuron detection"]
+                .iter()
+                .map(|name| discovery_dispatch::DiscoveryModuleSpec {
+                    module_name: (*name).to_string(),
+                    phase_name: "tiering_test_phase",
+                    max_candidates: 0,
+                    detect_fn: Box::new(|| None),
+                })
+                .collect();
+
+        let decision = ModeDecision {
+            mode: DiscoveryMode::Normal,
+            module_escalation_active: false,
+            trailing_failure_streak: 0,
+            rolling_success_rate: 1.0,
+        };
+
+        // Well above DEFAULT_MODULE_TIERING_HIDDEN_THRESHOLD (1000), matching
+        // the production-scale creature in the #1920 study.
+        let tiered_out = apply_module_tiering(&mut modules, 1662, &decision);
+
+        assert_eq!(
+            tiered_out
+                .iter()
+                .map(|s| s.module_name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["multi-hop analysis"],
+            "the expensive module must be returned, not silently dropped"
+        );
+        assert_eq!(
+            modules
+                .iter()
+                .map(|s| s.module_name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["dead neuron detection"],
+            "standard-tier modules stay in the dispatch set"
+        );
     }
 
     /// Verify that all module specs have unique phase names (no duplicates).

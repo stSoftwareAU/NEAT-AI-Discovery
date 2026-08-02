@@ -68,6 +68,8 @@ fn make_detection_results(
                     detected_count: candidates.len(),
                     candidates,
                 }),
+                // Issue #1925: every module in this benchmark ran.
+                skip_reason: None,
             }
         })
         .collect();

@@ -89,6 +89,8 @@ pub use ffi_types::{
     FinishSessionInput,
     FinishSessionOutput,
     FoldedBiasDeltaJson,
+    // Starvation signals inside the zero-candidate summary (Issue #1925).
+    GenerationSignalsJson,
     // Response types — top-level (`ffi_types::responses`).
     GetVersionOutput,
     GpuAdapterInfoJson,
