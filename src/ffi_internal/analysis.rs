@@ -3,6 +3,7 @@
 #![allow(clippy::cast_possible_truncation)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use anyhow::Result;
 
+use crate::analysis::utils::build_deadline;
 use crate::ffi_types::*;
 use crate::{analysis, focus};
 
@@ -712,8 +713,20 @@ pub fn rank_focus_neurons_internal(input_json: &str) -> Result<String> {
     // value). Issue #1783: the single criterion validates it, so a non-finite
     // or non-positive value falls back to that default with a WARN instead of
     // being taken raw — Issue #1807 pins that on this entry point.
-    let removal_outcome =
-        focus::identify_structural_removal_candidates(&input.creature, input.cost_of_growth);
+    //
+    // Issue #1923: the activation-weighted gate the structural triage defers is
+    // then resolved here, from one two-column streaming pass over the discovery
+    // parquet that materialises no records. `remove-low-impact` previously
+    // ranked on `meanActivation: 0.0` — a dead field — because nothing
+    // downstream ever revisited the deferral. The pass runs strictly *after*
+    // focus selection (already complete above) and is bounded by the shared
+    // discovery deadline, so it cannot recreate the #1766 focus stall.
+    let removal_outcome = focus::identify_removal_candidates_for_focus(
+        &input.creature,
+        input.cost_of_growth,
+        &input.parquet_file,
+        build_deadline(input.analysis_deadline_ms),
+    );
     let rejection_breakdown = removal_outcome.rejection_breakdown();
     let removal_candidates: Vec<RemovalCandidateJson> = removal_outcome
         .candidates

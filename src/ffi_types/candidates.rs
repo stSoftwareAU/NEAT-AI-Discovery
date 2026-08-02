@@ -419,10 +419,18 @@ pub struct RemovalCandidateJson {
     pub total_error: f32,
     /// Structural impact based on weight paths to output
     pub impact: f32,
-    /// Mean absolute activation value from recorded samples
+    /// Mean absolute activation value from recorded samples.
+    ///
+    /// Issue #1923: measured on **both** producing paths. When the discovery
+    /// records cannot be read — no parquet, an I/O error, or a neuron with no
+    /// recorded rows — this stays `0.0` and [`Self::reason`] says so explicitly.
+    /// A `0.0` here is therefore only a measurement when the reason string
+    /// reports the gate as resolved; consumers must not treat an unmeasured
+    /// zero as "measured and inactive".
     pub mean_activation: f32,
     /// Activation-weighted impact = `structural_impact` × `mean_activation`
-    /// This reflects the actual contribution the neuron makes during inference
+    /// This reflects the actual contribution the neuron makes during inference,
+    /// and is the value candidates are ranked by (Issue #1923).
     pub activation_weighted_impact: f32,
     /// Number of synapses pointing TO this neuron
     pub incoming_synapses: usize,

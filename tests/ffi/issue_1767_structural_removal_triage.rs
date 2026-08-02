@@ -6,6 +6,18 @@
 //! whose LOW structural contribution is outweighed by pruning savings. These
 //! tests lock the fix at the FFI boundary: a *non-existent* parquet path still
 //! yields removal candidates, proving triage is structure-only.
+//!
+//! # Business-logic change (Issue #1923)
+//!
+//! The candidate **set** is still chosen from topology alone, so every
+//! assertion below holds unchanged. What changed is what happens afterwards:
+//! the activation-weighted gate that #1767 deferred is now resolved from a
+//! projected activation-only parquet pass, so `meanActivation` /
+//! `activationWeightedImpact` carry measurements when records exist. Every test
+//! here passes `/nonexistent/x.parquet`, which is the *unresolvable* case — the
+//! fields stay unmeasured and say so — so this suite now pins the
+//! graceful-degradation half of the contract. The measured half lives in
+//! `issue_1923_activation_weighted_removal_gate.rs`.
 
 use neat_ai_discovery::rank_focus_neurons_internal;
 use serde_json::{Value, json};
@@ -115,8 +127,12 @@ fn high_impact_and_output_neurons_are_never_removal_candidates() {
     );
 }
 
+/// Issue #1923 renamed this from `..._defer_activation_weighted_fields_to_analysis`:
+/// the fields are no longer *deferred*, they are measured — except when the
+/// records cannot be read, which is exactly the case this fixture sets up with
+/// a non-existent parquet path. The assertions are unchanged.
 #[test]
-fn removal_candidates_defer_activation_weighted_fields_to_analysis() {
+fn removal_candidates_stay_unmeasured_when_records_cannot_be_read() {
     let creature = creature_with_dead_branch();
     let (result, _) = rank(&creature, "/nonexistent/x.parquet");
     let candidates = result["removalCandidates"]
@@ -124,16 +140,16 @@ fn removal_candidates_defer_activation_weighted_fields_to_analysis() {
         .expect("removalCandidates array");
 
     for c in candidates {
-        // Record-derived gates run later in the analysis phase, not at focus time.
+        // No readable records, so the activation-weighted gate cannot resolve.
         assert_eq!(
             c["meanActivation"].as_f64().unwrap(),
             0.0,
-            "meanActivation is record-derived and must be unmeasured on the focus path"
+            "meanActivation is record-derived and must be unmeasured without records"
         );
         assert_eq!(
             c["activationWeightedImpact"].as_f64().unwrap(),
             0.0,
-            "activationWeightedImpact is deferred to analysis"
+            "activationWeightedImpact cannot be computed without records"
         );
         // Structural contribution (impact) is low — the removal axis.
         assert!(
