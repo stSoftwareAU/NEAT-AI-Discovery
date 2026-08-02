@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use super::staleness::caller_liveness_pair;
 use super::{GpuFuture, GpuWorkQueue, GpuWorkRequest};
-use crate::analysis::gpu::breaker::{GpuCircuitBreaker, GpuTripReason};
+use crate::analysis::gpu::breaker::{GpuCircuitBreaker, GpuTripReason, gpu_wedged_error};
 use crate::analysis::gpu::budget::GpuTimeBudget;
 use crate::analysis::samples::{
     HarmfulStats, HelpfulSample, HelpfulStats, ReluOrientation, ReluStats,
@@ -20,29 +20,30 @@ use crate::analysis::utils::calculate_gpu_batch_timeout;
 /// Error for a work request the GPU thread never accepted (Issue #1930).
 ///
 /// A full queue that will not drain within the caller's whole timeout means the
-/// GPU thread is not consuming work, so this trips the breaker.
-pub(super) fn queue_full_error(breaker: &GpuCircuitBreaker, timeout_secs: u64) -> anyhow::Error {
+/// GPU thread is not consuming work, so this trips the breaker. Issue #1932: the
+/// returned error is typed, so the host reads it as a wedged GPU rather than as
+/// a retryable timeout.
+pub fn queue_full_error(breaker: &GpuCircuitBreaker, timeout_secs: u64) -> anyhow::Error {
     breaker.trip(GpuTripReason::BatchTimeout);
-    anyhow!(
-        "GPU work queue full - send timed out after {timeout_secs}s. \
-         The GPU thread may be hung. Consider restarting the process."
-    )
+    gpu_wedged_error(format!(
+        "GPU work queue full - send timed out after {timeout_secs}s; \
+         the GPU thread is not consuming work"
+    ))
 }
 
 /// Error for a submitted batch the GPU thread never answered (Issue #1930).
 ///
 /// This is the wedged-GPU signature the breaker exists to stop repeating: the
-/// caller has just burned its full 60–300s wait for nothing.
-pub(super) fn batch_timeout_error(
+/// caller has just burned its full 60–300s wait for nothing. Issue #1932: it is
+/// reported as [`DiscoveryError::GpuWedged`](crate::ffi_types::DiscoveryError),
+/// never as a timeout the host could retry with a longer deadline.
+pub fn batch_timeout_error(
     breaker: &GpuCircuitBreaker,
     operation: &str,
     timeout_secs: u64,
 ) -> anyhow::Error {
     breaker.trip(GpuTripReason::BatchTimeout);
-    anyhow!(
-        "GPU {operation} timed out after {timeout_secs}s. \
-         The GPU may be unresponsive. Consider reducing batch size or restarting."
-    )
+    gpu_wedged_error(format!("GPU {operation} timed out after {timeout_secs}s"))
 }
 
 impl GpuWorkQueue {

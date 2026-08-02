@@ -303,9 +303,15 @@ The library includes automatic timeout protection for GPU operations. If the GPU
 unresponsive, you'll see an error like:
 
 ```
-GPU helpful batch evaluation timed out after 150s. The GPU may be unresponsive.
-Consider reducing batch size or restarting.
+GPU wedged: GPU helpful batch evaluation timed out after 150s (abandoned GPU threads: 0).
+The GPU will not answer for the remainder of this process — retrying or extending the
+deadline cannot recover it; restart the worker externally.
 ```
+
+That failure crosses the FFI boundary as `"errorKind": "gpu_wedged"`,
+`"retryable": false` (Issue #1932), so the host stops extending the analysis
+deadline instead of reading the timeout wording as "retry with longer". See
+[FFI_API.md § Wedged GPU](FFI_API.md#-wedged-gpu--errorkind-gpu_wedged-issue-1932).
 
 **Adaptive timeout architecture** (v0.1.166):
 - **Minimum GPU batch timeout**: 60 seconds
@@ -379,7 +385,9 @@ The first sign that the GPU is wedged now trips a one-way, process-wide breaker:
 Once tripped, for the rest of the process: `GpuWorkQueue::new()` returns an error
 instead of spawning another thread, and every submission returns that error
 immediately instead of starting a new multi-minute wait. The error carries the
-original trip reason and the abandoned-thread count. The trip is logged **once**
+original trip reason and the abandoned-thread count. Every one of those sites
+returns the typed `DiscoveryError::GpuWedged` (Issue #1932), so the host is told
+`retryable: false` rather than being invited to extend the deadline. The trip is logged **once**
 at `warn`; every suppressed call afterwards logs at `debug` only, so a wedged GPU
 cannot flood the log.
 

@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use super::{GpuWorkQueue, GpuWorkRequest};
 use crate::analysis::gpu::analyzer::GpuAnalyzer;
-use crate::analysis::gpu::breaker::{GpuTripReason, global_gpu_breaker};
+use crate::analysis::gpu::breaker::{GpuTripReason, global_gpu_breaker, gpu_wedged_error};
 use crate::analysis::gpu::shaders::{GPU_INIT_TIMEOUT_SECS, GPU_SHUTDOWN_TIMEOUT_SECS};
 use crate::analysis::utils::get_work_queue_capacity;
 
@@ -87,11 +87,11 @@ impl GpuWorkQueue {
                 // Issue #1930: initialisation that never completes means the device
                 // is unreachable — do not let the next analysis try again.
                 breaker.trip(GpuTripReason::InitTimeout);
-                return Err(anyhow!(
-                    "GPU initialisation timed out after {GPU_INIT_TIMEOUT_SECS}s. \
-                     The GPU may be unresponsive or overwhelmed. \
-                     Try restarting the process or reducing workload."
-                ));
+                // Issue #1932: typed, so the host sees a wedged GPU rather than
+                // a timeout it should retry with a longer deadline.
+                return Err(gpu_wedged_error(format!(
+                    "GPU initialisation timed out after {GPU_INIT_TIMEOUT_SECS}s"
+                )));
             }
             Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
                 return Err(anyhow!("GPU thread failed to start (channel disconnected)"));

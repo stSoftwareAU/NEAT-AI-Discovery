@@ -20,6 +20,13 @@ pub enum DiscoveryErrorKind {
     GpuTransient,
     /// Permanent GPU error (no GPU available, unsupported hardware) — not retryable.
     GpuPermanent,
+    /// The GPU is present but wedged for the remainder of this process
+    /// (Issue #1932) — **not** retryable, and a longer deadline cannot help.
+    ///
+    /// Raised once the GPU circuit breaker trips: the device stopped answering
+    /// batch submissions, so every further attempt is refused immediately. Only
+    /// an external restart of the worker clears it.
+    GpuWedged,
     /// Data validation error (malformed input, missing fields) — not retryable.
     DataValidation,
     /// Deadline/timeout exceeded — retryable with a longer deadline.
@@ -39,6 +46,10 @@ pub enum DiscoveryErrorKind {
 
 impl DiscoveryErrorKind {
     /// Whether errors of this kind are typically worth retrying.
+    ///
+    /// `GpuWedged` is deliberately absent (Issue #1932): a wedged GPU answers
+    /// nothing for the rest of the process, so neither a retry nor a longer
+    /// deadline can recover it.
     pub fn is_retryable(self) -> bool {
         matches!(
             self,
@@ -70,6 +81,22 @@ pub enum DiscoveryError {
     #[error("GPU device lost: {detail}")]
     GpuDeviceLost { detail: String },
 
+    /// The GPU is present but wedged for the rest of this process (Issue #1932).
+    ///
+    /// Constructed at the GPU circuit-breaker trip sites and the batch
+    /// submission timeout arms. `abandoned_threads` is the process-wide count of
+    /// GPU threads that would not exit and were leaked, so the host can see how
+    /// far the device has degraded without scraping the log.
+    #[error(
+        "GPU wedged: {detail} (abandoned GPU threads: {abandoned_threads}). \
+         The GPU will not answer for the remainder of this process — retrying or \
+         extending the deadline cannot recover it; restart the worker externally."
+    )]
+    GpuWedged {
+        detail: String,
+        abandoned_threads: usize,
+    },
+
     /// Invalid input data (parse failure, missing fields, bad format).
     #[error("Invalid input: {detail}")]
     InvalidInput { detail: String },
@@ -97,6 +124,7 @@ impl DiscoveryError {
         match self {
             Self::GpuUnavailable { .. } => DiscoveryErrorKind::GpuPermanent,
             Self::GpuDeviceLost { .. } => DiscoveryErrorKind::GpuTransient,
+            Self::GpuWedged { .. } => DiscoveryErrorKind::GpuWedged,
             Self::InvalidInput { .. } => DiscoveryErrorKind::DataValidation,
             Self::Timeout { .. } => DiscoveryErrorKind::Timeout,
             Self::MemoryExhausted { .. } => DiscoveryErrorKind::MemoryExhausted,
@@ -144,6 +172,13 @@ pub fn classify_error(error_msg: &str) -> DiscoveryErrorKind {
         return DiscoveryErrorKind::Cancelled;
     }
 
+    // Wedged GPU (Issue #1932). Checked before the transient and timeout
+    // branches: the wedged message names a timeout, and classifying it as
+    // `Timeout` is what told the host to keep extending the deadline.
+    if is_gpu_wedged_pattern(&lower) {
+        return DiscoveryErrorKind::GpuWedged;
+    }
+
     // GPU transient errors (device lost, driver issues)
     if is_gpu_transient_pattern(&lower) {
         return DiscoveryErrorKind::GpuTransient;
@@ -175,6 +210,14 @@ pub fn classify_error(error_msg: &str) -> DiscoveryErrorKind {
     }
 
     DiscoveryErrorKind::Unknown
+}
+
+/// Wedged-GPU wording produced by the circuit breaker and the submission
+/// timeout arms (Issue #1932), for errors that reach us as text only.
+fn is_gpu_wedged_pattern(lower: &str) -> bool {
+    lower.contains("gpu wedged")
+        || lower.contains("gpu is wedged")
+        || lower.contains("gpu circuit breaker tripped")
 }
 
 fn is_gpu_transient_pattern(lower: &str) -> bool {
@@ -402,6 +445,26 @@ mod tests {
         assert_eq!(
             classify_error("GPU driver may be unresponsive"),
             DiscoveryErrorKind::GpuTransient
+        );
+    }
+
+    /// Issue #1932: a wedged GPU must never be advertised as retryable, and its
+    /// wording must not fall through to the retryable `Timeout` branch.
+    #[test]
+    fn test_gpu_wedged_is_not_retryable() {
+        let typed = DiscoveryError::GpuWedged {
+            detail: "GPU helpful batch evaluation timed out after 300s".to_string(),
+            abandoned_threads: 1,
+        };
+        assert_eq!(typed.error_kind(), DiscoveryErrorKind::GpuWedged);
+        assert!(!typed.error_kind().is_retryable());
+
+        let err = anyhow::Error::new(typed);
+        assert_eq!(classify_anyhow_error(&err), DiscoveryErrorKind::GpuWedged);
+        // Even without the typed downcast the string must not read as a timeout.
+        assert_eq!(
+            classify_error(&err.to_string()),
+            DiscoveryErrorKind::GpuWedged
         );
     }
 
