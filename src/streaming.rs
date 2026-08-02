@@ -43,6 +43,15 @@
 //! after its writes, so a batch destined for a `.tmp` file that is about to be
 //! discarded fails loudly instead of returning `Ok`. The flag lives *outside* the
 //! per-session mutex so cancelling never waits on an in-flight Parquet write.
+//!
+//! ## Retryable finalisation (Issue #1902)
+//!
+//! `finish_session` leaves the handle in the map until the flush and rename have
+//! both succeeded, and sets `preserve_tmp_on_drop` before it starts. A transient
+//! I/O failure therefore keeps the complete `.tmp` recording on disk — `Drop`
+//! distinguishes that from an abandoned session, whose `.tmp` file is still
+//! deleted — and the session stays retryable instead of returning "Session not
+//! found".
 
 #![allow(clippy::cast_sign_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use anyhow::{Context, Result};
@@ -136,6 +145,10 @@ pub struct RecordingSession {
     parquet_path: String,
     records_written: u64,
     finished: bool,
+    /// Set by `finish_session` before it flushes and renames. Once set, the `.tmp`
+    /// file holds the complete recording, so `Drop` must retain it for a retry
+    /// rather than delete it (Issue #1902).
+    preserve_tmp_on_drop: bool,
     created_at: Instant,
 }
 
@@ -159,6 +172,7 @@ impl RecordingSession {
             parquet_path: parquet_path.to_string(),
             records_written: 0,
             finished: false,
+            preserve_tmp_on_drop: false,
             created_at: Instant::now(),
         })
     }
@@ -169,8 +183,18 @@ impl Drop for RecordingSession {
         if self.finished {
             return;
         }
-        // Session was not finished normally — clean up the incomplete temporary file
         let tmp_path = format!("{}.tmp", self.parquet_path);
+        // A finalisation that failed part-way leaves a complete recording behind —
+        // deleting it would turn a recoverable I/O error into permanent data loss
+        // (Issue #1902).
+        if self.preserve_tmp_on_drop {
+            tracing::error!(
+                path = %tmp_path,
+                "Recording session dropped after a failed finalisation — retaining the complete temporary recording"
+            );
+            return;
+        }
+        // Session was not finished normally — clean up the incomplete temporary file
         if let Err(err) = fs::remove_file(&tmp_path)
             && err.kind() != std::io::ErrorKind::NotFound
         {
@@ -384,39 +408,70 @@ fn append_to_handle(
 /// Finish a recording session
 ///
 /// Finalises the Parquet file and returns the file location.
-/// The session is removed from storage after this call.
+/// The session is removed from storage only once finalisation succeeds.
+///
+/// ## Retryable finalisation (Issue #1902)
+///
+/// The handle stays in the session map until the flush and rename have both
+/// succeeded, so a transient `ENOSPC` on flush or `EXDEV`/`EACCES` on the rename
+/// leaves the complete `.tmp` recording on disk and the session retryable. The
+/// writer is only flushed once, so a retry after a failed rename renames the
+/// already-finalised file rather than re-finishing the writer.
 pub fn finish_session(session_id: &str) -> Result<(String, String, u64)> {
-    let handle = remove_session_handle(session_id)
+    let handle = session_handle(session_id)
         .ok_or_else(|| anyhow::anyhow!("Session not found: {session_id}"))?;
     // Global lock already released — finalisation (writer flush + rename) runs
     // under the per-session lock only (Issue #1751).
     let mut session = handle.session.lock();
 
     if session.records_written == 0 {
+        // Nothing was recorded, so the `.tmp` file is genuinely empty: retire the
+        // session and let `Drop` delete it.
+        drop(session);
+        drop(remove_session_handle(session_id));
         anyhow::bail!("No records were written to the session");
     }
 
-    let writer = session
-        .writer
-        .take()
-        .ok_or_else(|| anyhow::anyhow!("Session writer already consumed"))?;
-    writer
-        .finish()
-        .context("Failed to finalise Parquet writer")?;
+    let tmp_path = format!("{}.tmp", session.parquet_path);
+    // Past this point the `.tmp` file holds the whole recording — every failure
+    // below must retain it (Issue #1902).
+    session.preserve_tmp_on_drop = true;
+
+    // `None` means an earlier attempt already flushed the writer; only the rename
+    // still needs retrying.
+    if let Some(writer) = session.writer.take() {
+        writer.finish().map_err(|err| {
+            tracing::error!(
+                session_id = %session_id,
+                path = %tmp_path,
+                error = %err,
+                "Failed to finalise Parquet writer — retaining the complete temporary recording for retry"
+            );
+            err.context("Failed to finalise Parquet writer")
+        })?;
+    }
 
     // Atomically rename .parquet.tmp to .parquet so consumers never see partial files
-    let tmp_path = format!("{}.tmp", session.parquet_path);
-    fs::rename(&tmp_path, &session.parquet_path).with_context(|| {
-        format!(
+    fs::rename(&tmp_path, &session.parquet_path).map_err(|err| {
+        tracing::error!(
+            session_id = %session_id,
+            path = %tmp_path,
+            error = %err,
+            "Failed to rename the finalised recording — retaining the complete temporary recording for retry"
+        );
+        anyhow::Error::new(err).context(format!(
             "Failed to rename temporary file {tmp_path} to {}",
             session.parquet_path
-        )
+        ))
     })?;
 
     session.finished = true;
 
     let temp_dir = session.temp_dir.clone();
     let records_written = session.records_written;
+    // Finalisation succeeded — retire the session from the map.
+    drop(session);
+    drop(remove_session_handle(session_id));
 
     Ok((
         temp_dir,
@@ -760,6 +815,114 @@ mod tests {
         assert!(
             !tmp_file.exists(),
             "expected tmp file to be gone after finish (renamed)"
+        );
+    }
+
+    /// A failed rename must not destroy the completed recording (Issue #1902).
+    ///
+    /// The final path is occupied by a non-empty directory, so `fs::rename` fails.
+    /// The `.tmp` file must survive with every appended record intact, and the
+    /// session must still be retryable once the obstruction is cleared.
+    #[test]
+    fn test_failed_finish_preserves_tmp() {
+        let temp_dir = TempDir::new().unwrap();
+        let creature = create_test_creature();
+        let temp_path = temp_dir.path().to_str().unwrap().to_string();
+
+        let session_id = start_session(creature, temp_path.clone()).unwrap();
+
+        let batch = vec![(
+            0u32,
+            vec![
+                NeuronData {
+                    neuron_uuid: "hidden-1".to_string(),
+                    activation: 0.5,
+                    value: Some(0.4),
+                    errors: vec![0.1],
+                },
+                NeuronData {
+                    neuron_uuid: "output-0".to_string(),
+                    activation: 0.5,
+                    value: Some(0.5),
+                    errors: vec![0.0],
+                },
+            ],
+            vec![0.1, 0.2],
+        )];
+        let appended = append_records(&session_id, batch).unwrap();
+
+        // Block the rename: the destination is an existing non-empty directory.
+        let final_file = Path::new(&temp_path).join("discovery_data.parquet");
+        fs::create_dir(&final_file).unwrap();
+        fs::write(final_file.join("occupied.txt"), b"blocked").unwrap();
+
+        let err = finish_session(&session_id).expect_err("rename onto a directory must fail");
+        assert!(
+            err.to_string().contains("Failed to rename"),
+            "unexpected error: {err}"
+        );
+
+        // The complete recording must still be on disk.
+        let tmp_file = Path::new(&temp_path).join("discovery_data.parquet.tmp");
+        assert!(
+            tmp_file.exists(),
+            "expected the tmp file to be retained after a failed finish"
+        );
+        // The reader rejects `.tmp` paths outright, so verify a copy under a normal
+        // parquet name.
+        let verify_file = Path::new(&temp_path).join("verify.parquet");
+        fs::copy(&tmp_file, &verify_file).unwrap();
+        let retained =
+            crate::parquet_format::read_all_records_from_parquet(verify_file.to_str().unwrap())
+                .expect("retained tmp file should be a complete parquet file");
+        assert_eq!(
+            retained.len() as u64,
+            appended,
+            "retained recording should hold every appended record"
+        );
+
+        // The session must still be retryable rather than "Session not found".
+        assert!(
+            session_exists(&session_id),
+            "expected the session to survive a failed finish"
+        );
+
+        // Clear the obstruction and retry — finalisation should now succeed.
+        fs::remove_dir_all(&final_file).unwrap();
+        let (result_dir, file, records_written) =
+            finish_session(&session_id).expect("retry after clearing the obstruction should work");
+        assert_eq!(records_written, appended);
+        assert!(Path::new(&result_dir).join(&file).exists());
+        assert!(
+            !tmp_file.exists(),
+            "expected the tmp file to be renamed away by the successful retry"
+        );
+        assert!(
+            !session_exists(&session_id),
+            "expected the session to be removed after a successful finish"
+        );
+    }
+
+    /// The empty-session bail must still retire the session and delete its `.tmp`
+    /// file — the recording is genuinely empty (Issue #1902).
+    #[test]
+    fn test_empty_session_finish_removes_tmp() {
+        let temp_dir = TempDir::new().unwrap();
+        let creature = create_test_creature();
+        let temp_path = temp_dir.path().to_str().unwrap().to_string();
+
+        let session_id = start_session(creature, temp_path.clone()).unwrap();
+
+        assert!(finish_session(&session_id).is_err());
+
+        let tmp_file = Path::new(&temp_path).join("discovery_data.parquet.tmp");
+        assert!(
+            !tmp_file.exists(),
+            "expected the empty tmp file to be cleaned up"
+        );
+        assert!(
+            !session_exists(&session_id),
+            "expected the empty session to be removed"
         );
     }
 
