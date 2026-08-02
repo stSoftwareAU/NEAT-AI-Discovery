@@ -59,6 +59,7 @@ fn execute_request(
         GpuWorkRequest::HelpfulBatch {
             samples,
             response_tx,
+            budget,
         } => {
             let sample_count: usize = samples.iter().map(|s| s.len()).sum();
             let start = if track_metrics {
@@ -71,7 +72,7 @@ fn execute_request(
             // GPU thread never takes ownership, so refcount sharing is safe.
             let samples_refs: Vec<&[HelpfulSample]> =
                 samples.iter().map(|s| s.as_slice()).collect();
-            let result = analyzer.evaluate_helpful_batch(&samples_refs);
+            let result = analyzer.evaluate_helpful_batch_with_budget(&samples_refs, *budget);
 
             if let Some(start) = start {
                 let metrics = global_gpu_metrics();
@@ -92,6 +93,7 @@ fn execute_request(
         GpuWorkRequest::HarmfulBatch {
             samples_with_weights,
             response_tx,
+            budget,
         } => {
             let sample_count: usize = samples_with_weights.iter().map(|(v, _)| v.len()).sum();
             let start = if track_metrics {
@@ -104,7 +106,7 @@ fn execute_request(
                 .iter()
                 .map(|(samples, weight)| (samples.as_slice(), *weight))
                 .collect();
-            let result = analyzer.evaluate_harmful_batch(&batch_refs);
+            let result = analyzer.evaluate_harmful_batch_with_budget(&batch_refs, *budget);
 
             if let Some(start) = start {
                 let metrics = global_gpu_metrics();
@@ -126,6 +128,7 @@ fn execute_request(
             samples,
             threshold,
             response_tx,
+            budget,
         } => {
             let sample_count = samples.len();
             let start = if track_metrics {
@@ -134,7 +137,7 @@ fn execute_request(
                 None
             };
 
-            let result = analyzer.evaluate_relu_gpu(samples, *threshold);
+            let result = analyzer.evaluate_relu_gpu_with_budget(samples, *threshold, *budget);
 
             if let Some(start) = start {
                 let metrics = global_gpu_metrics();
@@ -158,6 +161,7 @@ fn execute_request(
             orientation,
             scale,
             response_tx,
+            budget,
         } => {
             let sample_count = samples.len();
             let start = if track_metrics {
@@ -166,8 +170,13 @@ fn execute_request(
                 None
             };
 
-            let result =
-                analyzer.evaluate_activation_gpu(samples, *activation_type, *orientation, *scale);
+            let result = analyzer.evaluate_activation_gpu_with_budget(
+                samples,
+                *activation_type,
+                *orientation,
+                *scale,
+                *budget,
+            );
 
             if let Some(start) = start {
                 let metrics = global_gpu_metrics();
@@ -189,6 +198,7 @@ fn execute_request(
             samples,
             activation_configs,
             response_tx,
+            budget,
         } => {
             let sample_count = samples.len();
             let config_count = activation_configs.len();
@@ -198,7 +208,11 @@ fn execute_request(
                 None
             };
 
-            let result = analyzer.evaluate_activations_batched_gpu(samples, activation_configs);
+            let result = analyzer.evaluate_activations_batched_gpu_with_budget(
+                samples,
+                activation_configs,
+                *budget,
+            );
 
             if let Some(start) = start {
                 let metrics = global_gpu_metrics();
@@ -514,6 +528,7 @@ impl GpuEvaluator for GpuWorkQueue {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::analysis::gpu::budget::GpuTimeBudget;
     use crate::analysis::samples::{HarmfulStats, HelpfulStats};
     use crossbeam_channel::bounded;
 
@@ -558,6 +573,7 @@ mod tests {
         let request = GpuWorkRequest::HelpfulBatch {
             samples: vec![],
             response_tx: tx,
+            budget: GpuTimeBudget::unbounded(),
         };
         // Must not panic — the receiver is gone
         send_error_to_request(&request, "test error");
@@ -570,6 +586,7 @@ mod tests {
         let request = GpuWorkRequest::HarmfulBatch {
             samples_with_weights: vec![],
             response_tx: tx,
+            budget: GpuTimeBudget::unbounded(),
         };
         send_error_to_request(&request, "test error");
     }
@@ -582,6 +599,7 @@ mod tests {
             samples: vec![],
             threshold: 0.0,
             response_tx: tx,
+            budget: GpuTimeBudget::unbounded(),
         };
         send_error_to_request(&request, "test error");
     }
@@ -596,6 +614,7 @@ mod tests {
             orientation: 1.0,
             scale: 1.0,
             response_tx: tx,
+            budget: GpuTimeBudget::unbounded(),
         };
         send_error_to_request(&request, "test error");
     }
@@ -608,6 +627,7 @@ mod tests {
             samples: vec![],
             activation_configs: vec![],
             response_tx: tx,
+            budget: GpuTimeBudget::unbounded(),
         };
         send_error_to_request(&request, "test error");
     }
@@ -620,6 +640,7 @@ mod tests {
         let request = GpuWorkRequest::HelpfulBatch {
             samples: vec![],
             response_tx: tx,
+            budget: GpuTimeBudget::unbounded(),
         };
         send_error_to_request(&request, "recovery failed");
         let result = rx.recv().expect("should receive error");
@@ -643,6 +664,7 @@ mod tests {
             request_label(&GpuWorkRequest::HelpfulBatch {
                 samples: vec![],
                 response_tx: tx,
+                budget: GpuTimeBudget::unbounded(),
             }),
             "helpful_batch"
         );
@@ -652,6 +674,7 @@ mod tests {
             request_label(&GpuWorkRequest::HarmfulBatch {
                 samples_with_weights: vec![],
                 response_tx: tx,
+                budget: GpuTimeBudget::unbounded(),
             }),
             "harmful_batch"
         );
@@ -662,6 +685,7 @@ mod tests {
                 samples: vec![],
                 threshold: 0.0,
                 response_tx: tx,
+                budget: GpuTimeBudget::unbounded(),
             }),
             "relu_eval"
         );
@@ -674,6 +698,7 @@ mod tests {
                 orientation: 1.0,
                 scale: 1.0,
                 response_tx: tx,
+                budget: GpuTimeBudget::unbounded(),
             }),
             "activation_eval"
         );
@@ -684,6 +709,7 @@ mod tests {
                 samples: vec![],
                 activation_configs: vec![],
                 response_tx: tx,
+                budget: GpuTimeBudget::unbounded(),
             }),
             "activation_batch_eval"
         );

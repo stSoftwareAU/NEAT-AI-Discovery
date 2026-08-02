@@ -16,6 +16,7 @@
 //! ├── relu_evaluation.rs        <- ReLU activation GPU evaluation (Issue #520)
 //! ├── activation_evaluation.rs  <- Activation function GPU evaluation (Issue #520)
 //! ├── bias_evaluation.rs        <- Bias GPU evaluation (Issue #520)
+//! ├── budget.rs                 <- Per-request GPU time budget (Issue #1928)
 //! ├── pipeline_builder.rs      <- Shared compute pipeline builder (Issue #978)
 //! ├── queue/                    <- GPU work queue (Issue #274, #608)
 //! │   ├── mod.rs                <- Public API, re-exports, queue types
@@ -35,6 +36,7 @@
 pub mod activation_evaluation;
 pub mod analyzer;
 pub mod bias_evaluation;
+pub mod budget;
 pub mod device;
 pub mod harmful_evaluation;
 pub mod helpful_evaluation;
@@ -53,6 +55,9 @@ pub use device::{
 
 // Re-export GPU_QUEUE_TIMEOUT_MAX_SECS from device (which gets it from utils)
 pub use device::GPU_QUEUE_TIMEOUT_MAX_SECS;
+
+// Re-export the per-request GPU time budget (Issue #1928)
+pub use budget::GpuTimeBudget;
 
 // Re-export analyzer module contents
 pub use analyzer::{GPU_MAX_BATCH_ALLOC_BYTES, GpuAnalyzer, GpuEvaluator};

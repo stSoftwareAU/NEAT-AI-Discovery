@@ -314,6 +314,30 @@ Consider reducing batch size or restarting.
 - **Non-blocking work submission**: `send_timeout()` prevents deadlock if GPU hangs
 - **Shutdown timeout**: 12 seconds max (2s send + 10s exit wait)
 
+**Per-request time budget** (Issue #1928): each work request carries the
+submitter's timeout into the GPU thread as a `GpuTimeBudget`. Every inner wait
+(buffer mapping, device polling) is capped by the budget remaining at that
+moment, recomputed for each sub-batch, and the budget expires 5 seconds
+(`GPU_BUFFER_MAP_TIMEOUT_MARGIN_SECS`) before the caller's timeout does. So the
+worker always errors out first and returns that error through the response
+channel, instead of the caller giving up on a GPU thread still inside the
+driver. Requests submitted without a deadline fall back to the fixed
+`GPU_BUFFER_MAP_TIMEOUT_SECS` (295s) inner wait.
+
+```mermaid
+sequenceDiagram
+    participant C as Caller (submitter)
+    participant Q as GPU work queue
+    participant W as GPU thread
+    C->>Q: request + GpuTimeBudget (T − 5s)
+    C->>C: recv_timeout(T)
+    loop each sub-batch
+        W->>W: budget.check() — abort if exhausted
+        W->>W: wait_for_buffer_maps_batch(budget.remaining())
+    end
+    W-->>C: results, or a real error before T elapses
+```
+
 **Causes and solutions:**
 - **GPU driver hang**: Restart the process. If persistent, restart the machine.
 - **GPU memory exhaustion**: Reduce `NEAT_AI_DISCOVERY_GPU_BATCH_SIZE` (try 256 or 128).

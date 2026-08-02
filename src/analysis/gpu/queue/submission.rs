@@ -9,6 +9,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use super::{GpuFuture, GpuWorkQueue, GpuWorkRequest};
+use crate::analysis::gpu::budget::GpuTimeBudget;
 use crate::analysis::samples::{
     HarmfulStats, HelpfulSample, HelpfulStats, ReluOrientation, ReluStats,
 };
@@ -40,6 +41,9 @@ impl GpuWorkQueue {
         let (response_tx, response_rx) = bounded(1);
         let timeout = calculate_gpu_batch_timeout(deadline);
         let timeout_secs = timeout.as_secs();
+        // Issue #1928: the worker's inner waits share this request's budget,
+        // which expires a safety margin before the caller stops waiting.
+        let budget = GpuTimeBudget::from_caller_timeout(timeout);
 
         tracing::debug!(
             batch_count = samples.len(),
@@ -49,6 +53,7 @@ impl GpuWorkQueue {
             GpuWorkRequest::HelpfulBatch {
                 samples,
                 response_tx,
+                budget,
             },
             timeout,
         ) {
@@ -93,6 +98,9 @@ impl GpuWorkQueue {
         // Calculate timeout based on remaining deadline
         let timeout = calculate_gpu_batch_timeout(deadline);
         let timeout_secs = timeout.as_secs();
+        // Issue #1928: the worker's inner waits share this request's budget,
+        // which expires a safety margin before the caller stops waiting.
+        let budget = GpuTimeBudget::from_caller_timeout(timeout);
 
         tracing::debug!(
             batch_count = samples.len(),
@@ -104,6 +112,7 @@ impl GpuWorkQueue {
             GpuWorkRequest::HelpfulBatch {
                 samples,
                 response_tx,
+                budget,
             },
             timeout,
         ) {
@@ -147,6 +156,9 @@ impl GpuWorkQueue {
         let (response_tx, response_rx) = bounded(1);
         let timeout = calculate_gpu_batch_timeout(deadline);
         let timeout_secs = timeout.as_secs();
+        // Issue #1928: the worker's inner waits share this request's budget,
+        // which expires a safety margin before the caller stops waiting.
+        let budget = GpuTimeBudget::from_caller_timeout(timeout);
 
         tracing::debug!(
             batch_count = samples_with_weights.len(),
@@ -157,6 +169,7 @@ impl GpuWorkQueue {
             GpuWorkRequest::HarmfulBatch {
                 samples_with_weights,
                 response_tx,
+                budget,
             },
             timeout,
         ) {
@@ -205,6 +218,9 @@ impl GpuWorkQueue {
         let (response_tx, response_rx) = bounded(1);
         let timeout = calculate_gpu_batch_timeout(deadline);
         let timeout_secs = timeout.as_secs();
+        // Issue #1928: the worker's inner waits share this request's budget,
+        // which expires a safety margin before the caller stops waiting.
+        let budget = GpuTimeBudget::from_caller_timeout(timeout);
 
         tracing::debug!(
             sample_count = samples.len(),
@@ -216,6 +232,7 @@ impl GpuWorkQueue {
                 samples: samples.to_vec(),
                 threshold,
                 response_tx,
+                budget,
             },
             timeout,
         ) {
@@ -262,6 +279,9 @@ impl GpuWorkQueue {
         let (response_tx, response_rx) = bounded(1);
         let timeout = calculate_gpu_batch_timeout(deadline);
         let timeout_secs = timeout.as_secs();
+        // Issue #1928: the worker's inner waits share this request's budget,
+        // which expires a safety margin before the caller stops waiting.
+        let budget = GpuTimeBudget::from_caller_timeout(timeout);
 
         tracing::debug!(
             sample_count = samples.len(),
@@ -276,6 +296,7 @@ impl GpuWorkQueue {
                 orientation,
                 scale,
                 response_tx,
+                budget,
             },
             timeout,
         ) {
@@ -335,6 +356,9 @@ impl GpuWorkQueue {
         let (response_tx, response_rx) = bounded(1);
         let timeout = calculate_gpu_batch_timeout(deadline);
         let timeout_secs = timeout.as_secs();
+        // Issue #1928: the worker's inner waits share this request's budget,
+        // which expires a safety margin before the caller stops waiting.
+        let budget = GpuTimeBudget::from_caller_timeout(timeout);
 
         tracing::debug!(
             sample_count = samples.len(),
@@ -347,6 +371,7 @@ impl GpuWorkQueue {
                 samples: samples.to_vec(),
                 activation_configs: activation_configs.to_vec(),
                 response_tx,
+                budget,
             },
             timeout,
         ) {
@@ -468,5 +493,64 @@ mod tests {
             .evaluate_harmful_batch(batch, &None)
             .expect("empty harmful batch should succeed");
         assert!(stats.is_empty(), "empty harmful batch yields no stats");
+    }
+
+    /// Issue #1928: a submitted request carries a bounded budget that expires
+    /// strictly before the caller's own timeout, so the worker gives up first
+    /// and the GPU thread stays joinable.
+    #[test]
+    fn submitted_request_budget_expires_before_the_caller_timeout() {
+        let (queue, work_rx) = test_queue();
+        let deadline = Some(std::time::SystemTime::now() + Duration::from_secs(240));
+        let caller_timeout = calculate_gpu_batch_timeout(&deadline);
+
+        queue
+            .submit_helpful_batch(vec![Arc::new(vec![sample(1.0)])], &deadline)
+            .expect("submit should enqueue");
+
+        let GpuWorkRequest::HelpfulBatch { budget, .. } =
+            work_rx.recv().expect("request should be enqueued")
+        else {
+            panic!("expected HelpfulBatch request variant");
+        };
+
+        assert!(budget.is_bounded(), "a deadlined request carries a budget");
+        assert!(
+            budget.remaining() < caller_timeout,
+            "worker budget {:?} must expire before the caller timeout {caller_timeout:?}",
+            budget.remaining()
+        );
+        assert!(
+            budget.remaining()
+                <= caller_timeout
+                    - Duration::from_secs(
+                        crate::analysis::gpu::device::GPU_BUFFER_MAP_TIMEOUT_MARGIN_SECS
+                    ),
+            "the safety margin must be deducted from the worker budget"
+        );
+    }
+
+    /// Issue #1928: without a deadline the request still carries a budget, and
+    /// it never exceeds the maximum queue timeout.
+    #[test]
+    fn submitted_request_without_deadline_stays_within_the_max_timeout() {
+        let (queue, work_rx) = test_queue();
+        let caller_timeout = calculate_gpu_batch_timeout(&None);
+
+        queue
+            .submit_helpful_batch(vec![Arc::new(vec![sample(1.0)])], &None)
+            .expect("submit should enqueue");
+
+        let GpuWorkRequest::HelpfulBatch { budget, .. } =
+            work_rx.recv().expect("request should be enqueued")
+        else {
+            panic!("expected HelpfulBatch request variant");
+        };
+
+        assert!(budget.remaining() < caller_timeout);
+        assert!(
+            budget.remaining()
+                < Duration::from_secs(crate::analysis::utils::GPU_QUEUE_TIMEOUT_MAX_SECS)
+        );
     }
 }

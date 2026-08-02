@@ -54,6 +54,7 @@ use std::sync::Arc;
 use std::thread::JoinHandle;
 use std::time::{Duration, SystemTime};
 
+use crate::analysis::gpu::budget::GpuTimeBudget;
 use crate::analysis::samples::{HarmfulStats, HelpfulSample, HelpfulStats, ReluStats};
 
 // =============================================================================
@@ -108,6 +109,8 @@ pub(crate) enum GpuWorkRequest {
         samples: Vec<Arc<Vec<HelpfulSample>>>,
         /// Channel to send results back.
         response_tx: Sender<Result<Vec<HelpfulStats>>>,
+        /// Time this request may spend in the worker (Issue #1928).
+        budget: GpuTimeBudget,
     },
     /// Batch of harmful synapse evaluations.
     /// Each item is (samples, weight) pair.
@@ -118,12 +121,16 @@ pub(crate) enum GpuWorkRequest {
         samples_with_weights: Vec<(Arc<Vec<HelpfulSample>>, f32)>,
         /// Channel to send results back.
         response_tx: Sender<Result<Vec<HarmfulStats>>>,
+        /// Time this request may spend in the worker (Issue #1928).
+        budget: GpuTimeBudget,
     },
     /// `ReLU` activation evaluation for neuron candidates.
     ReluEval {
         samples: Vec<HelpfulSample>,
         threshold: f32,
         response_tx: Sender<Result<(ReluStats, ReluStats, f32)>>,
+        /// Time this request may spend in the worker (Issue #1928).
+        budget: GpuTimeBudget,
     },
     /// General activation function evaluation for neuron candidates.
     ActivationEval {
@@ -132,6 +139,8 @@ pub(crate) enum GpuWorkRequest {
         orientation: f32,
         scale: f32,
         response_tx: Sender<Result<(f32, f32, f32, u32)>>,
+        /// Time this request may spend in the worker (Issue #1928).
+        budget: GpuTimeBudget,
     },
     /// Batched activation function evaluation for multiple configs.
     /// Issue #201: Reduces GPU round-trips by evaluating multiple activation
@@ -141,6 +150,8 @@ pub(crate) enum GpuWorkRequest {
         samples: Vec<HelpfulSample>,
         activation_configs: Vec<(u32, f32, f32)>, // (activation_type, orientation, scale)
         response_tx: Sender<Result<Vec<(f32, f32, f32, u32)>>>,
+        /// Time this request may spend in the worker (Issue #1928).
+        budget: GpuTimeBudget,
     },
     /// Request to shut down the GPU thread.
     Shutdown,
@@ -319,12 +330,14 @@ mod tests {
         let _helpful = GpuWorkRequest::HelpfulBatch {
             samples: vec![],
             response_tx: tx,
+            budget: GpuTimeBudget::unbounded(),
         };
 
         let (tx, _rx) = bounded::<Result<Vec<HarmfulStats>>>(1);
         let _harmful = GpuWorkRequest::HarmfulBatch {
             samples_with_weights: vec![],
             response_tx: tx,
+            budget: GpuTimeBudget::unbounded(),
         };
 
         let (tx, _rx) = bounded::<Result<(ReluStats, ReluStats, f32)>>(1);
@@ -332,6 +345,7 @@ mod tests {
             samples: vec![],
             threshold: 0.0,
             response_tx: tx,
+            budget: GpuTimeBudget::unbounded(),
         };
 
         let (tx, _rx) = bounded::<Result<(f32, f32, f32, u32)>>(1);
@@ -341,6 +355,7 @@ mod tests {
             orientation: 1.0,
             scale: 1.0,
             response_tx: tx,
+            budget: GpuTimeBudget::unbounded(),
         };
 
         let _shutdown = GpuWorkRequest::Shutdown;
