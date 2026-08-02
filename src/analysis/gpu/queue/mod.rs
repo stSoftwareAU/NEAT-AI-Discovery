@@ -62,6 +62,7 @@ use std::thread::JoinHandle;
 use std::time::{Duration, SystemTime};
 
 use self::staleness::{CallerGuard, CallerLiveness};
+use crate::analysis::gpu::breaker::GpuCircuitBreaker;
 use crate::analysis::gpu::budget::GpuTimeBudget;
 use crate::analysis::samples::{HarmfulStats, HelpfulSample, HelpfulStats, ReluStats};
 
@@ -80,6 +81,8 @@ pub(crate) struct GpuFuture<T> {
     /// Keeps the worker's liveness handle alive until the future is collected
     /// or dropped (Issue #1929).
     pub(super) caller_guard: CallerGuard,
+    /// Circuit breaker to trip if this wait times out (Issue #1930).
+    pub(super) breaker: &'static GpuCircuitBreaker,
 }
 
 impl<T> GpuFuture<T> {
@@ -94,10 +97,15 @@ impl<T> GpuFuture<T> {
         drop(self.caller_guard);
         match outcome {
             Ok(result) => result,
-            Err(crossbeam_channel::RecvTimeoutError::Timeout) => Err(anyhow::anyhow!(
-                "GPU batch evaluation timed out after {timeout_secs}s. \
-                 The GPU may be unresponsive. Consider reducing batch size or restarting."
-            )),
+            // Issue #1930: the async counterpart of the blocking batch timeout —
+            // it trips the breaker for the same reason.
+            Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
+                Err(self::submission::batch_timeout_error(
+                    self.breaker,
+                    "batch evaluation",
+                    timeout_secs,
+                ))
+            }
             Err(crossbeam_channel::RecvTimeoutError::Disconnected) => Err(anyhow::anyhow!(
                 "GPU response channel closed unexpectedly — \
                  the GPU thread may have exited or panicked"
@@ -208,6 +216,12 @@ pub struct GpuWorkQueue {
     /// When `Some`, GPU batch timeouts are derived from the remaining time until
     /// this deadline instead of using the maximum 5-minute default.
     pub(super) deadline: Option<SystemTime>,
+    /// Circuit breaker consulted before every submission (Issue #1930).
+    ///
+    /// Always [`global_gpu_breaker()`](crate::analysis::gpu::breaker::global_gpu_breaker)
+    /// in production, so a trip anywhere stops GPU work everywhere. Tests point
+    /// a queue at an isolated breaker instead.
+    pub(super) breaker: &'static GpuCircuitBreaker,
 }
 
 impl GpuWorkQueue {
@@ -303,12 +317,17 @@ mod tests {
         // Construct a dummy queue struct to test the builder.
         // We can't call GpuWorkQueue::new() without a GPU, so build manually.
         let (work_tx, _work_rx) = bounded::<GpuWorkRequest>(1);
-        let (_exit_tx, exit_rx) = bounded::<()>(1);
+        // Drop the exit sender immediately so `Drop for GpuWorkQueue` takes the
+        // disconnected path. Holding it alive made every one of these fixtures
+        // sit out the full `GPU_SHUTDOWN_TIMEOUT_SECS` and report a GPU thread
+        // that was never spawned as abandoned (Issue #1930).
+        let (_, exit_rx) = bounded::<()>(1);
         let queue = GpuWorkQueue {
             work_tx,
             thread_handle: None,
             exit_rx,
             deadline: None,
+            breaker: Box::leak(Box::new(GpuCircuitBreaker::new())),
         };
         let queue = queue.with_deadline(None);
         assert!(queue.deadline.is_none());
@@ -318,13 +337,18 @@ mod tests {
     #[test]
     fn test_with_deadline_some_stores_deadline() {
         let (work_tx, _work_rx) = bounded::<GpuWorkRequest>(1);
-        let (_exit_tx, exit_rx) = bounded::<()>(1);
+        // Drop the exit sender immediately so `Drop for GpuWorkQueue` takes the
+        // disconnected path. Holding it alive made every one of these fixtures
+        // sit out the full `GPU_SHUTDOWN_TIMEOUT_SECS` and report a GPU thread
+        // that was never spawned as abandoned (Issue #1930).
+        let (_, exit_rx) = bounded::<()>(1);
         let future = SystemTime::now() + Duration::from_secs(120);
         let queue = GpuWorkQueue {
             work_tx,
             thread_handle: None,
             exit_rx,
             deadline: None,
+            breaker: Box::leak(Box::new(GpuCircuitBreaker::new())),
         };
         let queue = queue.with_deadline(Some(future));
         assert!(queue.deadline.is_some());
@@ -335,7 +359,11 @@ mod tests {
     #[test]
     fn test_with_deadline_overrides_previous() {
         let (work_tx, _work_rx) = bounded::<GpuWorkRequest>(1);
-        let (_exit_tx, exit_rx) = bounded::<()>(1);
+        // Drop the exit sender immediately so `Drop for GpuWorkQueue` takes the
+        // disconnected path. Holding it alive made every one of these fixtures
+        // sit out the full `GPU_SHUTDOWN_TIMEOUT_SECS` and report a GPU thread
+        // that was never spawned as abandoned (Issue #1930).
+        let (_, exit_rx) = bounded::<()>(1);
         let initial = SystemTime::now() + Duration::from_secs(60);
         let updated = SystemTime::now() + Duration::from_secs(300);
         let queue = GpuWorkQueue {
@@ -343,6 +371,7 @@ mod tests {
             thread_handle: None,
             exit_rx,
             deadline: Some(initial),
+            breaker: Box::leak(Box::new(GpuCircuitBreaker::new())),
         };
         let queue = queue.with_deadline(Some(updated));
         assert_eq!(queue.deadline.unwrap(), updated);

@@ -17,6 +17,7 @@
 //! ├── activation_evaluation.rs  <- Activation function GPU evaluation (Issue #520)
 //! ├── bias_evaluation.rs        <- Bias GPU evaluation (Issue #520)
 //! ├── budget.rs                 <- Per-request GPU time budget (Issue #1928)
+//! ├── breaker.rs                <- Process-wide GPU circuit breaker (Issue #1930)
 //! ├── pipeline_builder.rs      <- Shared compute pipeline builder (Issue #978)
 //! ├── queue/                    <- GPU work queue (Issue #274, #608)
 //! │   ├── mod.rs                <- Public API, re-exports, queue types
@@ -36,6 +37,7 @@
 pub mod activation_evaluation;
 pub mod analyzer;
 pub mod bias_evaluation;
+pub mod breaker;
 pub mod budget;
 pub mod device;
 pub mod harmful_evaluation;
@@ -58,6 +60,13 @@ pub use device::GPU_QUEUE_TIMEOUT_MAX_SECS;
 
 // Re-export the per-request GPU time budget (Issue #1928)
 pub use budget::GpuTimeBudget;
+
+// Re-export the process-wide GPU circuit breaker (Issue #1930)
+pub use breaker::{
+    GpuCircuitBreaker, GpuTripReason, abandoned_gpu_thread_count, check_gpu_breaker,
+    global_gpu_breaker, gpu_breaker_trip_reason, is_gpu_breaker_tripped,
+    record_abandoned_gpu_thread, reset_gpu_breaker, trip_gpu_breaker,
+};
 
 // Re-export analyzer module contents
 pub use analyzer::{GPU_MAX_BATCH_ALLOC_BYTES, GpuAnalyzer, GpuEvaluator};

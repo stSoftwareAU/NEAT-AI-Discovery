@@ -10,11 +10,40 @@ use std::time::Duration;
 
 use super::staleness::caller_liveness_pair;
 use super::{GpuFuture, GpuWorkQueue, GpuWorkRequest};
+use crate::analysis::gpu::breaker::{GpuCircuitBreaker, GpuTripReason};
 use crate::analysis::gpu::budget::GpuTimeBudget;
 use crate::analysis::samples::{
     HarmfulStats, HelpfulSample, HelpfulStats, ReluOrientation, ReluStats,
 };
 use crate::analysis::utils::calculate_gpu_batch_timeout;
+
+/// Error for a work request the GPU thread never accepted (Issue #1930).
+///
+/// A full queue that will not drain within the caller's whole timeout means the
+/// GPU thread is not consuming work, so this trips the breaker.
+pub(super) fn queue_full_error(breaker: &GpuCircuitBreaker, timeout_secs: u64) -> anyhow::Error {
+    breaker.trip(GpuTripReason::BatchTimeout);
+    anyhow!(
+        "GPU work queue full - send timed out after {timeout_secs}s. \
+         The GPU thread may be hung. Consider restarting the process."
+    )
+}
+
+/// Error for a submitted batch the GPU thread never answered (Issue #1930).
+///
+/// This is the wedged-GPU signature the breaker exists to stop repeating: the
+/// caller has just burned its full 60–300s wait for nothing.
+pub(super) fn batch_timeout_error(
+    breaker: &GpuCircuitBreaker,
+    operation: &str,
+    timeout_secs: u64,
+) -> anyhow::Error {
+    breaker.trip(GpuTripReason::BatchTimeout);
+    anyhow!(
+        "GPU {operation} timed out after {timeout_secs}s. \
+         The GPU may be unresponsive. Consider reducing batch size or restarting."
+    )
+}
 
 impl GpuWorkQueue {
     /// Submit a helpful batch to the GPU thread without blocking (Issue #568).
@@ -27,6 +56,10 @@ impl GpuWorkQueue {
         samples: Vec<Arc<Vec<HelpfulSample>>>,
         deadline: &Option<std::time::SystemTime>,
     ) -> Result<GpuFuture<Vec<HelpfulStats>>> {
+        // Issue #1930: a wedged GPU answers nothing — fail now instead of
+        // handing back a future that can only time out.
+        self.breaker.check()?;
+
         if samples.is_empty() {
             // Return a pre-resolved future with empty results
             let (tx, rx) = bounded(1);
@@ -38,6 +71,7 @@ impl GpuWorkQueue {
                 response_rx: rx,
                 timeout: Duration::from_secs(1),
                 caller_guard,
+                breaker: self.breaker,
             });
         }
 
@@ -66,10 +100,7 @@ impl GpuWorkQueue {
         ) {
             Ok(()) => {}
             Err(crossbeam_channel::SendTimeoutError::Timeout(_)) => {
-                return Err(anyhow!(
-                    "GPU work queue full - send timed out after {timeout_secs}s. \
-                     The GPU thread may be hung. Consider restarting the process."
-                ));
+                return Err(queue_full_error(self.breaker, timeout_secs));
             }
             Err(crossbeam_channel::SendTimeoutError::Disconnected(_)) => {
                 return Err(anyhow!("GPU work queue channel closed"));
@@ -80,6 +111,7 @@ impl GpuWorkQueue {
             response_rx,
             timeout,
             caller_guard,
+            breaker: self.breaker,
         })
     }
 
@@ -96,6 +128,9 @@ impl GpuWorkQueue {
         samples: Vec<Arc<Vec<HelpfulSample>>>,
         deadline: &Option<std::time::SystemTime>,
     ) -> Result<Vec<HelpfulStats>> {
+        // Issue #1930: never start another multi-minute wait on a wedged GPU.
+        self.breaker.check()?;
+
         if samples.is_empty() {
             return Ok(Vec::new());
         }
@@ -130,10 +165,7 @@ impl GpuWorkQueue {
         ) {
             Ok(()) => {}
             Err(crossbeam_channel::SendTimeoutError::Timeout(_)) => {
-                return Err(anyhow!(
-                    "GPU work queue full - send timed out after {timeout_secs}s. \
-                     The GPU thread may be hung. Consider restarting the process."
-                ));
+                return Err(queue_full_error(self.breaker, timeout_secs));
             }
             Err(crossbeam_channel::SendTimeoutError::Disconnected(_)) => {
                 return Err(anyhow!("GPU work queue channel closed"));
@@ -143,9 +175,10 @@ impl GpuWorkQueue {
         // Wait for the response with timeout
         match response_rx.recv_timeout(timeout) {
             Ok(result) => result,
-            Err(crossbeam_channel::RecvTimeoutError::Timeout) => Err(anyhow!(
-                "GPU helpful batch evaluation timed out after {timeout_secs}s. \
-                     The GPU may be unresponsive. Consider reducing batch size or restarting."
+            Err(crossbeam_channel::RecvTimeoutError::Timeout) => Err(batch_timeout_error(
+                self.breaker,
+                "helpful batch evaluation",
+                timeout_secs,
             )),
             Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
                 Err(anyhow!("GPU response channel closed unexpectedly"))
@@ -161,6 +194,9 @@ impl GpuWorkQueue {
         samples_with_weights: Vec<(Arc<Vec<HelpfulSample>>, f32)>,
         deadline: &Option<std::time::SystemTime>,
     ) -> Result<Vec<HarmfulStats>> {
+        // Issue #1930: never start another multi-minute wait on a wedged GPU.
+        self.breaker.check()?;
+
         if samples_with_weights.is_empty() {
             return Ok(Vec::new());
         }
@@ -191,10 +227,7 @@ impl GpuWorkQueue {
         ) {
             Ok(()) => {}
             Err(crossbeam_channel::SendTimeoutError::Timeout(_)) => {
-                return Err(anyhow!(
-                    "GPU work queue full - send timed out after {timeout_secs}s. \
-                     The GPU thread may be hung. Consider restarting the process."
-                ));
+                return Err(queue_full_error(self.breaker, timeout_secs));
             }
             Err(crossbeam_channel::SendTimeoutError::Disconnected(_)) => {
                 return Err(anyhow!("GPU work queue channel closed"));
@@ -203,9 +236,10 @@ impl GpuWorkQueue {
 
         match response_rx.recv_timeout(timeout) {
             Ok(result) => result,
-            Err(crossbeam_channel::RecvTimeoutError::Timeout) => Err(anyhow!(
-                "GPU harmful batch evaluation timed out after {timeout_secs}s. \
-                     The GPU may be unresponsive. Consider reducing batch size or restarting."
+            Err(crossbeam_channel::RecvTimeoutError::Timeout) => Err(batch_timeout_error(
+                self.breaker,
+                "harmful batch evaluation",
+                timeout_secs,
             )),
             Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
                 Err(anyhow!("GPU response channel closed unexpectedly"))
@@ -223,6 +257,9 @@ impl GpuWorkQueue {
         threshold: f32,
         deadline: &Option<std::time::SystemTime>,
     ) -> Result<(ReluStats, ReluStats, f32)> {
+        // Issue #1930: never start another multi-minute wait on a wedged GPU.
+        self.breaker.check()?;
+
         if samples.is_empty() {
             return Ok((
                 ReluStats::new(ReluOrientation::Positive),
@@ -258,10 +295,7 @@ impl GpuWorkQueue {
         ) {
             Ok(()) => {}
             Err(crossbeam_channel::SendTimeoutError::Timeout(_)) => {
-                return Err(anyhow!(
-                    "GPU work queue full - send timed out after {timeout_secs}s. \
-                     The GPU thread may be hung. Consider restarting the process."
-                ));
+                return Err(queue_full_error(self.breaker, timeout_secs));
             }
             Err(crossbeam_channel::SendTimeoutError::Disconnected(_)) => {
                 return Err(anyhow!("GPU work queue channel closed"));
@@ -270,9 +304,10 @@ impl GpuWorkQueue {
 
         match response_rx.recv_timeout(timeout) {
             Ok(result) => result,
-            Err(crossbeam_channel::RecvTimeoutError::Timeout) => Err(anyhow!(
-                "GPU ReLU evaluation timed out after {timeout_secs}s. \
-                     The GPU may be unresponsive. Consider reducing batch size or restarting."
+            Err(crossbeam_channel::RecvTimeoutError::Timeout) => Err(batch_timeout_error(
+                self.breaker,
+                "ReLU evaluation",
+                timeout_secs,
             )),
             Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
                 Err(anyhow!("GPU response channel closed unexpectedly"))
@@ -292,6 +327,9 @@ impl GpuWorkQueue {
         scale: f32,
         deadline: &Option<std::time::SystemTime>,
     ) -> Result<(f32, f32, f32, u32)> {
+        // Issue #1930: never start another multi-minute wait on a wedged GPU.
+        self.breaker.check()?;
+
         if samples.is_empty() {
             return Ok((0.0, 0.0, 0.0, 0));
         }
@@ -326,10 +364,7 @@ impl GpuWorkQueue {
         ) {
             Ok(()) => {}
             Err(crossbeam_channel::SendTimeoutError::Timeout(_)) => {
-                return Err(anyhow!(
-                    "GPU work queue full - send timed out after {timeout_secs}s. \
-                     The GPU thread may be hung. Consider restarting the process."
-                ));
+                return Err(queue_full_error(self.breaker, timeout_secs));
             }
             Err(crossbeam_channel::SendTimeoutError::Disconnected(_)) => {
                 return Err(anyhow!("GPU work queue channel closed"));
@@ -338,9 +373,10 @@ impl GpuWorkQueue {
 
         match response_rx.recv_timeout(timeout) {
             Ok(result) => result,
-            Err(crossbeam_channel::RecvTimeoutError::Timeout) => Err(anyhow!(
-                "GPU activation evaluation timed out after {timeout_secs}s. \
-                     The GPU may be unresponsive. Consider reducing batch size or restarting."
+            Err(crossbeam_channel::RecvTimeoutError::Timeout) => Err(batch_timeout_error(
+                self.breaker,
+                "activation evaluation",
+                timeout_secs,
             )),
             Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
                 Err(anyhow!("GPU response channel closed unexpectedly"))
@@ -367,6 +403,9 @@ impl GpuWorkQueue {
         activation_configs: &[(u32, f32, f32)],
         deadline: &Option<std::time::SystemTime>,
     ) -> Result<Vec<(f32, f32, f32, u32)>> {
+        // Issue #1930: never start another multi-minute wait on a wedged GPU.
+        self.breaker.check()?;
+
         // Handle edge cases
         if activation_configs.is_empty() {
             return Ok(Vec::new());
@@ -405,10 +444,7 @@ impl GpuWorkQueue {
         ) {
             Ok(()) => {}
             Err(crossbeam_channel::SendTimeoutError::Timeout(_)) => {
-                return Err(anyhow!(
-                    "GPU work queue full - send timed out after {timeout_secs}s. \
-                     The GPU thread may be hung. Consider restarting the process."
-                ));
+                return Err(queue_full_error(self.breaker, timeout_secs));
             }
             Err(crossbeam_channel::SendTimeoutError::Disconnected(_)) => {
                 return Err(anyhow!("GPU work queue channel closed"));
@@ -417,9 +453,10 @@ impl GpuWorkQueue {
 
         match response_rx.recv_timeout(timeout) {
             Ok(result) => result,
-            Err(crossbeam_channel::RecvTimeoutError::Timeout) => Err(anyhow!(
-                "GPU batched activation evaluation timed out after {timeout_secs}s. \
-                     The GPU may be unresponsive. Consider reducing batch size or restarting."
+            Err(crossbeam_channel::RecvTimeoutError::Timeout) => Err(batch_timeout_error(
+                self.breaker,
+                "batched activation evaluation",
+                timeout_secs,
             )),
             Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
                 Err(anyhow!("GPU response channel closed unexpectedly"))
@@ -445,6 +482,11 @@ mod tests {
 
     /// Build a queue whose work receiver is returned so tests can inspect the
     /// enqueued request. No GPU thread is spawned.
+    ///
+    /// Issue #1930: each queue gets its **own** circuit breaker, leaked for
+    /// `'static`. Tripping the process-wide breaker here would refuse GPU work
+    /// for every other test in this binary — including the ones that run a real
+    /// analysis — so the tripped path is exercised in isolation instead.
     fn test_queue() -> (GpuWorkQueue, crossbeam_channel::Receiver<GpuWorkRequest>) {
         let (work_tx, work_rx) = bounded::<GpuWorkRequest>(1);
         let (_exit_tx, exit_rx) = bounded::<()>(1);
@@ -453,6 +495,7 @@ mod tests {
             thread_handle: None,
             exit_rx,
             deadline: None,
+            breaker: Box::leak(Box::new(GpuCircuitBreaker::new())),
         };
         (queue, work_rx)
     }
@@ -579,6 +622,151 @@ mod tests {
         assert!(
             budget.remaining()
                 < Duration::from_secs(crate::analysis::utils::GPU_QUEUE_TIMEOUT_MAX_SECS)
+        );
+    }
+
+    // =========================================================================
+    // Issue #1930 — a tripped circuit breaker short-circuits every entry point
+    // =========================================================================
+
+    use std::time::Instant;
+
+    /// Well under the 60s minimum wait each of these calls would otherwise
+    /// start, and far above the microseconds a suppressed call actually takes.
+    const IMMEDIATE: Duration = Duration::from_secs(1);
+
+    /// Assert a call was suppressed by the breaker. Takes the whole `Result` so
+    /// it works for the entry points whose success type is not `Debug`.
+    fn assert_suppressed<T>(result: Result<T>, entry_point: &str) {
+        match result {
+            Ok(_) => panic!("{entry_point} must be suppressed while the breaker is tripped"),
+            Err(err) => {
+                let msg = format!("{err:#}");
+                assert!(
+                    msg.contains("GPU circuit breaker tripped"),
+                    "{entry_point}: expected the breaker error, got: {msg}"
+                );
+            }
+        }
+    }
+
+    /// Every `submit_*`/`evaluate_*` entry point must return the breaker error
+    /// immediately once the breaker has tripped — no enqueue, no waiting.
+    ///
+    /// The queue here has capacity 1 and no consumer, so an un-suppressed call
+    /// would block for its full timeout; the deadline bound is what proves the
+    /// short circuit.
+    #[test]
+    fn tripped_breaker_short_circuits_every_entry_point() {
+        let (queue, work_rx) = test_queue();
+        queue.breaker.trip(GpuTripReason::AbandonedThread);
+
+        let batch = vec![Arc::new(vec![sample(1.0)])];
+        let samples = vec![sample(1.0)];
+
+        let started = Instant::now();
+
+        assert_suppressed(
+            queue.submit_helpful_batch(batch.clone(), &None),
+            "submit_helpful_batch",
+        );
+        assert_suppressed(
+            queue.evaluate_helpful_batch(batch, &None),
+            "evaluate_helpful_batch",
+        );
+        assert_suppressed(
+            queue.evaluate_harmful_batch(vec![(Arc::new(samples.clone()), 1.0)], &None),
+            "evaluate_harmful_batch",
+        );
+        assert_suppressed(
+            queue.evaluate_relu_gpu(&samples, 0.0, &None),
+            "evaluate_relu_gpu",
+        );
+        assert_suppressed(
+            queue.evaluate_activation_gpu(&samples, 0, 1.0, 1.0, &None),
+            "evaluate_activation_gpu",
+        );
+        assert_suppressed(
+            queue.evaluate_activations_batched_gpu(&samples, &[(0, 1.0, 1.0)], &None),
+            "evaluate_activations_batched_gpu",
+        );
+
+        let elapsed = started.elapsed();
+        assert!(
+            elapsed < IMMEDIATE,
+            "suppressed calls must return immediately, took {elapsed:?}"
+        );
+        assert!(
+            work_rx.try_recv().is_err(),
+            "a suppressed call must not enqueue GPU work"
+        );
+    }
+
+    /// The empty-input fast paths are suppressed too: after a trip nothing
+    /// reports a clean (zero) result that a caller could mistake for real work.
+    #[test]
+    fn tripped_breaker_suppresses_the_empty_input_fast_paths() {
+        let (queue, _work_rx) = test_queue();
+        queue.breaker.trip(GpuTripReason::BatchTimeout);
+
+        assert!(queue.submit_helpful_batch(Vec::new(), &None).is_err());
+        assert!(queue.evaluate_helpful_batch(Vec::new(), &None).is_err());
+        assert!(queue.evaluate_harmful_batch(Vec::new(), &None).is_err());
+        assert!(queue.evaluate_relu_gpu(&[], 0.0, &None).is_err());
+        assert!(
+            queue
+                .evaluate_activations_batched_gpu(&[], &[], &None)
+                .is_err()
+        );
+    }
+
+    /// A batch that times out waiting for the GPU trips the breaker — this is
+    /// the wedged-batch signal the breaker exists to remember.
+    #[test]
+    fn a_batch_response_timeout_trips_the_breaker() {
+        let breaker = GpuCircuitBreaker::new();
+        assert!(!breaker.is_tripped(), "starts closed");
+
+        let err = batch_timeout_error(&breaker, "helpful batch evaluation", 60);
+
+        assert!(
+            format!("{err:#}").contains("timed out after 60s"),
+            "the caller still gets the original timeout error"
+        );
+        assert!(
+            breaker.is_tripped(),
+            "a batch timeout must trip the breaker"
+        );
+        assert_eq!(breaker.trip_reason(), Some(GpuTripReason::BatchTimeout));
+    }
+
+    /// A queue that will not accept work within the caller's whole timeout is
+    /// the same wedged-GPU signal.
+    #[test]
+    fn a_full_queue_send_timeout_trips_the_breaker() {
+        let breaker = GpuCircuitBreaker::new();
+        let err = queue_full_error(&breaker, 60);
+
+        assert!(format!("{err:#}").contains("GPU work queue full"));
+        assert_eq!(breaker.trip_reason(), Some(GpuTripReason::BatchTimeout));
+    }
+
+    /// After the reset hook the queue submits normally again, so tests that
+    /// trip the breaker do not make later ones order-dependent.
+    #[test]
+    fn reset_restores_normal_submission() {
+        let (queue, work_rx) = test_queue();
+        queue.breaker.trip(GpuTripReason::AbandonedThread);
+        assert!(queue.evaluate_helpful_batch(Vec::new(), &None).is_err());
+
+        queue.breaker.reset();
+
+        queue
+            .submit_helpful_batch(vec![Arc::new(vec![sample(1.0)])], &None)
+            .expect("submission works again once the breaker is reset");
+        assert!(
+            work_rx.try_recv().is_ok(),
+            "the request is enqueued once more"
         );
     }
 }

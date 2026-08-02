@@ -10,6 +10,7 @@ use std::time::Duration;
 
 use super::{GpuWorkQueue, GpuWorkRequest};
 use crate::analysis::gpu::analyzer::GpuAnalyzer;
+use crate::analysis::gpu::breaker::{GpuTripReason, global_gpu_breaker};
 use crate::analysis::gpu::shaders::{GPU_INIT_TIMEOUT_SECS, GPU_SHUTDOWN_TIMEOUT_SECS};
 use crate::analysis::utils::get_work_queue_capacity;
 
@@ -24,6 +25,12 @@ impl GpuWorkQueue {
     /// wgpu devices have thread-local state that doesn't transfer properly when
     /// moved across threads, causing deadlocks in `device.poll()`.
     pub fn new() -> Result<Self> {
+        // Issue #1930: once the GPU has wedged, never spawn another thread against
+        // it — a fresh thread means a fresh wgpu device on dead hardware, and the
+        // last one is still leaked.
+        let breaker = global_gpu_breaker();
+        breaker.check()?;
+
         // Create the channel for sending work to the GPU thread.
         // Capacity is dynamically sized based on available system memory.
         // Lower capacity = more backpressure = less memory usage.
@@ -77,6 +84,9 @@ impl GpuWorkQueue {
                 return Err(e).context("GPU analyser initialisation failed on GPU thread");
             }
             Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
+                // Issue #1930: initialisation that never completes means the device
+                // is unreachable — do not let the next analysis try again.
+                breaker.trip(GpuTripReason::InitTimeout);
                 return Err(anyhow!(
                     "GPU initialisation timed out after {GPU_INIT_TIMEOUT_SECS}s. \
                      The GPU may be unresponsive or overwhelmed. \
@@ -93,6 +103,7 @@ impl GpuWorkQueue {
             thread_handle: Some(thread_handle),
             exit_rx,
             deadline: None,
+            breaker,
         })
     }
 
@@ -145,6 +156,9 @@ impl Drop for GpuWorkQueue {
                 );
                 // Don't join - the thread is stuck and joining would block forever
                 let _ = self.thread_handle.take();
+                // Issue #1930: count the leaked thread and trip the breaker, so the
+                // next analysis fails fast instead of abandoning another one.
+                self.breaker.record_abandoned_thread();
             }
             Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
                 // Channel disconnected - thread already exited (possibly via panic)
