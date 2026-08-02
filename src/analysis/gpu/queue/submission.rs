@@ -13,6 +13,7 @@ use super::{GpuFuture, GpuWorkQueue, GpuWorkRequest};
 use crate::analysis::gpu::breaker::{GpuCircuitBreaker, GpuTripReason, gpu_wedged_error};
 use crate::analysis::gpu::budget::GpuTimeBudget;
 use crate::analysis::gpu::heartbeat::{GpuHeartbeat, HeartbeatWatch, global_gpu_heartbeat};
+use crate::analysis::gpu::inflight;
 use crate::analysis::samples::{
     HarmfulStats, HelpfulSample, HelpfulStats, ReluOrientation, ReluStats,
 };
@@ -148,12 +149,17 @@ pub(crate) fn resolve_gpu_wait<T>(
 
 /// Wait for a submitted request on the global heartbeat with the configured
 /// stall window (Issue #1933).
+///
+/// Issue #1934: the operation is listed as outstanding for exactly as long as
+/// this wait lasts, so a SIGUSR1 thread dump on a wedged GPU can name what the
+/// device was asked to do and how long ago.
 pub(crate) fn await_gpu_response<T>(
     response_rx: &Receiver<Result<T>>,
     timeout: Duration,
     breaker: &GpuCircuitBreaker,
-    operation: &str,
+    operation: &'static str,
 ) -> Result<T> {
+    let _inflight = inflight::register(operation);
     let outcome = wait_for_gpu_response(
         response_rx,
         timeout,
@@ -964,6 +970,50 @@ mod tests {
             "the error must name the stall window: {msg}"
         );
         assert_eq!(breaker.trip_reason(), Some(GpuTripReason::HeartbeatStall));
+    }
+
+    /// Issue #1934: a caller waiting on the GPU is listed as an outstanding
+    /// request for exactly as long as it waits, so a thread dump taken during a
+    /// wedge can name the operation. Regression test for the submit path never
+    /// having been wired to the registry.
+    #[test]
+    fn a_waiting_caller_is_listed_as_an_outstanding_request() {
+        use crate::analysis::gpu::inflight::outstanding_requests;
+
+        let (response_tx, response_rx) = bounded::<Result<Vec<HelpfulStats>>>(1);
+        let breaker = Box::leak(Box::new(GpuCircuitBreaker::new()));
+
+        let waiter = std::thread::spawn(move || {
+            await_gpu_response(
+                &response_rx,
+                Duration::from_secs(30),
+                breaker,
+                "helpful batch evaluation",
+            )
+        });
+
+        // The waiter registers before it blocks; poll rather than sleep so the
+        // test is not a timing gamble.
+        let listed = (0..200).any(|_| {
+            let found = outstanding_requests()
+                .is_some_and(|rs| rs.iter().any(|r| r.label == "helpful batch evaluation"));
+            if !found {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            found
+        });
+        assert!(listed, "a waiting caller must appear in the registry");
+
+        response_tx
+            .send(Ok(Vec::new()))
+            .expect("waiter still listening");
+        waiter.join().expect("waiter panicked").expect("answered");
+
+        let after = outstanding_requests().expect("registry readable");
+        assert!(
+            !after.iter().any(|r| r.label == "helpful batch evaluation"),
+            "a finished wait must not linger: {after:?}"
+        );
     }
 
     /// A queue that will not accept work within the caller's whole timeout is
