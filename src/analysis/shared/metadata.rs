@@ -160,6 +160,15 @@ pub struct SynapseAnalysisMetadata {
     pub insufficient_recording:
         Option<crate::analysis::insufficient_recording::InsufficientRecordingDiagnostic>,
 
+    /// The pass skipped its GPU work because the GPU circuit breaker had
+    /// tripped (Issue #1931).
+    ///
+    /// There is no CPU fallback for this analysis (Issue #1419), so the result
+    /// is genuinely empty. This flag is what distinguishes it from a
+    /// zero-candidate success; the process must be restarted externally before
+    /// the GPU can be used again.
+    pub gpu_wedged: bool,
+
     /// Number of focus targets this phase dropped because they were in
     /// cooldown (Issue #1791).
     ///
@@ -261,6 +270,11 @@ pub struct NeuronAnalysisMetadata {
     pub insufficient_recording:
         Option<crate::analysis::insufficient_recording::InsufficientRecordingDiagnostic>,
 
+    /// The pass skipped its GPU work because the GPU is wedged (Issue #1931).
+    ///
+    /// See `SynapseAnalysisMetadata::gpu_wedged` for full docs.
+    pub gpu_wedged: bool,
+
     /// Focus targets dropped for cooldown by this phase (Issue #1791).
     ///
     /// See `SynapseAnalysisMetadata::target_cooldown_skipped` for full docs.
@@ -322,6 +336,12 @@ pub struct AnalyzeAllResult {
     /// pressure (Issue #1099). When `true`, the host should take additional
     /// recovery actions such as clearing WASM caches and discovery buffers.
     pub memory_pressure_cancelled: bool,
+    /// Whether the GPU analyses were skipped because the GPU circuit breaker
+    /// had tripped (Issue #1930, #1931). When `true`, `synapse` and `neuron`
+    /// are empty because the GPU is wedged — **not** because the search was
+    /// exhausted. There is no CPU fallback (Issue #1419); the process must be
+    /// restarted externally before the GPU can be used again.
+    pub gpu_wedged: bool,
     /// Current neuron fingerprints for incremental analysis (Issue #490).
     ///
     /// Callers should store these and pass them back on the next run.
