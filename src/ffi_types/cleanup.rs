@@ -49,6 +49,10 @@ pub struct CleanOrphanedDirsOutput {
     /// Number of directories that were already gone.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub already_gone: Option<u32>,
+    /// Number of directories a discovery session claimed mid-sweep, so they
+    /// were deliberately left in place (Issue #1903).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub claimed: Option<u32>,
     /// Error messages from directories that failed to remove.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub removal_errors: Option<Vec<String>>,

@@ -27,6 +27,7 @@
 use std::fs;
 use std::io;
 use std::path::{Component, Path};
+use std::time::SystemTime;
 
 /// Conventional lock-file name placed inside a discovery temp directory
 /// to indicate it is still in use.
@@ -55,6 +56,20 @@ pub enum CleanupOutcome {
     Removed,
     /// The directory was already gone (another actor removed it first).
     AlreadyGone,
+    /// A discovery session claimed the directory (its lock file was present at
+    /// the final pre-removal check), so nothing was removed (Issue #1903).
+    Claimed,
+}
+
+/// Whether a removal must re-read the lock file immediately before deleting
+/// (Issue #1903).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LockRecheck {
+    /// The caller owns the directory and holds its lock — do not re-check.
+    Skip,
+    /// The caller inferred the directory was abandoned earlier — re-check and
+    /// abort with [`CleanupOutcome::Claimed`] if a session has claimed it.
+    Enforce,
 }
 
 /// Reject a caller-supplied path that is not plainly a discovery directory
@@ -123,6 +138,29 @@ fn assert_is_discovery_dir(path: &Path, temp_dir: &str) -> io::Result<()> {
 /// [`LOCK_FILE_NAME`] or [`DISCOVERY_DATA_FILE_NAME`] file. Any other I/O
 /// failure from the recursive removal is propagated unchanged.
 pub fn cleanup_discovery_dir(temp_dir: &str) -> io::Result<CleanupOutcome> {
+    remove_discovery_dir(temp_dir, LockRecheck::Skip)
+}
+
+/// Remove a discovery directory the *orphan sweep* believes is abandoned
+/// (Issue #1903).
+///
+/// Identical to [`cleanup_discovery_dir`] except that the lock file is re-read
+/// immediately before the removal syscall. If a discovery session claimed the
+/// directory after the sweep's [`is_directory_orphaned`] check, this returns
+/// `Ok(CleanupOutcome::Claimed)` and removes nothing.
+///
+/// The re-check narrows the window to the interval between the final probe and
+/// the syscall rather than closing it — closing it entirely would need a
+/// directory-level lock the host filesystem does not offer.
+///
+/// # Errors
+///
+/// Same as [`cleanup_discovery_dir`].
+pub fn cleanup_orphaned_discovery_dir(temp_dir: &str) -> io::Result<CleanupOutcome> {
+    remove_discovery_dir(temp_dir, LockRecheck::Enforce)
+}
+
+fn remove_discovery_dir(temp_dir: &str, recheck: LockRecheck) -> io::Result<CleanupOutcome> {
     let path = Path::new(temp_dir);
 
     assert_is_discovery_dir(path, temp_dir)?;
@@ -157,6 +195,17 @@ pub fn cleanup_discovery_dir(temp_dir: &str) -> io::Result<CleanupOutcome> {
             io::ErrorKind::InvalidInput,
             format!("temp_dir is not a directory: {temp_dir}"),
         ));
+    }
+
+    // Last-moment lock re-check (Issue #1903). The sweep's orphan decision was
+    // taken earlier, so a session may have claimed the directory since; deleting
+    // it now would destroy in-flight data.
+    if recheck == LockRecheck::Enforce && !is_directory_orphaned(path) {
+        tracing::info!(
+            path = %temp_dir,
+            "Discovery temp directory was claimed after the orphan check — not removing"
+        );
+        return Ok(CleanupOutcome::Claimed);
     }
 
     // A destructive action must leave an audit trail, so log the resolved
@@ -199,9 +248,36 @@ pub fn cleanup_discovery_dir(temp_dir: &str) -> io::Result<CleanupOutcome> {
 /// A directory is considered orphaned when its lock file is absent, meaning
 /// no active discovery process owns it. Directories that still contain a
 /// lock file are actively in use and must not be removed.
+///
+/// The probe uses `fs::symlink_metadata` and **fails closed** (Issue #1903):
+/// only a `NotFound` error means "no lock". `Path::exists()` followed symlinks
+/// and mapped every error to `false`, so a dangling-symlink lock file, or one
+/// that could not be stat'd because of a permissions error, reported the
+/// directory as orphaned and eligible for deletion.
 pub fn is_directory_orphaned(dir: &Path) -> bool {
     let lock_path = dir.join(LOCK_FILE_NAME);
-    !lock_path.exists()
+    match fs::symlink_metadata(&lock_path) {
+        Ok(_) => false,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => true,
+        Err(err) => {
+            tracing::warn!(
+                path = %lock_path.display(),
+                error = %err,
+                "Could not stat discovery lock file — treating the directory as in use"
+            );
+            false
+        }
+    }
+}
+
+/// Whether `dir` was last modified at or after `scan_started` (Issue #1903).
+///
+/// Creating a directory, or writing `discovery.lock` into it, bumps the
+/// directory's modification time, so this is the age floor that keeps a session
+/// starting mid-sweep out of the candidate set. Errors are propagated rather
+/// than defaulted so an unreadable timestamp is never silently read as "old".
+fn directory_touched_since(dir: &Path, scan_started: SystemTime) -> io::Result<bool> {
+    Ok(fs::symlink_metadata(dir)?.modified()? >= scan_started)
 }
 
 /// Result of scanning and cleaning orphaned discovery directories.
@@ -211,6 +287,11 @@ pub struct OrphanCleanupResult {
     pub removed: u32,
     /// Number of directories that were already gone when removal was attempted.
     pub already_gone: u32,
+    /// Number of directories left in place because a discovery session claimed
+    /// them during the sweep (Issue #1903) — either the lock file re-appeared
+    /// before removal, or the directory was modified after the scan started.
+    /// This is neither a removal nor an error.
+    pub claimed: u32,
     /// Number of directories that failed to remove (with error details).
     pub errors: Vec<String>,
 }
@@ -222,11 +303,41 @@ pub struct OrphanCleanupResult {
 /// Removal suppresses `NotFound` errors because the async cleanup actor may
 /// have removed the directory between the orphan check and the removal call.
 ///
+/// The orphan decision is re-validated immediately before each removal
+/// (Issue #1903): a directory whose lock re-appeared, or which was modified
+/// after the scan started, is left in place and counted in
+/// [`OrphanCleanupResult::claimed`] rather than removed.
+///
 /// # Arguments
 ///
 /// * `base_dir` - The parent directory that contains discovery temp directories
 ///   (e.g. `.discovery/`).
 pub fn clean_orphaned_discovery_dirs(base_dir: &str) -> io::Result<OrphanCleanupResult> {
+    clean_orphaned_discovery_dirs_since(base_dir, SystemTime::now())
+}
+
+/// Scan for orphaned discovery directories with an explicit age floor
+/// (Issue #1903).
+///
+/// Behaves like [`clean_orphaned_discovery_dirs`], which passes
+/// `SystemTime::now()`, but only sweeps directories last modified **before**
+/// `scan_started`. A directory created — or claimed, since writing
+/// `discovery.lock` into it bumps its modification time — after the scan began
+/// is counted in [`OrphanCleanupResult::claimed`] and left alone.
+///
+/// # Arguments
+///
+/// * `base_dir` - The parent directory that contains discovery temp directories.
+/// * `scan_started` - The age floor; directories touched at or after this
+///   instant are never candidates.
+///
+/// # Errors
+///
+/// Same as [`clean_orphaned_discovery_dirs`].
+pub fn clean_orphaned_discovery_dirs_since(
+    base_dir: &str,
+    scan_started: SystemTime,
+) -> io::Result<OrphanCleanupResult> {
     let base_path = Path::new(base_dir);
 
     // Defence in depth (Issue #1218): refuse to operate on anything whose
@@ -314,8 +425,29 @@ pub fn clean_orphaned_discovery_dirs(base_dir: &str) -> io::Result<OrphanCleanup
             continue;
         }
 
+        // Age floor (Issue #1903): a directory created or written to after the
+        // scan began belongs to a session that started inside the sweep, so it
+        // is never a candidate no matter what the lock probe said.
+        match directory_touched_since(&path, scan_started) {
+            Ok(true) => {
+                tracing::info!(
+                    path = %path.display(),
+                    "Discovery directory modified after the scan started — not removing"
+                );
+                result.claimed += 1;
+                continue;
+            }
+            Ok(false) => {}
+            Err(err) => {
+                result.errors.push(format!(
+                    "Failed to read modification time for {path:?}: {err}"
+                ));
+                continue;
+            }
+        }
+
         let dir_str = path.display().to_string();
-        match cleanup_discovery_dir(&dir_str) {
+        match cleanup_orphaned_discovery_dir(&dir_str) {
             Ok(CleanupOutcome::Removed) => {
                 tracing::info!(
                     path = %dir_str,
@@ -326,6 +458,9 @@ pub fn clean_orphaned_discovery_dirs(base_dir: &str) -> io::Result<OrphanCleanup
             Ok(CleanupOutcome::AlreadyGone) => {
                 result.already_gone += 1;
             }
+            Ok(CleanupOutcome::Claimed) => {
+                result.claimed += 1;
+            }
             Err(err) => {
                 result.errors.push(format!(
                     "Failed to remove orphaned directory {dir_str}: {err}"
@@ -334,11 +469,12 @@ pub fn clean_orphaned_discovery_dirs(base_dir: &str) -> io::Result<OrphanCleanup
         }
     }
 
-    if result.removed > 0 || !result.errors.is_empty() {
+    if result.removed > 0 || result.claimed > 0 || !result.errors.is_empty() {
         tracing::info!(
             base_dir = %base_dir,
             removed = result.removed,
             already_gone = result.already_gone,
+            claimed = result.claimed,
             errors = result.errors.len(),
             "Orphan discovery directory scan complete"
         );

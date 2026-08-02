@@ -386,9 +386,19 @@ the removal call.
 - **Output**: JSON string:
 
   ```json
-  { "success": true, "removed": 2, "alreadyGone": 0, "removalErrors": [] }
+  { "success": true, "removed": 2, "alreadyGone": 0, "claimed": 0, "removalErrors": [] }
   ```
 
+- **Claim re-check** (Issue #1903): the orphan decision and the removal are two
+  separate calls, so a session can claim a directory in between and lose its
+  in-flight data. The lock file is therefore re-read immediately before the
+  removal syscall, and the directory is left in place when it is present. Such a
+  directory is counted under `claimed` — neither `removed` nor an entry in
+  `removalErrors`. `claimed` also counts directories modified after the scan
+  started (the age floor), so a session starting mid-sweep is never a candidate.
+  The lock probe uses `symlink_metadata` and fails closed: only a `NotFound`
+  error means "no lock", so a dangling-symlink `discovery.lock` or a permissions
+  error leaves the directory in place.
 - **Memory**: the returned pointer **must** be freed with `free_discovery_result`.
 
 ---
