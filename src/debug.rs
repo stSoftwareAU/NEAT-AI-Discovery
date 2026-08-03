@@ -45,6 +45,7 @@
 
 mod process_state;
 mod sample_capture;
+mod sample_dir;
 
 use parking_lot::Mutex;
 use std::fmt::Write as _;

@@ -23,7 +23,7 @@ use std::fmt::Write as _;
 use std::thread;
 use std::time::Duration;
 
-use super::DumpCompleteness;
+use super::{DumpCompleteness, sample_dir};
 
 /// Hard cap on how long the sampler may run before it is killed.
 ///
@@ -74,14 +74,21 @@ pub(super) fn capture(pid: u32, out: &mut String) -> DumpCompleteness {
     // pipe it and don't continuously drain the pipe, the child can block forever
     // once the buffer fills. That manifests exactly as "sample did not exit".
     //
-    // Issue #1905 owns the predictability of this path; keep the construction in
-    // one place so that fix has a single site to change.
-    let out_path = std::env::temp_dir().join(format!(
-        "neat_ai_discovery.sample.{pid}.{}.txt",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |d| d.as_millis())
-    ));
+    // The capture lives in an owner-only per-invocation directory that is removed
+    // when `dir` drops — which happens on every return below, including the
+    // kill-on-timeout path (Issue #1905).
+    let dir = match sample_dir::SampleDir::create(pid) {
+        Ok(dir) => dir,
+        Err(e) => {
+            let _ = writeln!(
+                out,
+                "[NEAT-AI-Discovery][debug] WARNING: no private capture directory for '{program}': {e}"
+            );
+            write_manual_hint(out, pid);
+            return DumpCompleteness::NoBacktraces;
+        }
+    };
+    let out_path = dir.capture_path();
     let out_path_str = out_path.to_string_lossy().to_string();
 
     let args = vec![
@@ -114,13 +121,14 @@ pub(super) fn capture(pid: u32, out: &mut String) -> DumpCompleteness {
             "[NEAT-AI-Discovery][debug] WARNING: '{program}' did not exit within \
              {SAMPLE_TIMEOUT_SECS}s. Attempting to print any partial output captured so far."
         );
-        return match read_non_empty(&out_path) {
+        return match read_capture(out, &out_path) {
             Some(contents) => {
                 let _ = writeln!(
                     out,
-                    "[NEAT-AI-Discovery][debug] Partial '{program}' output saved to: {out_path_str}\n"
+                    "[NEAT-AI-Discovery][debug] Partial '{program}' output recovered ({} bytes):\n",
+                    contents.len()
                 );
-                write_filtered_sample_output(out, &contents, &out_path_str);
+                write_filtered_sample_output(out, &contents);
                 DumpCompleteness::Partial
             }
             None => {
@@ -146,13 +154,14 @@ pub(super) fn capture(pid: u32, out: &mut String) -> DumpCompleteness {
         return DumpCompleteness::NoBacktraces;
     }
 
-    match read_non_empty(&out_path) {
+    match read_capture(out, &out_path) {
         Some(contents) => {
             let _ = writeln!(
                 out,
-                "[NEAT-AI-Discovery][debug] Full '{program}' output saved to: {out_path_str}\n"
+                "[NEAT-AI-Discovery][debug] Full '{program}' output captured ({} bytes):\n",
+                contents.len()
             );
-            write_filtered_sample_output(out, &contents, &out_path_str);
+            write_filtered_sample_output(out, &contents);
             DumpCompleteness::Full
         }
         None => {
@@ -167,14 +176,27 @@ pub(super) fn capture(pid: u32, out: &mut String) -> DumpCompleteness {
     }
 }
 
-/// Read the sampler's output file, treating missing/empty/unreadable alike.
+/// Read the sampler's capture, treating missing/empty alike.
 ///
 /// An empty file is not evidence of anything, so it must not be reported as a
-/// successful capture (Issue #1934).
-fn read_non_empty(path: &std::path::Path) -> Option<String> {
-    std::fs::read_to_string(path)
-        .ok()
-        .filter(|contents| !contents.trim().is_empty())
+/// successful capture (Issue #1934). Anything that is not a regular file we own
+/// is refused outright, and the refusal is written into the dump rather than
+/// swallowed — a capture that silently produces nothing is the symptom this
+/// guard exists to make visible (Issue #1905).
+fn read_capture(out: &mut String, path: &std::path::Path) -> Option<String> {
+    match sample_dir::read_guarded(path) {
+        Ok(contents) if contents.trim().is_empty() => None,
+        Ok(contents) => Some(contents),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => {
+            let _ = writeln!(
+                out,
+                "[NEAT-AI-Discovery][debug] WARNING: refusing to read the capture at {}: {e}",
+                path.display()
+            );
+            None
+        }
+    }
 }
 
 fn write_manual_hint(out: &mut String, pid: u32) {
@@ -251,7 +273,10 @@ pub(super) fn run_external_command_with_timeout(
 }
 
 /// Filter sample output down to the most relevant thread information.
-fn write_filtered_sample_output(out: &mut String, output: &str, out_path: &str) {
+///
+/// The raw capture is not left on disk to refer back to (Issue #1905), so an
+/// unmatched capture reports its size rather than a path that no longer exists.
+fn write_filtered_sample_output(out: &mut String, output: &str) {
     let mut in_call_graph = false;
     let mut thread_count = 0;
     let mut printed = 0_usize;
@@ -308,7 +333,8 @@ fn write_filtered_sample_output(out: &mut String, output: &str, out_path: &str) 
     if printed == 0 {
         let _ = writeln!(
             out,
-            "(no call-graph lines matched the filter — read the full capture at {out_path})"
+            "(no call-graph lines matched the filter — {} bytes captured)",
+            output.len()
         );
     }
 }
@@ -425,16 +451,27 @@ mod tests {
             std::process::id(),
             super::super::chrono_lite_timestamp().replace(' ', "_")
         ));
+        let mut log = String::new();
         std::fs::write(&path, "   \n\n").expect("write empty-ish file");
-        assert!(read_non_empty(&path).is_none(), "whitespace is not output");
+        assert!(
+            read_capture(&mut log, &path).is_none(),
+            "whitespace is not output"
+        );
 
         std::fs::write(&path, "Call graph:\n").expect("write content");
-        assert!(read_non_empty(&path).is_some(), "real content is readable");
+        assert!(
+            read_capture(&mut log, &path).is_some(),
+            "real content is readable"
+        );
 
         let _ = std::fs::remove_file(&path);
         assert!(
-            read_non_empty(&path).is_none(),
+            read_capture(&mut log, &path).is_none(),
             "a missing file yields no output"
+        );
+        assert!(
+            log.is_empty(),
+            "missing and empty captures are ordinary, not refusals: {log}"
         );
     }
 
@@ -442,7 +479,7 @@ mod tests {
     #[test]
     fn unmatched_call_graph_lines_are_reported_not_silently_dropped() {
         let mut out = String::new();
-        write_filtered_sample_output(&mut out, "nothing interesting here\n", "/tmp/x.txt");
+        write_filtered_sample_output(&mut out, "nothing interesting here\n");
         assert!(
             out.contains("no call-graph lines matched"),
             "unmatched output must be reported: {out}"
@@ -458,7 +495,7 @@ mod tests {
              +  1000 unrelated_symbol\n\
              Binary Images:\n";
         let mut out = String::new();
-        write_filtered_sample_output(&mut out, sample, "/tmp/x.txt");
+        write_filtered_sample_output(&mut out, sample);
         assert!(out.contains("Thread_1234"), "thread header kept: {out}");
         assert!(
             out.contains("neat_ai_discovery"),

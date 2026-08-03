@@ -631,6 +631,23 @@ flowchart LR
 Grep field reports for `no backtraces captured` to find dumps where only the
 state block survived.
 
+#### The capture is private and transient (Issue #1905)
+
+The sampler's output no longer lands at a predictable path in the shared temp
+directory. Each dump creates its own directory with mode `0700`, hands the
+sampler a file inside it, and removes the directory on every exit path —
+including when the sampler is killed on timeout. Before reading the capture back
+the handler refuses anything that is not a regular file owned by the current
+user, so a planted symlink is reported rather than followed:
+
+```text
+[NEAT-AI-Discovery][debug] WARNING: refusing to read the capture at <path>: <path> is a symlink, not a regular file
+```
+
+The dump therefore no longer prints a path to `cat` afterwards — the filtered
+call graph in the dump *is* the capture. To keep a copy on disk, run the sampler
+yourself with [Manual Thread Inspection](#-manual-thread-inspection) below.
+
 ### 🐕 Hang Watchdog (unattended machines)
 
 The library includes an optional stall watchdog that triggers a SIGUSR1 thread dump,
