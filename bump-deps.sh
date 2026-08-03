@@ -188,7 +188,9 @@ bump_deps::list_manifests() {
         found="$(git -C "$root" ls-files -- 'Cargo.toml' '*/Cargo.toml' 2>/dev/null || true)"
     fi
     if [[ -z "$found" ]]; then
-        found="$(cd "$root" && find . -name Cargo.toml -not -path './target/*' 2>/dev/null | sed 's|^\./||' || true)"
+        # `|| found=""` sits outside the substitution: an `A && B || C` chain
+        # inside it reads as if-then-else but is not one (SC2015).
+        found="$(cd "$root" && find . -name Cargo.toml -not -path './target/*' 2>/dev/null | sed 's|^\./||')" || found=""
     fi
     if [[ -z "$found" ]]; then
         return 0
@@ -650,7 +652,8 @@ CHECK_LOG="$(mktemp)"
 DENY_LOG="$(mktemp)"
 SNAPSHOT_DIR="$(mktemp -d)"
 
-# shellcheck disable=SC2329  # invoked indirectly by the EXIT/INT/TERM trap.
+# shellcheck disable=SC2317,SC2329  # invoked indirectly by the EXIT/INT/TERM
+# trap. SC2317 is the pre-0.10 spelling of the same "unreachable" note.
 bump_deps::cleanup_temp_files() {
     rm -rf -- \
         "$LOCK_BEFORE" "$LOCK_AFTER" "$UPGRADE_LOG" "$CHECK_LOG" "$DENY_LOG" \
