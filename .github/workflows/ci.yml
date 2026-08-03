@@ -72,6 +72,7 @@ jobs:
 
     - name: Configure Git
       run: |
+        set -euo pipefail
         git config user.name "github-actions[bot]"
         git config user.email "github-actions[bot]@users.noreply.github.com"
 
@@ -478,15 +479,17 @@ jobs:
     - name: Check for Changes
       id: check_changes
       run: |
+        set -euo pipefail
         if git diff --quiet; then
-          echo "has_changes=false" >> $GITHUB_OUTPUT
+          echo "has_changes=false" >> "$GITHUB_OUTPUT"
         else
-          echo "has_changes=true" >> $GITHUB_OUTPUT
+          echo "has_changes=true" >> "$GITHUB_OUTPUT"
         fi
 
     - name: Commit Changes
       if: steps.check_changes.outputs.has_changes == 'true'
       run: |
+        set -euo pipefail
         git config user.name "github-actions[bot]"
         git config user.email "github-actions[bot]@users.noreply.github.com"
         git commit -am "chore: apply rustfmt fixes"
@@ -533,6 +536,7 @@ jobs:
     - name: Run codespell
       shell: bash
       run: |
+        set -euo pipefail
         ~/.local/bin/codespell \
           --check-filenames \
           --check-hidden \
