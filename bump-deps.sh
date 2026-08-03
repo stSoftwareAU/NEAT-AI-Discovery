@@ -52,15 +52,18 @@ set -euo pipefail
 
 # ── Helper functions (sourceable for tests) ───────────────────────────
 
-# bump_deps::is_quarantine_expired NOW PUBLISHED_AT THRESHOLD_HOURS
-# Returns 0 (success) when (NOW - PUBLISHED_AT) >= THRESHOLD_HOURS, else 1.
-# All values are in hours.
+# bump_deps::is_quarantine_expired NOW_EPOCH PUBLISHED_EPOCH THRESHOLD_HOURS
+# Returns 0 (success) when (NOW_EPOCH - PUBLISHED_EPOCH) >= THRESHOLD_HOURS
+# hours, else 1. Both timestamps are epoch *seconds*: flooring each side to
+# whole hours first discarded up to 59m59s from the published side and
+# credited the same to now, so a 24h window could expire after 23h00m01s of
+# real elapsed time (Issue #1909).
 bump_deps::is_quarantine_expired() {
     local now="$1"
     local published="$2"
-    local threshold="$3"
+    local threshold_hours="$3"
     local elapsed=$(( now - published ))
-    if (( elapsed >= threshold )); then
+    if (( elapsed >= threshold_hours * 3600 )); then
         return 0
     fi
     return 1
@@ -265,7 +268,7 @@ bump_deps::compute_new_deps() {
     ' "$before" "$after"
 }
 
-# bump_deps::plan_lock_quarantine BEFORE AFTER NOW_HOURS WINDOW_HOURS
+# bump_deps::plan_lock_quarantine BEFORE AFTER NOW_EPOCH WINDOW_HOURS
 # Age-check every lockfile change between the BEFORE and AFTER listings
 # (both `name<TAB>version` files) and print one verdict line per package
 # that must not be accepted:
@@ -279,9 +282,9 @@ bump_deps::compute_new_deps() {
 bump_deps::plan_lock_quarantine() {
     local before="$1"
     local after="$2"
-    local now_hours="$3"
+    local now_epoch="$3"
     local window="$4"
-    local name old new pub_epoch pub_hours
+    local name old new pub_epoch
 
     while IFS=$'\t' read -r name old new; do
         [[ -z "$name" ]] && continue
@@ -290,9 +293,8 @@ bump_deps::plan_lock_quarantine() {
             printf 'revert\t%s\t%s\t%s\tunknown\n' "$name" "$old" "$new"
             continue
         fi
-        pub_hours=$(( pub_epoch / 3600 ))
-        if ! bump_deps::is_quarantine_expired "$now_hours" "$pub_hours" "$window"; then
-            printf 'revert\t%s\t%s\t%s\t%sh\n' "$name" "$old" "$new" "$(( now_hours - pub_hours ))"
+        if ! bump_deps::is_quarantine_expired "$now_epoch" "$pub_epoch" "$window"; then
+            printf 'revert\t%s\t%s\t%s\t%sh\n' "$name" "$old" "$new" "$(( (now_epoch - pub_epoch) / 3600 ))"
         fi
     done < <(bump_deps::compute_changed_deps "$before" "$after")
 
@@ -303,9 +305,8 @@ bump_deps::plan_lock_quarantine() {
             printf 'block\t%s\t-\t%s\tunknown\n' "$name" "$new"
             continue
         fi
-        pub_hours=$(( pub_epoch / 3600 ))
-        if ! bump_deps::is_quarantine_expired "$now_hours" "$pub_hours" "$window"; then
-            printf 'block\t%s\t-\t%s\t%sh\n' "$name" "$new" "$(( now_hours - pub_hours ))"
+        if ! bump_deps::is_quarantine_expired "$now_epoch" "$pub_epoch" "$window"; then
+            printf 'block\t%s\t-\t%s\t%sh\n' "$name" "$new" "$(( (now_epoch - pub_epoch) / 3600 ))"
         fi
     done < <(bump_deps::compute_new_deps "$before" "$after")
 }
@@ -429,7 +430,7 @@ bump_deps::revert_dep_line() {
     mv "$tmp" "$manifest"
 }
 
-# bump_deps::apply_manifest_quarantine MANIFEST BEFORE AFTER NOW_HOURS WINDOW
+# bump_deps::apply_manifest_quarantine MANIFEST BEFORE AFTER NOW_EPOCH WINDOW
 # Age-check every requirement change in MANIFEST between the BEFORE and
 # AFTER listings (both `name<TAB>version` files), revert the bumps that land
 # inside the window, and print one verdict line per changed dependency:
@@ -445,20 +446,19 @@ bump_deps::apply_manifest_quarantine() {
     local manifest="$1"
     local before="$2"
     local after="$3"
-    local now_hours="$4"
+    local now_epoch="$4"
     local window="$5"
-    local name old new pub_epoch pub_hours age survivor
+    local name old new pub_epoch age survivor
 
     while IFS=$'\t' read -r name old new; do
         [[ -z "$name" ]] && continue
         pub_epoch="$(bump_deps::fetch_publish_epoch "$name" "$new" || true)"
         if [[ -n "$pub_epoch" ]]; then
-            pub_hours=$(( pub_epoch / 3600 ))
-            if bump_deps::is_quarantine_expired "$now_hours" "$pub_hours" "$window"; then
-                printf 'keep\t%s\t%s\t%s\t%sh\n' "$name" "$old" "$new" "$(( now_hours - pub_hours ))"
+            if bump_deps::is_quarantine_expired "$now_epoch" "$pub_epoch" "$window"; then
+                printf 'keep\t%s\t%s\t%s\t%sh\n' "$name" "$old" "$new" "$(( (now_epoch - pub_epoch) / 3600 ))"
                 continue
             fi
-            age="$(( now_hours - pub_hours ))h"
+            age="$(( (now_epoch - pub_epoch) / 3600 ))h"
         else
             age="unknown"
         fi
@@ -740,7 +740,7 @@ if [[ -f "$CARGO_MANIFEST" ]]; then
                     # revert any bump that is younger than the configured
                     # window. Every dependency table of every tracked
                     # manifest is checked (Issue #1908).
-                    NOW_HOURS=$(( $(bump_deps::current_epoch) / 3600 ))
+                    NOW_EPOCH="$(bump_deps::current_epoch)"
                     echo "🛡️  Quarantine gate (window=${QUARANTINE_HOURS}h): checking publish times…"
                     while IFS= read -r MANIFEST_PATH; do
                         [[ -z "$MANIFEST_PATH" ]] && continue
@@ -752,7 +752,7 @@ if [[ -f "$CARGO_MANIFEST" ]]; then
                             "$MANIFEST_PATH" \
                             "$SNAPSHOT_DIR/$MANIFEST_KEY.before" \
                             "$SNAPSHOT_DIR/$MANIFEST_KEY.after" \
-                            "$NOW_HOURS" "$QUARANTINE_HOURS")"; then
+                            "$NOW_EPOCH" "$QUARANTINE_HOURS")"; then
                             echo "ERROR: quarantine gate could not enforce the window on $MANIFEST_REL" >&2
                             exit 8
                         fi
@@ -819,8 +819,8 @@ elif [[ "$DRY_RUN" -eq 0 && -f "$CARGO_MANIFEST" ]]; then
     # snapshot and pin every in-quarantine change back with --precise.
     echo "🛡️  Lockfile quarantine gate (window=${QUARANTINE_HOURS}h)…"
     bump_deps::extract_lock_versions "$CARGO_LOCK" > "$LOCK_AFTER"
-    LOCK_NOW_HOURS=$(( $(bump_deps::current_epoch) / 3600 ))
-    LOCK_PLAN="$(bump_deps::plan_lock_quarantine "$LOCK_BEFORE" "$LOCK_AFTER" "$LOCK_NOW_HOURS" "$QUARANTINE_HOURS")"
+    LOCK_NOW_EPOCH="$(bump_deps::current_epoch)"
+    LOCK_PLAN="$(bump_deps::plan_lock_quarantine "$LOCK_BEFORE" "$LOCK_AFTER" "$LOCK_NOW_EPOCH" "$QUARANTINE_HOURS")"
     LOCK_BLOCKED=""
     if [[ -n "$LOCK_PLAN" ]]; then
         while IFS=$'\t' read -r VERDICT PKG_NAME PKG_OLD PKG_NEW PKG_AGE; do
@@ -856,7 +856,7 @@ elif [[ "$DRY_RUN" -eq 0 && -f "$CARGO_MANIFEST" ]]; then
     # Confirm success positively: re-diff after pinning and fail loud if any
     # in-quarantine package survived (absence of an error is not a pass).
     bump_deps::extract_lock_versions "$CARGO_LOCK" > "$LOCK_AFTER"
-    LOCK_RECHECK="$(bump_deps::plan_lock_quarantine "$LOCK_BEFORE" "$LOCK_AFTER" "$LOCK_NOW_HOURS" "$QUARANTINE_HOURS")"
+    LOCK_RECHECK="$(bump_deps::plan_lock_quarantine "$LOCK_BEFORE" "$LOCK_AFTER" "$LOCK_NOW_EPOCH" "$QUARANTINE_HOURS")"
     if [[ -n "$LOCK_RECHECK" ]]; then
         echo "ERROR: lockfile still contains in-quarantine packages after pinning:" >&2
         echo "$LOCK_RECHECK" >&2

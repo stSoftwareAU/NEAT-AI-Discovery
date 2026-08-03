@@ -75,8 +75,8 @@ fn write_publish_fixture(dir: &Path, name: &str, version: &str, age_hours: i64) 
     .expect("write publish fixture");
 }
 
-/// "now" expressed in whole hours, matching the script's own arithmetic.
-const NOW_HOURS: i64 = 1_748_736_000 / 3600;
+/// "now" in epoch seconds — the unit the quarantine helpers take (Issue #1909).
+const NOW_EPOCH: i64 = 1_748_736_000;
 
 // ── Acceptance criterion 1: every dependency table is parsed ──────────
 
@@ -231,7 +231,7 @@ cc = "1.2.0"
 
     let verdicts = run_helper(
         &format!(
-            "bump_deps::apply_manifest_quarantine '{}' '{}' '{}' {NOW_HOURS} 24",
+            "bump_deps::apply_manifest_quarantine '{}' '{}' '{}' {NOW_EPOCH} 24",
             manifest.path_display(),
             before.path_display(),
             after.path_display()
@@ -297,7 +297,7 @@ version = "1.2.0"
 
     let verdicts = run_helper(
         &format!(
-            "bump_deps::apply_manifest_quarantine '{}' '{}' '{}' {NOW_HOURS} 24",
+            "bump_deps::apply_manifest_quarantine '{}' '{}' '{}' {NOW_EPOCH} 24",
             manifest.path_display(),
             before.path_display(),
             after.path_display()
