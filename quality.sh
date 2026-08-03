@@ -19,6 +19,10 @@ echo "📝 Checking bash script syntax..."
 echo "🐚 Running shellcheck on bash scripts..."
 ./quality/shellcheck.sh .
 
+# Committed `cargo install` pinning gate (Issue #1912, enforcing Issue #1223).
+echo "📌 Checking cargo install pinning..."
+./quality/cargo_install_pinning.sh .
+
 # PR summaries must stay in their canonical archive dir (Issue #1613).
 echo "📄 Checking PR summary layout..."
 ./scripts/check-pr-summary-location.sh

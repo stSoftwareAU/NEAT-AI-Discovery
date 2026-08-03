@@ -56,6 +56,15 @@ jobs:
         shell: bash
         run: ./scripts/install-rust-toolchain.sh
 
+      - name: Install ShellCheck (koalaman/shellcheck)
+        # The test suite runs quality/shellcheck.sh, so this job needs the same
+        # pinned binary as .github/workflows/shellcheck.yml. Without it the gate
+        # lints with the runner's preinstalled ShellCheck and the verdict drifts
+        # with the runner image (PR #1972).
+        uses: taiki-e/install-action@7be9fd86bd1707236395105d6e9329dd1511a7e1 # v2.79.0
+        with:
+          tool: shellcheck@0.11.0
+
       # Coverage instrumentation and upload (Issue #1636).
       - name: Install cargo-llvm-cov
         # Pinned to the action's release SHA rather than the mutable

@@ -72,6 +72,7 @@ jobs:
 
     - name: Configure Git
       run: |
+        set -euo pipefail
         git config user.name "github-actions[bot]"
         git config user.email "github-actions[bot]@users.noreply.github.com"
 
@@ -478,15 +479,17 @@ jobs:
     - name: Check for Changes
       id: check_changes
       run: |
+        set -euo pipefail
         if git diff --quiet; then
-          echo "has_changes=false" >> $GITHUB_OUTPUT
+          echo "has_changes=false" >> "$GITHUB_OUTPUT"
         else
-          echo "has_changes=true" >> $GITHUB_OUTPUT
+          echo "has_changes=true" >> "$GITHUB_OUTPUT"
         fi
 
     - name: Commit Changes
       if: steps.check_changes.outputs.has_changes == 'true'
       run: |
+        set -euo pipefail
         git config user.name "github-actions[bot]"
         git config user.email "github-actions[bot]@users.noreply.github.com"
         git commit -am "chore: apply rustfmt fixes"
@@ -528,11 +531,18 @@ jobs:
         persist-credentials: false
 
     - name: Install codespell
-      run: pip install --user codespell
+      # Hash-pinned, not a moving target (Issue #1913). A bare
+      # `pip install codespell` resolved the newest release — and ran whatever
+      # build backend its sdist shipped — on every PR. `--require-hashes`
+      # makes pip refuse any artefact whose SHA-256 does not match, and refuse
+      # the whole install if any requirement is unpinned. Renovate keeps the
+      # pin current under the standard 24h quarantine (renovate.json).
+      run: pip install --user --require-hashes -r .github/requirements/codespell-requirements.txt
 
     - name: Run codespell
       shell: bash
       run: |
+        set -euo pipefail
         ~/.local/bin/codespell \
           --check-filenames \
           --check-hidden \

@@ -13,7 +13,9 @@
 #   ./benchmark_compare.sh --help                   # Show this help
 #
 # Environment variables:
-#   BENCHMARK_THRESHOLD  Regression threshold percentage (default: 5)
+#   BENCHMARK_THRESHOLD  Regression threshold percentage (default: 5). Must be a
+#                        non-negative number such as 5 or 2.5 — anything else
+#                        (including a bc expression like 10^9) is rejected.
 #   BENCHMARK_BASELINE   Baseline name (default: "saved")
 #
 # The baseline is stored in target/criterion/ and is machine-specific.
@@ -26,6 +28,18 @@
 #   4. After intentional performance changes: re-save the baseline
 
 set -euo pipefail
+
+# ── Shared helpers ────────────────────────────────────────────────────
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+THRESHOLD_LIB="$SCRIPT_DIR/scripts/benchmark_threshold.sh"
+if [[ ! -r "$THRESHOLD_LIB" ]]; then
+    echo "Error: required helper not found: $THRESHOLD_LIB" >&2
+    exit 1
+fi
+# shellcheck source=scripts/benchmark_threshold.sh
+# shellcheck disable=SC1091
+source "$THRESHOLD_LIB"
 
 # ── Configuration ─────────────────────────────────────────────────────
 
@@ -49,6 +63,10 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         --threshold)
+            if [[ $# -lt 2 ]]; then
+                echo "Error: --threshold requires a value" >&2
+                exit 1
+            fi
             THRESHOLD="$2"
             shift 2
             ;;
@@ -71,6 +89,12 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
+
+# ── Validate threshold ────────────────────────────────────────────────
+
+# Runs after argument parsing so `--help` still works, and before any
+# comparison so a bogus value can never reach `bc` (Issue #1918).
+benchmark_threshold::require_valid "$THRESHOLD"
 
 # ── Discover benchmark suites from Cargo.toml ────────────────────────
 
@@ -198,6 +222,13 @@ for bench in "${BENCHMARKS[@]}"; do
 
             # Remove leading + for comparison
             change_num="${change#+}"
+
+            # A malformed measurement would make `bc` error and leave `(( ))`
+            # with an empty operand, so fail loud rather than miscompare.
+            if ! benchmark_threshold::is_measurement "$change_num"; then
+                echo "Error: unparsable benchmark change value '$change_num' in suite '$bench'" >&2
+                exit 1
+            fi
 
             # Check if it's a regression (positive change means slower)
             if (( $(echo "$change_num > $THRESHOLD" | bc -l) )); then

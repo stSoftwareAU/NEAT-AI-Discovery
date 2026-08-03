@@ -38,6 +38,17 @@ This script installs Rust and Cargo if missing (no sudo required), builds the
 library in release mode, installs it to `~/.cargo/lib/` with version tracking,
 and signs it on macOS for FFI compatibility.
 
+The Rust bootstrap goes through `./scripts/install-rustup.sh`, which downloads
+the pinned `rustup-init` binary for the host target and executes it **only**
+when its SHA-256 matches the digest committed in `scripts/rustup-init.sha256`.
+Nothing is ever piped from the network into a shell: a mismatch, a failed
+download, or an unpinned host target aborts non-zero without executing the
+downloaded file (Issue #1911). To bump rustup, change `RUSTUP_VERSION` in
+`scripts/install-rustup.sh` and replace every digest in
+`scripts/rustup-init.sha256` with the corresponding `rustup-init.sha256`
+published by the Rust project for the new version — the two files must move
+together.
+
 ### 🧪 Running Tests
 
 ```bash
@@ -116,7 +127,9 @@ If any step fails, fix the issue and re-run. Do **not** commit code that fails
 `cargo upgrade --incompatible` + `cargo update`, which pulled crates published
 minutes earlier and bypassed the 24h quarantine window. Bump dependencies with
 `./bump-deps.sh` — it age-checks every change to the resolved `Cargo.lock`,
-transitive packages included — or let Renovate raise the PR. `./bump-deps.sh`
+transitive packages included, plus every dependency table of every tracked
+manifest (`[build-dependencies]`, `[target.<spec>.*]` and `fuzz/Cargo.toml`
+included, Issue #1908) — or let Renovate raise the PR. `./bump-deps.sh`
 requires `cargo-deny`: its audit gate exits 9 rather than skipping when the tool
 is missing, so the bump can never pass unaudited (Issue #1870).
 
@@ -137,7 +150,11 @@ the gate runs on milestone sub-issue PRs too, not just the rollup into `Develop`
   bumps go through `./bump-deps.sh` or Renovate, which enforce the quarantine
   window (Issue #1878)
 - `quality` — fmt check, Clippy, cargo check, doc build, tests, build
-- `spell-check` — runs codespell on the codebase
+- `spell-check` — runs codespell on the codebase. codespell is installed with
+  `pip install --user --require-hashes -r
+  .github/requirements/codespell-requirements.txt`, so the version and the
+  SHA-256 of every artefact are pinned; Renovate's `pip_requirements` manager
+  keeps that file current under the standard 24h quarantine (Issue #1913)
 - `validation` — checks required files and `Cargo.toml`
 - `security` — runs the security audit workflow: `cargo audit` (RustSec
   advisories), `cargo deny check` (the `deny.toml` licence, ban and
@@ -148,6 +165,16 @@ the gate runs on milestone sub-issue PRs too, not just the rollup into `Develop`
   `quality/shellcheck.sh` lint gate (Issues #1755, #1898). The ShellCheck binary
   is installed straight from upstream `koalaman/shellcheck` releases by
   SHA-pinned `taiki-e/install-action` — no third-party wrapper action
+- `renovate-config-validator` (separate workflow
+  `.github/workflows/renovate-validate.yml`) — runs the upstream
+  `renovate-config-validator --strict` on PRs that touch `renovate.json`
+  (Issue #1916). `renovate.json` carries the 24h supply-chain quarantine, and a
+  deprecated or removed config key does not fail loudly: Renovate either
+  rejects the file or silently treats the rule as non-matching, so a control can
+  disappear without any signal. `--strict` also fails on keys Renovate would
+  otherwise auto-migrate. Note that `packageRules` **ordering is load-bearing**
+  — the last matching rule wins, so the internal `stSoftwareAU/*` bypass must
+  stay the final entry
 
 Every job that needs Rust installs it with the committed
 `./scripts/install-rust-toolchain.sh [TOOLCHAIN] [COMPONENT...]`, which drives
@@ -340,7 +367,13 @@ High-blast-radius paths are owned by the admin maintainers
 [`.github/CODEOWNERS`](.github/CODEOWNERS): the CI workflows (which hold the
 `ACTIONS_PUSH` PAT plus `SEMGREP_APP_TOKEN` and `CODECOV_TOKEN`), the
 dependency manifests (`Cargo.toml` / `Cargo.lock`), and the security policy.
-A pull request touching any of these requires maintainer review. Individual
+The same block also owns the scripts that *enforce* a supply-chain control —
+`bump-deps.sh` (the quarantine gate), `quality.sh` (the audit gate), and the
+toolchain installers `scripts/runlib.sh` and `scripts/fuzz-ci.sh` — because
+editing the enforcement is equivalent to editing the declaration (Issue #1914).
+The block's inclusion criterion is "files that enforce or bypass a supply-chain
+control". A pull request touching any of these requires maintainer review.
+Individual
 maintainers are named (rather than a team) because no org team holds direct
 write access to this repo, so a team owner would not enforce; switch to a team
 reference once one is granted write access.

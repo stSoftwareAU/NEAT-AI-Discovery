@@ -1,0 +1,59 @@
+name: Renovate Config Validate
+
+# Issue #1916: renovate.json carries the supply-chain quarantine (Issue #1234).
+# A deprecated or removed config key does not fail loudly — Renovate either
+# rejects the whole file or silently treats the rule as non-matching, so a
+# control can disappear without any signal. This gate runs the upstream
+# validator so an invalid key fails the PR instead.
+#
+# As a checker (not a deploy/publish workflow) it runs on the pull request
+# only (Issue #1565). The single-star glob `*` matches only slash-free branch
+# names, so milestone feature branches need an explicit `milestone/*` entry
+# (Issue #1653).
+on:
+  pull_request:
+    branches: ["*", "milestone/*"]
+    paths:
+      - renovate.json
+      - .github/workflows/renovate-validate.yml
+
+# Cancel superseded runs on the same ref (Issue #1288).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  renovate-config-validator:
+    runs-on: ubuntu-latest
+    # Single-file config validation — light job, 10 minute cap (Issue #1287).
+    timeout-minutes: 10
+    steps:
+      # actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+        # This validation-only job never pushes back or fetches private
+        # submodules, so the GITHUB_TOKEN must not be persisted to
+        # .git/config where a later compromised step could read it
+        # (Issue #1646).
+        with:
+          persist-credentials: false
+      # actions/setup-node@v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        with:
+          node-version: "22"
+      - name: Install renovate CLI
+        # Version-pinned and lifecycle scripts disabled to harden the supply
+        # chain (Issue #1484): a poisoned release cannot silently bump the
+        # resolved version or run install/postinstall scripts on the runner.
+        # Renovate keeps this pin current under the shared >=24h quarantine
+        # via the customManager in renovate.json.
+        run: npm install -g --ignore-scripts renovate@44.7.2
+      - name: Validate renovate.json
+        # --strict fails on deprecated keys that Renovate would otherwise
+        # auto-migrate, so a removed key such as matchSourceUrlPrefixes
+        # (Issue #1916) is caught here rather than silently no-opping.
+        run: |
+          set -euo pipefail
+          renovate-config-validator --strict renovate.json

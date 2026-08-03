@@ -17,16 +17,29 @@ MAX_TIME="${1:-30}"
 echo "🔍 Fuzzing CI — ${MAX_TIME}s per target"
 echo "========================================="
 
-# Ensure nightly toolchain is available
+# Ensure nightly toolchain is available.
+#
+# The channel deliberately floats rather than pinning `nightly-YYYY-MM-DD`
+# (Issue #1912): cargo-fuzz builds the targets with `-Z sanitizer`, and a dated
+# nightly goes stale against the sanitiser and `libfuzzer-sys` support the fuzz
+# targets need. The toolchain comes from rustup's signed channel, not crates.io,
+# so it carries no third-party `build.rs` — the risk the tool pin below closes.
 if ! rustup run nightly rustc --version >/dev/null 2>&1; then
     echo "Installing nightly toolchain..."
     rustup install nightly
 fi
 
-# Ensure cargo-fuzz is installed
+# Ensure cargo-fuzz is installed.
+#
+# Pinned with both `--locked` and `--version` (Issue #1223; this call site was
+# missed until Issue #1912). Without `--version` whatever is latest on crates.io
+# at run time is fetched; without `--locked` cargo re-resolves the full
+# transitive graph, so a freshly poisoned dependency would execute its
+# `build.rs` on this runner. Bump the pin deliberately — `quality/cargo_install_pinning.sh`
+# enforces that both flags stay present.
 if ! cargo +nightly fuzz --version >/dev/null 2>&1; then
-    echo "Installing cargo-fuzz..."
-    cargo +nightly install cargo-fuzz
+    echo "Installing cargo-fuzz 0.13.2..."
+    cargo +nightly install --locked --version 0.13.2 cargo-fuzz
 fi
 
 FUZZ_TARGETS=(

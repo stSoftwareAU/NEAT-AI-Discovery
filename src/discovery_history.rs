@@ -230,8 +230,15 @@ fn compute_calibration_factor(observations: &[CalibrationObservation]) -> f64 {
 /// - A single success doesn't give score 1.0 (would be (1+1)/(1+2) = 0.67)
 /// - A single failure doesn't give score 0.0 (would be (0+1)/(1+2) = 0.33)
 /// - With many samples, the score converges to the true success rate
+///
+/// # Invariant
+///
+/// `successes <= attempts` always holds. It is enforced on the deserialisation
+/// path via `NeuronDiscoveryHistoryWire` (Issue #1906), so a corrupt or
+/// hand-edited history file fails loudly instead of mis-scoring silently.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
+#[serde(try_from = "NeuronDiscoveryHistoryWire")]
 pub struct NeuronDiscoveryHistory {
     /// The neuron's UUID
     uuid: String,
@@ -242,6 +249,41 @@ pub struct NeuronDiscoveryHistory {
     /// Epoch timestamp of the most recent successful discovery
     #[serde(skip_serializing_if = "Option::is_none")]
     last_success_epoch: Option<u64>,
+}
+
+/// Wire representation of [`NeuronDiscoveryHistory`], validated on the way in.
+///
+/// Deserialising straight into the public type would accept `successes >
+/// attempts`, which then panics (debug) or wraps (release) in
+/// [`NeuronDiscoveryHistory::bayesian_score`] — Issue #1906.
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct NeuronDiscoveryHistoryWire {
+    uuid: String,
+    attempts: u32,
+    successes: u32,
+    #[serde(default)]
+    last_success_epoch: Option<u64>,
+}
+
+impl TryFrom<NeuronDiscoveryHistoryWire> for NeuronDiscoveryHistory {
+    type Error = String;
+
+    fn try_from(wire: NeuronDiscoveryHistoryWire) -> Result<Self, Self::Error> {
+        if wire.successes > wire.attempts {
+            return Err(format!(
+                "invalid discovery history for neuron '{}': successes ({}) exceeds attempts ({})",
+                wire.uuid, wire.successes, wire.attempts
+            ));
+        }
+
+        Ok(Self {
+            uuid: wire.uuid,
+            attempts: wire.attempts,
+            successes: wire.successes,
+            last_success_epoch: wire.last_success_epoch,
+        })
+    }
 }
 
 impl NeuronDiscoveryHistory {
@@ -305,9 +347,13 @@ impl NeuronDiscoveryHistory {
     /// This is the posterior mean of Beta(α, β) where:
     /// - α = successes + 1 (prior: 1 pseudo-success)
     /// - β = failures + 1 (prior: 1 pseudo-failure)
+    ///
+    /// The failure count saturates at zero so an out-of-range instance (one built
+    /// directly rather than deserialised) can never panic in debug or wrap in
+    /// release — Issue #1906.
     pub fn bayesian_score(&self) -> f64 {
         let alpha = self.successes as f64 + 1.0;
-        let beta = (self.attempts - self.successes) as f64 + 1.0;
+        let beta = self.attempts.saturating_sub(self.successes) as f64 + 1.0;
         alpha / (alpha + beta)
     }
 
@@ -494,6 +540,69 @@ mod tests {
         // 2 successes, 1 failure: (2+1)/(3+2) = 3/5 = 0.6
         h.record_attempt(true, None);
         assert!((h.bayesian_score() - 0.6).abs() < 0.001);
+    }
+
+    /// Issue #1906: a history JSON claiming more successes than attempts must be
+    /// rejected with a descriptive error naming the neuron — not accepted and not
+    /// silently clamped.
+    #[test]
+    fn test_deserialize_rejects_successes_exceeding_attempts() {
+        let err = serde_json::from_str::<NeuronDiscoveryHistory>(
+            r#"{"uuid":"n1","attempts":1,"successes":5}"#,
+        )
+        .expect_err("successes > attempts must not deserialise");
+
+        let message = err.to_string();
+        assert!(
+            message.contains("n1") && message.contains("successes") && message.contains("attempts"),
+            "error must name the neuron and both counts, got: {message}"
+        );
+
+        // A container carrying the same corrupt entry must fail too.
+        let container_err = serde_json::from_str::<DiscoveryHistory>(
+            r#"{"neurons":{"n1":{"uuid":"n1","attempts":1,"successes":5}}}"#,
+        )
+        .expect_err("corrupt entry must fail the whole history parse");
+        assert!(
+            container_err.to_string().contains("n1"),
+            "container error must name the neuron, got: {container_err}"
+        );
+    }
+
+    /// Issue #1906: even if an out-of-range instance is constructed directly,
+    /// `bayesian_score` must not panic (debug) or wrap (release).
+    #[test]
+    fn test_bayesian_score_invalid_counts_saturates() {
+        let h = NeuronDiscoveryHistory {
+            uuid: "n1".to_string(),
+            attempts: 1,
+            successes: 5,
+            last_success_epoch: None,
+        };
+
+        let score = h.bayesian_score();
+        assert!(score.is_finite(), "score must be finite, got {score}");
+        assert!(
+            score > 0.0 && score < 1.0,
+            "score must lie in (0.0, 1.0), got {score}"
+        );
+        // Failures saturate to 0, so alpha = 6, beta = 1 and score = 6/7.
+        // A wrapping subtraction would instead yield ~1.4e-9.
+        assert!(
+            (score - 6.0 / 7.0).abs() < 1e-9,
+            "score must saturate to 6/7, got {score}"
+        );
+    }
+
+    /// Valid histories still round-trip through JSON unchanged (Issue #1906).
+    #[test]
+    fn test_deserialize_accepts_valid_counts() {
+        let restored: NeuronDiscoveryHistory =
+            serde_json::from_str(r#"{"uuid":"n1","attempts":5,"successes":5}"#)
+                .expect("successes == attempts is valid");
+        assert_eq!(restored.attempts(), 5);
+        assert_eq!(restored.successes(), 5);
+        assert!(restored.last_success_epoch().is_none());
     }
 
     #[test]

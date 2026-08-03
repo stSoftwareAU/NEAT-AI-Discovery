@@ -1,7 +1,8 @@
 # Cost-Function Notes — Discovery's Implicit Assumptions
 
 **Status**: Audit completed for Issue #1245 (parent: #1244).
-**Last reviewed**: 2026-05-23.
+**Last reviewed**: 2026-08-03 (Issue #1942 — premise and site references
+re-verified against the source).
 **Scope**: every consumer of `DiscoverRecord.errors` under `src/analysis/`.
 
 ---
@@ -21,19 +22,37 @@ NEAT-AI exposes seven built-in cost functions:
 | `CATEGORICAL_ERROR` | quantised misclassification flag `{0, 1}` on the predicted class | unsigned | `{0, 1}` |
 
 The discovery pipeline records one error per output neuron per observation via
-`DiscoverRecord.errors: Vec<f32>` (`src/types.rs:18`). NEAT-AI populates the
-vector — discovery is the consumer.
+`DiscoverRecord.errors: Vec<f32>` (`src/types.rs`, field `errors`). NEAT-AI
+populates the vector — discovery is the consumer.
 
-Today there are **zero references to any cost name in `src/` of this crate**:
+Cost **names** do reach this crate. Running
 
 ```bash
 grep -rn "MSE\|MAE\|MAPE\|MSLE\|HINGE\|CROSS_ENTROPY\|CATEGORICAL_ERROR" src/
 ```
 
-So discovery is **claimed to be cost-agnostic** — but a number of analysers
-assume linear-residual semantics in places. This document records each
-assumption, classifies how each consumer interprets the errors, and lists the
-invariants that any future cost function must preserve.
+returns hits. Every one of them is a match arm in one of two name mappers, a
+test or doc comment that exercises or describes those mappers, or a
+human-readable log message — never a branch inside an analysis consumer. The
+two mappers are:
+
+- `analysis::cost_function_hint::CostFunctionHint::from_name` — maps a cost
+  name onto `LinearResidual` / `NonLinearResidual` / `Unknown`, which gates the
+  two `activation + error ≈ target` reconstruction sites (Issue #1250).
+- `analysis::task_descriptor::TaskDescriptor::from_name` — maps a cost name
+  onto a target topology, target range, and output-squash family.
+
+Both translate a name into *residual semantics* at the crate boundary and then
+discard it. **No consumer catalogued in §3 branches on the configured cost**:
+each one reads `DiscoverRecord.errors` and nothing else. That — not an absence
+of cost names in `src/` — is the cost-agnostic invariant this document is
+about. The caller-facing summary of the same plumbing lives in
+[DISCOVERY_TYPES.md](DISCOVERY_TYPES.md).
+
+So discovery is **cost-agnostic over its consumers** — but a number of those
+analysers assume linear-residual semantics in places. This document records
+each assumption, classifies how each consumer interprets the errors, and lists
+the invariants that any future cost function must preserve.
 
 ---
 
@@ -81,6 +100,11 @@ and the **per-cost validity**:
 - ⚠️ correct but degraded signal (e.g., sparse, biased magnitude)
 - ❌ likely misleading — flagged for follow-up
 
+Sites are cited as `<file>.rs::<function>`, never `<file>.rs:<line>` — a 400-line
+catalogue of line numbers rots on every refactor, and this one rotted once
+already (Issue #1942). Several rows share a symbol; the **Operation** column
+distinguishes them.
+
 Classifications:
 
 - **RESIDUAL** — raw signed value used (mean, sum, correlation, gradient).
@@ -91,111 +115,111 @@ Classifications:
 
 ### 3.1 `src/analysis/detection/`
 
-| File:line | Operation | Class | MSE | MAE | MAPE | MSLE | HINGE | CE | CAT_ERR |
-|-----------|-----------|-------|-----|-----|------|------|-------|----|---------|
-| `compound_degradation.rs:171` | `errors.sum / n` | RESIDUAL | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ❌ |
-| `compound_degradation.rs:248` | `r.errors.first()` per obs | RESIDUAL | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⚠️ |
-| `compound_degradation.rs:277` | `Σ e²` (baseline SSE) | SQUARED | ✅ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ✅ | ⚠️ gated (#1249) |
-| `compound_degradation.rs:282` | `(err − Δw·act)²` corrected SSE | SQUARED | ✅ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ✅ | ⚠️ gated (#1249) |
-| `correlated_error.rs:110` | `!errors.is_empty()` | PRESENCE | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `correlated_error.rs:128` | `errors.first()` for correlation | RESIDUAL | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ❌ |
-| `error_plateau.rs:124` | `errors.first()` raw | RESIDUAL | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⚠️ |
-| `error_plateau.rs:160` | `errors.first().abs()` | MAGNITUDE | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⚠️ |
-| `hard_sample_cluster.rs:240` | presence check | PRESENCE | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `hard_sample_cluster.rs:244` | `Σ |e| / n` | MAGNITUDE | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⚠️ |
-| `monotonicity.rs:92` | `errors.first()` series | RESIDUAL | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ❌ |
-| `monotonicity.rs:105` | `.abs()` of series | MAGNITUDE | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ❌ |
-| `noise_signal.rs:142` | `errors.first()` | RESIDUAL | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⚠️ |
-| `noise_signal.rs:237` | (obs, err) for noise stats | RESIDUAL | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⚠️ |
-| `observation_range.rs:115` | presence | PRESENCE | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `observation_range.rs:118` | `errors[0]` raw | RESIDUAL | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⚠️ |
-| `output_conflict.rs:115` | presence | PRESENCE | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `output_conflict.rs:130` | length check vs output count | PRESENCE | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `output_conflict.rs:131` | per-output residual accumulator | RESIDUAL | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ❌ |
-| `output_squash_mismatch.rs:133` | `errors.first().abs()` | MAGNITUDE | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⚠️ |
-| `output_squash_mismatch.rs:221` | `activation − errors.first()` (≈target) | RESIDUAL | ✅ | ✅ | ⚠️ | ⚠️ | ❌ | ⚠️ | ❌ |
-| `output_squash_mismatch.rs:301` | `.abs()` filter | MAGNITUDE | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⚠️ |
-| `output_squash_mismatch.rs:382` | `|err| > mean_error` | MAGNITUDE | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⚠️ |
-| `output_squash_mismatch.rs:424` | `.abs()` | MAGNITUDE | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⚠️ |
-| `bias_perturbation.rs:177` | `errors.first().abs()` | MAGNITUDE | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⚠️ |
-| `bottleneck.rs:102-103` | `Σ |e|` over neuron | MAGNITUDE | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⚠️ |
-| `bottleneck.rs:140-141` | `Σ |e|` aggregate | MAGNITUDE | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⚠️ |
-| `topology.rs:171-174` | `Σ |e|` + length | MAGNITUDE | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⚠️ |
-| `topology_diversification.rs:255-256` | `Σ |e|` | MAGNITUDE | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⚠️ |
-| `topology_diversification.rs:322-323` | `Σ |e|` | MAGNITUDE | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⚠️ |
-| `squash_weight_rescale.rs:115` | `errors.first()` raw | RESIDUAL | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ❌ |
-| `squash_weight_rescale.rs:204` | `.abs()` | MAGNITUDE | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⚠️ |
-| `skip_connection.rs:156-159` | `Σ |e|` + length | MAGNITUDE | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⚠️ |
-| `weight_magnitude_reset.rs:169` | `errors.first().abs()` | MAGNITUDE | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⚠️ |
-| `sentinel_gating.rs:122-125` | presence + `errors[0]` | RESIDUAL | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ❌ |
-| `opposing_synapse.rs:132` | `errors.first()` | RESIDUAL | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ❌ |
-| `weight_polarity_flip.rs:100` | `errors.first().is_finite()` | RESIDUAL | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ❌ |
-| `high_error_squash_exploration.rs:140-141` | `act + err` ≈ implied target | RESIDUAL | ✅ | ✅ | ⚠️ | ⚠️ | ❌ | ⚠️ | ❌ |
+| Site | Operation | Class | MSE | MAE | MAPE | MSLE | HINGE | CE | CAT_ERR |
+|------|-----------|-------|-----|-----|------|------|-------|----|---------|
+| `compound_degradation.rs::detect_bias_corrections` | `errors.sum / n` | RESIDUAL | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ❌ |
+| `compound_degradation.rs::detect_weight_corrections` | `r.errors.first()` per obs | RESIDUAL | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⚠️ |
+| `compound_degradation.rs::detect_weight_corrections` | `Σ e²` (baseline SSE) | SQUARED | ✅ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ✅ | ⚠️ gated (#1249) |
+| `compound_degradation.rs::detect_weight_corrections` | `(err − Δw·act)²` corrected SSE | SQUARED | ✅ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ✅ | ⚠️ gated (#1249) |
+| `correlated_error.rs::detect_correlated_error_patterns` | `!errors.is_empty()` | PRESENCE | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `correlated_error.rs::detect_correlated_error_patterns` | `errors.first()` for correlation | RESIDUAL | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ❌ |
+| `error_plateau.rs::compute_bias_adjustment` | `errors.first()` raw | RESIDUAL | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⚠️ |
+| `error_plateau.rs::detect_error_plateaus` | `errors.first().abs()` | MAGNITUDE | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⚠️ |
+| `hard_sample_cluster.rs::aggregate_obs_errors` | presence check | PRESENCE | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `hard_sample_cluster.rs::aggregate_obs_errors` | `Σ |e| / n` | MAGNITUDE | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⚠️ |
+| `monotonicity.rs::detect_non_monotonic_neurons` | `errors.first()` series | RESIDUAL | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ❌ |
+| `monotonicity.rs::detect_non_monotonic_neurons` | `.abs()` of series | MAGNITUDE | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ❌ |
+| `noise_signal.rs::detect_noisy_neurons` | `errors.first()` | RESIDUAL | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⚠️ |
+| `noise_signal.rs::detect_noisy_synapses` | (obs, err) for noise stats | RESIDUAL | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⚠️ |
+| `observation_range.rs::analyse_observation_range` | presence | PRESENCE | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `observation_range.rs::analyse_observation_range` | `errors[0]` raw | RESIDUAL | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⚠️ |
+| `output_conflict.rs::detect_output_conflict_neurons` | presence | PRESENCE | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `output_conflict.rs::detect_output_conflict_neurons` | length check vs output count | PRESENCE | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `output_conflict.rs::detect_output_conflict_neurons` | per-output residual accumulator | RESIDUAL | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ❌ |
+| `output_squash_mismatch.rs::compute_bound_error_ratio` | `errors.first().abs()` | MAGNITUDE | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⚠️ |
+| `output_squash_mismatch.rs::evaluate_alternative_squashes` | `activation − errors.first()` (≈target) | RESIDUAL | ✅ | ✅ | ⚠️ | ⚠️ | ❌ | ⚠️ | ❌ |
+| `output_squash_mismatch.rs::detect_output_squash_mismatches_with_cost_hint` | `.abs()` filter | MAGNITUDE | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⚠️ |
+| `output_squash_mismatch.rs::detect_output_squash_mismatches_with_cost_hint` | `|err| > mean_error` | MAGNITUDE | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⚠️ |
+| `output_squash_mismatch.rs::detect_output_squash_mismatches_with_cost_hint` | `.abs()` | MAGNITUDE | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⚠️ |
+| `bias_perturbation.rs::detect_bias_perturbation_candidates` | `errors.first().abs()` | MAGNITUDE | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⚠️ |
+| `bottleneck.rs::detect_bottleneck_neurons` | `Σ |e|` over neuron | MAGNITUDE | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⚠️ |
+| `bottleneck.rs::detect_bottleneck_neurons` | `Σ |e|` aggregate | MAGNITUDE | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⚠️ |
+| `topology.rs::detect_topology_issues` | `Σ |e|` + length | MAGNITUDE | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⚠️ |
+| `topology_diversification.rs::has_unhealthy_intermediates` | `Σ |e|` | MAGNITUDE | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⚠️ |
+| `topology_diversification.rs::detect_topology_diversification_candidates` | `Σ |e|` | MAGNITUDE | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⚠️ |
+| `squash_weight_rescale.rs::evaluate_squash_errors` | `errors.first()` raw | RESIDUAL | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ❌ |
+| `squash_weight_rescale.rs::detect_squash_weight_rescale_candidates` | `.abs()` | MAGNITUDE | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⚠️ |
+| `skip_connection.rs::detect_skip_connection_candidates` | `Σ |e|` + length | MAGNITUDE | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⚠️ |
+| `weight_magnitude_reset.rs::detect_stuck_synapse_weight_resets` | `errors.first().abs()` | MAGNITUDE | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⚠️ |
+| `sentinel_gating.rs::analyse_observation_for_sentinel` | presence + `errors[0]` | RESIDUAL | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ❌ |
+| `opposing_synapse.rs::detect_opposing_synapses` | `errors.first()` | RESIDUAL | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ❌ |
+| `weight_polarity_flip.rs::detect_weight_polarity_flip_candidates` | `errors.first().is_finite()` | RESIDUAL | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ❌ |
+| `high_error_squash_exploration.rs::evaluate_neuron` | `act + err` ≈ implied target | RESIDUAL | ✅ | ✅ | ⚠️ | ⚠️ | ❌ | ⚠️ | ❌ |
 
 ### 3.2 `src/analysis/recommendation/`
 
-| File:line | Operation | Class | MSE | MAE | MAPE | MSLE | HINGE | CE | CAT_ERR |
-|-----------|-----------|-------|-----|-----|------|------|-------|----|---------|
-| `fan_in.rs:139` | presence | PRESENCE | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `fan_in.rs:156-157` | obs→error map | RESIDUAL | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ❌ |
-| `fan_in.rs:372` | `original_sse = Σ e²` | SQUARED | ✅ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ✅ | ⚠️ gated (#1249) |
-| `fan_in.rs:373-382` | residual SSE post-fit | SQUARED | ✅ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ✅ | ⚠️ gated (#1249) |
-| `sample_weighted.rs:111-114` | mean error per record | RESIDUAL | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ❌ |
-| `sample_weighted.rs:155-159` | mean error, then `.abs()` | RESIDUAL→MAGNITUDE | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⚠️ |
-| `sample_weighted.rs:258-262` | same pattern | RESIDUAL→MAGNITUDE | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⚠️ |
-| `gradient_discovery.rs:99` | `(obs, err)` map | RESIDUAL | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ❌ |
-| `gradient_discovery.rs:115` | `∂L/∂w ≈ source_act × target_err` | RESIDUAL | ✅ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ✅ | ❌ |
-| `gradient_discovery.rs:162-165` | filtered `(obs, err)` map | RESIDUAL | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ❌ |
-| `multi_hop.rs:121` | `errors.first()` for chain propagation | RESIDUAL | ✅ | ✅ | ⚠️ | ⚠️ | ❌ | ⚠️ | ❌ |
-| `output_bias_drift.rs:105` | `errors.first()` mean drift | RESIDUAL | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ❌ |
-| `batch_successful/detection.rs:70` | presence | PRESENCE | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `batch_successful/detection.rs:100-101` | obs→error map | RESIDUAL | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ❌ |
-| `batch_successful/detection.rs:189` | `original_sse = Σ e²` | SQUARED | ✅ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ✅ | ⚠️ gated (#1249) |
-| `batch_successful/detection.rs:194-203` | `improvement = 1 − residual_sse/original_sse` | SQUARED | ✅ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ✅ | ⚠️ gated (#1249) |
+| Site | Operation | Class | MSE | MAE | MAPE | MSLE | HINGE | CE | CAT_ERR |
+|------|-----------|-------|-----|-----|------|------|-------|----|---------|
+| `fan_in.rs::detect_fan_in_candidates` | presence | PRESENCE | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `fan_in.rs::detect_fan_in_candidates` | obs→error map | RESIDUAL | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ❌ |
+| `fan_in.rs::compute_least_squares_improvement` | `original_sse = Σ e²` | SQUARED | ✅ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ✅ | ⚠️ gated (#1249) |
+| `fan_in.rs::compute_least_squares_improvement` | residual SSE post-fit | SQUARED | ✅ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ✅ | ⚠️ gated (#1249) |
+| `sample_weighted.rs::compute_sample_weights` | mean error per record, then `.abs()` | RESIDUAL→MAGNITUDE | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⚠️ |
+| `sample_weighted.rs::stratify_samples` | same pattern, median easy/hard split | RESIDUAL→MAGNITUDE | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⚠️ |
+| `sample_weighted.rs::detect_high_error_neurons` | same pattern, weighted mean | RESIDUAL→MAGNITUDE | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⚠️ |
+| `gradient_discovery.rs::compute_synapse_gradient` | `(obs, err)` map | RESIDUAL | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ❌ |
+| `gradient_discovery.rs::compute_synapse_gradient` | `∂L/∂w ≈ source_act × target_err` | RESIDUAL | ✅ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ✅ | ❌ |
+| `gradient_discovery.rs::detect_gradient_candidates` | filtered `(obs, err)` map | RESIDUAL | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ❌ |
+| `multi_hop.rs::detect_multi_hop_candidates` | `errors.first()` for chain propagation | RESIDUAL | ✅ | ✅ | ⚠️ | ⚠️ | ❌ | ⚠️ | ❌ |
+| `output_bias_drift.rs::detect_output_bias_drift` | `errors.first()` mean drift | RESIDUAL | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ❌ |
+| `batch_successful/detection.rs::detect_individually_successful` | presence | PRESENCE | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `batch_successful/detection.rs::detect_individually_successful` | obs→error map | RESIDUAL | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ❌ |
+| `batch_successful/detection.rs::evaluate_individual` | `original_sse = Σ e²` | SQUARED | ✅ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ✅ | ⚠️ gated (#1249) |
+| `batch_successful/detection.rs::evaluate_individual` | `improvement = 1 − residual_sse/original_sse` | SQUARED | ✅ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ✅ | ⚠️ gated (#1249) |
 
 ### 3.3 `src/analysis/scoring/`
 
-| File:line | Operation | Class | MSE | MAE | MAPE | MSLE | HINGE | CE | CAT_ERR |
-|-----------|-----------|-------|-----|-----|------|------|-------|----|---------|
-| `confidence.rs:272-291` | `Var = Σe²/n − (Σe/n)²` over `HelpfulSample.avg_error` | DISTRIBUTION | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⚠️ |
-| `error_distribution.rs:71-92` | percentiles / skew / kurtosis on `avg_error` | DISTRIBUTION | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ❌ |
-| `error_distribution.rs:280-300` | second invocation on raw error series | DISTRIBUTION | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ❌ |
-| `weights/calculation.rs` (all of `calculate_optimal_outgoing_weight`) | `w = Σ(e·a)/Σ(a²)` consumed from `HelpfulSample.avg_error` | RESIDUAL | ✅ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ✅ | ❌ |
+| Site | Operation | Class | MSE | MAE | MAPE | MSLE | HINGE | CE | CAT_ERR |
+|------|-----------|-------|-----|-----|------|------|-------|----|---------|
+| `confidence.rs::compute_error_variance` | `Var = Σe²/n − (Σe/n)²` over `HelpfulSample.avg_error` | DISTRIBUTION | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⚠️ |
+| `error_distribution.rs::from_samples` | percentiles / skew / kurtosis on `avg_error` | DISTRIBUTION | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ❌ |
+| `error_distribution.rs::from_errors` | second invocation on raw error series | DISTRIBUTION | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ❌ |
+| `weights/calculation.rs::calculate_optimal_outgoing_weight` | `w = Σ(e·a)/Σ(a²)` consumed from `HelpfulSample.avg_error` | RESIDUAL | ✅ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ✅ | ❌ |
 
 `scoring/` does not touch `DiscoverRecord.errors` directly — it consumes the
 pre-aggregated `HelpfulSample.avg_error` field. That averaging happens in
-`diagnostics/target_data.rs:43` (signed sum / count) and
-`samples/statistics.rs:37` (same). Per-cost validity therefore propagates
-through the averaging step.
+`diagnostics/target_data.rs::from_records` (signed sum / count) and
+`samples/statistics.rs::from_records` (same). Per-cost validity therefore
+propagates through the averaging step.
 
 ### 3.4 `src/analysis/synapse/`
 
-| File:line | Operation | Class | MSE | MAE | MAPE | MSLE | HINGE | CE | CAT_ERR |
-|-----------|-----------|-------|-----|-----|------|------|-------|----|---------|
-| `target_analysis/mod.rs:175-177` | filter finite, copy | RESIDUAL | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⚠️ |
-| `post_processing.rs:131-138` | `Σ e²` per target neuron | SQUARED | ✅ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ✅ | ❌ |
+| Site | Operation | Class | MSE | MAE | MAPE | MSLE | HINGE | CE | CAT_ERR |
+|------|-----------|-------|-----|-----|------|------|-------|----|---------|
+| `synapse/target_analysis/mod.rs::analyse_single_target` | filter finite, copy | RESIDUAL | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⚠️ |
+| `synapse/post_processing.rs::compute_neuron_error_sq_map` | `Σ e²` per target neuron | SQUARED | ✅ | ⚠️ | ⚠️ | ⚠️ | ⚠️ | ✅ | ❌ |
 
 ### 3.5 `src/analysis/neuron/`
 
-| File:line | Operation | Class | MSE | MAE | MAPE | MSLE | HINGE | CE | CAT_ERR |
-|-----------|-----------|-------|-----|-----|------|------|-------|----|---------|
-| `mod.rs:239-241` | filtered copy of errors | RESIDUAL | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⚠️ |
-| `mod.rs:252` | presence | PRESENCE | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Site | Operation | Class | MSE | MAE | MAPE | MSLE | HINGE | CE | CAT_ERR |
+|------|-----------|-------|-----|-----|------|------|-------|----|---------|
+| `neuron/mod.rs::analyze_neurons_with_cache_and_gpu_queue` | filtered copy of errors | RESIDUAL | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⚠️ |
+| `neuron/mod.rs::analyze_neurons_with_cache_and_gpu_queue` | presence | PRESENCE | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 
 ### 3.6 `src/analysis/samples/`
 
-| File:line | Operation | Class | MSE | MAE | MAPE | MSLE | HINGE | CE | CAT_ERR |
-|-----------|-----------|-------|-----|-----|------|------|-------|----|---------|
-| `statistics.rs:31` | presence | PRESENCE | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `statistics.rs:37-44` | signed average | RESIDUAL | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⚠️ |
-| `statistics.rs:87` | `error_sq_sum += avg²` (variance via `HelpfulSample`) | DISTRIBUTION | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⚠️ |
+| Site | Operation | Class | MSE | MAE | MAPE | MSLE | HINGE | CE | CAT_ERR |
+|------|-----------|-------|-----|-----|------|------|-------|----|---------|
+| `samples/statistics.rs::from_records` | presence | PRESENCE | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `samples/statistics.rs::from_records` | signed average | RESIDUAL | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⚠️ |
+| `samples/statistics.rs::from_samples` | `error_sq_sum += avg²` (variance via `HelpfulSample`) | DISTRIBUTION | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⚠️ |
 
 ### 3.7 `src/analysis/diagnostics/`
 
-| File:line | Operation | Class | MSE | MAE | MAPE | MSLE | HINGE | CE | CAT_ERR |
-|-----------|-----------|-------|-----|-----|------|------|-------|----|---------|
-| `target_data.rs:38` | presence | PRESENCE | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| `target_data.rs:43-45` | signed average per obs | RESIDUAL | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⚠️ |
+| Site | Operation | Class | MSE | MAE | MAPE | MSLE | HINGE | CE | CAT_ERR |
+|------|-----------|-------|-----|-----|------|------|-------|----|---------|
+| `target_data.rs::from_records` | presence | PRESENCE | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `target_data.rs::from_records` | signed average per obs | RESIDUAL | ✅ | ✅ | ✅ | ✅ | ⚠️ | ✅ | ⚠️ |
 
 ---
 
@@ -211,20 +235,22 @@ loss, SSE-based improvements directly equal the network's loss reduction.
 
 - `RESIDUAL`/`MAGNITUDE` consumers: ✅ correct — the chain rule still emits
   signed residuals from the `|·|` derivative.
-- `SQUARED` consumers (SSE-based improvements like `fan_in.rs:372`,
-  `batch_successful/detection.rs:189`, `compound_degradation.rs:277`,
-  `synapse/post_processing.rs:135`): ⚠️ overestimate the improvement when
-  errors are heavy-tailed because squaring weights outliers more than MAE
-  does. Ranking remains broadly correct; absolute "expected improvement"
-  values are inflated.
+- `SQUARED` consumers (SSE-based improvements like
+  `fan_in.rs::compute_least_squares_improvement`,
+  `batch_successful/detection.rs::evaluate_individual`,
+  `compound_degradation.rs::detect_weight_corrections`,
+  `synapse/post_processing.rs::compute_neuron_error_sq_map`): ⚠️ overestimate
+  the improvement when errors are heavy-tailed because squaring weights
+  outliers more than MAE does. Ranking remains broadly correct; absolute
+  "expected improvement" values are inflated.
 
 ### 4.3 `MAPE`
 
 Same as MAE plus a percentage scale. `RESIDUAL` consumers are unaffected (mean
 of percentages is a percentage). The `act + err` reconstruction in
-`output_squash_mismatch.rs:221` and `high_error_squash_exploration.rs:141`
-becomes `act + (target − output)/|target|` which is *not* the target —
-⚠️ degraded.
+`output_squash_mismatch.rs::evaluate_alternative_squashes` and
+`high_error_squash_exploration.rs::evaluate_neuron` becomes
+`act + (target − output)/|target|` which is *not* the target — ⚠️ degraded.
 
 **Fixed in Issue #1250.** Both sites now accept a `CostFunctionHint`
 (see `src/analysis/cost_function_hint.rs`). When the caller declares
@@ -248,13 +274,15 @@ affected code paths.
 
 - Hinge residuals are zero on correctly-margined samples. Mean residual is
   biased towards zero even when the network is imperfect, so any RESIDUAL
-  consumer that averages errors (e.g., `sample_weighted.rs:114`,
-  `target_data.rs:43`) ⚠️ under-reports neuron error.
+  consumer that averages errors (e.g.,
+  `sample_weighted.rs::compute_sample_weights`,
+  `target_data.rs::from_records`) ⚠️ under-reports neuron error.
 - SSE-based "improvement = 1 − residual_sse/original_sse" still works for
   ranking because both numerator and denominator share the sparsity bias.
-- `act + err = implied target` (`output_squash_mismatch.rs:221`,
-  `high_error_squash_exploration.rs:141`) is ❌ — the relationship is not
-  linear under hinge. **Fixed in Issue #1250** by gating the affected
+- `act + err = implied target`
+  (`output_squash_mismatch.rs::evaluate_alternative_squashes`,
+  `high_error_squash_exploration.rs::evaluate_neuron`) is ❌ — the relationship
+  is not linear under hinge. **Fixed in Issue #1250** by gating the affected
   code paths off when the caller passes `CostFunctionHint::from_name("HINGE")`.
 
 ### 4.6 `CROSS_ENTROPY`
@@ -279,26 +307,35 @@ This is the most disruptive cost for discovery:
 
 Concretely:
 
-- ❌ **All SQUARED consumers** (`fan_in.rs:372`,
-  `batch_successful/detection.rs:189`, `compound_degradation.rs:277`,
-  `synapse/post_processing.rs:135`) produce numbers that do not correspond
-  to NEAT-AI's loss. **Fixed in Issue #1249** for the three sites whose
-  output is interpreted as "expected loss reduction": the fan-in
+- ❌ **All SQUARED consumers**
+  (`fan_in.rs::compute_least_squares_improvement`,
+  `batch_successful/detection.rs::evaluate_individual`,
+  `compound_degradation.rs::detect_weight_corrections`,
+  `synapse/post_processing.rs::compute_neuron_error_sq_map`) produce numbers
+  that do not correspond to NEAT-AI's loss. **Fixed in Issue #1249** for the
+  three sites whose output is interpreted as "expected loss reduction": the fan-in
   least-squares improvement, the batch-successful
   `1 − residual_sse/original_sse` ratio, and the compound-degradation
   weight correction all now invoke
   `crate::analysis::quantised_error::is_quantised_zero_one` on the
   target's recorded errors and gate the SSE-improvement code path off
-  when the regime is detected. `synapse/post_processing.rs:135` is
-  retained — under `CATEGORICAL_ERROR` it collapses to "fraction of
-  network misclassifications attributable to this neuron", which is
+  when the regime is detected.
+  `synapse/post_processing.rs::compute_neuron_error_sq_map` is retained —
+  under `CATEGORICAL_ERROR` it collapses to "fraction of network
+  misclassifications attributable to this neuron", which is
   still a sensible cost-agnostic impact-scaling factor and gating it
   off would silence the entire discovery pipeline.
 - ❌ **All RESIDUAL consumers used in correlation/regression**
-  (`gradient_discovery.rs:115`, `compound_degradation.rs`,
-  `correlated_error.rs:128`, `monotonicity.rs:92`, `weight_polarity_flip.rs`,
-  `opposing_synapse.rs`, `sentinel_gating.rs`, `output_conflict.rs:131`,
-  `multi_hop.rs:121`, `output_bias_drift.rs:105`) are biased — the
+  (`gradient_discovery.rs::compute_synapse_gradient`,
+  `compound_degradation.rs::detect_weight_corrections`,
+  `correlated_error.rs::detect_correlated_error_patterns`,
+  `monotonicity.rs::detect_non_monotonic_neurons`,
+  `weight_polarity_flip.rs::detect_weight_polarity_flip_candidates`,
+  `opposing_synapse.rs::detect_opposing_synapses`,
+  `sentinel_gating.rs::analyse_observation_for_sentinel`,
+  `output_conflict.rs::detect_output_conflict_neurons`,
+  `multi_hop.rs::detect_multi_hop_candidates`,
+  `output_bias_drift.rs::detect_output_bias_drift`) are biased — the
   regression slope no longer matches the gradient.
 - ❌ **`activation + error = implied target`** patterns are wrong (target is
   not bounded by the activation range). **Fixed in Issue #1250** —
@@ -331,8 +368,8 @@ Before NEAT-AI ships a new cost, walk this list against discovery:
 - [ ] **Sparsity (mass at exactly zero)?** Hinge-style. RESIDUAL means will be
       biased. Document the bias rather than fixing every consumer.
 - [ ] **`activation + error ≈ target`?** Only true for `MSE`/`MAE`/`CE`. If
-      not, audit `output_squash_mismatch.rs:221` and
-      `high_error_squash_exploration.rs:141`.
+      not, audit `output_squash_mismatch.rs::evaluate_alternative_squashes` and
+      `high_error_squash_exploration.rs::evaluate_neuron`.
 - [ ] **Add a test** under `tests/cost_invariants/` (to be created — see
       follow-up #1244-family) that records a known network under the new
       cost and asserts ranking stability for each detector listed in §3.
@@ -346,10 +383,11 @@ The audit surfaced the following concrete defects, all triggered by
 remains a documentation deliverable:
 
 1. **#1249 — `improvement = 1 − residual_sse/original_sse` collapses for
-   `{0, 1}` errors** — affects `fan_in.rs:372-382`,
-   `batch_successful/detection.rs:189-203`,
-   `compound_degradation.rs:277-288`,
-   `synapse/post_processing.rs:131-138`.
+   `{0, 1}` errors** — affects
+   `fan_in.rs::compute_least_squares_improvement`,
+   `batch_successful/detection.rs::evaluate_individual`,
+   `compound_degradation.rs::detect_weight_corrections`,
+   `synapse/post_processing.rs::compute_neuron_error_sq_map`.
    **Resolved**: the three sites whose output is treated as "expected
    loss reduction" by the downstream candidate ranker
    (`fan_in::compute_least_squares_improvement` /
@@ -376,17 +414,17 @@ remains a documentation deliverable:
    carry regression tests under
    `tests/{detection,recommendation,scoring}/issue_1247_*`.
 2. **#1250 — `activation + error = implied target` is invalid for
-   non-linear-residual costs** — affects `output_squash_mismatch.rs:221`
-   and `high_error_squash_exploration.rs:141`. **Resolved**: both sites
-   now expose a `_with_cost_hint` overload that accepts a
+   non-linear-residual costs** — affects
+   `output_squash_mismatch.rs::evaluate_alternative_squashes` and
+   `high_error_squash_exploration.rs::evaluate_neuron`. **Resolved**: both
+   sites now expose a `_with_cost_hint` overload that accepts a
    `CostFunctionHint`. Non-linear-residual costs gate the affected code
    paths off. Backwards-compatible unhinted entry points remain for
    callers that have not been migrated.
-3. **#1251 — `docs/discoveries/add-neuron.md:56` claims "Expected
-   improvement = reduction in MSE"** — should be reworded to
-   "Expected improvement = SSE reduction (exact for MSE, a ranking signal
-   for other costs)". Tracked as a doc-only follow-up so this audit can
-   land independently of the doc edit.
+3. **#1251 — `docs/discoveries/add-neuron.md` claimed "Expected
+   improvement = reduction in MSE"** — **Resolved**: the flowchart node now
+   reads "Expected improvement = SSE reduction (exact for MSE; ranking signal
+   for other costs)".
 
 A `negative-result` follow-up will be raised on #1249 if no fix proves
 better than gating SSE-improvement scoring off for `CATEGORICAL_ERROR`.
@@ -418,8 +456,9 @@ flowchart LR
 - **Issue**: #1245 (parent #1244).
 - **Method**: exhaustive `rg`-driven crawl over `src/analysis/**` for `.errors`
   field accesses and downstream `Vec<f32>` consumption, cross-checked against
-  the field's definition in `src/types.rs:18` and the FFI shape in
-  `src/ffi_types/responses/export.rs:90`.
+  the field's definition (`DiscoverRecord::errors` in `src/types.rs`) and the
+  FFI shape (`DiscoverRecordJson::errors` in
+  `src/ffi_types/responses/export.rs`).
 - **Test files exercising the affected paths** (skipped from the catalogue but
   recorded for traceability):
   - `src/analysis/implementation_tests/diagnostics_tests.rs`
@@ -430,3 +469,7 @@ flowchart LR
 Re-run the audit by re-executing the grep in §1 and walking §3 against the
 current code. The audit is intended to be cheap to refresh after any cost
 change in NEAT-AI.
+
+`tests/issue_1942_cost_function_notes_contract.rs` pins the parts of this
+document a refactor can silently falsify: the §1 premise, and the existence of
+every symbol §3 and §4–§6 cite.
