@@ -23,7 +23,8 @@ set -euo pipefail
 #     saved baseline. Suitable for self-hosted runners with consistent hardware.
 #
 # Environment variables:
-#   BENCHMARK_THRESHOLD   Regression threshold percentage (default: 10)
+#   BENCHMARK_THRESHOLD   Regression threshold percentage (default: 10). Must be
+#                         a non-negative number such as 10 or 2.5.
 #   BENCHMARK_CI_MODE     Override mode: "compile" or "compare" (default: "compile")
 
 # ── Configuration ─────────────────────────────────────────────────────
@@ -33,6 +34,15 @@ MODE="${BENCHMARK_CI_MODE:-compile}"
 LIST_ONLY=false
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+THRESHOLD_LIB="$SCRIPT_DIR/benchmark_threshold.sh"
+if [[ ! -r "$THRESHOLD_LIB" ]]; then
+    echo "Error: required helper not found: $THRESHOLD_LIB" >&2
+    exit 1
+fi
+# shellcheck source=benchmark_threshold.sh
+# shellcheck disable=SC1091
+source "$THRESHOLD_LIB"
 
 # ── Argument parsing ──────────────────────────────────────────────────
 
@@ -87,10 +97,8 @@ done
 
 # ── Validate threshold ────────────────────────────────────────────────
 
-if ! [[ "$THRESHOLD" =~ ^[0-9]+$ ]]; then
-    echo "Error: Threshold must be a positive integer, got '$THRESHOLD'"
-    exit 1
-fi
+# Shared with benchmark_compare.sh so the two cannot drift (Issue #1918).
+benchmark_threshold::require_valid "$THRESHOLD"
 
 # ── Discover benchmark suites from Cargo.toml ────────────────────────
 

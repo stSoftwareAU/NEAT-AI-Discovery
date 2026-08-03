@@ -101,7 +101,7 @@ future measurement shows the compile-time cost outweighs the runtime win.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `BENCHMARK_THRESHOLD` | `5` | Regression threshold percentage |
+| `BENCHMARK_THRESHOLD` | `5` | Regression threshold percentage — a non-negative number such as `5` or `2.5` |
 | `BENCHMARK_BASELINE` | `saved` | Baseline name for Criterion |
 
 ## 🧪 Benchmark Suites
@@ -277,6 +277,12 @@ down by more than 10% compared to the baseline to be flagged as a regression.
 The threshold can be configured via:
 - Command-line flag: `--threshold N`
 - Environment variable: `BENCHMARK_THRESHOLD=N`
+
+Both paths are validated by `scripts/benchmark_threshold.sh` before the value is
+used: `N` must be a non-negative number such as `10` or `2.5`. Anything else —
+`abc`, a negative value, or a `bc` expression such as `10^9` that would quietly
+put every regression under threshold — is rejected with a non-zero exit before
+any comparison runs (Issue #1918).
 
 A 10% default was chosen to balance sensitivity against noise from CI
 environment variability. For self-hosted runners with stable hardware, consider
