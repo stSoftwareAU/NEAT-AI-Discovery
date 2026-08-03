@@ -353,7 +353,13 @@ High-blast-radius paths are owned by the admin maintainers
 [`.github/CODEOWNERS`](.github/CODEOWNERS): the CI workflows (which hold the
 `ACTIONS_PUSH` PAT plus `SEMGREP_APP_TOKEN` and `CODECOV_TOKEN`), the
 dependency manifests (`Cargo.toml` / `Cargo.lock`), and the security policy.
-A pull request touching any of these requires maintainer review. Individual
+The same block also owns the scripts that *enforce* a supply-chain control —
+`bump-deps.sh` (the quarantine gate), `quality.sh` (the audit gate), and the
+toolchain installers `scripts/runlib.sh` and `scripts/fuzz-ci.sh` — because
+editing the enforcement is equivalent to editing the declaration (Issue #1914).
+The block's inclusion criterion is "files that enforce or bypass a supply-chain
+control". A pull request touching any of these requires maintainer review.
+Individual
 maintainers are named (rather than a team) because no org team holds direct
 write access to this repo, so a team owner would not enforce; switch to a team
 reference once one is granted write access.

@@ -31,7 +31,16 @@
 /Cargo.toml             @Green-Beret @nleck @stservice
 /Cargo.lock             @Green-Beret @nleck @stservice
 
-# Release / security-sensitive automation and policy.
+# Release / security-sensitive automation and policy. The criterion for this
+# block is: files that enforce or bypass a supply-chain control. That covers the
+# declarations (deny.toml, renovate.json, SECURITY.md) *and* the scripts that
+# implement them — editing bump-deps.sh disables the quarantine gate just as
+# effectively as editing renovate.json, and the enforcement script is what an
+# attacker targets first (Issue #1914).
 /deny.toml              @Green-Beret @nleck @stservice
 /renovate.json          @Green-Beret @nleck @stservice
 /SECURITY.md            @Green-Beret @nleck @stservice
+/bump-deps.sh           @Green-Beret @nleck @stservice
+/quality.sh             @Green-Beret @nleck @stservice
+/scripts/runlib.sh      @Green-Beret @nleck @stservice
+/scripts/fuzz-ci.sh     @Green-Beret @nleck @stservice
