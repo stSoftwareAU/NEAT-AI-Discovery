@@ -15,6 +15,12 @@ set -euo pipefail
 #     is pinned back with `cargo update --precise` (Issue #1865). A newly-pulled
 #     package inside the window has no earlier version to pin back to, so the
 #     run fails loud instead.
+#   * The manifest gate covers EVERY tracked Cargo.toml (root and `fuzz/`) and
+#     EVERY dependency table Cargo recognises — `[dependencies]`,
+#     `[dev-dependencies]`, `[build-dependencies]`, their `[target.<spec>.*]`
+#     forms and their `[<table>.<name>]` sub-tables (Issue #1908). A
+#     build-dependency runs at compile time with the developer's privileges, so
+#     an un-gated `[build-dependencies]` bump was the highest-value hole.
 #   * This script — not ./quality.sh — is the only path that bumps dependencies.
 #     The pre-commit quality gate verifies the tree and never mutates it.
 #
@@ -83,29 +89,62 @@ bump_deps::validate_hours() {
 }
 
 # bump_deps::extract_dep_versions MANIFEST
-# Print `name<TAB>version` for every top-level inline dependency declared
-# in MANIFEST under [dependencies] or [dev-dependencies]. Handles both
+# Print `name<TAB>version` for every dependency requirement declared in
+# MANIFEST, across every dependency table Cargo recognises (Issue #1908):
+#
+#   [dependencies]  [dev-dependencies]  [build-dependencies]
+#   [target.<spec>.dependencies]  (and the dev-/build- variants)
+#   [<table>.<name>] sub-tables, e.g. [build-dependencies.cc]
+#
+# Handles the inline forms
 #     foo = "1.2.3"
 #     foo = { version = "1.2.3", … }
+# and the sub-table form
+#     [dependencies.foo]
+#     version = "1.2.3"
+#
 # Used to diff before/after states across a `cargo upgrade` run so we can
 # revert any bump that lands inside the quarantine window (Issue #1234).
+# Only `[dependencies]` and `[dev-dependencies]` were parsed before, so a
+# `[build-dependencies]` bump — code that runs at compile time — was never
+# age-checked (Issue #1908).
 bump_deps::extract_dep_versions() {
     local manifest="$1"
     if [[ ! -f "$manifest" ]]; then
         return 0
     fi
     awk '
-        /^\[/ {
-            in_deps = ($0 == "[dependencies]" || $0 == "[dev-dependencies]") ? 1 : 0
+        # A table header switches state: inline dependency table, named
+        # dependency sub-table, or neither.
+        /^[[:space:]]*\[/ {
+            in_deps = 0
+            sub_name = ""
+            hdr = $0
+            sub(/[[:space:]]*#.*/, "", hdr)
+            sub(/^[[:space:]]*\[[[:space:]]*/, "", hdr)
+            sub(/[[:space:]]*\][[:space:]]*$/, "", hdr)
+            if (hdr ~ /^(dependencies|dev-dependencies|build-dependencies)(\.|$)/ || hdr ~ /^target\./) {
+                if (hdr ~ /(^|\.)(dependencies|dev-dependencies|build-dependencies)$/) {
+                    in_deps = 1
+                } else if (match(hdr, /(^|\.)(dependencies|dev-dependencies|build-dependencies)\./)) {
+                    candidate = substr(hdr, RSTART + RLENGTH)
+                    gsub(/"/, "", candidate)
+                    # A single key only — anything else is a deeper table.
+                    if (candidate ~ /^[A-Za-z0-9_-]+$/) {
+                        sub_name = candidate
+                    }
+                }
+            }
             next
         }
-        in_deps && /^[a-zA-Z0-9_-]+[[:space:]]*=/ {
+        in_deps && /^[[:space:]]*[A-Za-z0-9_.-]+[[:space:]]*=/ {
             # Strip trailing comment.
             line = $0
             sub(/[[:space:]]*#.*/, "", line)
             # Capture name (before =).
             name = line
             sub(/[[:space:]]*=.*/, "", name)
+            gsub(/^[[:space:]]+|[[:space:]]+$/, "", name)
             # Capture the first quoted string after "version" if present,
             # otherwise the first quoted string after =.
             rest = line
@@ -121,8 +160,51 @@ bump_deps::extract_dep_versions() {
             if (version != "") {
                 printf "%s\t%s\n", name, version
             }
+            next
+        }
+        sub_name != "" && /^[[:space:]]*version[[:space:]]*=/ {
+            line = $0
+            sub(/[[:space:]]*#.*/, "", line)
+            if (match(line, /"[^"]+"/)) {
+                printf "%s\t%s\n", sub_name, substr(line, RSTART + 1, RLENGTH - 2)
+                # Only the first version key in the sub-table counts.
+                sub_name = ""
+            }
+            next
         }
     ' "$manifest"
+}
+
+# bump_deps::list_manifests ROOT
+# Print the absolute path of every tracked Cargo.toml under ROOT, one per
+# line, sorted. `git ls-files` is preferred so untracked scratch manifests
+# and vendored copies under target/ stay out; a non-git tree falls back to
+# `find`. The gate hardcoded the root manifest before, so `fuzz/Cargo.toml`
+# was never age-checked (Issue #1908).
+bump_deps::list_manifests() {
+    local root="$1"
+    local found="" rel
+    if command -v git >/dev/null 2>&1 && git -C "$root" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        found="$(git -C "$root" ls-files -- 'Cargo.toml' '*/Cargo.toml' 2>/dev/null || true)"
+    fi
+    if [[ -z "$found" ]]; then
+        found="$(cd "$root" && find . -name Cargo.toml -not -path './target/*' 2>/dev/null | sed 's|^\./||' || true)"
+    fi
+    if [[ -z "$found" ]]; then
+        return 0
+    fi
+    while IFS= read -r rel; do
+        [[ -z "$rel" ]] && continue
+        printf '%s/%s\n' "$root" "$rel"
+    done < <(printf '%s\n' "$found" | LC_ALL=C sort)
+}
+
+# bump_deps::snapshot_key MANIFEST ROOT
+# Print a filesystem-safe key naming MANIFEST's before/after snapshot files
+# (`fuzz/Cargo.toml` → `fuzz_Cargo.toml`).
+bump_deps::snapshot_key() {
+    local rel="${1#"$2"/}"
+    printf '%s' "${rel//\//_}"
 }
 
 # bump_deps::compute_changed_deps BEFORE AFTER
@@ -290,9 +372,10 @@ bump_deps::fetch_publish_epoch() {
 }
 
 # bump_deps::revert_dep_line MANIFEST NAME OLD_VERSION
-# Restore the version string of NAME in MANIFEST to OLD_VERSION. Touches
-# only the top-level inline declaration; nested [dependencies.<name>]
-# tables are left alone (the manifest in this repo uses inline form).
+# Restore the version string of NAME in MANIFEST to OLD_VERSION. Rewrites
+# the first inline declaration of NAME in any dependency table, or the
+# first `version = …` key inside a matching `[<table>.NAME]` sub-table
+# (Issue #1908).
 bump_deps::revert_dep_line() {
     local manifest="$1"
     local name="$2"
@@ -302,12 +385,28 @@ bump_deps::revert_dep_line() {
     # Match either `name = "X.Y.Z"` or `name = { … version = "X.Y.Z" … }`
     # and rewrite only the first quoted version string on that line.
     awk -v target="$name" -v new_v="$old" '
-        BEGIN { done = 0 }
+        BEGIN { done = 0; in_sub = 0 }
+        /^[[:space:]]*\[/ {
+            in_sub = 0
+            hdr = $0
+            sub(/[[:space:]]*#.*/, "", hdr)
+            sub(/^[[:space:]]*\[[[:space:]]*/, "", hdr)
+            sub(/[[:space:]]*\][[:space:]]*$/, "", hdr)
+            if (match(hdr, /(^|\.)(dependencies|dev-dependencies|build-dependencies)\./)) {
+                candidate = substr(hdr, RSTART + RLENGTH)
+                gsub(/"/, "", candidate)
+                if (candidate == target) {
+                    in_sub = 1
+                }
+            }
+            print
+            next
+        }
         {
             if (!done) {
                 # Anchor at column 0; allow optional whitespace before =.
-                pattern = "^" target "[[:space:]]*="
-                if ($0 ~ pattern) {
+                pattern = "^[[:space:]]*" target "[[:space:]]*="
+                if ($0 ~ pattern || (in_sub && $0 ~ /^[[:space:]]*version[[:space:]]*=/)) {
                     # Prefer rewriting `version = "…"` if present.
                     if (match($0, /version[[:space:]]*=[[:space:]]*"[^"]+"/)) {
                         seg = substr($0, RSTART, RLENGTH)
@@ -326,6 +425,52 @@ bump_deps::revert_dep_line() {
         }
     ' "$manifest" > "$tmp"
     mv "$tmp" "$manifest"
+}
+
+# bump_deps::apply_manifest_quarantine MANIFEST BEFORE AFTER NOW_HOURS WINDOW
+# Age-check every requirement change in MANIFEST between the BEFORE and
+# AFTER listings (both `name<TAB>version` files), revert the bumps that land
+# inside the window, and print one verdict line per changed dependency:
+#
+#   keep<TAB>name<TAB>old<TAB>new<TAB>age      published outside the window
+#   revert<TAB>name<TAB>old<TAB>new<TAB>age    reverted to the old version
+#
+# `age` is either "<N>h" or "unknown". An unknown publish time fails closed:
+# a version we cannot date is never confirmed safe. A revert that does not
+# actually rewrite the manifest returns 1 — a gate that cannot enforce the
+# window must fail loud, not report a clean run (Issue #1908).
+bump_deps::apply_manifest_quarantine() {
+    local manifest="$1"
+    local before="$2"
+    local after="$3"
+    local now_hours="$4"
+    local window="$5"
+    local name old new pub_epoch pub_hours age survivor
+
+    while IFS=$'\t' read -r name old new; do
+        [[ -z "$name" ]] && continue
+        pub_epoch="$(bump_deps::fetch_publish_epoch "$name" "$new" || true)"
+        if [[ -n "$pub_epoch" ]]; then
+            pub_hours=$(( pub_epoch / 3600 ))
+            if bump_deps::is_quarantine_expired "$now_hours" "$pub_hours" "$window"; then
+                printf 'keep\t%s\t%s\t%s\t%sh\n' "$name" "$old" "$new" "$(( now_hours - pub_hours ))"
+                continue
+            fi
+            age="$(( now_hours - pub_hours ))h"
+        else
+            age="unknown"
+        fi
+        bump_deps::revert_dep_line "$manifest" "$name" "$old"
+        # Positively confirm the rewrite landed: a silent no-op would leave
+        # the in-quarantine version in the tree and still look clean.
+        survivor="$(bump_deps::extract_dep_versions "$manifest" \
+            | awk -F '\t' -v n="$name" -v v="$new" '$1 == n && $2 == v')"
+        if [[ -n "$survivor" ]]; then
+            echo "ERROR: could not revert $name to $old in $manifest — refusing to accept an in-quarantine dependency" >&2
+            return 1
+        fi
+        printf 'revert\t%s\t%s\t%s\t%s\n' "$name" "$old" "$new" "$age"
+    done < <(bump_deps::compute_changed_deps "$before" "$after")
 }
 
 # bump_deps::current_epoch
@@ -461,6 +606,12 @@ if [[ "$ACTION" == "print-config" ]]; then
     else
         echo "  Cargo.toml       = absent"
     fi
+    # Every tracked manifest is age-checked, not just the root one (Issue #1908).
+    echo "  gated_manifests  ="
+    while IFS= read -r MANIFEST_PATH; do
+        [[ -z "$MANIFEST_PATH" ]] && continue
+        echo "    - ${MANIFEST_PATH#"$PROJECT_ROOT"/}"
+    done <<< "$(bump_deps::list_manifests "$PROJECT_ROOT")"
     exit 0
 fi
 
@@ -515,11 +666,23 @@ EXTERNAL_BUMPED=0
 EXTERNAL_REVERTED=0
 EXTERNAL_PLAN=""
 QUARANTINED_DEPS=""
+GATED_MANIFESTS=""
 if [[ -f "$CARGO_MANIFEST" ]]; then
     if ! command -v cargo >/dev/null 2>&1; then
         echo "ERROR: cargo not found on PATH" >&2
         exit 3
     fi
+    # Age-check every tracked manifest, not just the root one (Issue #1908).
+    GATED_MANIFESTS="$(bump_deps::list_manifests "$PROJECT_ROOT")"
+    if [[ -z "$GATED_MANIFESTS" ]]; then
+        echo "ERROR: no tracked Cargo.toml found under $PROJECT_ROOT — the quarantine gate cannot run" >&2
+        exit 2
+    fi
+    echo "🗂️  Manifests under the quarantine gate:"
+    while IFS= read -r MANIFEST_PATH; do
+        [[ -z "$MANIFEST_PATH" ]] && continue
+        echo "   - ${MANIFEST_PATH#"$PROJECT_ROOT"/}"
+    done <<< "$GATED_MANIFESTS"
     if ! command -v cargo-upgrade >/dev/null 2>&1; then
         echo "⚠️  cargo-edit not installed — external bumps skipped (install: cargo install cargo-edit)"
     else
@@ -534,56 +697,72 @@ if [[ -f "$CARGO_MANIFEST" ]]; then
                 EXTERNAL_PLAN="$(echo "$UPGRADE_OUT" | grep -E '\->' || true)"
             fi
             if [[ "$DRY_RUN" -eq 0 ]]; then
-                # Snapshot the manifest so we can identify which deps the
-                # upgrade actually changed (Issue #1234).
-                BEFORE_VERSIONS="$(mktemp)"
-                AFTER_VERSIONS="$(mktemp)"
-                bump_deps::extract_dep_versions "$CARGO_MANIFEST" > "$BEFORE_VERSIONS"
+                # Snapshot EVERY tracked manifest — root and fuzz/ alike — so
+                # we can identify which deps the upgrade actually changed
+                # (Issues #1234, #1908).
+                SNAPSHOT_DIR="$(mktemp -d)"
+                while IFS= read -r MANIFEST_PATH; do
+                    [[ -z "$MANIFEST_PATH" ]] && continue
+                    bump_deps::extract_dep_versions "$MANIFEST_PATH" \
+                        > "$SNAPSHOT_DIR/$(bump_deps::snapshot_key "$MANIFEST_PATH" "$PROJECT_ROOT").before"
+                done <<< "$GATED_MANIFESTS"
 
                 # Apply compatible upgrades only (incompatible upgrades are
                 # higher-risk and require a human review; raise a manual PR
                 # for those — the weekly upgrade-dependencies.yml workflow
                 # was removed in Issue #1282).
                 if cargo upgrade --compatible 2>&1 | tee /tmp/bump-deps-upgrade.log; then
-                    bump_deps::extract_dep_versions "$CARGO_MANIFEST" > "$AFTER_VERSIONS"
-
                     # Quarantine gate (Issue #1234): for each newly-bumped
                     # version, query crates.io for its publish time and
                     # revert any bump that is younger than the configured
-                    # window. The header policy promised this — the helper
-                    # `bump_deps::is_quarantine_expired` was wired up but
-                    # never reached the bump path until now.
-                    CHANGED="$(bump_deps::compute_changed_deps "$BEFORE_VERSIONS" "$AFTER_VERSIONS" || true)"
-                    if [[ -n "$CHANGED" ]]; then
-                        NOW_EPOCH="$(bump_deps::current_epoch)"
-                        NOW_HOURS=$(( NOW_EPOCH / 3600 ))
-                        echo "🛡️  Quarantine gate (window=${QUARANTINE_HOURS}h): checking publish times…"
-                        while IFS=$'\t' read -r DEP_NAME DEP_OLD DEP_NEW; do
-                            [[ -z "$DEP_NAME" ]] && continue
-                            PUB_EPOCH="$(bump_deps::fetch_publish_epoch "$DEP_NAME" "$DEP_NEW" || true)"
-                            if [[ -z "$PUB_EPOCH" ]]; then
-                                echo "   ⚠️  $DEP_NAME@$DEP_NEW — publish time unknown; reverting to $DEP_OLD"
-                                bump_deps::revert_dep_line "$CARGO_MANIFEST" "$DEP_NAME" "$DEP_OLD"
-                                EXTERNAL_REVERTED=$(( EXTERNAL_REVERTED + 1 ))
-                                QUARANTINED_DEPS="${QUARANTINED_DEPS} ${DEP_NAME}@${DEP_NEW}(unknown)"
-                                continue
-                            fi
-                            PUB_HOURS=$(( PUB_EPOCH / 3600 ))
-                            if bump_deps::is_quarantine_expired "$NOW_HOURS" "$PUB_HOURS" "$QUARANTINE_HOURS"; then
-                                echo "   ✅ $DEP_NAME $DEP_OLD → $DEP_NEW (publish age ≥ ${QUARANTINE_HOURS}h, kept)"
-                            else
-                                AGE_HOURS=$(( NOW_HOURS - PUB_HOURS ))
-                                echo "   🚧 $DEP_NAME $DEP_OLD → $DEP_NEW (publish age ${AGE_HOURS}h < ${QUARANTINE_HOURS}h, reverting)"
-                                bump_deps::revert_dep_line "$CARGO_MANIFEST" "$DEP_NAME" "$DEP_OLD"
-                                EXTERNAL_REVERTED=$(( EXTERNAL_REVERTED + 1 ))
-                                QUARANTINED_DEPS="${QUARANTINED_DEPS} ${DEP_NAME}@${DEP_NEW}(${AGE_HOURS}h)"
-                            fi
-                        done <<< "$CHANGED"
-                    fi
-                    rm -f "$BEFORE_VERSIONS" "$AFTER_VERSIONS"
-                    if ! git diff --quiet -- "$CARGO_MANIFEST"; then
-                        EXTERNAL_BUMPED=1
-                    fi
+                    # window. Every dependency table of every tracked
+                    # manifest is checked (Issue #1908).
+                    NOW_HOURS=$(( $(bump_deps::current_epoch) / 3600 ))
+                    echo "🛡️  Quarantine gate (window=${QUARANTINE_HOURS}h): checking publish times…"
+                    while IFS= read -r MANIFEST_PATH; do
+                        [[ -z "$MANIFEST_PATH" ]] && continue
+                        MANIFEST_KEY="$(bump_deps::snapshot_key "$MANIFEST_PATH" "$PROJECT_ROOT")"
+                        MANIFEST_REL="${MANIFEST_PATH#"$PROJECT_ROOT"/}"
+                        bump_deps::extract_dep_versions "$MANIFEST_PATH" \
+                            > "$SNAPSHOT_DIR/$MANIFEST_KEY.after"
+                        if ! VERDICTS="$(bump_deps::apply_manifest_quarantine \
+                            "$MANIFEST_PATH" \
+                            "$SNAPSHOT_DIR/$MANIFEST_KEY.before" \
+                            "$SNAPSHOT_DIR/$MANIFEST_KEY.after" \
+                            "$NOW_HOURS" "$QUARANTINE_HOURS")"; then
+                            echo "ERROR: quarantine gate could not enforce the window on $MANIFEST_REL" >&2
+                            exit 8
+                        fi
+                        [[ -z "$VERDICTS" ]] && continue
+                        while IFS=$'\t' read -r VERDICT DEP_NAME DEP_OLD DEP_NEW DEP_AGE; do
+                            [[ -z "$VERDICT" ]] && continue
+                            case "$VERDICT" in
+                                keep)
+                                    echo "   ✅ $MANIFEST_REL: $DEP_NAME $DEP_OLD → $DEP_NEW (publish age $DEP_AGE ≥ ${QUARANTINE_HOURS}h, kept)"
+                                    ;;
+                                revert)
+                                    if [[ "$DEP_AGE" == "unknown" ]]; then
+                                        echo "   ⚠️  $MANIFEST_REL: $DEP_NAME@$DEP_NEW — publish time unknown; reverted to $DEP_OLD"
+                                    else
+                                        echo "   🚧 $MANIFEST_REL: $DEP_NAME $DEP_OLD → $DEP_NEW (publish age $DEP_AGE < ${QUARANTINE_HOURS}h, reverted)"
+                                    fi
+                                    EXTERNAL_REVERTED=$(( EXTERNAL_REVERTED + 1 ))
+                                    QUARANTINED_DEPS="${QUARANTINED_DEPS} ${DEP_NAME}@${DEP_NEW}(${DEP_AGE})"
+                                    ;;
+                                *)
+                                    echo "ERROR: unrecognised quarantine verdict '$VERDICT' for $DEP_NAME in $MANIFEST_REL" >&2
+                                    exit 8
+                                    ;;
+                            esac
+                        done <<< "$VERDICTS"
+                    done <<< "$GATED_MANIFESTS"
+                    rm -rf "$SNAPSHOT_DIR"
+                    while IFS= read -r MANIFEST_PATH; do
+                        [[ -z "$MANIFEST_PATH" ]] && continue
+                        if ! git diff --quiet -- "$MANIFEST_PATH" 2>/dev/null; then
+                            EXTERNAL_BUMPED=1
+                        fi
+                    done <<< "$GATED_MANIFESTS"
                 else
                     echo "ERROR: cargo upgrade failed" >&2
                     exit 4

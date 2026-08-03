@@ -43,8 +43,10 @@ remote, which use an explicit authenticated URL (Issue #1868). Do not reintroduc
 gate verifies the tree, it must not mutate its dependency graph. Bump with
 `./bump-deps.sh`, which age-checks every change to the resolved `Cargo.lock`
 (transitive packages included) against `VIBE_BUMP_QUARANTINE_HOURS` (default
-24h) and pins in-quarantine versions back. Do not reintroduce
-`cargo upgrade` / `cargo update` into `quality.sh`.
+24h) and pins in-quarantine versions back. The same window is enforced on every
+tracked manifest — root and `fuzz/Cargo.toml` — across every dependency table,
+`[build-dependencies]` and `[target.<spec>.*]` included (Issue #1908). Do not
+reintroduce `cargo upgrade` / `cargo update` into `quality.sh`.
 
 `cargo upgrade --incompatible` — which `bump-deps.sh` uses only to *discover*
 candidates — force-bumps dependencies across **major** versions, which can break

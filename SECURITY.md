@@ -32,7 +32,10 @@ already in place:
   `.github/workflows/security.yml` (invoked from `.github/workflows/ci.yml`).
 - **Quarantine window** — Renovate holds external crates.io and GitHub Actions
   updates for 24h after publish (`renovate.json`), and `bump-deps.sh` mirrors
-  the same window locally via `VIBE_BUMP_QUARANTINE_HOURS` (default `24`).
+  the same window locally via `VIBE_BUMP_QUARANTINE_HOURS` (default `24`). The
+  local gate covers the resolved `Cargo.lock` and every dependency table of
+  every tracked manifest — `[build-dependencies]`, `[target.<spec>.*]` and
+  `fuzz/Cargo.toml` included (Issue #1908).
 - **Internal deps** — first-party `stSoftwareAU/*` releases bypass the
   quarantine window.
 
