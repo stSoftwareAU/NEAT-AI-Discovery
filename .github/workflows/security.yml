@@ -92,12 +92,9 @@ jobs:
       uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
       with:
         comment-summary-in-pr: always
-        # thrift ≤ 0.22.0 is affected by GHSA-2f9f-gq7v-9h6m (moderate —
-        # Memory Allocation with Excessive Size Value). The RustSec advisory
-        # database has no patched release; every published version is flagged.
-        # thrift is a transitive dependency of parquet (Apache Arrow Parquet
-        # crate) that encodes the Parquet file-format schema — it cannot be
-        # removed without dropping parquet. Allow this advisory explicitly
-        # and revisit when an upstream patch ships.
-        allow-ghsas: GHSA-2f9f-gq7v-9h6m
+        # No allow-ghsas list: an advisory allowed here is suppressed for every
+        # future PR, including ones where the crate that justified it has left
+        # the graph. The thrift entry proved the hazard — it outlived thrift's
+        # removal from Cargo.lock (Issue #1917). Add an entry only alongside a
+        # matching, live deny.toml ignore.
 
