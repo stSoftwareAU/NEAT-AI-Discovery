@@ -43,9 +43,19 @@ jobs:
       # "no minimum release age is set" — is false here; it fires only
       # because it hardcodes a >=7 day threshold and cannot express the
       # org's 24h standard, so no compliant value exists that also
-      # satisfies the 24h invariant asserted in
-      # tests/issue_1234_quarantine_enforcement.rs. The window is enforced
-      # independently by bump-deps.sh and the Deno P1D floor.
+      # satisfies the 24h invariant.
+      #
+      # What replaces it (Issue #1915): the structural audit in
+      # tests/issue_1234_quarantine_enforcement.rs, which parses
+      # renovate.json rather than substring-matching it —
+      # `renovate_json_configures_minimum_release_age` requires every
+      # packageRule to carry a >=24h window and every covered class
+      # (cargo, github-actions, custom.regex) to be held, while
+      # `zeroing_a_covered_rule_is_detected`,
+      # `lowering_a_window_below_24h_is_detected` and
+      # `a_new_zero_age_rule_outside_the_internal_bypass_is_detected`
+      # pin the failure modes. Only the stSoftwareAU/* bypass rule may
+      # set 0. bump-deps.sh enforces the same window at bump time.
       - run: |
           set -euo pipefail
           semgrep ci --config p/default \
