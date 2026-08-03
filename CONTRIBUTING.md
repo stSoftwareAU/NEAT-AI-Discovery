@@ -38,6 +38,17 @@ This script installs Rust and Cargo if missing (no sudo required), builds the
 library in release mode, installs it to `~/.cargo/lib/` with version tracking,
 and signs it on macOS for FFI compatibility.
 
+The Rust bootstrap goes through `./scripts/install-rustup.sh`, which downloads
+the pinned `rustup-init` binary for the host target and executes it **only**
+when its SHA-256 matches the digest committed in `scripts/rustup-init.sha256`.
+Nothing is ever piped from the network into a shell: a mismatch, a failed
+download, or an unpinned host target aborts non-zero without executing the
+downloaded file (Issue #1911). To bump rustup, change `RUSTUP_VERSION` in
+`scripts/install-rustup.sh` and replace every digest in
+`scripts/rustup-init.sha256` with the corresponding `rustup-init.sha256`
+published by the Rust project for the new version — the two files must move
+together.
+
 ### 🧪 Running Tests
 
 ```bash

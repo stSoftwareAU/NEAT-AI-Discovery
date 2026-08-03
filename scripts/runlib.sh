@@ -91,7 +91,9 @@ _require_tools() {
   # Install Rust (rustup + cargo) if missing
   if ! command -v cargo >/dev/null 2>&1 || ! command -v rustup >/dev/null 2>&1; then
     echo "Installing Rust (rustup + cargo)..." >&2
-    curl --proto "=https" --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+    # Never pipe a network download into a shell: install-rustup.sh verifies the
+    # pinned rustup-init against a committed SHA-256 first (Issue #1911).
+    "$(dirname "${BASH_SOURCE[0]}")/install-rustup.sh" -y >&2
     export PATH="$HOME/.cargo/bin:$PATH"
     # Ensure PATH is set for future invocations
     if [[ -f "$HOME/.bashrc" ]] && ! grep -q "\.cargo/bin" "$HOME/.bashrc" 2>/dev/null; then
