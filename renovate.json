@@ -9,7 +9,10 @@
     "Internal stSoftwareAU/* git deps bypass the wait — they are first-party releases. This repository currently has no internal git deps in Cargo.toml; the rule is kept so future internal deps inherit the bypass automatically.",
     "Renovate is the defence-in-depth layer; bump-deps.sh also enforces the same window when it runs locally or on the per-PR dependency-bump path (the weekly upgrade-dependencies.yml cron was removed in Issue #1282).",
     "Issue #1484: the markdownlint-cli2 npm tool is pinned inline in .github/workflows/markdown-lint.yml (no package.json manifest exists). A customManagers regex entry tracks that pin so Renovate keeps it current, and the npm packageRule below holds bumps for the same 24h quarantine window as every other external dependency.",
-    "Issue #1913: the CI spell-check job installs codespell from .github/requirements/codespell-requirements.txt with pip --require-hashes. The pip_requirements manager below tracks that file (its default file patterns do not cover .github/requirements/), and the pip packageRule holds bumps for the same 24h quarantine window."
+    "Issue #1913: the CI spell-check job installs codespell from .github/requirements/codespell-requirements.txt with pip --require-hashes. The pip_requirements manager below tracks that file (its default file patterns do not cover .github/requirements/), and the pip packageRule holds bumps for the same 24h quarantine window.",
+    "Issue #1916: ORDERING IS LOAD-BEARING. Renovate merges packageRules in array order and the LAST matching rule wins, so the internal stSoftwareAU/* bypass MUST remain the final entry of packageRules — placed earlier, the manager-scoped rules that follow it (cargo, github-actions) silently override it back to 24h. Do not reorder packageRules without re-reading tests/issue_1916_renovate_rule_ordering.rs.",
+    "Issue #1916: source-URL matching uses matchSourceUrls with glob patterns. The predecessor key matchSourceUrlPrefixes was deprecated in favour of matchSourceUrls and removed in Renovate 40 — reintroducing it makes the rule a validation error or a silently non-matching no-op.",
+    "Issue #1916: the renovate-validate workflow runs renovate-config-validator on every PR touching this file, so an invalid or migrated-away key fails CI instead of silently disabling a rule. The renovate CLI pin in that workflow is tracked by the customManager below."
   ],
   "pip_requirements": {
     "managerFilePatterns": [
@@ -28,6 +31,18 @@
       ],
       "datasourceTemplate": "npm",
       "depNameTemplate": "markdownlint-cli2"
+    },
+    {
+      "customType": "regex",
+      "description": "Track the renovate CLI version pinned inline in the renovate-validate workflow (Issue #1916).",
+      "managerFilePatterns": [
+        "/^\\.github/workflows/renovate-validate\\.yml$/"
+      ],
+      "matchStrings": [
+        "renovate@(?<currentValue>\\d+\\.\\d+\\.\\d+)"
+      ],
+      "datasourceTemplate": "npm",
+      "depNameTemplate": "renovate"
     }
   ],
   "packageRules": [
@@ -53,24 +68,17 @@
       "matchManagers": [
         "cargo"
       ],
-      "matchSourceUrlPrefixes": [
-        "https://crates.io/"
+      "matchSourceUrls": [
+        "https://crates.io/**"
       ],
       "minimumReleaseAge": "24h"
     },
     {
-      "description": "Default cargo packages without an explicit source URL still get the quarantine window — minimumReleaseAge applies unless overridden by the rule below.",
+      "description": "Default cargo packages without an explicit source URL still get the quarantine window — minimumReleaseAge applies unless overridden by the internal bypass at the end of this array.",
       "matchManagers": [
         "cargo"
       ],
       "minimumReleaseAge": "24h"
-    },
-    {
-      "description": "Internal stSoftwareAU/* deps bypass the quarantine — first-party releases.",
-      "matchSourceUrlPrefixes": [
-        "https://github.com/stSoftwareAU/"
-      ],
-      "minimumReleaseAge": "0"
     },
     {
       "description": "GitHub Actions: hold for 24h after publish, in addition to commit-SHA pinning (Issue #1216).",
@@ -78,6 +86,13 @@
         "github-actions"
       ],
       "minimumReleaseAge": "24h"
+    },
+    {
+      "description": "Internal stSoftwareAU/* deps bypass the quarantine — first-party releases. MUST STAY LAST: the last matching packageRule wins, so any manager-scoped rule placed after this one would override the bypass back to 24h (Issue #1916).",
+      "matchSourceUrls": [
+        "https://github.com/stSoftwareAU/**"
+      ],
+      "minimumReleaseAge": "0"
     }
   ],
   "vulnerabilityAlerts": {
