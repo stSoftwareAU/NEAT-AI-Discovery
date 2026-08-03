@@ -636,11 +636,32 @@ echo "   dry_run          = $DRY_RUN"
 echo "   no_network       = $NO_NETWORK"
 echo ""
 
+# ── Temp files ────────────────────────────────────────────────────────
+# Every temp path is allocated with mktemp (Issue #1910). Fixed, predictable
+# log names under the shared temp directory collided between concurrent runs
+# on a build host — two of them are read back to decide what to report, so a
+# stale or foreign file yielded a wrong verdict — and a pre-created symlink at
+# a predictable name captured this script's redirects. A single EXIT trap
+# removes them all, on the success and the failure path alike.
+LOCK_BEFORE="$(mktemp)"
+LOCK_AFTER="$(mktemp)"
+UPGRADE_LOG="$(mktemp)"
+CHECK_LOG="$(mktemp)"
+DENY_LOG="$(mktemp)"
+SNAPSHOT_DIR="$(mktemp -d)"
+
+# shellcheck disable=SC2329  # invoked indirectly by the EXIT/INT/TERM trap.
+bump_deps::cleanup_temp_files() {
+    rm -rf -- \
+        "$LOCK_BEFORE" "$LOCK_AFTER" "$UPGRADE_LOG" "$CHECK_LOG" "$DENY_LOG" \
+        "$SNAPSHOT_DIR"
+}
+trap bump_deps::cleanup_temp_files EXIT INT TERM
+
 # Snapshot the resolved graph BEFORE any mutation so phase 3 can age-check
 # every lockfile change — including transitive packages the manifest gate
 # never sees (Issue #1865).
 CARGO_LOCK="$PROJECT_ROOT/Cargo.lock"
-LOCK_BEFORE="$(mktemp)"
 bump_deps::extract_lock_versions "$CARGO_LOCK" > "$LOCK_BEFORE"
 
 # Phase 1: internal deps.
@@ -700,7 +721,6 @@ if [[ -f "$CARGO_MANIFEST" ]]; then
                 # Snapshot EVERY tracked manifest — root and fuzz/ alike — so
                 # we can identify which deps the upgrade actually changed
                 # (Issues #1234, #1908).
-                SNAPSHOT_DIR="$(mktemp -d)"
                 while IFS= read -r MANIFEST_PATH; do
                     [[ -z "$MANIFEST_PATH" ]] && continue
                     bump_deps::extract_dep_versions "$MANIFEST_PATH" \
@@ -711,7 +731,7 @@ if [[ -f "$CARGO_MANIFEST" ]]; then
                 # higher-risk and require a human review; raise a manual PR
                 # for those — the weekly upgrade-dependencies.yml workflow
                 # was removed in Issue #1282).
-                if cargo upgrade --compatible 2>&1 | tee /tmp/bump-deps-upgrade.log; then
+                if cargo upgrade --compatible 2>&1 | tee "$UPGRADE_LOG"; then
                     # Quarantine gate (Issue #1234): for each newly-bumped
                     # version, query crates.io for its publish time and
                     # revert any bump that is younger than the configured
@@ -756,7 +776,6 @@ if [[ -f "$CARGO_MANIFEST" ]]; then
                             esac
                         done <<< "$VERDICTS"
                     done <<< "$GATED_MANIFESTS"
-                    rm -rf "$SNAPSHOT_DIR"
                     while IFS= read -r MANIFEST_PATH; do
                         [[ -z "$MANIFEST_PATH" ]] && continue
                         if ! git diff --quiet -- "$MANIFEST_PATH" 2>/dev/null; then
@@ -796,7 +815,6 @@ elif [[ "$DRY_RUN" -eq 0 && -f "$CARGO_MANIFEST" ]]; then
     # compromises pivoted through. Diff the lockfile against the pre-bump
     # snapshot and pin every in-quarantine change back with --precise.
     echo "🛡️  Lockfile quarantine gate (window=${QUARANTINE_HOURS}h)…"
-    LOCK_AFTER="$(mktemp)"
     bump_deps::extract_lock_versions "$CARGO_LOCK" > "$LOCK_AFTER"
     LOCK_NOW_HOURS=$(( $(bump_deps::current_epoch) / 3600 ))
     LOCK_PLAN="$(bump_deps::plan_lock_quarantine "$LOCK_BEFORE" "$LOCK_AFTER" "$LOCK_NOW_HOURS" "$QUARANTINE_HOURS")"
@@ -836,7 +854,6 @@ elif [[ "$DRY_RUN" -eq 0 && -f "$CARGO_MANIFEST" ]]; then
     # in-quarantine package survived (absence of an error is not a pass).
     bump_deps::extract_lock_versions "$CARGO_LOCK" > "$LOCK_AFTER"
     LOCK_RECHECK="$(bump_deps::plan_lock_quarantine "$LOCK_BEFORE" "$LOCK_AFTER" "$LOCK_NOW_HOURS" "$QUARANTINE_HOURS")"
-    rm -f "$LOCK_AFTER"
     if [[ -n "$LOCK_RECHECK" ]]; then
         echo "ERROR: lockfile still contains in-quarantine packages after pinning:" >&2
         echo "$LOCK_RECHECK" >&2
@@ -847,9 +864,9 @@ elif [[ "$DRY_RUN" -eq 0 && -f "$CARGO_MANIFEST" ]]; then
 
     # Phase 3b: lockfile integrity — registry hashes must match.
     echo "🔐 Verifying lockfile integrity (cargo check --locked)…"
-    if ! cargo check --locked --quiet >/tmp/bump-deps-check.log 2>&1; then
+    if ! cargo check --locked --quiet >"$CHECK_LOG" 2>&1; then
         echo "ERROR: lockfile integrity check failed — registry hashes do not match Cargo.lock" >&2
-        tail -40 /tmp/bump-deps-check.log >&2 || true
+        tail -40 "$CHECK_LOG" >&2 || true
         exit 6
     fi
     echo "   lockfile OK"
@@ -863,8 +880,8 @@ if [[ "$DRY_RUN" -eq 0 ]]; then
         exit 9
     fi
     echo "📜 Running audit gate (cargo deny check)…"
-    if ! cargo deny check 2>&1 | tee /tmp/bump-deps-deny.log; then
-        OFFENDER="$(grep -oE '[a-zA-Z0-9_-]+ v[0-9][^ ]*' /tmp/bump-deps-deny.log | head -1 || true)"
+    if ! cargo deny check 2>&1 | tee "$DENY_LOG"; then
+        OFFENDER="$(grep -oE '[a-zA-Z0-9_-]+ v[0-9][^ ]*' "$DENY_LOG" | head -1 || true)"
         if [[ -n "$OFFENDER" ]]; then
             echo "ERROR: audit gate failed (offending crate: $OFFENDER)" >&2
         else
@@ -876,8 +893,7 @@ if [[ "$DRY_RUN" -eq 0 ]]; then
     echo ""
 fi
 
-# Phase 5: summary.
-rm -f "$LOCK_BEFORE"
+# Phase 5: summary. Temp files are removed by the EXIT trap.
 if [[ "$EXTERNAL_BUMPED" -eq 1 || "$INTERNAL_COUNT" -gt 0 ]]; then
     if [[ "$DRY_RUN" -eq 1 ]]; then
         echo "✅ bump-deps: would bump (internal=$INTERNAL_COUNT external=$EXTERNAL_BUMPED, dry-run)"
