@@ -205,14 +205,50 @@ fn shutdown_sequence_home_is_ffi_api() {
     );
 }
 
+/// `FFI_API` is the `droughtDiagnostic` field-schema home. Issue #1937: the
+/// documented schema must match what `DroughtDiagnostic` actually serialises —
+/// it previously listed six `FailureAggregates` fields that no code can emit.
 #[test]
 fn drought_diagnostic_schema_home_is_ffi_api() {
-    // FFI_API is the field-schema home and must be complete (previously-missing
-    // dominant-failure fields folded in).
-    assert!(
-        FFI_API.contains("dominantFailedModule") && FFI_API.contains("predictedVsActualGapP50"),
-        "FFI_API.md must document the full droughtDiagnostic field schema"
-    );
+    let diagnostic = neat_ai_discovery::analysis::drought_diagnostic::DroughtDiagnostic {
+        consecutive_failures: 7,
+        rolling_success_rate: 0.0,
+        discovery_mode: neat_ai_discovery::analysis::discovery_mode::DiscoveryMode::Conservative,
+        target_cooldown_active_count: 3,
+        target_cooldown_skipped: 5,
+        dominant_rejection_reason: Some("no_eligible_sources".to_string()),
+        dominant_rejection_count: 17,
+        total_candidates_considered: 124,
+        total_candidates_rejected: 124,
+    };
+    let wire = serde_json::to_value(&diagnostic).expect("DroughtDiagnostic must serialise");
+    let keys = wire
+        .as_object()
+        .expect("DroughtDiagnostic serialises as an object");
+
+    // Every emitted key is documented.
+    for key in keys.keys() {
+        assert!(
+            FFI_API.contains(key.as_str()),
+            "FFI_API.md must document droughtDiagnostic field `{key}`"
+        );
+    }
+
+    // ...and no field the type cannot emit is documented as if it could.
+    for unemittable in [
+        "dominantFailedModule",
+        "dominantFailedModuleShare",
+        "dominantFailedTargetUuid",
+        "dominantFailedTargetShare",
+        "dominantOperationCount",
+        "predictedVsActualGapP50",
+    ] {
+        assert!(
+            !FFI_API.contains(&format!("| `{unemittable}` |")),
+            "FFI_API.md must not document `{unemittable}` — DroughtDiagnostic cannot emit it"
+        );
+    }
+
     assert!(
         DROUGHT_PLAYBOOK.contains("FFI_API.md#drought-diagnostic-metadata-issue-1202"),
         "DROUGHT_PLAYBOOK.md must link to the FFI_API droughtDiagnostic schema home"

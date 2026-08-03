@@ -9,7 +9,8 @@ and streaming recording API for NEAT-AI-Discovery. For a high-level overview, se
 ## 📦 Exported Symbols
 
 The library exposes a Deno FFI-friendly symbol set. The authoritative list of exported
-symbols lives in `src/lib.rs` as `#[no_mangle] pub extern "C"` functions.
+symbols lives under `src/ffi/` (`mod.rs`, `analysis.rs`, `gpu.rs`, `recording.rs`,
+`utilities.rs`) as `#[unsafe(no_mangle)] pub extern "C"` functions.
 
 The most commonly used entry points are:
 
@@ -108,27 +109,27 @@ const totalBytes = rustBytes + BigInt(v8Bytes);
 The `analyze_parallel` input accepts additional parameters to control resource
 usage and candidate selection behaviour:
 
-### Memory Budget (`max_analysis_memory_mb`)
+### Memory Budget (`maxAnalysisMemoryMb`)
 
 Limits the Rust-side memory consumption during the analysis phase. When the
 allocated memory exceeds the budget, analysis returns early with
-`memory_budget_exceeded: true` in the output. For guidance on how this
+`memoryBudgetExceeded: true` in the output. For guidance on how this
 interacts with cache tier selection, see
 [CACHE_TUNING.md](CACHE_TUNING.md).
 
-- **Field**: `max_analysis_memory_mb` (optional `u64`)
+- **Field**: `maxAnalysisMemoryMb` (optional `u64`)
 - **Default**: no limit
 - **Checkpoints**: before GPU work submission and after parquet loading
-- **Output field**: `memory_budget_exceeded` (`bool`) — `true` if analysis
+- **Output field**: `memoryBudgetExceeded` (`bool`) — `true` if analysis
   aborted due to exceeding the budget
 
-### Analysis Deadline (`analysis_deadline_ms`)
+### Analysis Deadline (`analysisDeadlineMs`)
 
 Sets a wall-clock deadline for the analysis phase. Detection modules abort
 early when the deadline is reached, returning whatever candidates have been
 found so far. Coverage improves over repeated runs.
 
-- **Field**: `analysis_deadline_ms` (optional `u64`)
+- **Field**: `analysisDeadlineMs` (optional `u64`)
 - **Default**: no deadline
 - **Behaviour**: deadline is passed to the record cache and detection dispatch
 
@@ -190,7 +191,7 @@ When `NEAT_AI_DISCOVERY_MH_TEMPERATURE` is also set, Metropolis-Hastings
 probabilistic acceptance is applied to synapse candidates, allowing
 occasionally weaker candidates through to maintain search diversity.
 
-### Phase Gating (`includeSynapseAnalysis` / `includeNeuronAnalysis`)
+### Phase Gating (`includeSynapseAnalysis` / `includeNeuronAnalysis`, Issue #1937)
 
 `analyze_parallel` runs two independent analysis phases — synapse discovery and
 neuron discovery. Each phase can be switched off so a caller can run
@@ -414,10 +415,12 @@ suitable GPU, controllers must disable discovery entirely.
   ```json
   {
     "success": true,
-    "gpuAvailable": true,
-    "reason": null
+    "gpuAvailable": true
   }
   ```
+
+  `reason` is `skip_serializing_if = "Option::is_none"`, so on the success
+  path the key is **absent** — never `null`.
 
   When GPU is unavailable (Issue #1419):
 
@@ -622,12 +625,13 @@ per `analyze_all` invocation when the diagnostic fires.
 | `dominantRejectionCount` | Count for `dominantRejectionReason`. |
 | `totalCandidatesConsidered` | `totalCandidatesRejected + candidatesReturned`. |
 | `totalCandidatesRejected` | Sum across the rejection breakdown. |
-| `dominantFailedModule` | Discovery module responsible for the most recent failures (e.g. `"coordinated-structural"`). `null` until ≥ 5 failures are recorded. |
-| `dominantFailedModuleShare` | Share (0.0–1.0) of recent failures attributed to `dominantFailedModule`. |
-| `dominantFailedTargetUuid` | Target neuron UUID absorbing the most recent failures. `null` until ≥ 5 failures are recorded. |
-| `dominantFailedTargetShare` | Share (0.0–1.0) of recent failures targeting `dominantFailedTargetUuid`. |
-| `dominantOperationCount` | Most common operation count among recent failures (e.g. `4` for 4-op coordinated-structural collapses). `null` until ≥ 5 failures are recorded. |
-| `predictedVsActualGapP50` | Median ratio of `actualErrorReduction / expectedCreatureScoreGain` over the recent-failure window; negative means candidates moved error the wrong way. `0.0` when the window is below the 5-failure floor or every prediction was zero. |
+
+The nine fields above are the **complete** `droughtDiagnostic` schema — no
+other key is ever emitted. In particular, the recent-failure aggregates
+(`FailureAggregates` in `src/analysis/recent_failure_window.rs`) are computed
+by an internal module that is not yet wired into any response, so no
+dominant-failure module / target / operation-count field reaches the wire
+(Issue #1937).
 
 ### Failure-Cache Handshake (Issue #1447)
 
@@ -1070,8 +1074,7 @@ drought streak, so the outcome is visible in logs as well as in the response.
     "environmentalGates": {
       "memoryBudgetExceeded": false,
       "memoryPressureCancelled": false,
-      "cancelled": false,
-      "environmentallyDisabled": null
+      "cancelled": false
     },
     "starvationClass": "candidateStarved",
     "generationSignals": {

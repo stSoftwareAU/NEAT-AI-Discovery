@@ -73,10 +73,12 @@ Everything in this repository serves that objective:
    - Installs it to `~/.cargo/lib/` with version tracking
    - Signs it on macOS for FFI compatibility
 
-   **From NEAT-AI directory**, you can call this script directly:
+   **From the NEAT-AI directory**, run it in a subshell that changes into this
+   crate's root first — the script reads `Cargo.toml` from the current working
+   directory and aborts if it is not there:
 
    ```bash
-   ../NEAT-AI-Discovery/scripts/runlib.sh
+   (cd ../NEAT-AI-Discovery && ./scripts/runlib.sh)
    ```
 
 3. Confirm the artefact exists at `~/.cargo/lib/libneat_ai_discovery.*`.
@@ -438,11 +440,11 @@ rustup toolchain install nightly
 # Run with a custom duration (60s per target)
 ./scripts/fuzz-ci.sh 60
 
-# Run a specific target directly
-cargo +nightly fuzz run fuzz_ffi_deserialisation -- -max_total_time=60
+# Run a specific target directly (--locked honours the committed fuzz/Cargo.lock)
+cargo +nightly fuzz run --locked fuzz_ffi_deserialisation -- -max_total_time=60
 
 # Run with a maximum input length of 4096 bytes
-cargo +nightly fuzz run fuzz_ffi_entry_points -- -max_total_time=60 -max_len=4096
+cargo +nightly fuzz run --locked fuzz_ffi_entry_points -- -max_total_time=60 -max_len=4096
 
 # List all available fuzz targets
 cargo +nightly fuzz list

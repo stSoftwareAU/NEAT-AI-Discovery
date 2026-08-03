@@ -8,6 +8,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+#### `analyze_parallel` honours the documented phase gating (Issue #1937)
+
+`docs/FFI_API.md` documented `includeSynapseAnalysis` / `includeNeuronAnalysis`
+on `analyze_parallel`, but `AnalyzeParallelInput` had no such fields and the
+conversion to `AnalyzeAllInput` hard-coded both to `Some(true)` — serde dropped
+the caller's choice silently. Both fields are now on the FFI request type and
+forwarded to the orchestrator, so a caller can genuinely run neuron-only or
+synapse-only discovery. Absent still means "run the phase", so existing callers
+are unaffected.
+
+The same audit corrected four documentation defects in `docs/FFI_API.md`: six
+`droughtDiagnostic` rows describing `FailureAggregates` fields no code can emit
+were removed, `max_analysis_memory_mb` / `analysis_deadline_ms` were respelt to
+their actual camelCase wire names, examples no longer show `null` for
+`skip_serializing_if` fields that are simply absent, and the exported-symbol
+list now points at `src/ffi/` rather than `src/lib.rs`.
+
 #### `remove-low-impact` ranks on a live activation-weighted signal (Issue #1923)
 
 The structural removal path built every candidate with `mean_activation: 0.0`

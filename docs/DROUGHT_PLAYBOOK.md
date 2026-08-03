@@ -1,16 +1,15 @@
 # Discovery Drought Playbook
 
-When NEAT-AI-Discovery reports "no successful candidates for a while", four
-suppression layers interact: the candidate outcome cache, the per-target
-cooldown tracker, conservative-mode module bias, and post-processing rejection
-filters. This playbook explains how to diagnose and respond without reading
-source.
+When NEAT-AI-Discovery reports "no successful candidates for a while", three
+suppression layers interact: the per-target cooldown tracker, conservative-mode
+module bias, and post-processing rejection filters. This playbook explains how
+to diagnose and respond without reading source.
 
 It is the operator companion to:
 
 - Issue #1132 — creature-level discovery mode (Normal / Conservative).
 - Issue #1130 — target cooldown tracker.
-- Issue #465 — candidate outcome cache and source-type stats.
+- Issue #1204 — adaptive target-cooldown relaxation.
 - Issue #1202 — drought diagnostic (`droughtDiagnostic`).
 - Issue #1205 — operator escape hatch (forced reset).
 - Issue #1274 — dominant-failure-pattern enrichment of the diagnostic.
@@ -29,6 +28,7 @@ INFO Issue #1422: effective drought-mitigation config
     low_success_rate_threshold=0.2 conservative_mode_max_epochs=20
     conservative_gain_multiplier=10 target_cooldown_failures=3
     target_cooldown_epochs=10 drought_alarm_epochs="100"
+    remove_neuron_drought_factor=0.1
 ```
 
 `drought_reset_after_epochs` renders as `"disabled"` when the operator has set
@@ -166,9 +166,8 @@ per-target / per-module failure. The Rust helpers enforce this:
 
 - `DiscoveryOutcomeLog::record_outcome` skips gated passes (bumping the
   `environmentallyDisabledPasses` counter instead of the trailing streak).
-- `TargetFailureTracker::record_failure_unless_disabled` and
-  `ModuleStarvationTracker::record_failure_unless_disabled` no-op on a gated
-  pass and return `false`.
+- `TargetFailureTracker::record_failure_unless_disabled` no-ops on a gated pass
+  and returns `false`.
 
 Repeated `environmentallyDisabled` passes point at the **host**, not the
 creature — chase the memory-gate / GPU-fallback follow-ups, not the drought
@@ -243,7 +242,7 @@ the table below adds the **operator lever to investigate** for each field.
 | `targetCooldownSkipped` | If 0 with a large `targetCooldownActiveCount`, the focus set never included those targets — pre-screening is filtering before cooldown. |
 | `dominantRejectionReason` | Each reason maps to a different mechanism: see the table below. |
 | `dominantRejectionCount` | Compare to `totalCandidatesRejected` to gauge how dominant it is. |
-| `totalCandidatesConsidered` | If 0, no candidates reached post-processing — the cache and cooldown ate them. Reach for `DROUGHT_RESET_AFTER_EPOCHS`. |
+| `totalCandidatesConsidered` | If 0, no candidates reached post-processing — the target cooldown and the host's own failure cache ate them. Reach for `DROUGHT_RESET_AFTER_EPOCHS`. |
 | `totalCandidatesRejected` | High counts with `totalCandidatesConsidered == totalCandidatesRejected` mean every candidate failed a filter — read `dominantRejectionReason` first. |
 | `dominantFailedModule` | If one module dominates, its scoring / gain-floor settings are the first lever (e.g. `NEAT_AI_DISCOVERY_CONSERVATIVE_GAIN_MULTIPLIER` for coordinated-structural). |
 | `dominantFailedModuleShare` | A share > 0.8 means the pipeline is essentially failing on one module — investigate that module's recommendation logic. |
@@ -298,8 +297,9 @@ Notes:
   rate alone, so Extended Drought keeps the full module set.
 - After Extended Drought reverts to Normal, the **operator escape hatch**
   (Issue #1205, env var `NEAT_AI_DISCOVERY_DROUGHT_RESET_AFTER_EPOCHS`) can
-  clear failed cache entries and active cooldowns in one shot. A successful
-  pass re-arms the lever.
+  clear every active target cooldown in one shot. That tracker is its only
+  clearable input — the candidate-cache half of the reset went with the cache
+  itself (#1792). A successful pass re-arms the lever.
 - **A reset that clears nothing is a no-op, not a success (Issue #1794).** When
   the escape hatch fires with no active cooldowns to flush it logs at `error!`
   — `drought escape hatch fired as a NO-OP` — with `noop=true` and
@@ -318,10 +318,46 @@ Notes:
       D --> E[No tombstone — lever stays armed for the streak]
   ```
 
-- Adaptive target-cooldown relaxation is tracked under **Issue #1204** and is
-  not yet shipped. Until it lands the target cooldown thresholds remain
-  static (`TARGET_COOLDOWN_FAILURES`, `TARGET_COOLDOWN_EPOCHS`); the operator
-  reset path covers the worst case.
+- **A poisoned mutex must not silently skip the reset (Issue #1875).**
+  `if let Ok(guard) = …lock()` with no `else` arm is the same silent no-op in a
+  different disguise: a panic anywhere else in the process poisons
+  `global_tracker()`, and from then on `maybe_perform_drought_reset` /
+  `rearm_drought_reset` are skipped and the drought diagnostic degrades to "no
+  tracker" — with **zero log output**. Every lock on the target-failure tracker
+  therefore recovers the poison rather than dropping the work:
+
+  ```rust
+  let mut tracker = global_tracker()
+      .lock()
+      .unwrap_or_else(std::sync::PoisonError::into_inner);
+  ```
+
+  This is safe **because of what the lock guards**: counters mutated by
+  infallible HashMap and arithmetic operations, so a poisoned guard is still
+  internally consistent. The convention applies to counter-only shared state
+  (the tracker, `advance_global_epoch`, both `apply_target_cooldown` sites, the
+  drought-reset call sites and the diagnostic snapshot). It does **not**
+  generalise to state whose invariant can be left half-updated by a panic
+  mid-mutation — there, recovering the poison would hide real corruption.
+
+- **Adaptive target-cooldown relaxation has shipped (Issue #1204).** Both
+  cooldown thresholds now move with the regime, so a target parked by a failure
+  streak returns to the focus list sooner the deeper the drought runs:
+
+  | Regime | Cooldown window | Consecutive-failure trigger |
+  |--------|-----------------|-----------------------------|
+  | Normal | `TARGET_COOLDOWN_EPOCHS` | `TARGET_COOLDOWN_FAILURES` |
+  | Conservative | ÷ `COOLDOWN_CONSERVATIVE_DIVISOR` (default 2) | + 1 |
+  | Extended Drought | ÷ `COOLDOWN_EXTENDED_DROUGHT_DIVISOR` (default 4) | + 2 |
+
+  The effective window never falls below a floor of 2 epochs, and the extended
+  divisor applies on streak length alone — it does not require the mode still to
+  be Conservative. See `TargetFailureTracker::effective_cooldown_epochs` /
+  `::effective_consecutive_failures`
+  (`src/analysis/target_failure_tracker.rs`), the constants in
+  `src/analysis/constants/detection_thresholds.rs`, and the two env overrides in
+  the Operator Levers table below. The operator reset path still covers the
+  worst case.
 
 ## Operator Levers
 
@@ -335,12 +371,14 @@ operator's "when to change" guidance so the two cannot drift apart.
 | Env var | When to change |
 |---------|----------------|
 | `NEAT_AI_DISCOVERY_DROUGHT_LOG_THRESHOLD` | Lower to surface droughts earlier in noisy environments; raise to suppress the warn log when short droughts are expected. |
-| `NEAT_AI_DISCOVERY_DROUGHT_RESET_AFTER_EPOCHS` | The operator escape hatch is **armed by default** (Issue #1422) so the one-shot cache + cooldown reset fires without operator action during a sustained drought. Lower (e.g. 30) to intervene sooner, or set to `0` to deliberately disable and intervene manually. |
+| `NEAT_AI_DISCOVERY_DROUGHT_RESET_AFTER_EPOCHS` | The operator escape hatch is **armed by default** (Issue #1422) so the one-shot target-cooldown reset fires without operator action during a sustained drought. Lower (e.g. 30) to intervene sooner, or set to `0` to deliberately disable and intervene manually. |
 | `NEAT_AI_DISCOVERY_LOW_SUCCESS_RATE_THRESHOLD` | Raise to enter Conservative mode earlier (e.g. 0.3 if 30 % success is too low for this workload). Values outside the range are ignored. |
 | `NEAT_AI_DISCOVERY_CONSERVATIVE_MODE_MAX_EPOCHS` | Lower to revert to Normal sooner when bias is not helping; raise to give Conservative mode more time before it gives up. This governs the **risk bias only** — the discovery module set stays escalated for the whole drought (Issue #1803). |
 | `NEAT_AI_DISCOVERY_CONSERVATIVE_GAIN_MULTIPLIER` | Lower (e.g. 3.0) when 10× is starving the pipeline of coordinated-structural candidates. The floor never relaxes below the base constant. |
 | `NEAT_AI_DISCOVERY_TARGET_COOLDOWN_FAILURES` | Raise to make the cooldown less aggressive when many targets are in cooldown simultaneously. |
-| `NEAT_AI_DISCOVERY_TARGET_COOLDOWN_EPOCHS` | Lower to free targets faster after a failure streak. |
+| `NEAT_AI_DISCOVERY_TARGET_COOLDOWN_EPOCHS` | Lower to free targets faster after a failure streak. This is the **Normal-mode** base — Conservative and Extended Drought divide it by the two divisors below (Issue #1204). |
+| `NEAT_AI_DISCOVERY_COOLDOWN_CONSERVATIVE_DIVISOR` | Raise to free targets faster once Conservative mode engages; leave at `1` to keep the Normal-mode window through the whole drought. |
+| `NEAT_AI_DISCOVERY_COOLDOWN_EXTENDED_DROUGHT_DIVISOR` | Raise for a more aggressive last-ditch relaxation once the streak passes `CONSERVATIVE_MODE_MAX_EPOCHS`, before reaching for the operator reset. The effective window is floored at 2 epochs, so values past that point change nothing. |
 | `NEAT_AI_DISCOVERY_MH_TEMPERATURE` | Raise to accept lower-gain candidates during a drought, lower to be stricter. Values outside the range are ignored with a warn log. |
 | `NEAT_AI_DISCOVERY_MODULE_TIERING_HIDDEN_THRESHOLD` | Hidden-neuron count above which **expensive**-tier discovery modules are skipped at dispatch on non-escalation passes (Issue #1547). Lower it to tier out sooner on mid-size creatures; set `0` to always run every module. Skipping is suppressed whenever the rolling success rate is below `LOW_SUCCESS_RATE_THRESHOLD`, so the full set is re-enabled for the whole drought — including Extended Drought, after the Conservative bias has reverted (Issue #1803). |
 

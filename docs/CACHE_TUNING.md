@@ -310,10 +310,10 @@ export NEAT_AI_DISCOVERY_PREFETCH_DEPTH=1
 ### Large Dataset (multi-GB Parquet files)
 
 ```bash
-# Force streaming mode if automatic detection is not aggressive enough
-# The cache will automatically select Streaming for files that exceed RAM,
-# but you can disable preload explicitly:
-export NEAT_AI_DISCOVERY_PRELOAD_ALL=0
+# There is no environment variable to force Streaming — the cache selects it
+# automatically for files that exceed RAM. Just leave
+# NEAT_AI_DISCOVERY_PRELOAD_ALL unset (setting it to 0 is a no-op; only 1,
+# true, or yes are truthy, and they force PreloadAll rather than Streaming).
 
 # Increase prefetch depth for sequential access patterns
 export NEAT_AI_DISCOVERY_PREFETCH_DEPTH=4

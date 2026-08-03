@@ -536,8 +536,10 @@ pub(crate) fn build_analyze_all_input_from_parallel(
         max_synapse_candidates: input.max_synapse_candidates,
         max_neuron_candidates: input.max_neuron_candidates,
         analysis_deadline_ms: input.analysis_deadline_ms,
-        include_synapse_analysis: Some(true),
-        include_neuron_analysis: Some(true),
+        // Issue #1937: honour the caller's phase gating instead of forcing
+        // both phases on. `None` still means "run it" downstream.
+        include_synapse_analysis: input.include_synapse_analysis,
+        include_neuron_analysis: input.include_neuron_analysis,
         random_seed: input.random_seed,
         previous_neuron_fingerprints: input.previous_neuron_fingerprints,
         module_outcome_tracker: input.module_outcome_tracker,
@@ -993,5 +995,81 @@ mod failure_cache_handshake_wiring_tests {
         let _syn_map = breakdown_with_failure_cache(&synapse, 3);
         let _neu_map = breakdown_with_failure_cache(&neuron, 2);
         assert_eq!(combined.total(), 9);
+    }
+}
+
+#[cfg(test)]
+mod phase_gating_wiring_tests {
+    //! `analyze_parallel` phase gating reaches the orchestrator (Issue #1937).
+    //!
+    //! `docs/FFI_API.md` documents `includeSynapseAnalysis` /
+    //! `includeNeuronAnalysis` on the `analyze_parallel` request. The FFI
+    //! payload previously lacked both fields and the conversion hard-coded
+    //! `Some(true)`, so serde silently dropped the caller's choice.
+
+    use super::*;
+
+    /// Minimal well-formed `analyze_parallel` payload with the caller's
+    /// phase-gating keys spliced in verbatim.
+    fn payload(gating: &str) -> String {
+        format!(
+            r#"{{
+                "parquetFile": "/tmp/does-not-need-to-exist.parquet",
+                "creature": {{
+                    "neurons": [
+                        {{ "uuid": "hidden-0", "type": "hidden", "squash": "IDENTITY" }}
+                    ],
+                    "synapses": [],
+                    "input": 1,
+                    "output": 1
+                }},
+                "focusNeurons": ["hidden-0"]{gating}
+            }}"#
+        )
+    }
+
+    fn convert(gating: &str) -> AnalyzeAllInput {
+        let input: AnalyzeParallelInput = serde_json::from_str(&payload(gating))
+            .expect("payload must deserialise as AnalyzeParallelInput");
+        build_analyze_all_input_from_parallel(input)
+    }
+
+    #[test]
+    fn neuron_phase_can_be_disabled_by_the_caller() {
+        let converted = convert(r#", "includeNeuronAnalysis": false"#);
+        assert_eq!(converted.include_neuron_analysis, Some(false));
+        assert_eq!(converted.include_synapse_analysis, None);
+    }
+
+    #[test]
+    fn synapse_phase_can_be_disabled_by_the_caller() {
+        let converted = convert(r#", "includeSynapseAnalysis": false"#);
+        assert_eq!(converted.include_synapse_analysis, Some(false));
+        assert_eq!(converted.include_neuron_analysis, None);
+    }
+
+    #[test]
+    fn both_phases_can_be_disabled_together() {
+        let converted =
+            convert(r#", "includeSynapseAnalysis": false, "includeNeuronAnalysis": false"#);
+        assert_eq!(converted.include_synapse_analysis, Some(false));
+        assert_eq!(converted.include_neuron_analysis, Some(false));
+    }
+
+    #[test]
+    fn explicit_true_is_preserved() {
+        let converted =
+            convert(r#", "includeSynapseAnalysis": true, "includeNeuronAnalysis": true"#);
+        assert_eq!(converted.include_synapse_analysis, Some(true));
+        assert_eq!(converted.include_neuron_analysis, Some(true));
+    }
+
+    /// Omitting both keys leaves them `None`, which the orchestrator reads as
+    /// `true` — the documented default keeps existing callers unchanged.
+    #[test]
+    fn absent_fields_default_to_running_both_phases() {
+        let converted = convert("");
+        assert_eq!(converted.include_synapse_analysis, None);
+        assert_eq!(converted.include_neuron_analysis, None);
     }
 }

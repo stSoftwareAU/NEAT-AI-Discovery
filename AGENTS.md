@@ -69,6 +69,41 @@ it manually (e.g. `0.43.8` → `0.43.9`). Confirm the loaded version with
 
 ---
 
+## Dead Levers — Delete the Component *and* Its Config Surface
+
+**An operator lever that silently does nothing is worse than no lever** — it is
+logged at startup, documented, and tuned during an incident, and changes
+nothing. The rule, applied three times running (Issues #1792, #1793, #1818):
+
+1. **Delete a never-constructed component unless a concrete writer can be
+   named** — an existing inbound surface carrying the data the component is
+   keyed on, not "could be wired one day".
+2. **Delete its config surface in the same change** — constants, env reads,
+   config fields, the startup `info!` line, and the `docs/CONFIGURATION.md` /
+   `docs/DROUGHT_PLAYBOOK.md` rows. #1792 deleted `CandidateOutcomeCache` but
+   left its staleness env vars read, logged and documented while controlling
+   nothing, so #1818 had to delete the same failure mode a second time.
+3. **More suppression is the wrong direction** — the pipeline already
+   *over*-suppresses (`docs/analysis/candidate-rate-diagnosis-1777.md`).
+
+**Do not re-add these** (the negative result behind #1792/#1793/#1818): the only
+inbound per-candidate history is the caller-supplied `failureCache` — failures
+only, no `source_uuid` — so nothing can key a
+`(source_uuid, target_uuid, operation_type)` cache or a staleness window off it,
+and a process-global alternative leaks per-creature suppression between
+creatures. `ModuleOutcomeTracker` already covers what `ModuleStarvationTracker`
+was meant to do. `src/analysis/candidate_starvation.rs` is a **different, live**
+component, untouched by this note.
+
+**Mermaid: never use a bare `;` in unquoted note or message text**
+(Issue #1817) — Mermaid parses it as a statement separator, so a `Note over A,B:`
+containing one breaks the diagram. Use a comma. The enforcing gate lives outside
+this repo (the worker's `mermaid_validator.ts`), so `./quality.sh` cannot catch
+it locally, and this repo carries ~30 Mermaid blocks. HTML entities (`&gt;`,
+`&le;`) and a `;` inside a quoted label are fine.
+
+---
+
 ## Key Invariants — Must Not Be Violated
 
 ### Forward-only Activation Order

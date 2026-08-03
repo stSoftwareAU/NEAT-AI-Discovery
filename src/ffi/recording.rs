@@ -213,7 +213,7 @@ pub unsafe extern "C" fn start_discovery_session(
 ///   "observations": [
 ///     {
 ///       "obsIndex": 0,
-///       "neuronData": [{ "neuronUuid": "...", "activation": 0.5, "value": 0.4, "errors": [0.1] }],
+///       "neuronData": [{ "neuron_uuid": "...", "activation": 0.5, "value": 0.4, "errors": [0.1] }],
 ///       "inputs": [0.1, 0.2, 0.3]
 ///     }
 ///   ]
