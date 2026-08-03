@@ -43,8 +43,11 @@ jobs:
     - name: Install nightly toolchain
       run: rustup install nightly
 
+    # Pinned with --locked and --version so a poisoned cargo-fuzz release (or any
+    # transitive dependency) cannot execute its build.rs with this workflow's
+    # GITHUB_TOKEN (Issue #1223, extended repo-wide by Issue #1912).
     - name: Install cargo-fuzz
-      run: cargo +nightly install cargo-fuzz
+      run: cargo +nightly install --locked --version 0.13.2 cargo-fuzz
 
     - name: Cache dependencies
       uses: actions/cache@v4

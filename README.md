@@ -417,8 +417,10 @@ production.
 **Prerequisites:**
 
 ```bash
-# Install cargo-fuzz (one-time setup)
-cargo install cargo-fuzz
+# Install cargo-fuzz (one-time setup). Pinned with --locked and an explicit
+# --version so a poisoned release — of cargo-fuzz or any transitive dependency —
+# cannot run its build.rs on your machine (Issue #1223, #1912).
+cargo install --locked --version 0.13.2 cargo-fuzz
 
 # Ensure the nightly toolchain is available
 rustup toolchain install nightly
