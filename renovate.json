@@ -8,8 +8,14 @@
     "External crates.io dependencies are held for at least 24h after publish to dodge fast-flagged supply-chain attacks; internal first-party (stSoftwareAU/*) deps are exempt.",
     "Internal stSoftwareAU/* git deps bypass the wait — they are first-party releases. This repository currently has no internal git deps in Cargo.toml; the rule is kept so future internal deps inherit the bypass automatically.",
     "Renovate is the defence-in-depth layer; bump-deps.sh also enforces the same window when it runs locally or on the per-PR dependency-bump path (the weekly upgrade-dependencies.yml cron was removed in Issue #1282).",
-    "Issue #1484: the markdownlint-cli2 npm tool is pinned inline in .github/workflows/markdown-lint.yml (no package.json manifest exists). A customManagers regex entry tracks that pin so Renovate keeps it current, and the npm packageRule below holds bumps for the same 24h quarantine window as every other external dependency."
+    "Issue #1484: the markdownlint-cli2 npm tool is pinned inline in .github/workflows/markdown-lint.yml (no package.json manifest exists). A customManagers regex entry tracks that pin so Renovate keeps it current, and the npm packageRule below holds bumps for the same 24h quarantine window as every other external dependency.",
+    "Issue #1913: the CI spell-check job installs codespell from .github/requirements/codespell-requirements.txt with pip --require-hashes. The pip_requirements manager below tracks that file (its default file patterns do not cover .github/requirements/), and the pip packageRule holds bumps for the same 24h quarantine window."
   ],
+  "pip_requirements": {
+    "managerFilePatterns": [
+      "/^\\.github/requirements/[\\w-]+-requirements\\.txt$/"
+    ]
+  },
   "customManagers": [
     {
       "customType": "regex",
@@ -32,6 +38,13 @@
       ],
       "matchDatasources": [
         "npm"
+      ],
+      "minimumReleaseAge": "24h"
+    },
+    {
+      "description": "External PyPI tools pinned in .github/requirements (codespell): hold for 24h after publish (Issue #1913).",
+      "matchManagers": [
+        "pip_requirements"
       ],
       "minimumReleaseAge": "24h"
     },

@@ -150,7 +150,11 @@ the gate runs on milestone sub-issue PRs too, not just the rollup into `Develop`
   bumps go through `./bump-deps.sh` or Renovate, which enforce the quarantine
   window (Issue #1878)
 - `quality` — fmt check, Clippy, cargo check, doc build, tests, build
-- `spell-check` — runs codespell on the codebase
+- `spell-check` — runs codespell on the codebase. codespell is installed with
+  `pip install --user --require-hashes -r
+  .github/requirements/codespell-requirements.txt`, so the version and the
+  SHA-256 of every artefact are pinned; Renovate's `pip_requirements` manager
+  keeps that file current under the standard 24h quarantine (Issue #1913)
 - `validation` — checks required files and `Cargo.toml`
 - `security` — runs the security audit workflow: `cargo audit` (RustSec
   advisories), `cargo deny check` (the `deny.toml` licence, ban and

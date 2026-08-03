@@ -531,7 +531,13 @@ jobs:
         persist-credentials: false
 
     - name: Install codespell
-      run: pip install --user codespell
+      # Hash-pinned, not a moving target (Issue #1913). A bare
+      # `pip install codespell` resolved the newest release — and ran whatever
+      # build backend its sdist shipped — on every PR. `--require-hashes`
+      # makes pip refuse any artefact whose SHA-256 does not match, and refuse
+      # the whole install if any requirement is unpinned. Renovate keeps the
+      # pin current under the standard 24h quarantine (renovate.json).
+      run: pip install --user --require-hashes -r .github/requirements/codespell-requirements.txt
 
     - name: Run codespell
       shell: bash
