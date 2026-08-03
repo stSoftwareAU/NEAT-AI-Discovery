@@ -554,6 +554,76 @@ assert_exit_code "plan_lock_quarantine exits 0 with unknown publish time" 0 "$EX
 assert_output_contains "unknown publish time is reverted" "^revert	ghost	1\\.0\\.0	9\\.9\\.9	unknown$" "$OUTPUT"
 echo ""
 
+# ── Test 24: temp paths are per-run and cleaned up (Issue #1910) ──────
+
+echo "Test 24: temp paths are unique per run and removed on exit"
+SHIM_DIR="$(mktemp -d)"
+ALLOC_LOG="$(mktemp)"
+# Record every path the script allocates, then delegate to the real mktemp.
+cat > "$SHIM_DIR/mktemp" <<SHIM
+#!/bin/bash
+REAL=/usr/bin/mktemp
+[[ -x "\$REAL" ]] || REAL=/bin/mktemp
+OUT="\$("\$REAL" "\$@")" || exit 1
+printf '%s\n' "\$OUT" >> "$ALLOC_LOG"
+printf '%s\n' "\$OUT"
+SHIM
+chmod +x "$SHIM_DIR/mktemp"
+
+set +e
+PATH="$SHIM_DIR:$PATH" "$BUMP_DEPS" --dry-run --no-network >/dev/null 2>&1
+EXIT_CODE=$?
+set -e
+RUN_A="$(sort "$ALLOC_LOG")"
+: > "$ALLOC_LOG"
+PATH="$SHIM_DIR:$PATH" "$BUMP_DEPS" --dry-run --no-network >/dev/null 2>&1 || true
+RUN_B="$(sort "$ALLOC_LOG")"
+ALLOC_COUNT=$(printf '%s\n' "$RUN_A" | grep -c . || true)
+
+assert_exit_code "instrumented dry-run exits 0" 0 "$EXIT_CODE"
+
+# Five formerly-fixed log paths plus the lockfile snapshots and the manifest
+# snapshot directory — all of them must come from mktemp.
+if [[ "$ALLOC_COUNT" -ge 6 ]]; then
+    echo "  PASS: every temp path is allocated with mktemp ($ALLOC_COUNT allocations)"
+    PASS=$((PASS + 1))
+else
+    echo "  FAIL: only $ALLOC_COUNT mktemp allocations — some temp paths are fixed"
+    FAIL=$((FAIL + 1))
+    ERRORS="${ERRORS}  FAIL: fixed temp paths remain\n"
+fi
+
+SHARED="$(comm -12 <(printf '%s\n' "$RUN_A") <(printf '%s\n' "$RUN_B") | grep -c . || true)"
+if [[ "$SHARED" -eq 0 ]]; then
+    echo "  PASS: two invocations share no temp path"
+    PASS=$((PASS + 1))
+else
+    echo "  FAIL: two invocations shared $SHARED temp path(s)"
+    FAIL=$((FAIL + 1))
+    ERRORS="${ERRORS}  FAIL: temp paths shared between runs\n"
+fi
+
+SURVIVORS=""
+while IFS= read -r TEMP_PATH; do
+    [[ -z "$TEMP_PATH" ]] && continue
+    if [[ -e "$TEMP_PATH" ]]; then
+        SURVIVORS="${SURVIVORS} ${TEMP_PATH}"
+    fi
+done <<< "$RUN_A
+$RUN_B"
+if [[ -z "$SURVIVORS" ]]; then
+    echo "  PASS: no temp file survives the run"
+    PASS=$((PASS + 1))
+else
+    echo "  FAIL: temp files left behind:$SURVIVORS"
+    FAIL=$((FAIL + 1))
+    ERRORS="${ERRORS}  FAIL: temp files left behind\n"
+fi
+
+rm -rf "$SHIM_DIR"
+rm -f "$ALLOC_LOG"
+echo ""
+
 # ── Summary ──────────────────────────────────────────────────────────
 
 echo ""
