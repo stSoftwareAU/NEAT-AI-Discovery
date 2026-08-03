@@ -226,7 +226,7 @@ for bench in "${BENCHMARKS[@]}"; do
             # A malformed measurement would make `bc` error and leave `(( ))`
             # with an empty operand, so fail loud rather than miscompare.
             if ! benchmark_threshold::is_measurement "$change_num"; then
-                echo "Error: unparseable benchmark change value '$change_num' in suite '$bench'" >&2
+                echo "Error: unparsable benchmark change value '$change_num' in suite '$bench'" >&2
                 exit 1
             fi
 
