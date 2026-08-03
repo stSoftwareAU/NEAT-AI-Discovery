@@ -110,12 +110,18 @@ fn sampler_leftovers() -> Vec<PathBuf> {
 fn the_capture_directory_is_created_owner_only() {
     // `$5` is the `-file` argument: `<pid> 1 -mayDie -file <path>`. The script
     // records the mode of the *containing* directory beside itself.
+    //
+    // GNU `stat` must be tried first: its `-f` is `--file-system`, so the BSD
+    // form `stat -f '%Lp' dir` still succeeds there while printing a filesystem
+    // report instead of the mode. BSD `stat` rejects `-c` outright and prints
+    // nothing, so GNU-then-BSD is the only ordering that probes both cleanly.
     let script = write_script(
         "mode",
         "#!/bin/sh\n\
          dir=$(dirname \"$5\")\n\
          echo \"$dir\" > \"$0.dirmode\"\n\
-         { stat -f '%Lp' \"$dir\" || stat -c '%a' \"$dir\"; } >> \"$0.dirmode\" 2>/dev/null\n\
+         mode=$(stat -c '%a' \"$dir\" 2>/dev/null || stat -f '%Lp' \"$dir\" 2>/dev/null)\n\
+         echo \"$mode\" >> \"$0.dirmode\"\n\
          printf 'Call graph:\\n    Thread_11: worker\\nBinary Images:\\n' > \"$5\"\n\
          exit 0\n",
     );
