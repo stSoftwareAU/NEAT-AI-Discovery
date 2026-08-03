@@ -157,22 +157,54 @@ echo ""
 # ── Test 9: helper sourcing — version comparator ──────────────────────
 
 echo "Test 9: source-mode helpers can be invoked directly"
+# Business-logic change (Issue #1909): is_quarantine_expired now takes epoch
+# SECONDS for `now` and `published` (the threshold stays in whole hours), so
+# these cases carry second-valued arguments rather than hour-floored ones.
 set +e
 # Source the script in helper-only mode (no main run).
 # shellcheck disable=SC1090
-OUTPUT=$(BUMP_DEPS_SOURCE_ONLY=1 bash -c "source '$BUMP_DEPS' && bump_deps::is_quarantine_expired 100 50 25 && echo OK || echo FAIL" 2>&1)
+OUTPUT=$(BUMP_DEPS_SOURCE_ONLY=1 bash -c "source '$BUMP_DEPS' && bump_deps::is_quarantine_expired 360000 180000 25 && echo OK || echo FAIL" 2>&1)
 EXIT_CODE=$?
 set -e
 assert_exit_code "helper sourcing exits 0" 0 "$EXIT_CODE"
-# 100 (now) - 50 (published) = 50 hours elapsed, threshold 25h ⇒ expired ⇒ true ⇒ OK
+# 360000 - 180000 = 180000s = 50 hours elapsed, threshold 25h ⇒ expired ⇒ OK
 assert_output_contains "is_quarantine_expired returns true when elapsed > threshold" "OK" "$OUTPUT"
 
 set +e
-OUTPUT=$(BUMP_DEPS_SOURCE_ONLY=1 bash -c "source '$BUMP_DEPS' && bump_deps::is_quarantine_expired 100 90 25 && echo OK || echo FAIL" 2>&1)
+OUTPUT=$(BUMP_DEPS_SOURCE_ONLY=1 bash -c "source '$BUMP_DEPS' && bump_deps::is_quarantine_expired 360000 324000 25 && echo OK || echo FAIL" 2>&1)
 EXIT_CODE=$?
 set -e
-# 100 - 90 = 10 hours, threshold 25 ⇒ NOT expired ⇒ false ⇒ FAIL
+# 360000 - 324000 = 36000s = 10 hours, threshold 25h ⇒ NOT expired ⇒ FAIL
 assert_output_contains "is_quarantine_expired returns false when elapsed < threshold" "FAIL" "$OUTPUT"
+echo ""
+
+# ── Test 9b: sub-hour boundary precision (Issue #1909) ────────────────
+
+echo "Test 9b: the quarantine window is measured in seconds, not floored hours"
+# 2025-06-01T00:00:00Z, an exact hour boundary.
+BASE_EPOCH=1748736000
+set +e
+# Published 23h59m59s ago ⇒ still inside a 24h window ⇒ held.
+OUTPUT=$(BUMP_DEPS_SOURCE_ONLY=1 bash -c \
+    "source '$BUMP_DEPS' && bump_deps::is_quarantine_expired $(( BASE_EPOCH + 86399 )) $BASE_EPOCH 24 && echo OK || echo FAIL" 2>&1)
+set -e
+assert_output_contains "23h59m59s old package is held" "FAIL" "$OUTPUT"
+
+set +e
+# Published exactly 24h00m00s ago ⇒ released.
+OUTPUT=$(BUMP_DEPS_SOURCE_ONLY=1 bash -c \
+    "source '$BUMP_DEPS' && bump_deps::is_quarantine_expired $(( BASE_EPOCH + 86400 )) $BASE_EPOCH 24 && echo OK || echo FAIL" 2>&1)
+set -e
+assert_output_contains "24h00m00s old package is released" "OK" "$OUTPUT"
+
+set +e
+# Worst-case straddle: published at HH:59:59, checked 23h00m01s later on an
+# exact hour boundary. Hour-floored arithmetic saw a 24h gap and released it.
+STRADDLE_PUB=$(( BASE_EPOCH + 10 * 3600 + 3599 ))
+OUTPUT=$(BUMP_DEPS_SOURCE_ONLY=1 bash -c \
+    "source '$BUMP_DEPS' && bump_deps::is_quarantine_expired $(( STRADDLE_PUB + 23 * 3600 + 1 )) $STRADDLE_PUB 24 && echo OK || echo FAIL" 2>&1)
+set -e
+assert_output_contains "23h00m01s hour-straddle is held" "FAIL" "$OUTPUT"
 echo ""
 
 # ── Test 10: --dry-run reports a plan, makes no changes ───────────────
@@ -486,10 +518,11 @@ BEFORE_FILE=$(mktemp)
 AFTER_FILE=$(mktemp)
 printf 'serde\t1.0.190\nquote\t1.0.35\n' > "$BEFORE_FILE"
 printf 'serde\t1.0.225\nquote\t1.0.40\nsneaky\t0.1.0\n' > "$AFTER_FILE"
-# "now" = 2025-06-01T00:00:00Z = 1748736000 epoch = 485760 hours.
+# "now" = 2025-06-01T00:00:00Z = 1748736000 epoch seconds (Issue #1909:
+# plan_lock_quarantine takes epoch seconds, not floored hours).
 set +e
 OUTPUT=$(BUMP_DEPS_SOURCE_ONLY=1 BUMP_DEPS_TEST_FIXTURE="$FIX_DIR" \
-    bash -c "source '$BUMP_DEPS' && bump_deps::plan_lock_quarantine '$BEFORE_FILE' '$AFTER_FILE' 485760 24" 2>&1)
+    bash -c "source '$BUMP_DEPS' && bump_deps::plan_lock_quarantine '$BEFORE_FILE' '$AFTER_FILE' 1748736000 24" 2>&1)
 EXIT_CODE=$?
 set -e
 assert_exit_code "plan_lock_quarantine exits 0" 0 "$EXIT_CODE"
@@ -512,7 +545,7 @@ printf 'ghost\t1.0.0\n' > "$BEFORE_FILE"
 printf 'ghost\t9.9.9\n' > "$AFTER_FILE"
 set +e
 OUTPUT=$(BUMP_DEPS_SOURCE_ONLY=1 BUMP_DEPS_TEST_FIXTURE="$FIX_DIR" \
-    bash -c "source '$BUMP_DEPS' && bump_deps::plan_lock_quarantine '$BEFORE_FILE' '$AFTER_FILE' 485760 24" 2>&1)
+    bash -c "source '$BUMP_DEPS' && bump_deps::plan_lock_quarantine '$BEFORE_FILE' '$AFTER_FILE' 1748736000 24" 2>&1)
 EXIT_CODE=$?
 set -e
 rm -f "$BEFORE_FILE" "$AFTER_FILE"
