@@ -234,7 +234,7 @@ fn compute_calibration_factor(observations: &[CalibrationObservation]) -> f64 {
 /// # Invariant
 ///
 /// `successes <= attempts` always holds. It is enforced on the deserialisation
-/// path via [`NeuronDiscoveryHistoryWire`] (Issue #1906), so a corrupt or
+/// path via `NeuronDiscoveryHistoryWire` (Issue #1906), so a corrupt or
 /// hand-edited history file fails loudly instead of mis-scoring silently.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
