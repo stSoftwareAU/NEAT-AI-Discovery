@@ -46,9 +46,10 @@ jobs:
       # satisfies the 24h invariant asserted in
       # tests/issue_1234_quarantine_enforcement.rs. The window is enforced
       # independently by bump-deps.sh and the Deno P1D floor.
-      - run: >-
-          semgrep ci --config p/default
-          --exclude-rule package_managers.renovate.renovate-missing-minimum-release-age.renovate-missing-minimum-release-age
-          --exclude-rule renovate-missing-minimum-release-age
+      - run: |
+          set -euo pipefail
+          semgrep ci --config p/default \
+            --exclude-rule package_managers.renovate.renovate-missing-minimum-release-age.renovate-missing-minimum-release-age \
+            --exclude-rule renovate-missing-minimum-release-age
         env:
           SEMGREP_APP_TOKEN: ${{ secrets.SEMGREP_APP_TOKEN }}
