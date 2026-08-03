@@ -320,7 +320,10 @@ predicted gains have matched observed outcomes.
   ```
 
 - **Errors**: on failure, `success` is `false`, `calibrationSummary` is empty,
-  and `error` / `errorKind` / `retryable` describe the failure.
+  and `error` / `errorKind` / `retryable` describe the failure. A history whose
+  per-neuron entry violates `successes <= attempts` is rejected here rather than
+  mis-scored later, with an error naming the offending neuron UUID and both
+  counts (Issue #1906).
 - **Memory**: the returned pointer **must** be freed with `free_discovery_result`.
 
 ---
