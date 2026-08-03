@@ -29,6 +29,14 @@
 //! check was the only thing behind the exclusion. It is replaced below by
 //! `audit_quarantine_policy`, which parses the JSON and checks each rule
 //! structurally.
+//!
+//! Issue #1916 (business-logic change to the bypass detector): the internal
+//! `stSoftwareAU/*` bypass was keyed on `matchSourceUrlPrefixes`, a key
+//! deprecated in favour of `matchSourceUrls` and removed in Renovate 40.
+//! `is_internal_bypass_rule` now reads `matchSourceUrls` glob patterns
+//! instead. Rule *ordering* — the bypass must be the last `packageRule` so
+//! it is not overridden by a later manager-scoped rule — is enforced
+//! separately in `tests/issue_1916_renovate_rule_ordering.rs`.
 
 use std::collections::BTreeSet;
 use std::fs;
@@ -49,6 +57,9 @@ const COVERED_MANAGERS: [&str; 3] = ["cargo", "github-actions", "custom.regex"];
 
 /// Source-URL prefix identifying first-party deps exempt from the window.
 const INTERNAL_SOURCE_PREFIX: &str = "https://github.com/stSoftwareAU/";
+
+/// Glob pattern (`matchSourceUrls` form) selecting crates.io-sourced deps.
+const CRATES_IO_GLOB: &str = "https://crates.io/**";
 
 /// Parse a Renovate duration (`"24h"`, `"1 day"`, `"0"`) into minutes.
 ///
@@ -79,15 +90,19 @@ fn parse_release_age_minutes(raw: &str) -> Result<u64, String> {
 
 /// Is this rule the internal `stSoftwareAU/*` bypass — the only rule
 /// permitted to set a zero window?
+///
+/// Keyed on `matchSourceUrls` (Issue #1916); the predecessor
+/// `matchSourceUrlPrefixes` was removed in Renovate 40 and no longer
+/// selects anything.
 fn is_internal_bypass_rule(rule: &Value) -> bool {
-    let Some(prefixes) = rule.get("matchSourceUrlPrefixes").and_then(Value::as_array) else {
+    let Some(patterns) = rule.get("matchSourceUrls").and_then(Value::as_array) else {
         return false;
     };
-    !prefixes.is_empty()
-        && prefixes.iter().all(|prefix| {
-            prefix
+    !patterns.is_empty()
+        && patterns.iter().all(|pattern| {
+            pattern
                 .as_str()
-                .is_some_and(|prefix| prefix.starts_with(INTERNAL_SOURCE_PREFIX))
+                .is_some_and(|pattern| pattern.starts_with(INTERNAL_SOURCE_PREFIX))
         })
 }
 
@@ -206,12 +221,12 @@ fn crates_io_rule_index(config: &Value) -> usize {
         .expect("packageRules array")
         .iter()
         .position(|rule| {
-            rule.get("matchSourceUrlPrefixes")
+            rule.get("matchSourceUrls")
                 .and_then(Value::as_array)
-                .is_some_and(|prefixes| {
-                    prefixes
+                .is_some_and(|patterns| {
+                    patterns
                         .iter()
-                        .any(|prefix| prefix.as_str() == Some("https://crates.io/"))
+                        .any(|pattern| pattern.as_str() == Some(CRATES_IO_GLOB))
                 })
         })
         .expect("renovate.json must carry a crates.io cargo packageRule")
@@ -293,7 +308,7 @@ fn a_new_zero_age_rule_outside_the_internal_bypass_is_detected() {
         }),
         json!({
             "description": "Smuggled bypass keyed on a third-party source.",
-            "matchSourceUrlPrefixes": ["https://github.com/attacker/"],
+            "matchSourceUrls": ["https://github.com/attacker/**"],
             "minimumReleaseAge": "0"
         }),
         json!({

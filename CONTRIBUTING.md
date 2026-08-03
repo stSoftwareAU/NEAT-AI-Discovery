@@ -165,6 +165,16 @@ the gate runs on milestone sub-issue PRs too, not just the rollup into `Develop`
   `quality/shellcheck.sh` lint gate (Issues #1755, #1898). The ShellCheck binary
   is installed straight from upstream `koalaman/shellcheck` releases by
   SHA-pinned `taiki-e/install-action` — no third-party wrapper action
+- `renovate-config-validator` (separate workflow
+  `.github/workflows/renovate-validate.yml`) — runs the upstream
+  `renovate-config-validator --strict` on PRs that touch `renovate.json`
+  (Issue #1916). `renovate.json` carries the 24h supply-chain quarantine, and a
+  deprecated or removed config key does not fail loudly: Renovate either
+  rejects the file or silently treats the rule as non-matching, so a control can
+  disappear without any signal. `--strict` also fails on keys Renovate would
+  otherwise auto-migrate. Note that `packageRules` **ordering is load-bearing**
+  — the last matching rule wins, so the internal `stSoftwareAU/*` bypass must
+  stay the final entry
 
 Every job that needs Rust installs it with the committed
 `./scripts/install-rust-toolchain.sh [TOOLCHAIN] [COMPONENT...]`, which drives
