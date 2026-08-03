@@ -38,6 +38,13 @@ already in place:
   `fuzz/Cargo.toml` included (Issue #1908).
 - **Internal deps** — first-party `stSoftwareAU/*` releases bypass the
   quarantine window.
+- **Expiring suppressions** — `deny.toml` sets
+  `[advisories] unused-ignored-advisory = "deny"`, so an ignore that no longer
+  matches any crate in the graph fails `cargo deny check` (Issue #1917). A
+  suppression may not outlive the dependency it was written for: left in place
+  it would silently re-suppress the advisory if that crate ever returned. For
+  the same reason the `dependency-review-action` step carries no `allow-ghsas`
+  list — add one only alongside a matching, live `deny.toml` ignore.
 
 ## Emergency dependency-bump runbook
 
