@@ -197,6 +197,14 @@ The library sets `XDG_RUNTIME_DIR` to a temporary directory if it's not already 
 This is required by wgpu (WebGPU) on Linux systems using Wayland. On macOS, this
 variable is not needed.
 
+The fallback directory is per-user (`$TMPDIR/neat-ai-discovery-runtime-<uid>`) and is
+created mode `0700`, whatever the process umask (Issue #1904). A path that already
+exists is only reused when it is a real directory (not a symlink), owned by this
+user, and carries no group or other permission bits — otherwise the library logs a
+warning naming the reason and leaves `XDG_RUNTIME_DIR` **unset** rather than handing
+wgpu a directory another local user controls. If you see that warning, remove the
+offending path or export `XDG_RUNTIME_DIR` yourself.
+
 The write only happens while the process is still **single-threaded** (Issue #1873):
 mutating the environment while another thread may call `getenv` is undefined
 behaviour, so the library checks `/proc/self/task` first and skips the write when
