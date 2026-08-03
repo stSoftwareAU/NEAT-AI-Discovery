@@ -1,0 +1,20 @@
+# Hash-pinned tool requirements for the CI spell-check job (Issue #1913).
+#
+# Installed by `.github/workflows/ci.yml` with:
+#   pip install --user --require-hashes -r .github/requirements/codespell-requirements.txt
+#
+# `--require-hashes` makes the install reproducible and tamper-evident: pip
+# refuses any artefact whose SHA-256 does not match, and refuses the whole
+# install if any requirement is unpinned. codespell has no mandatory runtime
+# dependencies (chardet and tomli are optional extras we do not install), so
+# this single entry pins the complete tree.
+#
+# Both hashes below are for codespell 2.4.3 — the wheel and the sdist — so the
+# pin holds whichever artefact pip selects.
+#
+# Renovate keeps this file current via the `pip_requirements` manager
+# configured in `renovate.json`, under the same 24h quarantine window as every
+# other external dependency.
+codespell==2.4.3 \
+    --hash=sha256:af2505b335e8573dbd2d384d1c4ef498f4006f4ba2d6fceca01e55b91f52628a \
+    --hash=sha256:cbe085e331227b37bb86ef8bddd08dc768c704ee9a07ca869852c093fa2793e2
