@@ -1,6 +1,6 @@
 [package]
 name = "neat_ai_discovery"
-version = "0.74.203"
+version = "0.74.204"
 edition = "2024"
 license = "Apache-2.0"
 description = "High-performance Rust library for recording neuron activations and errors during NEAT-AI discovery, and scanning the recorded data to identify beneficial new synapses/neurons."
@@ -31,6 +31,9 @@ parking_lot = { version = "0.12", features = ["deadlock_detection"] }  # Deadloc
 signal-hook = "0.4"  # Signal handling (SIGUSR1 for thread dumps)
 tracing = "0.1"  # Structured logging framework (Issue #575)
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }  # Subscriber with EnvFilter (Issue #575)
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"  # geteuid/umask for the XDG_RUNTIME_DIR ownership check (Issue #1904)
 
 [features]
 # Regression-test scaffolding, not shipped API (Issue #1877). Off by default so
