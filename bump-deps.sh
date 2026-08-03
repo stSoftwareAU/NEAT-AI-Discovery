@@ -183,7 +183,8 @@ bump_deps::extract_dep_versions() {
 # line, sorted. `git ls-files` is preferred so untracked scratch manifests
 # and vendored copies under target/ stay out; a non-git tree falls back to
 # `find`. The gate hardcoded the root manifest before, so `fuzz/Cargo.toml`
-# was never age-checked (Issue #1908).
+# was never age-checked (Issue #1908). A root that cannot be entered returns 1;
+# a readable root with no manifests returns 0 and prints nothing (Issue #1974).
 bump_deps::list_manifests() {
     local root="$1"
     local found="" rel
@@ -191,9 +192,16 @@ bump_deps::list_manifests() {
         found="$(git -C "$root" ls-files -- 'Cargo.toml' '*/Cargo.toml' 2>/dev/null || true)"
     fi
     if [[ -z "$found" ]]; then
-        # `|| found=""` sits outside the substitution: an `A && B || C` chain
-        # inside it reads as if-then-else but is not one (SC2015).
-        found="$(cd "$root" && find . -name Cargo.toml -not -path './target/*' 2>/dev/null | sed 's|^\./||')" || found=""
+        # A failed `cd` aborts loudly: collapsing an unreadable root to "no
+        # manifests" left the quarantine gate age-checking nothing while still
+        # reporting success (Issue #1974). Only a find/sed hiccup is tolerated.
+        if ! found="$(
+            cd "$root" || exit 3
+            find . -name Cargo.toml -not -path './target/*' 2>/dev/null | sed 's|^\./||' || true
+        )"; then
+            echo "ERROR: cannot enter $root to enumerate Cargo.toml manifests" >&2
+            return 1
+        fi
     fi
     if [[ -z "$found" ]]; then
         return 0
