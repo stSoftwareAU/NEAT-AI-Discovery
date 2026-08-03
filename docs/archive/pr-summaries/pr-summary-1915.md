@@ -21,7 +21,7 @@ This PR replaces those substring assertions with a structural audit that parses
   is unaffected);
 - each covered dependency class — `cargo`, `github-actions` and the npm
   `custom.regex` manager — must have at least one rule holding it for ≥ 24h;
-- an unparseable window (`"soon"`, `"7"`, a bare JSON number) is a violation,
+- an unparsable window (`"soon"`, `"7"`, a bare JSON number) is a violation,
   not a silently-accepted zero.
 
 The semgrep exclusion is kept and its justification comment now names the

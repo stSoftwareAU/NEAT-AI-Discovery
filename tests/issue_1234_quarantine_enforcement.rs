@@ -53,7 +53,7 @@ const INTERNAL_SOURCE_PREFIX: &str = "https://github.com/stSoftwareAU/";
 /// Parse a Renovate duration (`"24h"`, `"1 day"`, `"0"`) into minutes.
 ///
 /// Unknown units are an error rather than a silently-accepted zero: an
-/// unparseable window must fail the audit loudly, not pass it.
+/// unparsable window must fail the audit loudly, not pass it.
 fn parse_release_age_minutes(raw: &str) -> Result<u64, String> {
     let trimmed = raw.trim();
     let boundary = trimmed
