@@ -265,8 +265,8 @@ on machines without a GPU.
 **A unit test that builds its own subject cannot detect a missing production
 caller.** This is the root diagnosis of the whole #1780 bug class: every
 suppression store had thorough unit tests that constructed the store directly,
-so `TargetFailureTracker` stayed green with zero production writers, the whole
-#1767 removal-triage suite pinned a `focus::` helper that nothing in `src/`
+so `TargetFailureTracker` stayed green with zero production writers, the
+whole #1767 removal-triage suite pinned a `focus::` helper that nothing in `src/`
 called, and two independently green units shipped with the composition between
 them broken (#1815).
 

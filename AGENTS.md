@@ -95,8 +95,8 @@ creatures. `ModuleOutcomeTracker` already covers what `ModuleStarvationTracker`
 was meant to do. `src/analysis/candidate_starvation.rs` is a **different, live**
 component, untouched by this note.
 
-**Mermaid: never use a bare `;` in unquoted note or message text** (Issue
-#1817) — Mermaid parses it as a statement separator, so a `Note over A,B:`
+**Mermaid: never use a bare `;` in unquoted note or message text**
+(Issue #1817) — Mermaid parses it as a statement separator, so a `Note over A,B:`
 containing one breaks the diagram. Use a comma. The enforcing gate lives outside
 this repo (the worker's `mermaid_validator.ts`), so `./quality.sh` cannot catch
 it locally, and this repo carries ~30 Mermaid blocks. HTML entities (`&gt;`,
