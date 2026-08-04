@@ -352,10 +352,14 @@ pub fn read_all_records_grouped_by_neuron_bounded(
 
             budget.charge_record(record.neuron_uuid.len(), record.errors.len(), file_path)?;
 
-            grouped_records
-                .entry(record.neuron_uuid.clone())
-                .or_default()
-                .push(record);
+            // Issue #2007: only a neuron's *first* row allocates a map key. The
+            // `entry` API would clone the UUID on every row, and a recording
+            // holds thousands of rows per neuron.
+            if let Some(existing) = grouped_records.get_mut(&record.neuron_uuid) {
+                existing.push(record);
+            } else {
+                grouped_records.insert(record.neuron_uuid.clone(), vec![record]);
+            }
         }
     }
 
