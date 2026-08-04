@@ -108,21 +108,17 @@ A discovery drought presents as one or more of:
     "dominantRejectionReason": "no_eligible_sources",
     "dominantRejectionCount": 91,
     "totalCandidatesConsidered": 91,
-    "totalCandidatesRejected": 91,
-    "dominantFailedModule": "coordinated-structural",
-    "dominantFailedModuleShare": 0.91,
-    "dominantFailedTargetUuid": "533d8616-…",
-    "dominantFailedTargetShare": 0.96,
-    "dominantOperationCount": 4,
-    "predictedVsActualGapP50": -1000.0
+    "totalCandidatesRejected": 91
   }
   ```
 
-  The final six fields (Issue #1274) summarise the **shape** of recent
-  failures: which module / target / op count dominates and how badly the
-  predicted gain compared with the measured one. They populate once the
-  rolling per-creature failure window holds at least five entries; below
-  that the dominant fields are `null` / `0.0`.
+  Those nine fields are the **complete** schema — no other key is ever
+  emitted. The recent-failure aggregates (`FailureAggregates` in
+  `src/analysis/recent_failure_window.rs`) are computed by an internal module
+  that is not wired into any response, so no dominant-failure module / target /
+  operation-count field reaches the wire (Issue #1937). See
+  [docs/FFI_API.md § droughtDiagnostic](FFI_API.md#drought-diagnostic-metadata-issue-1202)
+  for the authoritative field-by-field reference.
 
 - **`discovery_mode` flips to `"conservative"`** in FFI metadata (Issue #1132)
   once the rolling success rate over the last 10 passes drops below the
@@ -201,7 +197,7 @@ flowchart LR
 
     Cooldown -. "drops targets with<br/>≥3 consecutive failures" .-> X2[(skipped)]
     Bias -. "demotes high-risk modules<br/>raises coordinated gain floor 10×" .-> X3[(under-weighted)]
-    Post -. "no_eligible_sources<br/>below_threshold<br/>budget_exceeded<br/>…" .-> X4[(rejected)]
+    Post -. "no_eligible_sources<br/>below_threshold<br/>budget_truncated<br/>…" .-> X4[(rejected)]
 ```
 
 | Layer | Source file | Records into the diagnostic as |
@@ -244,22 +240,24 @@ the table below adds the **operator lever to investigate** for each field.
 | `dominantRejectionCount` | Compare to `totalCandidatesRejected` to gauge how dominant it is. |
 | `totalCandidatesConsidered` | If 0, no candidates reached post-processing — the target cooldown and the host's own failure cache ate them. Reach for `DROUGHT_RESET_AFTER_EPOCHS`. |
 | `totalCandidatesRejected` | High counts with `totalCandidatesConsidered == totalCandidatesRejected` mean every candidate failed a filter — read `dominantRejectionReason` first. |
-| `dominantFailedModule` | If one module dominates, its scoring / gain-floor settings are the first lever (e.g. `NEAT_AI_DISCOVERY_CONSERVATIVE_GAIN_MULTIPLIER` for coordinated-structural). |
-| `dominantFailedModuleShare` | A share > 0.8 means the pipeline is essentially failing on one module — investigate that module's recommendation logic. |
-| `dominantFailedTargetUuid` | A single dominant target usually means the cooldown tracker has not engaged yet, or the target is structurally unfit for new attachments. Compare with `targetCooldownActiveCount`. |
-| `dominantFailedTargetShare` | A share at 1.0 means every recent failure hit the same neuron — almost certainly an output saturation or sink-neuron problem. |
-| `dominantOperationCount` | High values (≥ 4) with a coordinated-structural dominant module point at collapse-variant overfitting. |
-| `predictedVsActualGapP50` | Large magnitude (≥ 100 either way) means the scorer is mis-calibrated for the dominant module — bump the calibration prior (`NEAT_AI_DISCOVERY_RISKY_SQUASH_PRIOR`) or shrink the conservative-mode gain multiplier. |
 
-Common `dominantRejectionReason` values and the lever each implies:
+That is the whole schema — nine fields, nine rows. A field naming a dominant
+failed module, target, operation count or predicted-versus-actual gap does not
+exist on the wire (Issue #1937); grepping a live diagnostic for one will always
+miss.
+
+Common `dominantRejectionReason` values and the lever each implies. Every name
+below is a constant in `src/analysis/diagnostics/rejection_reasons.rs`; the
+authoritative list is `ALL_REJECTION_REASONS` in that file.
 
 | Reason | Implication |
 |--------|-------------|
 | `no_eligible_sources` | Source pre-screening (sample variance, range checks) eliminated every source. Often a sign that the creature has converged structurally. |
 | `below_threshold` | Candidates were generated but their expected gain failed the coordinated-structural floor. Conservative mode raises this floor 10×; consider lowering `CONSERVATIVE_GAIN_MULTIPLIER` or waiting for cooldown exit. |
-| `budget_exceeded` | Module budget allocation is leaving no headroom. Inspect `module_weights` snapshot. |
-| `cooldown_skipped` | Targets eliminated by `TargetFailureTracker`. Cross-check `targetCooldownActiveCount`. |
-| `duplicate` / `redundant_path` | Deduplication is eating the candidate pool — the creature is in a flat region of the search space. |
+| `budget_truncated` | Module budget allocation is leaving no headroom. Inspect `module_weights` snapshot. |
+| `target_cooldown_skipped` | Targets eliminated by `TargetFailureTracker`. Cross-check `targetCooldownActiveCount`. |
+| `duplicate_of_failure_cache` | The host's failure cache already rejected this candidate identity — the creature is re-proposing edits it has tried. Cross-check `failureCacheSuppressedCount` / `noveltyEscalationActive`. |
+| `same_target_squash_duplicate` | Deduplication is eating the candidate pool — the creature is in a flat region of the search space. |
 
 ## Adaptive Responses
 
@@ -352,7 +350,19 @@ Notes:
 
   The effective window never falls below a floor of 2 epochs, and the extended
   divisor applies on streak length alone — it does not require the mode still to
-  be Conservative. See `TargetFailureTracker::effective_cooldown_epochs` /
+  be Conservative.
+
+  **The cooldown escalation and the bias revert are not the same boundary.**
+  `effective_cooldown_epochs` / `effective_consecutive_failures` escalate when
+  the streak is **≥** the **compiled default** `CONSERVATIVE_MODE_MAX_EPOCHS`
+  (20) — that comparison does not read the environment, so
+  `NEAT_AI_DISCOVERY_CONSERVATIVE_MODE_MAX_EPOCHS` moves the bias revert but
+  **not** the cooldown escalation. The bias revert, by contrast, uses the
+  env-resolved value and fires when the streak is **>** it. At the default the
+  two land one epoch apart: at streak 20 the cooldown thresholds have already
+  relaxed to their Extended-Drought values while the mode is still
+  `"conservative"`; the mode flips at streak 21. See
+  `TargetFailureTracker::effective_cooldown_epochs` /
   `::effective_consecutive_failures`
   (`src/analysis/target_failure_tracker.rs`), the constants in
   `src/analysis/constants/detection_thresholds.rs`, and the two env overrides in
@@ -373,7 +383,7 @@ operator's "when to change" guidance so the two cannot drift apart.
 | `NEAT_AI_DISCOVERY_DROUGHT_LOG_THRESHOLD` | Lower to surface droughts earlier in noisy environments; raise to suppress the warn log when short droughts are expected. |
 | `NEAT_AI_DISCOVERY_DROUGHT_RESET_AFTER_EPOCHS` | The operator escape hatch is **armed by default** (Issue #1422) so the one-shot target-cooldown reset fires without operator action during a sustained drought. Lower (e.g. 30) to intervene sooner, or set to `0` to deliberately disable and intervene manually. |
 | `NEAT_AI_DISCOVERY_LOW_SUCCESS_RATE_THRESHOLD` | Raise to enter Conservative mode earlier (e.g. 0.3 if 30 % success is too low for this workload). Values outside the range are ignored. |
-| `NEAT_AI_DISCOVERY_CONSERVATIVE_MODE_MAX_EPOCHS` | Lower to revert to Normal sooner when bias is not helping; raise to give Conservative mode more time before it gives up. This governs the **risk bias only** — the discovery module set stays escalated for the whole drought (Issue #1803). |
+| `NEAT_AI_DISCOVERY_CONSERVATIVE_MODE_MAX_EPOCHS` | Lower to revert to Normal sooner when bias is not helping; raise to give Conservative mode more time before it gives up. This governs the **risk bias only** — the discovery module set stays escalated for the whole drought (Issue #1803), and the adaptive cooldown escalation stays pinned to the compiled default of 20 regardless of this variable (see Adaptive Responses). |
 | `NEAT_AI_DISCOVERY_CONSERVATIVE_GAIN_MULTIPLIER` | Lower (e.g. 3.0) when 10× is starving the pipeline of coordinated-structural candidates. The floor never relaxes below the base constant. |
 | `NEAT_AI_DISCOVERY_TARGET_COOLDOWN_FAILURES` | Raise to make the cooldown less aggressive when many targets are in cooldown simultaneously. |
 | `NEAT_AI_DISCOVERY_TARGET_COOLDOWN_EPOCHS` | Lower to free targets faster after a failure streak. This is the **Normal-mode** base — Conservative and Extended Drought divide it by the two divisors below (Issue #1204). |
@@ -443,19 +453,21 @@ rate, then starts producing empty passes. This example uses the defaults.
 | 55 | 5 | 0.1 | Normal | Streak hits the log threshold. `tracing::warn!` fires once, `droughtDiagnostic` populated. Rolling rate (0.1) is below `LOW_SUCCESS_RATE_THRESHOLD` (0.2) → mode flips. | `dominantRejectionReason` — likely `below_threshold` or `no_eligible_sources`. |
 | 56 | 6 | 0.0 | **Conservative** | `discoveryMode="conservative"` in FFI metadata. High-risk modules penalised, coordinated gain floor × 10. The target-cooldown window also relaxes (Issue #1204). | `discoveryMode` in the FFI metadata. |
 | 57–69 | 7–19 | 0.0 | Conservative | Conservative mode persists. `targetCooldownActiveCount` declines as the relaxed cooldown window re-enables targets. | Watch `targetCooldownActiveCount` ramp down. |
-| 70 | 20 | 0.0 | Conservative→**Extended Drought** | Streak crosses `CONSERVATIVE_MODE_MAX_EPOCHS`. Conservative bias drops; the expensive discovery modules stay escalated (Issue #1803). | Mode in metadata flips back to `"normal"`; the drought diagnostic still fires every pass. The re-enable line still logs, now with `extended_drought=true`. |
-| 71–79 | 21–29 | 0.0 | Extended Drought | If the streak crosses `DROUGHT_RESET_AFTER_EPOCHS` (default 50, Issue #1422), the one-shot operator reset fires here. | Look for the one-shot `warn!`: `drought escape hatch fired — cleared N active target cooldowns`. An `error!` reading `drought escape hatch fired as a NO-OP` instead means the reset had nothing to flush (Issue #1794). |
-| 80 | 30 | 0.0 | Extended Drought | A new candidate finally succeeds. Streak collapses to 0 and the reset tombstone clears, re-arming the lever. | Mode resumes Normal on the next pass. |
+| 70 | 20 | 0.0 | Conservative | Streak reaches the compiled default 20, so the **cooldown** thresholds escalate to their Extended-Drought values (÷ 4, + 2). The risk bias has not reverted yet — that comparison is `>`, not `≥`. | `discoveryMode` is still `"conservative"`; `targetCooldownActiveCount` steps down again. |
+| 71 | 21 | 0.0 | Conservative→**Extended Drought** | Streak passes `CONSERVATIVE_MODE_MAX_EPOCHS`. Conservative bias drops; the expensive discovery modules stay escalated (Issue #1803). | Mode in metadata flips back to `"normal"`; the drought diagnostic still fires every pass. The re-enable line still logs, now with `extended_drought=true`. |
+| 72–79 | 22–29 | 0.0 | Extended Drought | The escape hatch is armed but does **not** fire: `DROUGHT_RESET_AFTER_EPOCHS` defaults to 50 (Issue #1422) and a 30-epoch drought never reaches it. Lower it (e.g. to 25) if you want the one-shot reset inside a drought this short. | Nothing to look for at the defaults. Once lowered, the one-shot `warn!`: `drought escape hatch fired — cleared N active target cooldowns`. An `error!` reading `drought escape hatch fired as a NO-OP` instead means the reset had nothing to flush (Issue #1794). |
+| 80 | 30 | 0.0 | Extended Drought | A new candidate finally succeeds. Streak collapses to 0. | Mode resumes Normal on the next pass. |
 
 What an operator should look at, in order:
 
 1. The first `droughtDiagnostic` payload at epoch 55 — confirm
    `dominantRejectionReason`.
-2. Whether the rolling rate is climbing across epochs 56–69 — if yes,
+2. Whether the rolling rate is climbing across epochs 56–70 — if yes,
    conservative bias is helping; if no, it is not and the pipeline will
-   self-exit at epoch 70.
-3. If the streak reaches 20 with no improvement, decide whether to enable
-   `DROUGHT_RESET_AFTER_EPOCHS` for the next run.
+   self-exit at epoch 71.
+3. If the streak reaches 21 with no improvement, decide whether to **lower**
+   `DROUGHT_RESET_AFTER_EPOCHS` for the next run — the hatch is armed by
+   default, but at 50 it will not fire inside a drought this short.
 4. If the streak passes 30 with no improvement, that is a structural
    problem (the creature has saturated the search space) — escalate to a
    human reviewer with the most recent `droughtDiagnostic` attached.
