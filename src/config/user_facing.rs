@@ -6,7 +6,7 @@
 use std::sync::OnceLock;
 use std::time::Duration;
 
-use super::helpers::{parse_bool_env, parse_optional_bool_env};
+use super::helpers::{parse_bool_env, parse_env, parse_optional_bool_env};
 
 // =============================================================================
 // Core user-facing accessors
@@ -35,9 +35,7 @@ pub fn gpu_timing() -> bool {
 pub fn gpu_batch_size_override() -> Option<usize> {
     static VAL: OnceLock<Option<usize>> = OnceLock::new();
     *VAL.get_or_init(|| {
-        std::env::var("NEAT_AI_DISCOVERY_GPU_BATCH_SIZE")
-            .ok()
-            .and_then(|val| val.parse::<usize>().ok())
+        parse_env::<usize>("NEAT_AI_DISCOVERY_GPU_BATCH_SIZE")
             .filter(|size| (64..=4096).contains(size))
     })
 }
@@ -49,9 +47,7 @@ pub fn gpu_batch_size_override() -> Option<usize> {
 pub fn gpu_retry_limit() -> u32 {
     static VAL: OnceLock<u32> = OnceLock::new();
     *VAL.get_or_init(|| {
-        std::env::var("NEAT_AI_DISCOVERY_GPU_RETRY_LIMIT")
-            .ok()
-            .and_then(|val| val.parse::<u32>().ok())
+        parse_env::<u32>("NEAT_AI_DISCOVERY_GPU_RETRY_LIMIT")
             .filter(|&n| n <= 10)
             .unwrap_or(crate::analysis::gpu::queue::recovery::DEFAULT_GPU_RETRY_LIMIT)
     })
@@ -70,10 +66,8 @@ pub fn gpu_stall_window() -> Duration {
         MIN_GPU_STALL_WINDOW_SECS,
     };
 
-    let secs = std::env::var(GPU_STALL_WINDOW_ENV)
-        .ok()
-        .and_then(|val| val.trim().parse::<u64>().ok())
-        .map_or(DEFAULT_GPU_STALL_WINDOW_SECS, |secs| {
+    let secs =
+        parse_env::<u64>(GPU_STALL_WINDOW_ENV).map_or(DEFAULT_GPU_STALL_WINDOW_SECS, |secs| {
             if secs == 0 {
                 0
             } else {
@@ -89,10 +83,7 @@ pub fn gpu_stall_window() -> Duration {
 /// Set `NEAT_AI_DISCOVERY_WATCHDOG_STALL_SECS` to a positive number to enable.
 /// Returns `None` when disabled (unset or `0`).
 pub fn watchdog_stall_timeout() -> Option<Duration> {
-    let secs = std::env::var("NEAT_AI_DISCOVERY_WATCHDOG_STALL_SECS")
-        .ok()
-        .and_then(|s| s.parse::<u64>().ok())
-        .unwrap_or(0);
+    let secs = parse_env::<u64>("NEAT_AI_DISCOVERY_WATCHDOG_STALL_SECS").unwrap_or(0);
 
     if secs == 0 {
         None
@@ -106,10 +97,7 @@ pub fn watchdog_stall_timeout() -> Option<Duration> {
 /// Set `NEAT_AI_DISCOVERY_WATCHDOG_ABORT_DELAY_SECS` to control delay between
 /// thread dump and process abort. Default: 2 seconds.
 pub fn watchdog_abort_delay() -> Duration {
-    let secs = std::env::var("NEAT_AI_DISCOVERY_WATCHDOG_ABORT_DELAY_SECS")
-        .ok()
-        .and_then(|s| s.parse::<u64>().ok())
-        .unwrap_or(2);
+    let secs = parse_env::<u64>("NEAT_AI_DISCOVERY_WATCHDOG_ABORT_DELAY_SECS").unwrap_or(2);
 
     Duration::from_secs(secs)
 }
@@ -119,9 +107,7 @@ pub fn watchdog_abort_delay() -> Duration {
 /// Set `NEAT_AI_DISCOVERY_MAX_CACHED_BLOCKS` to override adaptive sizing.
 /// Returns `None` for adaptive behaviour based on available RAM.
 pub fn max_cached_blocks() -> Option<usize> {
-    std::env::var("NEAT_AI_DISCOVERY_MAX_CACHED_BLOCKS")
-        .ok()
-        .and_then(|v| v.parse().ok())
+    parse_env("NEAT_AI_DISCOVERY_MAX_CACHED_BLOCKS")
 }
 
 /// Get streaming prefetch depth.
@@ -129,10 +115,7 @@ pub fn max_cached_blocks() -> Option<usize> {
 /// Set `NEAT_AI_DISCOVERY_PREFETCH_DEPTH` to control how many blocks ahead
 /// to prefetch. Default: 2.
 pub fn prefetch_depth() -> usize {
-    std::env::var("NEAT_AI_DISCOVERY_PREFETCH_DEPTH")
-        .ok()
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(2)
+    parse_env("NEAT_AI_DISCOVERY_PREFETCH_DEPTH").unwrap_or(2)
 }
 
 /// Check if streaming mode is disabled (full preload requested).
@@ -156,9 +139,7 @@ pub const MAX_BLOCK_SIZE: usize = 100_000;
 /// Set `NEAT_AI_DISCOVERY_BLOCK_SIZE` to override. Default: 10000.
 /// Clamped to 10–100000.
 pub fn block_size() -> usize {
-    std::env::var("NEAT_AI_DISCOVERY_BLOCK_SIZE")
-        .ok()
-        .and_then(|v| v.parse().ok())
+    parse_env("NEAT_AI_DISCOVERY_BLOCK_SIZE")
         .unwrap_or(DEFAULT_BLOCK_SIZE)
         .clamp(MIN_BLOCK_SIZE, MAX_BLOCK_SIZE)
 }
@@ -175,9 +156,7 @@ pub fn outlier_analysis() -> bool {
 /// Set `NEAT_AI_DISCOVERY_OUTLIER_PERCENTILE` to a value 1–99.
 /// Default: 90.
 pub fn outlier_percentile() -> u8 {
-    std::env::var("NEAT_AI_DISCOVERY_OUTLIER_PERCENTILE")
-        .ok()
-        .and_then(|v| v.trim().parse::<u8>().ok())
+    parse_env::<u8>("NEAT_AI_DISCOVERY_OUTLIER_PERCENTILE")
         .filter(|&p| p > 0 && p < 100)
         .unwrap_or(90)
 }
@@ -362,10 +341,7 @@ pub fn hidden_squash_prune_enabled() -> bool {
 /// `NEAT_AI_DISCOVERY_MAX_ACTIVATION_CONFIGS_PER_TARGET`. Unparsable values fall
 /// back to `0` (uncapped).
 pub fn max_activation_configs_per_target() -> usize {
-    std::env::var("NEAT_AI_DISCOVERY_MAX_ACTIVATION_CONFIGS_PER_TARGET")
-        .ok()
-        .and_then(|v| v.trim().parse::<usize>().ok())
-        .unwrap_or(0)
+    parse_env::<usize>("NEAT_AI_DISCOVERY_MAX_ACTIVATION_CONFIGS_PER_TARGET").unwrap_or(0)
 }
 
 /// Maximum valid source input index bias.
@@ -1083,9 +1059,7 @@ pub const MAX_SESSION_TTL_SECS: u64 = 86400;
 ///
 /// Default: 3600 (1 hour). Clamped to 60–86400.
 pub fn session_ttl_secs() -> u64 {
-    std::env::var("NEAT_AI_DISCOVERY_SESSION_TTL_SECS")
-        .ok()
-        .and_then(|v| v.trim().parse::<u64>().ok())
+    parse_env::<u64>("NEAT_AI_DISCOVERY_SESSION_TTL_SECS")
         .unwrap_or(DEFAULT_SESSION_TTL_SECS)
         .clamp(MIN_SESSION_TTL_SECS, MAX_SESSION_TTL_SECS)
 }
@@ -1108,9 +1082,7 @@ pub const MAX_WALL_CLOCK_MINUTES: u64 = 120;
 ///
 /// Default: 20 minutes. Clamped to 1–120.
 pub fn max_wall_clock_minutes() -> u64 {
-    std::env::var("NEAT_AI_DISCOVERY_MAX_WALL_CLOCK_MINUTES")
-        .ok()
-        .and_then(|v| v.trim().parse::<u64>().ok())
+    parse_env::<u64>("NEAT_AI_DISCOVERY_MAX_WALL_CLOCK_MINUTES")
         .unwrap_or(DEFAULT_MAX_WALL_CLOCK_MINUTES)
         .clamp(MIN_WALL_CLOCK_MINUTES, MAX_WALL_CLOCK_MINUTES)
 }
@@ -1147,9 +1119,7 @@ pub fn sample_program_override() -> Option<String> {
 /// [`crate::analysis::discovery_mode::DEFAULT_LOW_SUCCESS_RATE_THRESHOLD`]
 /// (0.2).
 pub fn low_success_rate_threshold() -> f32 {
-    std::env::var("NEAT_AI_DISCOVERY_LOW_SUCCESS_RATE_THRESHOLD")
-        .ok()
-        .and_then(|v| v.trim().parse::<f32>().ok())
+    parse_env::<f32>("NEAT_AI_DISCOVERY_LOW_SUCCESS_RATE_THRESHOLD")
         .filter(|v| v.is_finite() && *v > 0.0 && *v <= 1.0)
         .unwrap_or(crate::analysis::discovery_mode::DEFAULT_LOW_SUCCESS_RATE_THRESHOLD)
 }
@@ -1163,9 +1133,7 @@ pub fn low_success_rate_threshold() -> f32 {
 /// [`crate::analysis::discovery_mode::DEFAULT_CONSERVATIVE_MODE_MAX_EPOCHS`]
 /// (20).
 pub fn conservative_mode_max_epochs() -> u32 {
-    std::env::var("NEAT_AI_DISCOVERY_CONSERVATIVE_MODE_MAX_EPOCHS")
-        .ok()
-        .and_then(|v| v.trim().parse::<u32>().ok())
+    parse_env::<u32>("NEAT_AI_DISCOVERY_CONSERVATIVE_MODE_MAX_EPOCHS")
         .filter(|v| *v >= 1)
         .unwrap_or(crate::analysis::discovery_mode::DEFAULT_CONSERVATIVE_MODE_MAX_EPOCHS)
 }
@@ -1181,9 +1149,7 @@ pub fn conservative_mode_max_epochs() -> u32 {
 /// [`crate::analysis::discovery_mode::DEFAULT_CONSERVATIVE_GAIN_MULTIPLIER`]
 /// (10.0).
 pub fn conservative_gain_multiplier() -> f32 {
-    let raw = std::env::var("NEAT_AI_DISCOVERY_CONSERVATIVE_GAIN_MULTIPLIER")
-        .ok()
-        .and_then(|v| v.trim().parse::<f32>().ok())
+    let raw = parse_env::<f32>("NEAT_AI_DISCOVERY_CONSERVATIVE_GAIN_MULTIPLIER")
         .filter(|v| v.is_finite())
         .unwrap_or(crate::analysis::discovery_mode::DEFAULT_CONSERVATIVE_GAIN_MULTIPLIER);
     raw.max(1.0)
@@ -1201,9 +1167,7 @@ pub const DEFAULT_DROUGHT_LOG_THRESHOLD: u32 = 5;
 /// override. Values that fail to parse, are zero, or are otherwise invalid
 /// fall back to [`DEFAULT_DROUGHT_LOG_THRESHOLD`] (5).
 pub fn drought_log_threshold() -> u32 {
-    std::env::var("NEAT_AI_DISCOVERY_DROUGHT_LOG_THRESHOLD")
-        .ok()
-        .and_then(|v| v.trim().parse::<u32>().ok())
+    parse_env::<u32>("NEAT_AI_DISCOVERY_DROUGHT_LOG_THRESHOLD")
         .filter(|v| *v >= 1)
         .unwrap_or(DEFAULT_DROUGHT_LOG_THRESHOLD)
 }
@@ -1302,9 +1266,7 @@ pub fn remove_neuron_drought_factor() -> f32 {
 /// [`crate::analysis::novelty_escalation::DEFAULT_SUPPRESSION_RATIO_THRESHOLD`]
 /// (0.8).
 pub fn novelty_suppression_ratio() -> f64 {
-    std::env::var("NEAT_AI_DISCOVERY_NOVELTY_SUPPRESSION_RATIO")
-        .ok()
-        .and_then(|v| v.trim().parse::<f64>().ok())
+    parse_env::<f64>("NEAT_AI_DISCOVERY_NOVELTY_SUPPRESSION_RATIO")
         .filter(|v| v.is_finite() && *v > 0.0 && *v <= 1.0)
         .unwrap_or(crate::analysis::novelty_escalation::DEFAULT_SUPPRESSION_RATIO_THRESHOLD)
 }
@@ -1319,9 +1281,7 @@ pub fn novelty_suppression_ratio() -> f64 {
 /// The relaxation only ever loosens the floor; it never raises it above the
 /// base constant.
 pub fn novelty_gain_relaxation() -> f32 {
-    std::env::var("NEAT_AI_DISCOVERY_NOVELTY_GAIN_RELAXATION")
-        .ok()
-        .and_then(|v| v.trim().parse::<f32>().ok())
+    parse_env::<f32>("NEAT_AI_DISCOVERY_NOVELTY_GAIN_RELAXATION")
         .filter(|v| v.is_finite() && *v > 0.0 && *v <= 1.0)
         .unwrap_or(crate::analysis::novelty_escalation::DEFAULT_GAIN_FLOOR_RELAXATION)
 }

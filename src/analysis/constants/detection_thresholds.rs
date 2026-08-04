@@ -4,6 +4,8 @@
 //! removal, weight constraints) to filter and validate candidates before
 //! scoring.
 
+use crate::config::helpers::parse_env;
+
 // =============================================================================
 // Pessimism Discount Ratio Thresholds (Issue #506)
 // =============================================================================
@@ -231,9 +233,7 @@ pub const COOLDOWN_DIVISOR_CEILING: u64 = 64;
 /// Unparsable or missing values fall back to [`COOLDOWN_CONSERVATIVE_DIVISOR`].
 #[must_use]
 pub fn cooldown_conservative_divisor() -> u64 {
-    std::env::var("NEAT_AI_DISCOVERY_COOLDOWN_CONSERVATIVE_DIVISOR")
-        .ok()
-        .and_then(|v| v.trim().parse::<u64>().ok())
+    parse_env::<u64>("NEAT_AI_DISCOVERY_COOLDOWN_CONSERVATIVE_DIVISOR")
         .unwrap_or(COOLDOWN_CONSERVATIVE_DIVISOR)
         .clamp(COOLDOWN_DIVISOR_FLOOR, COOLDOWN_DIVISOR_CEILING)
 }
@@ -247,9 +247,7 @@ pub fn cooldown_conservative_divisor() -> u64 {
 /// [`COOLDOWN_EXTENDED_DROUGHT_DIVISOR`].
 #[must_use]
 pub fn cooldown_extended_drought_divisor() -> u64 {
-    std::env::var("NEAT_AI_DISCOVERY_COOLDOWN_EXTENDED_DROUGHT_DIVISOR")
-        .ok()
-        .and_then(|v| v.trim().parse::<u64>().ok())
+    parse_env::<u64>("NEAT_AI_DISCOVERY_COOLDOWN_EXTENDED_DROUGHT_DIVISOR")
         .unwrap_or(COOLDOWN_EXTENDED_DROUGHT_DIVISOR)
         .clamp(COOLDOWN_DIVISOR_FLOOR, COOLDOWN_DIVISOR_CEILING)
 }

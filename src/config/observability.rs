@@ -2,6 +2,8 @@
 
 use std::sync::OnceLock;
 
+use super::helpers::parse_env;
+
 /// Check if phase timing output is enabled (cached).
 ///
 /// Set `NEAT_AI_DISCOVERY_TIMING=1` to enable.
@@ -78,9 +80,7 @@ pub fn strict_candidate_reconciliation() -> bool {
 /// Values that fail to parse, are non-finite, or `<= 1.0` fall back to the
 /// default so the log channel cannot be silenced by a malformed value.
 pub fn calibration_miss_threshold() -> f32 {
-    std::env::var("NEAT_AI_DISCOVERY_CALIBRATION_MISS_THRESHOLD")
-        .ok()
-        .and_then(|s| s.trim().parse::<f32>().ok())
+    parse_env::<f32>("NEAT_AI_DISCOVERY_CALIBRATION_MISS_THRESHOLD")
         .filter(|v| v.is_finite() && *v > 1.0)
         .unwrap_or(
             crate::analysis::diagnostics::mcmc_diagnostics::DEFAULT_CALIBRATION_MISS_THRESHOLD,

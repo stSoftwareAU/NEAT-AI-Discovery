@@ -8,6 +8,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+#### Numeric env overrides are whitespace-tolerant everywhere (Issue #2006)
+
+The rule for turning a numeric `NEAT_AI_DISCOVERY_*` override into a value —
+`std::env::var(name).ok()`, trim, `parse().ok()` — was copy-pasted into 35
+accessors across `src/config/` and `src/analysis/constants/`, and the copies had
+diverged: 25 trimmed before parsing and 10 did not. A value carrying stray
+whitespace (a trailing newline from a shell heredoc, `VAR: " 5 "` in a YAML
+`env:` block) therefore tuned most knobs but silently fell back to the compiled
+default for `noise_signal_threshold`, `dominance_threshold`,
+`gradient_threshold`, `gpu_batch_size_override`, `gpu_retry_limit`,
+`watchdog_stall_timeout`, `watchdog_abort_delay`, `max_cached_blocks`,
+`prefetch_depth` and `block_size` — a lever the operator set that changed
+nothing. Every accessor now calls the one `config::helpers::parse_env` rule
+(missing → unset, whitespace trimmed, unparsable → unset), keeping its own
+`unwrap_or` / `filter` / `clamp` policy at the call site. No fallback or bound
+moved.
+
 #### One shared decoder for discovery Parquet batches (Issue #2005)
 
 The rule for decoding a discovery Parquet batch into `DiscoverRecord`s was
