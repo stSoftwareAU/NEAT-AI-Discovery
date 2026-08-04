@@ -386,7 +386,12 @@ fn memory_pressure_only_acts_at_critical_and_the_table_matches() {
 
 /// The compressed LRU cache is never selected by production, so the guide may
 /// not claim automatic selection or an unbenchmarked "2x larger creatures".
+// `#[serial]` with the log-capture test below: both drive the same tracing
+// callsites in the cache constructor, and this one runs with no subscriber
+// installed. Concurrently they race tracing's global callsite-interest cache,
+// so the capture test can observe an empty log buffer.
 #[test]
+#[serial]
 fn the_compressed_cache_is_not_auto_selected_and_the_claim_is_gone() {
     let (_dir, file) = test_parquet();
     // The production constructor returns a plain `RecordCache` regardless of
@@ -424,6 +429,7 @@ fn the_compressed_cache_is_not_auto_selected_and_the_claim_is_gone() {
 /// The guide's diagnosis steps must quote those, not the tiered line that only
 /// the uncalled `new_tiered` can emit.
 #[test]
+#[serial]
 fn troubleshooting_quotes_the_log_lines_production_emits() {
     let (_dir, file) = test_parquet();
     let (cache, logs) =
