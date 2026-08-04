@@ -8,6 +8,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+#### One shared decoder for discovery Parquet batches (Issue #2005)
+
+The rule for decoding a discovery Parquet batch into `DiscoverRecord`s was
+copy-pasted into four readers and the copies had diverged: the streaming block
+loader charged no `DecodeBudget` (Issue #1869) and reported schema mismatches
+with different wording from the three `reader.rs` paths. All four now call
+`parquet_format::batch_columns::DiscoveryBatchColumns`, which owns column
+resolution and per-row decoding; each caller keeps only its own row filtering,
+grouping and budget policy. The streaming block loader consequently charges the
+shared decode budget, so it is no longer the one decode path where oversized
+UUIDs or `errors` lists materialise unbounded, and a failed prefetch now logs a
+warning instead of passing silently.
+
 #### `--no-network` is reported for the whole run (Issue #1994)
 
 `bump-deps.sh` printed its offline notice inside the `command -v cargo-upgrade`

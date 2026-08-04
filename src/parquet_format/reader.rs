@@ -1,7 +1,6 @@
 //! Parquet reading and deserialisation for discovery records
 
 use anyhow::{Context, Result};
-use arrow::array::{Array, Float32Array, ListArray, StringArray, UInt32Array};
 use arrow::datatypes::DataType;
 use parquet::arrow::ProjectionMask;
 use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
@@ -9,6 +8,7 @@ use std::collections::{HashMap, HashSet};
 use std::fs::File;
 
 use crate::DiscoveryError;
+use crate::parquet_format::batch_columns::DiscoveryBatchColumns;
 use crate::parquet_format::decode_budget::DecodeBudget;
 use crate::parquet_format::schema::create_schema;
 use crate::types::DiscoverRecord;
@@ -342,81 +342,20 @@ pub fn read_all_records_grouped_by_neuron_bounded(
 
         let batch = batch_result.context("Failed to read record batch")?;
 
-        // Column indices shift when projection is applied — use schema field names
-        let schema = batch.schema();
-        let obs_idx = schema
-            .index_of("obs_index")
-            .context("Missing obs_index column")?;
-        let uuid_idx = schema
-            .index_of("neuron_uuid")
-            .context("Missing neuron_uuid column")?;
-        let value_idx = schema.index_of("value").context("Missing value column")?;
-        let act_idx = schema
-            .index_of("activation")
-            .context("Missing activation column")?;
-
-        let obs_index_col = batch
-            .column(obs_idx)
-            .as_any()
-            .downcast_ref::<UInt32Array>()
-            .context("Failed to cast obs_index column")?;
-        let neuron_uuid_col = batch
-            .column(uuid_idx)
-            .as_any()
-            .downcast_ref::<StringArray>()
-            .context("Failed to cast neuron_uuid column")?;
-        let value_col = batch
-            .column(value_idx)
-            .as_any()
-            .downcast_ref::<Float32Array>()
-            .context("Failed to cast value column")?;
-        let activation_col = batch
-            .column(act_idx)
-            .as_any()
-            .downcast_ref::<Float32Array>()
-            .context("Failed to cast activation column")?;
-
-        let errors_col = if include_errors {
-            let err_idx = schema.index_of("errors").context("Missing errors column")?;
-            Some(
-                batch
-                    .column(err_idx)
-                    .as_any()
-                    .downcast_ref::<ListArray>()
-                    .context("Failed to cast errors column")?,
-            )
-        } else {
-            None
-        };
+        // Issue #2005: one shared decoder owns column resolution and per-row
+        // decoding; this reader keeps only its grouping and budget policy.
+        let columns = DiscoveryBatchColumns::resolve(&batch, include_errors)?;
 
         // Collect all records and group by neuron UUID
-        for i in 0..batch.num_rows() {
-            let uuid = neuron_uuid_col.value(i).to_string();
-            let obs_index = obs_index_col.value(i);
-            let value = if value_col.is_null(i) {
-                None
-            } else {
-                Some(value_col.value(i))
-            };
-            let activation = activation_col.value(i);
+        for i in 0..columns.num_rows() {
+            let record = columns.decode_row(i)?;
 
-            let errors = if let Some(errors_col) = errors_col {
-                let errors_list = errors_col.value(i);
-                let errors_array = errors_list
-                    .as_any()
-                    .downcast_ref::<Float32Array>()
-                    .context("Failed to cast errors array")?;
-                (0..errors_array.len())
-                    .map(|j| errors_array.value(j))
-                    .collect()
-            } else {
-                Vec::new()
-            };
+            budget.charge_record(record.neuron_uuid.len(), record.errors.len(), file_path)?;
 
-            budget.charge_record(uuid.len(), errors.len(), file_path)?;
-
-            let record = DiscoverRecord::new(obs_index, uuid.clone(), value, activation, errors);
-            grouped_records.entry(uuid).or_default().push(record);
+            grouped_records
+                .entry(record.neuron_uuid.clone())
+                .or_default()
+                .push(record);
         }
     }
 
@@ -461,87 +400,19 @@ pub fn read_records_from_parquet_with_profile(
     for batch_result in reader {
         let batch = batch_result.context("Failed to read record batch")?;
 
-        let schema = batch.schema();
-        let obs_idx = schema
-            .index_of("obs_index")
-            .context("Missing obs_index column")?;
-        let uuid_idx = schema
-            .index_of("neuron_uuid")
-            .context("Missing neuron_uuid column")?;
-        let value_idx = schema.index_of("value").context("Missing value column")?;
-        let act_idx = schema
-            .index_of("activation")
-            .context("Missing activation column")?;
-
-        let obs_index_col = batch
-            .column(obs_idx)
-            .as_any()
-            .downcast_ref::<UInt32Array>()
-            .context("Failed to cast obs_index column")?;
-        let neuron_uuid_col = batch
-            .column(uuid_idx)
-            .as_any()
-            .downcast_ref::<StringArray>()
-            .context("Failed to cast neuron_uuid column")?;
-        let value_col = batch
-            .column(value_idx)
-            .as_any()
-            .downcast_ref::<Float32Array>()
-            .context("Failed to cast value column")?;
-        let activation_col = batch
-            .column(act_idx)
-            .as_any()
-            .downcast_ref::<Float32Array>()
-            .context("Failed to cast activation column")?;
-
-        let errors_col = if include_errors {
-            let err_idx = schema.index_of("errors").context("Missing errors column")?;
-            Some(
-                batch
-                    .column(err_idx)
-                    .as_any()
-                    .downcast_ref::<ListArray>()
-                    .context("Failed to cast errors column")?,
-            )
-        } else {
-            None
-        };
+        // Issue #2005: shared column resolution and per-row decoding; this
+        // reader keeps only its UUID filter and budget policy.
+        let columns = DiscoveryBatchColumns::resolve(&batch, include_errors)?;
 
         // Filter by neuron UUID and collect records
-        for i in 0..batch.num_rows() {
-            let uuid = neuron_uuid_col.value(i);
-            if uuid == neuron_uuid {
-                let obs_index = obs_index_col.value(i);
-                let value = if value_col.is_null(i) {
-                    None
-                } else {
-                    Some(value_col.value(i))
-                };
-                let activation = activation_col.value(i);
-
-                let errors = if let Some(errors_col) = errors_col {
-                    let errors_list = errors_col.value(i);
-                    let errors_array = errors_list
-                        .as_any()
-                        .downcast_ref::<Float32Array>()
-                        .context("Failed to cast errors array")?;
-                    (0..errors_array.len())
-                        .map(|j| errors_array.value(j))
-                        .collect()
-                } else {
-                    Vec::new()
-                };
-
-                budget.charge_record(uuid.len(), errors.len(), file_path)?;
-
-                records.push(DiscoverRecord::new(
-                    obs_index,
-                    uuid.to_string(),
-                    value,
-                    activation,
-                    errors,
-                ));
+        for i in 0..columns.num_rows() {
+            if columns.neuron_uuid(i) != neuron_uuid {
+                continue;
             }
+
+            let record = columns.decode_row(i)?;
+            budget.charge_record(record.neuron_uuid.len(), record.errors.len(), file_path)?;
+            records.push(record);
         }
     }
 
@@ -627,54 +498,12 @@ pub fn read_records_from_parquet_with_limit_and_budget(
     for batch_result in reader {
         let batch = batch_result.context("Failed to read record batch")?;
 
-        let schema = batch.schema();
-        let obs_col_idx = schema
-            .index_of("obs_index")
-            .context("Missing obs_index column")?;
-        let uuid_col_idx = schema
-            .index_of("neuron_uuid")
-            .context("Missing neuron_uuid column")?;
-        let value_col_idx = schema.index_of("value").context("Missing value column")?;
-        let act_col_idx = schema
-            .index_of("activation")
-            .context("Missing activation column")?;
+        // Issue #2005: shared column resolution and per-row decoding; this
+        // reader keeps only its observation limit and budget policy.
+        let columns = DiscoveryBatchColumns::resolve(&batch, include_errors)?;
 
-        let obs_index_col = batch
-            .column(obs_col_idx)
-            .as_any()
-            .downcast_ref::<UInt32Array>()
-            .context("Failed to cast obs_index column")?;
-        let neuron_uuid_col = batch
-            .column(uuid_col_idx)
-            .as_any()
-            .downcast_ref::<StringArray>()
-            .context("Failed to cast neuron_uuid column")?;
-        let value_col = batch
-            .column(value_col_idx)
-            .as_any()
-            .downcast_ref::<Float32Array>()
-            .context("Failed to cast value column")?;
-        let activation_col = batch
-            .column(act_col_idx)
-            .as_any()
-            .downcast_ref::<Float32Array>()
-            .context("Failed to cast activation column")?;
-
-        let errors_col = if include_errors {
-            let err_idx = schema.index_of("errors").context("Missing errors column")?;
-            Some(
-                batch
-                    .column(err_idx)
-                    .as_any()
-                    .downcast_ref::<ListArray>()
-                    .context("Failed to cast errors column")?,
-            )
-        } else {
-            None
-        };
-
-        for i in 0..batch.num_rows() {
-            let obs_index = obs_index_col.value(i);
+        for i in 0..columns.num_rows() {
+            let obs_index = columns.obs_index(i);
 
             // Determine whether to include this row under the limit.
             let include_row = match max_obs {
@@ -698,36 +527,9 @@ pub fn read_records_from_parquet_with_limit_and_budget(
                 continue;
             }
 
-            let uuid = neuron_uuid_col.value(i);
-            let value = if value_col.is_null(i) {
-                None
-            } else {
-                Some(value_col.value(i))
-            };
-            let activation = activation_col.value(i);
-
-            let errors = if let Some(errors_col) = errors_col {
-                let errors_list = errors_col.value(i);
-                let errors_array = errors_list
-                    .as_any()
-                    .downcast_ref::<Float32Array>()
-                    .context("Failed to cast errors array")?;
-                (0..errors_array.len())
-                    .map(|j| errors_array.value(j))
-                    .collect()
-            } else {
-                Vec::new()
-            };
-
-            budget.charge_record(uuid.len(), errors.len(), file_path)?;
-
-            records.push(DiscoverRecord::new(
-                obs_index,
-                uuid.to_string(),
-                value,
-                activation,
-                errors,
-            ));
+            let record = columns.decode_row(i)?;
+            budget.charge_record(record.neuron_uuid.len(), record.errors.len(), file_path)?;
+            records.push(record);
         }
     }
 

@@ -4,8 +4,10 @@
 //! - `schema` — Schema definitions and validation
 //! - `writer` — Parquet writing and serialisation
 //! - `reader` — Parquet reading and deserialisation
+//! - `batch_columns` — the shared batch → `DiscoverRecord` decoder
 
 pub mod activation_summary;
+pub(crate) mod batch_columns;
 pub mod decode_budget;
 pub mod footer;
 mod reader;
