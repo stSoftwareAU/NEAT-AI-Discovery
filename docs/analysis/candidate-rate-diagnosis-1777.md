@@ -65,8 +65,8 @@ target (`:117-128`), and it is genuinely delivered to the consumer:
 | Attached to the candidate | `src/analysis/discovery_dispatch.rs:364-377` |
 | Serialised field | `coordinatedStructuralCandidates[].constantNeuronBiasFold.foldedTargets[].biasDelta` (`src/ffi_types/candidates.rs:246-311`) |
 
-The problem is the gate at `src/analysis/discovery_dispatch.rs:343`:
-`is_constant_neuron` requires `neuron_type == "constant"` (`:174-179`). But
+The problem is the gate in `src/analysis/discovery_dispatch.rs`:
+`is_constant_neuron` requires `neuron_type == "constant"`. But
 **every** producer of a sole-op `RemoveNeuron` restricts itself to hidden
 neurons — `detection/dead_neuron.rs:107`, `detection/low_impact_neuron.rs:121`,
 `detection/noise_signal.rs:121`, `detection/co_adaptation.rs:82`,
@@ -83,13 +83,26 @@ information**. The removal is still emitted, so the consumer deletes the neuron
 and folds only its own mean. The candidate is not rejected; the *remedy* is
 silently omitted as an absent optional field.
 
+> **Superseded — the `is_constant_neuron` gate.** That function no longer exists
+> on the cited path. The seam is now
+> `discovery_dispatch.rs::accepted_constant_bias_fold`, which evaluates the fold
+> for a candidate rather than gating on the declared `neuron_type`, so the
+> functionally-constant *hidden* case this section calls unreachable is the case
+> it now handles. Read the paragraph above as the diagnosis that motivated the
+> rename, not as a description of the current gate.
+
 Two further suppressors on this path:
 
 - `functionally_constant_neuron_uuids`
-  (`src/analysis/remove_neuron_constant_promotion.rs:112-114`) returns an empty
-  `HashSet` **unconditionally** (a documented dependency stub), so the #1622
-  priority promotion (`CONSTANT_NEURON_PRIORITY_GAIN`) is a no-op and constant
-  removals keep an honest gain of ≈0.
+  (`remove_neuron_constant_promotion.rs::functionally_constant_neuron_uuids`)
+  returns an empty `HashSet` **unconditionally** (a documented dependency stub),
+  so the #1622 priority promotion (`CONSTANT_NEURON_PRIORITY_GAIN`) is a no-op
+  and constant removals keep an honest gain of ≈0.
+
+  > **Superseded by #1813.** The stub was replaced by a structural fixpoint:
+  > `remove_neuron_constant_promotion.rs::functionally_constant_neuron_uuids`
+  > now walks the topology and returns the hidden neurons whose output cannot
+  > vary, so the #1622 priority promotion is live.
 - Three different variance thresholds govern nominally the same decision:
   `VARIANCE_EPSILON = 1e-12`, `BIAS_FOLD_GATE_TOLERANCE = 1e-6`
   (`remove_neuron_bias_fold.rs`), and `CONSTANT_VARIANCE_THRESHOLD = 1e-10`
@@ -311,8 +324,16 @@ the tracker were ever populated.
 > **Superseded — the `FailureCacheEntry` half.** **#1781** added the `ageEpochs`
 > field (alias `epochsSinceRecorded`), so an entry can now be expired and only a
 > demonstrably fresh entry earns wildcard reach — see
-> [`docs/FFI_API.md`](../FFI_API.md) § *failure cache*. The
-> `previous_neuron_fingerprints` half above stands as written.
+> [`docs/FFI_API.md`](../FFI_API.md) § *failure cache*.
+>
+> **Superseded — the `previous_neuron_fingerprints` half too.** The same #1781
+> shipped an escape hatch for the fingerprint skip:
+> `fingerprint_skip_escape.rs::should_bypass_fingerprint_cache` releases the
+> structural cache once the creature's trailing streak of empty passes reaches
+> `DEFAULT_FINGERPRINT_SKIP_DROUGHT_EPOCHS` (3), so the whole-pass drop this
+> paragraph describes is no longer reachable during a drought. The reasoning —
+> that a structural cache is self-reinforcing while nothing is being accepted —
+> is preserved verbatim in that module's header.
 
 ### B3 — Silent drops invisible to the rejection breakdown
 

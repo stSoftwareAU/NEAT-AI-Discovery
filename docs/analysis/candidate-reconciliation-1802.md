@@ -8,6 +8,12 @@ the same way.
 
 This page documents the enforced invariant that replaces that convention.
 
+> **Point-in-time study, as at 2026-07-31 — current.** The fail-loud
+> invariant below is still enforced by `src/analysis/candidate_reconciliation.rs`
+> and its guard tests; no claim here is known to be superseded. If the ledger
+> changes, annotate the affected claim inline rather than rewriting the page —
+> see [`docs/archive/README.md`](../archive/README.md) § *What goes where*.
+
 ## The invariant
 
 Each analysis surface owns a per-pass `CandidateLedger`

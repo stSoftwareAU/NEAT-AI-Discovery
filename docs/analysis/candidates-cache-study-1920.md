@@ -8,6 +8,15 @@ This report is **diagnostic only** — no production behaviour is changed here.
 Every improvement it names is handed to a follow-up issue, as the issue's
 accepted scope requires.
 
+> **Point-in-time study, as at 2026-08-02 — superseded by #1923, #1924 and
+> #1925.** All three follow-ups this study filed have since shipped, so its
+> three headline measurements describe a pipeline that no longer exists. The
+> prose is left as written; each superseded claim carries an inline
+> **Superseded** annotation naming the issue that closed it. For current
+> behaviour read [`docs/FOCUS_SELECTION.md`](../FOCUS_SELECTION.md),
+> [`neuron-ranking-score-1924.md`](neuron-ranking-score-1924.md) and
+> [`module-skip-attribution-1925.md`](module-skip-attribution-1925.md).
+
 ## Headline
 
 Both questions the issue asks have an answer, and they turn out to be the same
@@ -22,10 +31,18 @@ answer viewed twice.
    gain signal.** `removalCandidate.impact` correlates with realised gain at
    **r = −0.04** (n = 21) — statistically nothing. Its companion field
    `meanActivation` is **hard-coded to `0.0`**
-   (`src/focus/ranking/removal_candidates.rs:509`), so the documented
-   activation-weighted ranking is dead on the path that produces most
-   candidates. Discovery is not choosing *bad* removals; it is choosing
+   (`removal_candidates.rs::identify_structural_removal_candidates`), so the
+   documented activation-weighted ranking is dead on the path that produces
+   most candidates. Discovery is not choosing *bad* removals; it is choosing
    *arbitrary* ones from a pool it cannot rank.
+
+> **Superseded — the dead `meanActivation` field (point 2).** **#1923** shipped
+> the gate resolver: `src/focus/ranking/activation_weighting.rs` measures each
+> candidate's mean absolute activation in one projected streaming pass and
+> writes it back (`activation_weighting.rs::resolve_activation_weighted_gate`),
+> so the structure-only path now ranks on `activation_weighted_impact` exactly
+> as the record-derived path does. The *measurement* below stands as the
+> evidence that motivated the fix; the behaviour it describes does not.
 
 The one strategy that *does* carry a prediction — `add-neurons` — predicts
 backwards: `expectedCreatureScoreGain` correlates with **success at r = −0.61**.
@@ -145,9 +162,22 @@ gain. `meanActivation` — which `RemovalCandidateJson` documents as feeding
 `activation_weighted_impact = impact × mean_activation` — is `0` in all 67
 records, because the structural-removal path constructs the candidate with
 `mean_activation: 0.0, activation_weighted_impact: 0.0`
-(`src/focus/ranking/removal_candidates.rs:507-513`). The candidate's own
-`reason` string admits it: *"activation-weighted gate deferred to analysis"*.
-The deferral never resolves, so the gate never runs.
+(`removal_candidates.rs::identify_structural_removal_candidates`). The
+candidate's own `reason` string admits it: *"activation-weighted gate deferred
+to analysis"*. The deferral never resolves, so the gate never runs.
+
+> **Superseded by #1923.** The deferral now resolves. After the structural
+> triage picks its candidate set,
+> `activation_weighting.rs::resolve_activation_weighted_gate` measures mean
+> absolute activation from the discovery parquet, re-gates on
+> `impact × mean_activation`, and sets `candidate.mean_activation` — the field
+> is no longer `0` and the two removal paths apply the same criterion. The
+> `r = −0.04` correlation for `impact` remains the historical measurement that
+> justified the change; re-run the study to measure the ranking that replaced
+> it. The retired construction site is
+> `removal_candidates.rs::identify_structural_removal_candidates`, which still
+> seeds `mean_activation: 0.0` as *not-yet-measured* (reason string
+> `ACTIVATION_GATE_PENDING`) for the resolver to fill in.
 
 **B. `add-neurons` confidence is inverted.** Sorted by predicted gain, the
 largest predictions are exactly the ones that fail:
@@ -200,11 +230,11 @@ expected convergence effect: fitter creatures yield smaller, rarer wins.
 
 ## Follow-ups
 
-| Finding | Follow-up |
-| --- | --- |
-| A — dead activation-weighted ranking on `remove-low-impact` | #1923 |
-| B — `expectedCreatureScoreGain` anti-correlates with success | #1924 |
-| Volume — 57% barren runs, starved high-success strategies | #1925 |
+| Finding | Follow-up | Status as at 2026-08-04 |
+| --- | --- | --- |
+| A — dead activation-weighted ranking on `remove-low-impact` | #1923 | **closed** — gate resolver shipped in `src/focus/ranking/activation_weighting.rs` |
+| B — `expectedCreatureScoreGain` anti-correlates with success | #1924 | **closed** — reliability-weighted rank score shipped (`src/analysis/neuron/ranking_score.rs`); see [`neuron-ranking-score-1924.md`](neuron-ranking-score-1924.md) |
+| Volume — 57% barren runs, starved high-success strategies | #1925 | **closed** — module-skip attribution shipped; see [`module-skip-attribution-1925.md`](module-skip-attribution-1925.md) |
 
 Finding C is folded into #1924; finding D is a caveat, not a defect in this
 repository.

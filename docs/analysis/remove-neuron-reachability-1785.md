@@ -21,6 +21,12 @@ The test is a **characterisation pin, not an invariant**. A fix to either gate i
 expected to break it loudly; when that happens, update the pin *and* this table
 together.
 
+> **Point-in-time reference table, as at 2026-07-31 — characterisation pin,
+> not an invariant.** Every number below is produced by the committed test named
+> above, and the gates it pins were subsequently changed by #1812 and #1814.
+> Re-run the test rather than quoting a figure from this page as today's
+> behaviour.
+
 ## Measurement fixture
 
 `tests/fixtures/remove_neuron_reachability/network.json` — hand-authored and

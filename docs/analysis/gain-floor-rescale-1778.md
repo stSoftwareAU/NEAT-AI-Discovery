@@ -5,6 +5,13 @@ acceptance floor and found the floor **unreachable by construction**. This
 document records the re-derivation the issue asked for — floor and calibration
 constants together, on evidence — and the boundary it settles.
 
+> **Point-in-time study, as at 2026-07-31 — current.** The re-derivation below
+> is the shipped rescale (`candidate_scoring.rs::calibrated_gain_floor`,
+> `candidate_scoring.rs::GAIN_FLOOR_NOISE_BACKSTOP`). It supersedes
+> [`threshold-review-1740.md`](threshold-review-1740.md)'s "no floor change"
+> verdict and settles that review's contradiction with
+> [`rejection-diagnosis-1737.md`](rejection-diagnosis-1737.md).
+
 ## The fault in one line
 
 `expectedCreatureScoreGain` reaches the floor filter **after** the fixed
