@@ -144,30 +144,49 @@ flowchart TD
 
 | Pattern | Candidate | Operation | Detail |
 |---------|-----------|-----------|--------|
-| **Dominant input** | Reduce weight | `setWeight` | Scale to dominance_threshold × 0.8 |
+| **Dominant input** | Reduce weight | `setWeight` | Scale the *existing* weight down — see the expression below |
 | **Threshold effect** | Add dampening | `addNeuron` | IDENTITY neuron to attenuate signal |
 | **Threshold effect** | Shift bias | `setBias` | Move operating point away from cliff |
-| **Threshold effect** | Reduce weight | `setWeight` | Scale weight by gradient × 0.3 |
+| **Threshold effect** | Reduce weight | `setWeight` | Chosen when the neuron operates away from the cliff; no weight value is computed |
+
+For a dominant input, `input_sensitivity.rs::detect_dominant_inputs` scales the
+existing weight rather than assigning a target sensitivity:
+
+```text
+recommended_weight = weight × min(dominance_threshold × 0.8 / sensitivity_score,
+                                 WEIGHT_REDUCTION_FACTOR)
+```
+
+`WEIGHT_REDUCTION_FACTOR` (`input_sensitivity.rs`, 0.3) is a floor on how far a
+single recommendation may cut the weight, so the reduction is never gentler than
+70%. The three threshold-effect rows are alternative *operations* selected by
+threshold proximity — that path emits an action, not a weight.
 
 ---
 
 ## 📝 Example
 
-> **Dominant Input:**
-> Input I7 → Output O1, weight = 3.2
-> Correlation(I7, O1\_error) = 0.85
-> Leverage ratio = 3.2 × 0.85 × 1.8 = 4.9
-> Sensitivity = 4.9 × 3.2 = 15.7 (>> 2.0)
-> Fix: Set weight to 2.0 × 0.8 = 1.6
+> **Dominant Input:** Input I7 → Output O1
+>
+> - **Current weight:** 3.2
+> - Correlation(I7, O1\_error) = 0.85
+> - Leverage ratio = 3.2 × 0.85 × 1.8 = 4.9
+> - **Sensitivity score:** 15.7 = 4.9 × 3.2 (>> dominance\_threshold 2.0)
+>
+> Fix: `setWeight` to
+> `3.2 × min(2.0 × 0.8 / 15.7, 0.3) = 3.2 × 0.102 = 0.33`.
+> The ratio branch wins here, so the cut is far deeper than the
+> `WEIGHT_REDUCTION_FACTOR` floor of 0.3 would allow on its own.
 >
 > **Threshold Effect:**
 > Input I2 → Hidden H3 (TANH), weight = 1.5
 > Max finite difference in activation = 0.98
 > Effective gradient = 0.98 × 1.5 = 14.7 (> 10.0)
-> Fix options:
-> 1. Add IDENTITY dampening neuron between I2 and H3
-> 2. Shift H3 bias by ±0.5 to move away from steep region
-> 3. Reduce I2→H3 weight to 14.7 × 0.3 = 4.4
+> Fix options — the operation is chosen by threshold proximity, and this path
+> emits the action only:
+> 1. Add IDENTITY dampening neuron between I2 and H3 (proximity > 0.5)
+> 2. Shift H3 bias to move away from the steep region (\|mean value\| < 1.0)
+> 3. `setWeight` on I2→H3 (otherwise) — no weight value is computed here
 
 ---
 

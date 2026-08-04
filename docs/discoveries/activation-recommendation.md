@@ -58,11 +58,11 @@ graph LR
 flowchart TD
     A["🔍 For each hidden neuron"] --> B["📊 Step 1: Classify input distribution"]
     B --> C{"📈 Distribution type?"}
-    C -->|"Sparse: > 50% near zero"| D1["🧬 Best: RELU (0.9), LEAKYRELU (0.85)"]
-    C -->|"Bounded: range < 2.0"| D2["🧬 Best: LOGISTIC (0.85), HARD_TANH (0.80)"]
-    C -->|"Bimodal: kurtosis < 2.5"| D3["🧬 Needs: specialised handling"]
+    C -->|"Sparse: > 50% near zero"| D1["🧬 Best: RELU (0.9), RELU6 (0.85)"]
+    C -->|"Bounded: range < 2.0"| D2["🧬 Best: LOGISTIC (0.9), HARD_TANH (0.85)"]
+    C -->|"Bimodal: kurtosis < 2.5"| D3["🧬 Best: TANH (0.7), HARD_TANH (0.7)"]
     C -->|"Gaussian: kurtosis 2–5"| D4["🧬 Best: TANH (0.9), SOFTPLUS (0.85)"]
-    C -->|"Uniform"| D5["🧬 Best: TANH (0.80), IDENTITY (0.75)"]
+    C -->|"Uniform"| D5["🧬 Best: TANH (0.75), IDENTITY (0.7)"]
     D1 --> E["⚖️ Step 2: Apply gradient flow penalty"]
     D2 --> E
     D3 --> E
@@ -134,22 +134,32 @@ is the suitability score difference between recommended and current activation.
 > |--------|-------|
 > | Mean | 0.02 |
 > | Std dev | 0.8 |
+> | Min | -2.0 |
+> | Max | 2.0 |
 > | Kurtosis | 2.9 |
-> | Skew | 0.1 |
 >
-> **Suitability scores:**
+> **Suitability scores** (the Gaussian map in
+> `activation_recommendation.rs::classify_activation_suitability`, then
+> `apply_gradient_flow_penalty`):
 >
 > | Activation | Score | Notes |
 > |-----------|-------|-------|
-> | **TANH** | **0.90** | ← best for Gaussian |
+> | **TANH** | **0.90** | ← best for Gaussian; unpenalised, \|min\| and \|max\| stay under 3.0 |
 > | SOFTPLUS | 0.85 | |
-> | RELU | 0.60 | current — penalised for clipping negatives |
-> | LOGISTIC | 0.55 | |
+> | GELU | 0.80 | |
+> | ELU | 0.75 | |
+> | IDENTITY | 0.70 | |
+> | LOGISTIC | 0.60 | |
+> | RELU | 0.375 | current — base 0.50 penalised ×0.75 for clipping the negative half |
 >
-> Improvement: 0.90 − 0.60 = 0.30 (>> 0.001 threshold)
+> The RELU penalty is `1 − negative_fraction × 0.5`, where
+> `negative_fraction = (0 − min) / (max − min) = 2.0 / 4.0 = 0.5`, giving
+> `0.50 × 0.75 = 0.375`.
+>
+> Improvement: 0.90 − 0.375 = 0.525 (>> 0.001 threshold)
 >
 > **Candidate:** Change RELU → TANH
-> Expected improvement: 0.30 × 0.02 = 0.006
+> Expected improvement: 0.525 × 0.02 = 0.0105
 >
 > After fix: TANH handles the full bell-curve distribution
 > symmetrically, preserving negative inputs that RELU was clipping to zero ✅
