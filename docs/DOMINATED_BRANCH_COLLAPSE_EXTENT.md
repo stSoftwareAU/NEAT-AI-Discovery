@@ -14,6 +14,15 @@ This is a **report only** — it changes no engine behaviour. Every concrete gap
 it identifies is filed as a separate follow-up issue and linked from #1704; the
 register is at the end.
 
+> **Point-in-time report, as at 2026-07-21 — partly superseded by #1711 and
+> #1713.** Two of the three gaps it filed have since been delivered, so its
+> headline "extent of automatic collapse is **zero**" is history. The prose is
+> left as written; each superseded claim carries an inline **Superseded**
+> annotation naming the issue that closed it, and the register at the end
+> records the delivery. For current behaviour read
+> `src/analysis/dominated_branch_collapse.rs` and
+> [`docs/ANALYSIS_DEEP_DIVE.md`](ANALYSIS_DEEP_DIVE.md).
+
 ## Scope
 
 Three questions, one per section:
@@ -76,6 +85,17 @@ the extent of automatic collapse is **zero** across all three types and both
 dominance bases. The characterisation suite pins that "zero" so any future move
 toward the target (or a regression) trips a labelled `current vs target`
 assertion in CI. → **Gap G1**.
+
+> **Superseded by #1711 — the extent is no longer zero for MAX/MIN.**
+> `src/analysis/dominated_branch_collapse.rs` ships both halves of gap G1:
+> `dominated_branch_collapse.rs::detect_dominated_branches` proves dominance on
+> `weight × squash(range)` signs, and
+> `dominated_branch_collapse.rs::collapse_dominated_branch` removes the
+> dominated branch and folds the single-survivor aggregate to a pass-through,
+> behind the #1623-style evaluate-before-accept gate. The **IF** row still
+> stands: conditional dominance is gap G2 (#1712), which remains open. The
+> "current" column above therefore describes the pre-#1711 engine, and the
+> register at the end of this report already records the delivery.
 
 ---
 

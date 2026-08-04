@@ -12,6 +12,13 @@ evidence the parent's criterion needs.
 > keep out of the public tree. This note uses the concept-level term
 > "production network".
 
+> **Point-in-time study, as at 2026-07-25 — baseline superseded by the
+> #1777–#1818 campaign.** The accepted-run-rate *method* below is current, but
+> the baseline numbers were measured before the campaign changed the gain
+> floors (#1778), the removal denomination (#1812) and the ranking score
+> (#1924). Re-run the harness before quoting a number from this page as
+> today's rate.
+
 ## What the harness measures
 
 The parent's success criterion is *"at least one accepted improvement in most

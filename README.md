@@ -579,8 +579,9 @@ graph TD
 | [docs/STREAMING_GUIDE.md](docs/STREAMING_GUIDE.md) | Step-by-step streaming recording API guide with TypeScript examples |
 | [docs/CACHE_TUNING.md](docs/CACHE_TUNING.md) | Cache tier tuning, diagnostics, and example configurations |
 | [docs/BENCHMARKS.md](docs/BENCHMARKS.md) | Benchmark regression tracking and comparison workflow |
-| [docs/CANDIDATE_PIPELINE_MCMC_AUDIT.md](docs/CANDIDATE_PIPELINE_MCMC_AUDIT.md) | MCMC applicability audit for candidate selection pipeline |
+| [docs/CANDIDATE_PIPELINE_MCMC_AUDIT.md](docs/CANDIDATE_PIPELINE_MCMC_AUDIT.md) | MCMC applicability audit for candidate selection pipeline (point-in-time — see the index below for its status) |
 | [docs/DROUGHT_PLAYBOOK.md](docs/DROUGHT_PLAYBOOK.md) | Operator playbook for diagnosing "no successful candidates" droughts (suppression layers, regimes, env vars) |
+| [docs/analysis/README.md](docs/analysis/README.md) | **Index of every point-in-time study** — issue, date, and current/superseded status per study. Start here before citing one |
 | [docs/analysis/candidates-cache-study-1920.md](docs/analysis/candidates-cache-study-1920.md) | Findings from the production candidates-cache study: candidate volume and gain-size predictors |
 | [docs/analysis/neuron-ranking-score-1924.md](docs/analysis/neuron-ranking-score-1924.md) | The reliability-weighted add-neuron rank score, and the before/after correlation that accepts it |
 | [CodeWiki](https://codewiki.google/github.com/stsoftwareau/neat-ai-discovery) | AI-powered documentation and code exploration |

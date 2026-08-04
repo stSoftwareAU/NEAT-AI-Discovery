@@ -2,13 +2,27 @@
 
 Issue #1017 — Part of #1016
 
-> ⚠️ **Historical audit — partially superseded (see the [Postscript](#8-postscript-1018-later-introduced-opt-in-metropolis-hastings-acceptance)).**
+> ⚠️ **Point-in-time audit, as at 2026-04-07 — partially superseded (see the [Postscript](#8-postscript-1018-later-introduced-opt-in-metropolis-hastings-acceptance)).**
 > This document records the state of the pipeline as of Issue #1017. Its central
 > negative recommendation ("no probabilistic acceptance", "do not introduce MCMC
 > machinery") describes the pipeline **at that time**. Issue #1018 has since
 > landed **opt-in** Metropolis–Hastings acceptance, gated on the
 > `NEAT_AI_DISCOVERY_MH_TEMPERATURE` environment variable. Read the statements
 > below as the historical audit finding, not as current fact.
+>
+> **Retired constants (Issue #1990).** Several values quoted below as current
+> have since been re-tuned. Today's shipped values, all in
+> `src/analysis/constants/candidate_scoring.rs`:
+>
+> | Constant | Quoted here | Today |
+> | --- | --- | --- |
+> | `SYNAPSE_PREDICTION_CALIBRATION` | 0.001 | **0.0003** |
+> | `SYNAPSE_PESSIMISM_DISCOUNT_FLOOR` | 0.05 | **0.03** |
+> | `SYNAPSE_PESSIMISM_CURVE_EXPONENT` | 0.85 | **0.9** |
+>
+> Line-number citations in the tables below have rotted. Where a symbol is named
+> it is still findable by name, which is the `file.rs::symbol` convention this
+> repo now prefers.
 
 ## 1. Executive Summary
 
@@ -27,13 +41,13 @@ identifies where the analogy breaks down.
 
 | Pipeline Stage | Code Location | MCMC Analogue | Gap / Divergence |
 |----------------|---------------|---------------|------------------|
-| **Source enumeration** | `orchestration.rs` — `order_focus_targets()` | Proposal distribution | Deterministic neuron ordering with interleaving (Issue #907), not a stochastic proposal kernel |
+| **Source enumeration** | `utils/deadline.rs::order_focus_targets` (the audit cited `orchestration.rs`; it has since moved) | Proposal distribution | Deterministic neuron ordering with interleaving (Issue #907), not a stochastic proposal kernel |
 | **Weight grid search** | `evaluation.rs:160–170` — 9-variant `weight_candidates` | Parameter proposal | Fixed grid of {0.1, 0.25, 0.5, 0.75, 1.0, 1.5, 2.0, -0.5, -1.0} × optimal weight — not a continuous proposal distribution |
 | **GPU evaluation** | `evaluation.rs:78–94` — `positive_count`/`negative_count` | Likelihood computation | Counts improved/worsened samples as a quality signal — analogous to likelihood evaluation |
 | **Hold-out validation** | `holdout_validation.rs` — `split_samples_holdout()` | — (no MCMC analogue) | Cross-validation to combat overfitting from the 9-variant search; a statistical regularisation technique, not an MCMC concept |
 | **Accept/reject** | `evaluation.rs:258–289` — threshold + `MIN_IMPROVED_RATIO` | Acceptance criterion | **Purely deterministic**: accept if `improvement > 0` AND `improved_ratio >= 0.6`. No probabilistic acceptance (no Metropolis-Hastings α). Worse candidates are always rejected |
 | **Pessimism discount** | `discounting.rs` — `apply_synapse_pessimism_discount()` | — (no MCMC analogue) | Concave power-curve scaling of predictions to correct systematic overestimation. A calibration correction, not a transition probability |
-| **Prediction calibration** | `candidate_scoring.rs:557` — `SYNAPSE_PREDICTION_CALIBRATION = 0.001` | — (no MCMC analogue) | Per-type multiplicative correction for 100–10,000× overestimation. Calibration, not sampling |
+| **Prediction calibration** | `candidate_scoring.rs::SYNAPSE_PREDICTION_CALIBRATION` — audited at `0.001`, **today `0.0003`** | — (no MCMC analogue) | Per-type multiplicative correction for 100–10,000× overestimation. Calibration, not sampling |
 | **Impact discounting** | `post_processing.rs` — `apply_impact_to_helpful()` | — (no MCMC analogue) | Structural network-topology weighting (distance to outputs) |
 | **Diversification** | `deadline.rs:342` — `shuffle_within_top_k(DIVERSIFY_TOP_K=64)` | Chain mixing / exploration | Shuffles top-64 candidates for diversity across runs — closest to MCMC exploration, but applied post-hoc to a sorted list rather than as part of a chain's transition kernel |
 | **Ranking & truncation** | `post_processing.rs:386–453` | — (no MCMC analogue) | Sort by the reliability-weighted rank score (`ranking_score.rs`, Issue #1924 — improved-sample share banded, `expected_creature_score_gain` breaking ties within a band), truncate to `max_candidates`. Pure optimisation ranking |
@@ -107,8 +121,9 @@ This neuron-level metric does not translate to creature-level score gain because
 
 The pipeline already addresses this with:
 - Error fraction scaling (`post_processing.rs:80–90`)
-- Pessimism discounting (floor=0.05, exponent=0.85 for synapses)
-- Prediction calibration (×0.001 for synapses)
+- Pessimism discounting (audited at floor=0.05, exponent=0.85 for synapses;
+  **today 0.03 / 0.9**)
+- Prediction calibration (audited at ×0.001 for synapses; **today ×0.0003**)
 
 ### 4.2 Multi-Weight Search Overfitting
 
@@ -205,9 +220,21 @@ approaches are more promising than MCMC:
    (floor=0.05, exponent=0.85) were set based on the 0% success rate. As more
    data accumulates, these can be recalibrated.
 
+   > **Superseded — this recalibration happened.** The shipped values are now
+   > `SYNAPSE_PESSIMISM_DISCOUNT_FLOOR = 0.03` and
+   > `SYNAPSE_PESSIMISM_CURVE_EXPONENT = 0.9`
+   > (`src/analysis/constants/candidate_scoring.rs`).
+
 4. **Weight search refinement**: The fixed 9-variant grid could be replaced with
    a finer-grained search around the optimal weight, or an adaptive grid based
    on historical successful weights.
+
+   > **Superseded — #1019 landed this.**
+   > `src/analysis/synapse/adaptive_proposal.rs` replaces the fixed grid with an
+   > adaptive Gaussian proposal distribution centred on the computed optimal
+   > weight, whose sigma adapts to the historical acceptance rate per target
+   > neuron type. It falls back to the 9-variant grid below
+   > `ADAPTIVE_PROPOSAL_MIN_HISTORY` samples.
 
 ## 7. Key Files Reviewed
 
@@ -248,6 +275,14 @@ above are no longer unconditionally true and must be read as history:
   variable is unset, the original deterministic accept/reject logic described in
   §3.2 is preserved exactly. Only when a temperature is configured are marginal
   candidates accepted probabilistically.
+- **Issue #1019 replaced the fixed 9-variant weight grid** with an **adaptive
+  Gaussian proposal distribution** (`src/analysis/synapse/adaptive_proposal.rs`)
+  centred on the computed optimal weight, whose sigma adapts toward a target
+  acceptance rate per target-neuron type. That is the §6.2 recommendation
+  ("weight search refinement") delivered, and it makes the §2 "fixed grid, not a
+  continuous proposal distribution" row historical: the pipeline now has a real
+  proposal distribution, though it remains deterministic (hash-seeded) and falls
+  back to the grid below `ADAPTIVE_PROPOSAL_MIN_HISTORY` samples.
 - Issue #1020 added a **temperature schedule** that scales the MH temperature,
   and Issue #1021 added **MCMC-style acceptance-rate diagnostics**
   (`src/analysis/diagnostics/mcmc_diagnostics.rs`), so the "convergence

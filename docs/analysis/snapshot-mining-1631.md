@@ -5,6 +5,13 @@ successful-candidate rate has nearly halted, and proposes evidence-backed
 improvements. Each proposal is raised as its own child issue with a TDD proof
 plan; this document is the shared evidence base and cross-link.
 
+> **Point-in-time study, as at 2026-07-18 — partly superseded by #1632.** This
+> is a historical record, not a live reference. The prose is left as written;
+> each superseded claim carries an inline **Superseded** annotation naming the
+> issue that closed it. For current detection behaviour read
+> [`docs/DISCOVERY_TYPES.md`](../DISCOVERY_TYPES.md) and
+> [`docs/ANALYSIS_DEEP_DIVE.md`](../ANALYSIS_DEEP_DIVE.md).
+
 ## Inputs
 
 | Source | What it provided |
@@ -65,6 +72,14 @@ flowchart LR
 The dormant-synapse detector skips any synapse whose `|weight| > 1e-4` **before**
 it ever looks at contribution. But a synapse with a large weight contributes
 nothing when its source neuron is gated to `0` across every observation.
+
+> **Superseded by #1632 — this describes the pre-#1632 detector.**
+> `detection/dormant_synapse.rs::detect_dormant_synapses` now judges dormancy on
+> **contribution** (`|weight × source_activation|`) with a max-contribution
+> spike guard, exactly as this finding proposed; the weight-magnitude skip is
+> gone. The module's own header cites the 166-synapse figure below as the
+> history that motivated the change. The measurements in this finding therefore
+> remain valid as evidence, not as a description of current behaviour.
 
 | Signal (from `derived.synapses[].contribution`) | Count |
 | --- | --- |

@@ -8,6 +8,17 @@ only — **no production behaviour is changed here**. It names the dominant
 rejection path(s) and points each sibling issue in milestone #1736 at the right
 code.
 
+> **Point-in-time study, as at 2026-07-25 — partly superseded by #1802 and
+> #1778/#1812.** This is a historical record, not a live reference. The prose is
+> left as written; each superseded claim carries an inline **Superseded**
+> annotation naming the issue that closed it, and the still-true halves are
+> marked as such. Note in particular that this report's threshold verdict is the
+> **opposite** of [`threshold-review-1740.md`](threshold-review-1740.md)'s —
+> #1778 settled the contradiction in this report's favour, and the annotations
+> below cross-link both. For current behaviour read
+> [`docs/DROUGHT_PLAYBOOK.md`](../DROUGHT_PLAYBOOK.md) and
+> [`gain-floor-rescale-1778.md`](gain-floor-rescale-1778.md).
+
 ## Inputs
 
 | Source | What it provided |
@@ -40,6 +51,20 @@ calculation fault and a threshold effect, in that order of leverage:
    is still two orders of magnitude below the `1e-5`
    `COORDINATED_MIN_EXPECTED_GAIN` floor. The floors were tuned for small
    networks and reject the achievable-improvement band outright.
+
+> **Superseded — the threshold verdict (point 2).** The sibling review
+> [`threshold-review-1740.md`](threshold-review-1740.md) reached the opposite
+> conclusion days later ("the floors are correctly scaled and are *not*
+> lowered"), and neither document cross-linked the other. **#1778** settled it
+> in *this* report's favour but by a different mechanism than either proposed:
+> the floor was not lowered, it was **re-denominated** onto the post-calibration
+> scale (`candidate_scoring.rs::calibrated_gain_floor`, backstopped by
+> `candidate_scoring.rs::GAIN_FLOOR_NOISE_BACKSTOP`), so the two quantities are
+> now compared on one scale — see
+> [`gain-floor-rescale-1778.md`](gain-floor-rescale-1778.md). **#1812** then
+> re-denominated sole-op `RemoveNeuron` off that floor entirely
+> (`discovery_dispatch.rs::apply_honest_remove_neuron_gain`). Point 1 (the
+> estimator is the primary fault) stands.
 
 Candidate **generation is not the bottleneck** for this rejection profile — the
 cache shows the generators emitting `change-squash` (including coordinated
@@ -203,17 +228,28 @@ gains survive. A post-hoc diagnosis therefore has to reconstruct the ranking
 
 Two reason constants are also defined but **never incremented** in `src/`
 (`interference_filtered` and `below_improved_ratio`): the improved-sample-ratio
-gate (`src/analysis/neuron/evaluation.rs:363`) and the epistatic interference
-filter drop candidates without recording a reason. Any candidates they discard
-are invisible in the live breakdown, so the reconstructed ranking above may
-*under-count* those paths — wiring them is a cheap, well-scoped observability
-fix (and, per this issue's Failure Detection contract, would need coverage in
+gate (`neuron/evaluation.rs::passes_neuron_improved_ratio`) and the epistatic
+interference filter drop candidates without recording a reason. Any candidates
+they discard are invisible in the live breakdown, so the reconstructed ranking
+above may *under-count* those paths — wiring them is a cheap, well-scoped
+observability fix (and, per this issue's Failure Detection contract, would need coverage in
 `ALL_REJECTION_REASONS` / `all_reasons_list_contains_every_constant`). Capturing the live
 `top_level_summary` / `rejection_breakdown` alongside each "failed to find any
 improvements" run is the single highest-value observability improvement and
 belongs to the regression harness in **#1741**; it would also give the
 "stale-diagnosis" check in this issue's Failure Detection section an automated
 signal instead of a manual cross-reference.
+
+> **Superseded — the `below_improved_ratio` half.** **#1802** wired the
+> improved-sample-ratio gate into the breakdown: every drop site now calls
+> `evaluation_drops.rs::EvaluationDropCounters::drop_below_improved_ratio`
+> (three sites in `neuron/evaluation.rs`, one in
+> `synapse/target_analysis/evaluation.rs`), and the counter is folded into the
+> emitted `RejectionBreakdown` by `evaluation_drops.rs::fold_evaluation_drops`.
+> The **`interference_filtered` half still stands as written** — the constant is
+> defined in `diagnostics/rejection_reasons.rs` and read by
+> `candidate_starvation.rs`, but no production path records it, so the epistatic
+> interference filter's drops remain invisible in the live breakdown.
 
 ## Reproducing the evidence
 
