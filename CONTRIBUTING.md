@@ -109,16 +109,18 @@ so do not skip this step. `./quality.sh` performs these checks in order:
 2. `./quality/shellcheck.sh` — ShellCheck lint over every `.sh` file
    (Issue #1898); the same committed script CI runs on pull requests
    (hard-fails if `shellcheck` is not installed)
-3. `./scripts/check-pr-summary-location.sh` — PR summaries must stay in
+3. `./quality/cargo_install_pinning.sh` — every `cargo install` call site must
+   pass both `--locked` and `--version` (Issue #1912, enforcing Issue #1223)
+4. `./scripts/check-pr-summary-location.sh` — PR summaries must stay in
    `docs/archive/pr-summaries/` (Issue #1613)
-4. `cargo deny check` (licence and dependency audit)
-5. `cargo build` (debug, quick feedback)
-6. `cargo fmt --all` (auto-formatting)
-7. `cargo clippy --all-targets --all-features -- -D warnings`
-8. `cargo check --all-targets --all-features`
-9. `cargo test --lib --tests --all-features -- --test-threads=2`
-10. `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps` (documentation build)
-11. `cargo build --release --lib`
+5. `cargo deny check` (licence and dependency audit)
+6. `cargo build` (debug, quick feedback)
+7. `cargo fmt --all` (auto-formatting)
+8. `cargo clippy --all-targets --all-features -- -D warnings`
+9. `cargo check --all-targets --all-features`
+10. `cargo test --lib --tests --all-features -- --test-threads=2`
+11. `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps` (documentation build)
+12. `cargo build --release --lib`
 
 If any step fails, fix the issue and re-run. Do **not** commit code that fails
 `./quality.sh`.
@@ -149,13 +151,24 @@ the gate runs on milestone sub-issue PRs too, not just the rollup into `Develop`
   --workspace`) and fails loud if any dependency resolution moves — dependency
   bumps go through `./bump-deps.sh` or Renovate, which enforce the quarantine
   window (Issue #1878)
-- `quality` — fmt check, Clippy, cargo check, doc build, tests, build
+- `quality` — fmt check, Clippy, library build (`cargo build --lib`), an
+  intermediate-artefact cleanup, then tests. It runs **neither** `cargo check`
+  nor a doc build: no workflow builds the docs (see
+  [`docs/ci-doc-build-step.md`](docs/ci-doc-build-step.md)), so run
+  `./scripts/doc-check.sh` — or the full `./quality.sh` — locally. Its test
+  command is
+  `cargo test --lib --tests --bins --all-features --verbose -- --test-threads=2`
+  — the extra `--bins` and `--verbose` are the only delta from the documented
+  local command, and `--bins` selects nothing because the crate declares no
+  `[[bin]]` targets
 - `spell-check` — runs codespell on the codebase. codespell is installed with
   `pip install --user --require-hashes -r
   .github/requirements/codespell-requirements.txt`, so the version and the
   SHA-256 of every artefact are pinned; Renovate's `pip_requirements` manager
   keeps that file current under the standard 24h quarantine (Issue #1913)
-- `validation` — checks required files and `Cargo.toml`
+- `validation` — checks required files, `Cargo.toml`, and documentation (its
+  `Check documentation` step asserts `README.md` is not a stub and warns when
+  `src/lib.rs` carries no `///` comments — it does **not** build the docs)
 - `security` — runs the security audit workflow: `cargo audit` (RustSec
   advisories), `cargo deny check` (the `deny.toml` licence, ban and
   dependency-source policy, enforced in CI since Issue #1870), and
@@ -175,6 +188,24 @@ the gate runs on milestone sub-issue PRs too, not just the rollup into `Develop`
   otherwise auto-migrate. Note that `packageRules` **ordering is load-bearing**
   — the last matching rule wins, so the internal `stSoftwareAU/*` bypass must
   stay the final entry
+- `Coverage` (separate workflow `.github/workflows/cargo-quality.yml`) — builds
+  and uploads Codecov coverage. It carries no fmt or Clippy step: those live in
+  `ci.yml/quality` and running them twice doubled CI time for an identical
+  result (Issue #1636)
+- `Markdown Lint` (separate workflow `.github/workflows/markdown-lint.yml`) —
+  `markdownlint-cli2` over every `**/*.md`, configured by
+  `.markdownlint-cli2.jsonc`
+- `Semgrep` (separate workflow `.github/workflows/semgrep.yml`) — SAST scan over
+  the tree, in a SHA-pinned `semgrep/semgrep` container
+- `Gitleaks` (separate workflow `.github/workflows/gitleaks.yml`) — secret-scans
+  the PR diff
+- `actionlint` (separate workflow `.github/workflows/actionlint.yml`) — lints
+  every workflow file under `.github/workflows/`, so a bad expression or an
+  unsupported runner label fails on the PR rather than after merge (Issue #1292)
+
+Every one of these separate workflows triggers on `pull_request` against both
+`"*"` and `milestone/*` — the `*` glob does not cross `/`, so milestone
+sub-issue PRs need the explicit second pattern or the gate skips them.
 
 Every job that needs Rust installs it with the committed
 `./scripts/install-rust-toolchain.sh [TOOLCHAIN] [COMPONENT...]`, which drives

@@ -22,6 +22,7 @@ const STREAMING_GUIDE: &str = include_str!("../docs/STREAMING_GUIDE.md");
 const CACHE_TUNING: &str = include_str!("../docs/CACHE_TUNING.md");
 const RECORDING_FFI: &str = include_str!("../src/ffi/recording.rs");
 const CI_FUZZING_WORKFLOW: &str = include_str!("../docs/ci-fuzzing-workflow.yml");
+const FUZZ_CI_SCRIPT: &str = include_str!("../scripts/fuzz-ci.sh");
 
 // ============================================================================
 // 1. Cross-repo `runlib.sh` invocation (README).
@@ -257,5 +258,26 @@ fn readme_fuzz_commands_match_ci_by_passing_locked() {
     assert!(
         README.contains("cargo +nightly fuzz run --locked"),
         "README must document at least one fuzz command"
+    );
+}
+
+/// The README points contributors at `./scripts/fuzz-ci.sh` as the CI helper,
+/// so the committed script — not just the proposed workflow file — must deliver
+/// the `--locked` guarantee the README annotates (Issue #1992).
+#[test]
+fn committed_fuzz_helper_passes_locked_like_the_readme() {
+    let unlocked: Vec<&str> = FUZZ_CI_SCRIPT
+        .lines()
+        .filter(|line| line.contains("cargo +nightly fuzz run"))
+        .filter(|line| !line.contains("--locked"))
+        .collect();
+    assert!(
+        unlocked.is_empty(),
+        "scripts/fuzz-ci.sh must run fuzz targets with --locked so CI resolves the committed \
+         fuzz/Cargo.lock the README promises, found: {unlocked:?}"
+    );
+    assert!(
+        FUZZ_CI_SCRIPT.contains("cargo +nightly fuzz run --locked"),
+        "scripts/fuzz-ci.sh must run at least one fuzz target"
     );
 }
