@@ -124,7 +124,7 @@ single authoritative reference,
 |-------|-----------|---------------------|
 | `max_analysis_memory_mb` | `analyze_parallel` input JSON | The budget the projection is compared against. Lower it to force lazy mode; raise it to permit eager pre-load. |
 | `NEAT_AI_DISCOVERY_FOCUS_RANKING_MEMORY_MARGIN_MB` | environment | Safety margin reserved from OS-available memory on the auto-detect path. Raise it to bias towards lazy. |
-| `NEAT_AI_DISCOVERY_MAX_PARQUET_DECODE_MB` | environment | Hard ceiling on records decoded from one file, charged inside the reader's batch loop. Bounds the paths that carry no caller budget. |
+| `NEAT_AI_DISCOVERY_MAX_PARQUET_DECODE_MB` | environment | Hard ceiling on records decoded from one file, charged inside the reader's batch loop. Bounds the paths that carry no caller budget, including the streaming block loader (Issue #2005). |
 
 ### Levers that do **not** reach it
 

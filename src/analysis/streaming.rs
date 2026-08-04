@@ -331,15 +331,24 @@ impl StreamingRecordCache {
             }
 
             // Load the block
-            if let Ok(block_records) =
-                Self::load_block_records(&inner.parquet_file, req.block_id, inner.block_size)
-            {
-                // Evict and store atomically under the same write lock
-                let mut blocks = inner.blocks.write();
-                Self::evict_blocks(&mut blocks, inner.max_cached_blocks, &inner.eviction_count);
-                blocks
-                    .entry(req.block_id)
-                    .or_insert_with(|| CacheBlock::new(block_records));
+            match Self::load_block_records(&inner.parquet_file, req.block_id, inner.block_size) {
+                Ok(block_records) => {
+                    // Evict and store atomically under the same write lock
+                    let mut blocks = inner.blocks.write();
+                    Self::evict_blocks(&mut blocks, inner.max_cached_blocks, &inner.eviction_count);
+                    blocks
+                        .entry(req.block_id)
+                        .or_insert_with(|| CacheBlock::new(block_records));
+                }
+                // A prefetch failure is not fatal — the synchronous `get` will
+                // retry and surface the error to the caller — but it must not
+                // pass silently (Issue #2005: the streaming decode can now fail
+                // on the shared decode budget).
+                Err(err) => tracing::warn!(
+                    block_id = req.block_id,
+                    parquet_file = %inner.parquet_file,
+                    "Prefetch of block failed: {err:#}"
+                ),
             }
         }
     }
@@ -417,12 +426,20 @@ impl StreamingRecordCache {
     }
 
     /// Load records for a specific block.
+    ///
+    /// Decoding goes through the shared [`DiscoveryBatchColumns`] decoder
+    /// (Issue #2005), so this path resolves columns, reports schema mismatches
+    /// and charges the [`DecodeBudget`] exactly as the `reader.rs` paths do.
+    /// It used to be the only decode path that charged nothing, leaving
+    /// oversized UUIDs and `errors` lists to materialise unbounded — the very
+    /// failure mode Issue #1869 was filed to bound.
     fn load_block_records(
         parquet_file: &str,
         block_id: usize,
         block_size: usize,
     ) -> Result<HashMap<String, Vec<DiscoverRecord>>> {
-        use arrow::array::{Array, Float32Array, ListArray, StringArray, UInt32Array};
+        use crate::parquet_format::batch_columns::DiscoveryBatchColumns;
+        use crate::parquet_format::decode_budget::DecodeBudget;
         use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
         use std::fs::File;
 
@@ -438,85 +455,29 @@ impl StreamingRecordCache {
         let mut current_block = 0;
         let mut rows_in_block = 0;
         let mut found_target_block = false;
+        // Issue #1869 / #2005: bound the records this block materialises.
+        let mut budget = DecodeBudget::resolve(None);
 
         for batch_result in reader {
             let batch = batch_result.context("Failed to read record batch")?;
 
-            // Resolve every column by name rather than by fixed position.
-            // `RecordBatch::column(index)` panics on an out-of-bounds index, so
-            // a structurally valid Parquet whose batches expose fewer columns
-            // than expected would otherwise crash the process (potentially on
-            // the spawned prefetch thread, outside the FFI catch_unwind) rather
-            // than returning a recoverable error (Issue #1482).
-            let schema = batch.schema();
-            let obs_idx = schema
-                .index_of("obs_index")
-                .context("Parquet schema mismatch: missing 'obs_index' column")?;
-            let uuid_idx = schema
-                .index_of("neuron_uuid")
-                .context("Parquet schema mismatch: missing 'neuron_uuid' column")?;
-            let value_idx = schema
-                .index_of("value")
-                .context("Parquet schema mismatch: missing 'value' column")?;
-            let activation_idx = schema
-                .index_of("activation")
-                .context("Parquet schema mismatch: missing 'activation' column")?;
-            let errors_idx = schema
-                .index_of("errors")
-                .context("Parquet schema mismatch: missing 'errors' column")?;
+            let columns = DiscoveryBatchColumns::resolve(&batch, true)?;
 
-            let obs_index_col = batch
-                .column(obs_idx)
-                .as_any()
-                .downcast_ref::<UInt32Array>()
-                .context("Failed to cast obs_index column")?;
-            let neuron_uuid_col = batch
-                .column(uuid_idx)
-                .as_any()
-                .downcast_ref::<StringArray>()
-                .context("Failed to cast neuron_uuid column")?;
-            let value_col = batch
-                .column(value_idx)
-                .as_any()
-                .downcast_ref::<Float32Array>()
-                .context("Failed to cast value column")?;
-            let activation_col = batch
-                .column(activation_idx)
-                .as_any()
-                .downcast_ref::<Float32Array>()
-                .context("Failed to cast activation column")?;
-            let errors_col = batch
-                .column(errors_idx)
-                .as_any()
-                .downcast_ref::<ListArray>()
-                .context("Failed to cast errors column")?;
-
-            for i in 0..batch.num_rows() {
+            for i in 0..columns.num_rows() {
                 // Only process records from the target block
                 if current_block == block_id {
                     found_target_block = true;
 
-                    let uuid = neuron_uuid_col.value(i).to_string();
-                    let obs_index = obs_index_col.value(i);
-                    let value = if value_col.is_null(i) {
-                        None
-                    } else {
-                        Some(value_col.value(i))
-                    };
-                    let activation = activation_col.value(i);
-
-                    let errors_list = errors_col.value(i);
-                    let errors_array = errors_list
-                        .as_any()
-                        .downcast_ref::<Float32Array>()
-                        .context("Failed to cast errors array")?;
-                    let errors: Vec<f32> = (0..errors_array.len())
-                        .map(|j| errors_array.value(j))
-                        .collect();
-
-                    let record =
-                        DiscoverRecord::new(obs_index, uuid.clone(), value, activation, errors);
-                    records_by_neuron.entry(uuid).or_default().push(record);
+                    let record = columns.decode_row(i)?;
+                    budget.charge_record(
+                        record.neuron_uuid.len(),
+                        record.errors.len(),
+                        parquet_file,
+                    )?;
+                    records_by_neuron
+                        .entry(record.neuron_uuid.clone())
+                        .or_default()
+                        .push(record);
                 }
 
                 rows_in_block += 1;
