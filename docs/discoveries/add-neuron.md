@@ -114,20 +114,32 @@ graph LR
 
 | Candidate | Operation | Detail |
 |-----------|-----------|--------|
-| **Add neuron** | `addNeuron` | Includes incoming weight, outgoing weight (capped at ±0.1), bias, and activation function |
+| **Add neuron** | `addNeuron` | Includes incoming weight, outgoing weight (capped at ±`MAX_OUTGOING_WEIGHT`), bias, and activation function |
 
 ### 🔒 Parameter Constraints
 
-| Parameter | Constraint |
-|-----------|-----------|
-| \|incoming weight\| | ≤ 20 |
-| \|outgoing weight\| | ≤ 0.1 |
-| \|bias\| | ≤ 10 |
-| Weight ratio (in/out) | ≥ 50 (when in > 1) |
-| IDENTITY with \|bias\| < 0.01 | Filtered out (redundant with direct synapse) |
+Every emitted candidate clears `variant_generation.rs::filter_candidates_to_sensible_ranges`.
+Issue #888 tightened all three caps against the production discovery cache
+(incoming 20 → 5, outgoing 0.1 → 0.01, bias 10 → 2), so the constants — not the
+values — are the durable reference:
+
+| Parameter | Constraint | Constant |
+|-----------|-----------|----------|
+| \|incoming weight\| | ≤ 5.0 | `detection_thresholds.rs::MAX_INCOMING_WEIGHT`, enforced as `variant_generation.rs::SENSIBLE_INCOMING_ABS_MAX` |
+| \|outgoing weight\| | ≤ 0.01 | `weights/mod.rs::MAX_OUTGOING_WEIGHT`, enforced as `variant_generation.rs::SENSIBLE_OUTGOING_ABS_MAX` |
+| \|bias\| | ≤ 2.0 | `detection_thresholds.rs::MAX_BIAS_MAGNITUDE`, enforced as `variant_generation.rs::SENSIBLE_BIAS_ABS_MAX` |
+| Weight ratio (in/out) | ≥ 50 for IDENTITY, ≥ 10 for non-linear activations (when \|in\| > 1) | `weights/mod.rs::MIN_WEIGHT_RATIO` / `weights/mod.rs::MIN_WEIGHT_RATIO_NON_LINEAR` |
+| IDENTITY with \|bias\| < 0.01 | Filtered out (redundant with direct synapse) | — |
+
+> [!NOTE]
+> Issue #905 relaxed the *calculation* ceiling for non-linear activations to
+> `weights/mod.rs::MAX_OUTGOING_WEIGHT_NON_LINEAR` (0.03), because they compress
+> their output range. The sensible-range filter still applies
+> `SENSIBLE_OUTGOING_ABS_MAX` (0.01) to every candidate regardless of activation,
+> so 0.01 is the effective ceiling on anything emitted.
 
 > [!CAUTION]
-> 🚫 The outgoing weight is deliberately capped at a small magnitude (±0.1) to prevent the newly added neuron from **destabilising** the existing network.
+> 🚫 The outgoing weight is deliberately capped at a small magnitude (±0.01) to prevent the newly added neuron from **destabilising** the existing network.
 
 ---
 
@@ -142,10 +154,10 @@ graph LR
 > - **Activation:** RELU
 > - **Incoming weight:** 1.2
 > - **Bias:** -0.3
-> - **Outgoing weight:** 0.08
+> - **Outgoing weight:** 0.008
 >
 > **New neuron H_new:**
-> `output = 0.08 × RELU(1.2 × I3 − 0.3)`
+> `output = 0.008 × RELU(1.2 × I3 − 0.3)`
 >
 > **This creates a threshold detector:**
 > - When I3 < 0.25 → output = 0 (RELU cuts off)
