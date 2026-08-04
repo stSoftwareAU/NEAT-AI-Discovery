@@ -13,6 +13,27 @@ floors to admit the achievable band would admit noise-level (and demonstrably
 harmful) candidates. This is a valid "thresholds are correct" outcome per the
 issue's Notes, and it is now protected by a false-positive guard test.
 
+> **Point-in-time study, as at 2026-07-25 — superseded by #1778 and #1812.** The
+> verdict above is *history*, not a live position. #1778 re-denominated the
+> screen and #1812 carved sole-op `RemoveNeuron` out of the 1-op floor this
+> report's table presents as universal; both are annotated inline below. Note
+> also that this report's verdict is the **opposite** of the sibling
+> [`rejection-diagnosis-1737.md`](rejection-diagnosis-1737.md)'s, which #1778
+> settled in *that* report's favour. For current behaviour read
+> [`gain-floor-rescale-1778.md`](gain-floor-rescale-1778.md) and
+> [`remove-neuron-gain-scale-1785.md`](remove-neuron-gain-scale-1785.md).
+>
+> **Superseded — "the floors are correctly scaled … no floor change".** #1778
+> found the two sides of the comparison denominated on *different* scales:
+> `expectedCreatureScoreGain` reaches the floor **after** the per-type
+> calibration constant rescales it, while `MIN_EXPECTED_CREATURE_SCORE_GAIN` was
+> denominated **before** that rescale. The fix rescales the screen rather than
+> lowering it — `candidate_scoring.rs::calibrated_gain_floor`, backstopped by
+> `candidate_scoring.rs::GAIN_FLOOR_NOISE_BACKSTOP` — so the "no floor change"
+> conclusion no longer describes shipped behaviour. The *reasoning* (do not
+> lower a floor to chase a broken estimator) is what survived, and it is why the
+> fix re-denominated instead of lowering.
+
 ## The thresholds under review
 
 | Threshold | Value | Where enforced |
@@ -23,6 +44,15 @@ issue's Notes, and it is now protected by a false-positive guard test.
 | `COORDINATED_POST_DISCOUNT_NOISE_FLOOR_2OPS` | `1e-6` | ″ |
 | `COORDINATED_POST_DISCOUNT_NOISE_FLOOR_3OPS` | `2e-6` | ″ |
 | `COORDINATED_POST_DISCOUNT_NOISE_FLOOR_4PLUS_OPS` | `5e-6` | ″ |
+
+> **Superseded — the 1-op row is no longer universal.** **#1812** exempts a
+> **sole-op `RemoveNeuron`** from `COORDINATED_POST_DISCOUNT_NOISE_FLOOR_1OP`:
+> the removal's reported gain is rewritten as an exact net creature-score
+> benefit (`discovery_dispatch.rs::apply_honest_remove_neuron_gain`), which is
+> already denominated in score units and so is screened by its own removal floor
+> rather than the shared 1-op noise floor. The other three rows are unchanged.
+> See [`remove-neuron-gain-scale-1785.md`](remove-neuron-gain-scale-1785.md) for
+> the derivation.
 
 Upstream of every floor sits the per-`(change-type, target-squash)`
 **calibration correction** (`calibration_correction.rs`, #1131/#1162/#1521): a
@@ -101,6 +131,11 @@ would either admit noise (if lowered) or change nothing useful (if scaled),
 because the estimator — not the floor — is what maps genuine improvements to the
 noise band. The floors are correctly performing their one job: rejecting
 noise-level *estimates*.
+
+> **Superseded by #1778.** The decision held only while both sides of the
+> comparison were assumed to share a scale. They did not — see the header note.
+> #1778 kept the "do not lower the floor" half and fixed the scale mismatch
+> instead.
 
 The correct sequence, per the diagnosis, is:
 

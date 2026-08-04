@@ -10,6 +10,12 @@ so sorting on it descending put the losers at the top of every batch.
 This document records what replaced it and the measurement that accepts the
 change.
 
+> **Point-in-time study, as at 2026-08-02 — current.** This is the #1924
+> follow-up to the #1920 cache study. The rank score it records is shipped in
+> `src/analysis/neuron/ranking_score.rs`; the before/after correlations are a
+> point-in-time measurement, so re-run the study before quoting them as
+> today's numbers.
+
 ## What changed
 
 Ranking no longer sorts on the estimate. It sorts on a **rank score** that puts

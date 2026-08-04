@@ -35,12 +35,20 @@ default rather than aborting.
 
 ## Streaming & Parquet
 
+> **Reach (Issue #1987).** The first four rows below are **defined and parsed,
+> but not consumed by `analyze_parallel`** — they configure the tiered/streaming
+> caches, which are constructed only by tests and benches (see
+> [CACHE_TUNING.md § Appendix](CACHE_TUNING.md#appendix--tiered-cache-test-and-bench-only)).
+> To tune the production analysis cache use `max_analysis_memory_mb`,
+> `NEAT_AI_DISCOVERY_FOCUS_RANKING_MEMORY_MARGIN_MB` or
+> `NEAT_AI_DISCOVERY_MAX_PARQUET_DECODE_MB` instead.
+
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `NEAT_AI_DISCOVERY_MAX_CACHED_BLOCKS` | adaptive | Max blocks in the streaming Parquet cache. |
-| `NEAT_AI_DISCOVERY_PREFETCH_DEPTH` | 2 | Streaming prefetch depth. |
-| `NEAT_AI_DISCOVERY_PRELOAD_ALL` | off | Disable streaming and use full Parquet preload. |
-| `NEAT_AI_DISCOVERY_BLOCK_SIZE` | 10000 | Streaming block size in records. |
+| `NEAT_AI_DISCOVERY_MAX_CACHED_BLOCKS` | adaptive | Max blocks in the streaming Parquet cache. Defined, parsed, **not consumed by `analyze_parallel`**: the only in-tree `StreamingRecordCache::new` call site passes `None`, and `LruRecordCache` — its other reader — is never constructed in production. |
+| `NEAT_AI_DISCOVERY_PREFETCH_DEPTH` | 2 | Streaming prefetch depth. Defined, parsed, **not consumed by `analyze_parallel`**: read only by `get_streaming_config_from_env`, which has no caller. |
+| `NEAT_AI_DISCOVERY_PRELOAD_ALL` | off | Disable streaming and use full Parquet preload. Defined, parsed, **not consumed by `analyze_parallel`**: it feeds `is_streaming_enabled()`, which no production code calls. It does **not** force the production cache to pre-load, in either direction. |
+| `NEAT_AI_DISCOVERY_BLOCK_SIZE` | 10000 | Streaming block size in records. Defined, parsed, **not consumed by `analyze_parallel`**: only `StreamingRecordCache` reads it. |
 | `NEAT_AI_DISCOVERY_SESSION_TTL_SECS` | 3600 | Streaming session TTL for orphan cleanup. |
 
 ## Focus selection & ranking
@@ -108,7 +116,7 @@ default rather than aborting.
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `NEAT_AI_DISCOVERY_DROUGHT_LOG_THRESHOLD` | 5 | Consecutive trailing empty discovery passes at which the drought diagnostic warn log fires and the `droughtDiagnostic` payload populates on `synapseMetadata` / `neuronMetadata`. Must be `>= 1` (Issue #1202). |
-| `NEAT_AI_DISCOVERY_DROUGHT_RESET_AFTER_EPOCHS` | 50 | Operator escape hatch: force a one-shot reset of failed-candidate cache entries and active target cooldowns after this many consecutive empty discovery passes (Issue #1205). Armed by default (Issue #1422); set to `0` to disable. |
+| `NEAT_AI_DISCOVERY_DROUGHT_RESET_AFTER_EPOCHS` | 50 | Operator escape hatch: force a one-shot reset of active target cooldowns after this many consecutive empty discovery passes (Issue #1205). The cooldown tracker is the reset's only clearable input — the candidate-cache half went with `CandidateOutcomeCache` (Issue #1792). Armed by default (Issue #1422); set to `0` to disable. |
 | `NEAT_AI_DISCOVERY_DROUGHT_ALARM_EPOCHS` | 100 | Epochs since the creature last accepted a candidate at which a single, durable creature-level drought alarm fires (Issue #1424). Emits a `tracing::warn!` line and a `creatureDroughtAlarm` field carrying the creature uuid, epochs-since-last-acceptance, and an environmental-vs-search-exhaustion classification. Fires once; set to `0` to disable. |
 | `NEAT_AI_DISCOVERY_NOVELTY_SUPPRESSION_RATIO` | 0.8 | Fraction of the considered candidate pool that must be cache-suppressed before novelty/diversification escalation engages on a plateaued creature (Issue #1423). Honoured in `(0.0, 1.0]`. |
 | `NEAT_AI_DISCOVERY_NOVELTY_GAIN_RELAXATION` | 0.5 | Multiplier applied to the coordinated-structural expected-gain floor when novelty escalation engages, loosening it so structurally-novel candidates survive. Honoured in `(0.0, 1.0]`; never raises the floor above the base constant (Issue #1423). |

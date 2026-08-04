@@ -176,19 +176,24 @@ fn focus_selection_env_table_is_reduced_to_a_link() {
 // Cross-doc duplicates — one home, links from the rest.
 // ============================================================================
 
+/// Issue #1987 renamed the one home from "Tier Selection Logic" to "Preload
+/// Decision Logic": the three-tier model has no production caller, so the
+/// section the linkers point at now documents the binary eager-vs-lazy decision
+/// `analyze_parallel` actually makes. The invariant is unchanged — one home, the
+/// rest link to it — only the canonical heading and anchor moved.
 #[test]
-fn cache_tier_logic_has_one_home_and_the_others_link_to_it() {
+fn cache_preload_logic_has_one_home_and_the_others_link_to_it() {
     assert!(
-        CACHE_TUNING.contains("## Tier Selection Logic"),
-        "CACHE_TUNING.md is the home for tier-selection logic"
+        CACHE_TUNING.contains("## Preload Decision Logic"),
+        "CACHE_TUNING.md is the home for the cache preload decision"
     );
     assert!(
-        ANALYSIS_DEEP_DIVE.contains("CACHE_TUNING.md#tier-selection-logic"),
-        "ANALYSIS_DEEP_DIVE.md must link to the cache tier home"
+        ANALYSIS_DEEP_DIVE.contains("CACHE_TUNING.md#preload-decision-logic"),
+        "ANALYSIS_DEEP_DIVE.md must link to the cache preload home"
     );
     assert!(
-        GPU_GUIDE.contains("CACHE_TUNING.md#tier-selection-logic"),
-        "GPU_GUIDE.md must link to the cache tier home"
+        GPU_GUIDE.contains("CACHE_TUNING.md#preload-decision-logic"),
+        "GPU_GUIDE.md must link to the cache preload home"
     );
     // The duplicated ÷4 / half-memory tables must be gone from the linkers.
     assert!(

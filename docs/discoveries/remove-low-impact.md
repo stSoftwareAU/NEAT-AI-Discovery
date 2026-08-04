@@ -41,7 +41,7 @@ graph LR
 ```mermaid
 flowchart TD
     A["🔍 For each hidden neuron"] --> B["📊 Compute<br/>activation_weighted_impact"]
-    B --> C{"⚖️ impact < costOfGrowth?<br/><i>(default: 1e-7)</i>"}
+    B --> C{"⚖️ boostedSavings > contribution?<br/><i>(FOCUS_SELECTION.md §4.1)</i>"}
     C -->|No| Z["✅ Neuron earns its keep"]
     C -->|Yes| D["📐 Factor in synapse count<br/><i>more synapses = bigger savings</i>"]
     D --> E["📉 Candidate for removal"]
@@ -52,6 +52,21 @@ flowchart TD
     style E fill:#fce4ec,stroke:#c62828,color:#000
     style Z fill:#e8f5e9,stroke:#2e7d32,color:#000
 ```
+
+### ⚖️ The Removal Criterion
+
+The criterion lives in **one** place —
+[docs/FOCUS_SELECTION.md § 4.1](../FOCUS_SELECTION.md#41-removal-is-the-near-opposite-axis-to-focus-issue-1767),
+matching [DISCOVERY_TYPES.md](../DISCOVERY_TYPES.md) — and is not restated here.
+In short: a hidden neuron is a candidate when the **boosted** complexity savings
+of pruning it and its synapses exceed its structural contribution, by at least
+the noise floor. The boost is
+`candidate_scoring.rs::REMOVAL_CANDIDATE_BOOST` (1.5×).
+
+> [!IMPORTANT]
+> Comparing the impact directly against `costOfGrowth` is **not** the criterion —
+> that comparison was superseded. `costOfGrowth` feeds the *savings* side of the
+> §4.1 inequality; it is never weighed against the impact on its own.
 
 ### 📊 Impact Scoring
 
@@ -102,9 +117,10 @@ graph LR
 > Creature with 50 hidden neurons, costOfGrowth = 1e-7
 >
 > **Neuron H28:**
-> - activation_weighted_impact = 3.2e-8 (below 1e-7 threshold)
-> - Fan-in: 4 synapses
-> - Fan-out: 2 synapses
+> - activation_weighted_impact (contribution) = 3.2e-8
+> - Fan-in: 4 synapses, fan-out: 2 → degree 6, so
+>   `savings = 1e-7 × (1 + 6/10) = 1.6e-7`
+> - `boostedSavings = 1.6e-7 × 1.5 = 2.4e-7` > contribution 3.2e-8 → candidate
 > - Total synapses removed: 6
 >
 > | Metric | Value |
@@ -113,8 +129,9 @@ graph LR
 > | Complexity saved | 1 neuron + 6 synapses |
 > | Net fitness improvement | positive ✅ |
 >
-> **Production success rate: 17.6%** (65 successes from 369 candidates)
-> This is the highest success-rate discovery type. 🏆
+> **Production success rate: 17.6%** (65 successes from 369 candidates) — one of
+> the stronger rates, though `change-squash` leads the
+> [production table](../DISCOVERY_TYPES.md#-production-success-rates) at 18.2%.
 
 ---
 

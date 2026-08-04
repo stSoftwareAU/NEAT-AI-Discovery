@@ -5,6 +5,10 @@ Follow-up to the #1920 cache study
 Part 1), which found that **57% of production runs cache nothing** and that four
 discovery strategies contribute **twelve records between them across 47 days**.
 
+> **Point-in-time study, as at 2026-08-02 — current.** This is the #1925
+> follow-up to the #1920 cache study; the attribution it documents is shipped
+> and no claim here is known to be superseded.
+
 ## The gap this closes
 
 The study named its own blind spot:

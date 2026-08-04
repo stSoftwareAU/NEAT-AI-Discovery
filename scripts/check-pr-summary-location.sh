@@ -25,8 +25,10 @@ if [[ ${#stray_files[@]} -gt 0 ]]; then
     echo "❌ Found ${#stray_files[@]} pr-summary-*.md file(s) outside ${CANONICAL_DIR}/:"
     printf '   %s\n' "${stray_files[@]}"
     echo ""
-    echo "Move them into ${CANONICAL_DIR}/ with 'git mv' (never delete — the"
-    echo "learnings must be preserved). See docs/archive/pr-summaries/README.md."
+    echo "Move them into ${CANONICAL_DIR}/ with 'git mv'."
+    echo "Retention rule: never delete an unfolded summary — fold its durable"
+    echo "learnings into the live docs first, then delete it."
+    echo "See docs/archive/pr-summaries/README.md (Issue #1682)."
     exit 1
 fi
 

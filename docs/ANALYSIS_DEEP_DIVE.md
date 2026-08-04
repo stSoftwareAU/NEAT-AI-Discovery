@@ -934,14 +934,16 @@ export NEAT_AI_DISCOVERY_OUTLIER_PERCENTILE=90
 
 ## 📦 Tiered Loading Strategy (Issue #215)
 
-The library automatically selects the optimal loading strategy (PreloadAll, LRU
-cache, or Streaming) based on file size and available system memory. The
-tier-selection heuristic — the ×3 decompression estimate, the `÷4` PreloadAll
-threshold, the half-memory LRU capacity, and the worked size thresholds — is
-documented once in
-[docs/CACHE_TUNING.md § Tier Selection Logic](CACHE_TUNING.md#tier-selection-logic).
+The tiered cache selects one of three strategies (PreloadAll, LRU cache, or
+Streaming) from file size and available system memory. It is an **opt-in API
+with no production caller** — `analyze_parallel` builds its cache through the
+binary eager-vs-lazy decision documented in
+[docs/CACHE_TUNING.md § Preload Decision Logic](CACHE_TUNING.md#preload-decision-logic),
+and the tier-selection heuristic itself is documented once in
+[docs/CACHE_TUNING.md § Appendix](CACHE_TUNING.md#appendix--tiered-cache-test-and-bench-only)
+(Issue #1987).
 
-**API Usage:**
+**API Usage** (explicit construction only):
 
 ```rust
 // Automatic strategy selection (recommended)

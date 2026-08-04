@@ -281,6 +281,14 @@ fn the_archive_readme_documents_every_documentation_tier() {
             "the archive README must say what goes in {tier}"
         );
     }
+
+    // The transient tier's obligation must agree with the canonical
+    // fold-then-delete retention rule, not contradict it (Issue #1991).
+    assert!(
+        !ARCHIVE_README.contains("leave the summary alone"),
+        "the transient tier must not tell a reader to keep a folded summary — the retention \
+         rule is fold, then delete (Issue #1991)"
+    );
 }
 
 /// Guard rail — no live section of the playbook may present a deleted component

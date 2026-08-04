@@ -12,6 +12,12 @@ Every number below is measured on the #1810 characterisation fixture
 (`tests/fixtures/remove_neuron_reachability/network.json`), whose reference table
 is [`remove-neuron-reachability-1785.md`](remove-neuron-reachability-1785.md).
 
+> **Point-in-time decision record, as at 2026-07-31 — implemented.** Gate 1 of
+> the rule below shipped as #1812
+> (`discovery_dispatch.rs::apply_honest_remove_neuron_gain`) and Gate 2 as
+> #1814. The decision stands as written; the "code changes are out of scope"
+> framing is historical — the code has since changed to match.
+
 ## The fault in one line
 
 `estimate_remove_neuron_gain` emits a **unitless influence fraction, negated** —

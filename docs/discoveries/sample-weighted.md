@@ -158,8 +158,17 @@ graph LR
 > [!TIP]
 > The adjustment is deliberately small (10% of weighted mean error) because NEAT-AI validates through ablation — conservative changes are more likely to pass validation.
 
-Estimated improvement:
-`min(weighted_mean_error × hard_to_easy_ratio × 0.01, 0.1)`.
+Estimated improvement
+(`sample_weighted.rs::detect_high_error_neurons`):
+
+```text
+min(weighted_mean_error × min(hard_to_easy_ratio, 10) × 0.01, 0.1)
+```
+
+> [!IMPORTANT]
+> The ratio is clamped at **10** *before* scaling, so a neuron with a ratio of
+> 18 contributes no more than one with a ratio of 10. Only the outer `0.1` cap
+> was documented previously.
 
 ---
 
@@ -181,7 +190,7 @@ Estimated improvement:
 > | Current bias | 1.2 |
 > | Adjustment | -(0.38 × 0.1) = -0.038 |
 > | New bias | 1.162 |
-> | Estimated improvement | min(0.38 × 18.0 × 0.01, 0.1) = 0.068 |
+> | Estimated improvement | min(0.38 × min(18.0, 10) × 0.01, 0.1) = 0.038 |
 >
 > **After fix:** The bias shift nudges the neuron's operating point toward
 > better handling of hard samples, where most of the creature's error is

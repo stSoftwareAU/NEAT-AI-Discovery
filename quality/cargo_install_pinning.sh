@@ -14,6 +14,12 @@
 # `scripts/fuzz-ci.sh` was missed and ran an unpinned `cargo install cargo-fuzz`
 # for months. This gate scans the whole repository, not just `.github/workflows`.
 #
+# Scope: `cargo install` only. The nightly **rustup toolchain** channel is
+# deliberately left floating and must NOT be pinned to `nightly-YYYY-MM-DD` — a
+# dated nightly goes stale against the `-Z sanitizer` / `libfuzzer-sys` support
+# the fuzz targets need, and rustup's signed channel carries no third-party
+# `build.rs`. See README.md § Fuzz Testing (Issue #1912).
+#
 # Usage: quality/cargo_install_pinning.sh [root ...]    (default root: .)
 #
 # Exits non-zero — loudly — on any unpinned invocation, when a root does not

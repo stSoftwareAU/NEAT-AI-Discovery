@@ -341,3 +341,39 @@ fn ci_doc_build_step_pointers_are_current() {
         );
     }
 }
+
+/// The doc's pointer at CI's own "Check documentation" step is derived from
+/// `ci.yml` the same way the `quality.sh` pointers above are — the step moves
+/// whenever an earlier job gains a step, and a stale pointer is exactly the
+/// drift this doc exists to prevent (Issue #1992).
+#[test]
+fn ci_doc_build_step_cites_the_real_check_documentation_lines() {
+    let ci = read(".github/workflows/ci.yml");
+    let lines: Vec<&str> = ci.lines().collect();
+
+    let start = lines
+        .iter()
+        .position(|line| line.trim() == "- name: Check documentation")
+        .expect("ci.yml must carry a `Check documentation` step");
+
+    // The step ends at its last non-blank line indented deeper than the step's
+    // own `- name:` key (indent 4).
+    let mut end = start;
+    for (index, line) in lines.iter().enumerate().skip(start + 1) {
+        if line.trim().is_empty() {
+            continue;
+        }
+        if line.len() - line.trim_start().len() <= 4 {
+            break;
+        }
+        end = index;
+    }
+
+    let pointer = format!("ci.yml:{}-{}", start + 1, end + 1);
+    let doc = read("docs/ci-doc-build-step.md");
+    assert!(
+        doc.contains(&pointer),
+        "ci-doc-build-step must cite the real `Check documentation` location \
+         (expected `{pointer}`, Issue #1992)"
+    );
+}

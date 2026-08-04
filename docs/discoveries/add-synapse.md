@@ -44,7 +44,7 @@ flowchart TD
     A["📋 For each target neuron T"]
     B["🔎 Enumerate all neurons S<br/>not directly connected to T<br/>(earlier in evaluation order)"]
     C["📊 Match samples:<br/>S's activation ↔ T's error<br/>(by observation index)"]
-    D["📐 Compute optimal weight via least squares:<br/>w = Σ(error × activation) / Σ(activation²)<br/>(capped at ±0.1)"]
+    D["📐 Compute optimal weight via least squares:<br/>w = Σ(error × activation) / Σ(activation²)<br/>(clamped to ±MAX_OUTGOING_WEIGHT)"]
     E["📈 Estimate improvement:<br/>How much would adding<br/>w × S_activation reduce T's error?"]
     F{"✅ Positive<br/>improvement?"}
     G["🎯 Keep as candidate"]
@@ -122,7 +122,7 @@ graph LR
     subgraph after ["✅ After"]
         S_a["🧠 S"]
         T_a["🧠 T"]
-        S_a -- "new synapse<br/>w = +0.08" --> T_a
+        S_a -- "new synapse<br/>w = +0.008" --> T_a
     end
 
     style S_b fill:#4a9eff,stroke:#333,color:#fff
@@ -149,8 +149,8 @@ graph LR
         S1_a["🧠 S1"]
         S2_a["🧠 S2"]
         T_a["🧠 T"]
-        S1_a -- "w = +0.06" --> T_a
-        S2_a -- "w = −0.04" --> T_a
+        S1_a -- "w = +0.006" --> T_a
+        S2_a -- "w = −0.004" --> T_a
     end
 
     style S1_b fill:#4a9eff,stroke:#333,color:#fff
@@ -167,8 +167,14 @@ graph LR
 
 | Candidate | Operation | Detail |
 |-----------|-----------|--------|
-| **Add synapse** | `addSynapse` | Weight capped at ±0.1 |
+| **Add synapse** | `addSynapse` | Weight clamped to ±`MAX_OUTGOING_WEIGHT` (0.01, `src/analysis/scoring/weights/mod.rs`) |
 | **Epistatic pair** | 2× `addSynapse` (coordinated) | Both added atomically |
+
+> [!NOTE]
+> Issue #888 tightened the clamp by an order of magnitude (0.1 → 0.01) against
+> the production discovery cache: successful synapses land at 0.001–0.005, while
+> the 0.01–0.1 band almost always fails. Every weight illustrated on this page
+> therefore sits in the 1e-3 band.
 
 ---
 
@@ -179,10 +185,10 @@ graph LR
 >
 > **Analysis:**
 > - Matched 500 samples of I5 activation with O1 error
-> - Optimal weight: w = +0.07
+> - Optimal weight: w = +0.007
 > - Expected improvement: 12% reduction in O1's sum-of-squared error (exact for `MSE`; a ranking signal for other costs)
 >
-> **Fix:** `addSynapse I5 → O1 (weight +0.07)`
+> **Fix:** `addSynapse I5 → O1 (weight +0.007)`
 >
 > ✅ Now O1 can factor in bedroom count directly.
 
