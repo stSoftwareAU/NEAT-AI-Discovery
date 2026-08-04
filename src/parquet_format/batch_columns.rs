@@ -12,11 +12,70 @@
 //! decoder owns only column resolution and per-row decoding. `include_errors`
 //! is the single axis the callers vary, mirroring
 //! [`crate::parquet_format::ColumnProfile`]'s errors projection (Issue #1073).
+//!
+//! Everything that can be hoisted out of the per-row path is (Issue #2007): the
+//! `errors` list is flattened to its offsets and its child values slice once per
+//! batch, so a row copies a sub-slice instead of allocating a fresh Arrow array
+//! and reading it back one element at a time.
 
 use anyhow::{Context, Result};
 use arrow::array::{Array, Float32Array, ListArray, RecordBatch, StringArray, UInt32Array};
 
 use crate::types::DiscoverRecord;
+
+/// The `errors` list column, flattened once per batch (Issue #2007).
+///
+/// `ListArray::value(row)` builds a fresh `ArrayRef` for every row — a heap
+/// allocation and an atomic refcount just to read a handful of floats, which is
+/// then re-read element by element. Holding the offsets and the child values
+/// slice instead makes a row's errors a plain sub-slice.
+#[derive(Debug)]
+struct ErrorLists<'a> {
+    /// Row `i`'s values span `offsets[i]..offsets[i + 1]` of `values`.
+    offsets: &'a [i32],
+    values: &'a [f32],
+}
+
+impl<'a> ErrorLists<'a> {
+    /// Flatten the list column into its offsets and child values.
+    fn resolve(errors: &'a ListArray) -> Result<Self> {
+        let values = errors
+            .values()
+            .as_any()
+            .downcast_ref::<Float32Array>()
+            .context("Failed to cast errors array")?;
+        Ok(Self {
+            offsets: errors.value_offsets(),
+            values: values.values(),
+        })
+    }
+
+    /// The error values at `row`.
+    ///
+    /// A malformed file whose offsets run past the child array is a recoverable
+    /// error rather than a slice panic — the reader must fail loud, not abort
+    /// the process.
+    fn row(&self, row: usize) -> Result<&'a [f32]> {
+        let start = self.offset_at(row)?;
+        let end = self.offset_at(row + 1)?;
+        self.values.get(start..end).with_context(|| {
+            format!(
+                "errors list at row {row} spans {start}..{end}, past the {} decoded error values",
+                self.values.len()
+            )
+        })
+    }
+
+    /// One offset, rejected if it is absent or negative.
+    fn offset_at(&self, index: usize) -> Result<usize> {
+        let offset = *self
+            .offsets
+            .get(index)
+            .with_context(|| format!("errors list column has no offset for row {index}"))?;
+        usize::try_from(offset)
+            .with_context(|| format!("errors list offset {offset} at row {index} is negative"))
+    }
+}
 
 /// Resolve one column by name and downcast it to its Arrow array type.
 fn typed_column<'a, T: 'static>(batch: &'a RecordBatch, name: &str) -> Result<&'a T> {
@@ -41,7 +100,7 @@ pub(crate) struct DiscoveryBatchColumns<'a> {
     activation: &'a Float32Array,
     /// `None` when the caller projected the `errors` column away — decoded rows
     /// then carry an empty `errors` vec.
-    errors: Option<&'a ListArray>,
+    errors: Option<ErrorLists<'a>>,
 }
 
 impl<'a> DiscoveryBatchColumns<'a> {
@@ -58,7 +117,9 @@ impl<'a> DiscoveryBatchColumns<'a> {
             value: typed_column(batch, "value")?,
             activation: typed_column(batch, "activation")?,
             errors: if include_errors {
-                Some(typed_column(batch, "errors")?)
+                Some(ErrorLists::resolve(typed_column::<ListArray>(
+                    batch, "errors",
+                )?)?)
             } else {
                 None
             },
@@ -88,15 +149,8 @@ impl<'a> DiscoveryBatchColumns<'a> {
             Some(self.value.value(row))
         };
 
-        let errors = match self.errors {
-            Some(errors) => {
-                let list = errors.value(row);
-                let values = list
-                    .as_any()
-                    .downcast_ref::<Float32Array>()
-                    .context("Failed to cast errors array")?;
-                (0..values.len()).map(|j| values.value(j)).collect()
-            }
+        let errors = match &self.errors {
+            Some(lists) => lists.row(row)?.to_vec(),
             None => Vec::new(),
         };
 
@@ -196,6 +250,25 @@ mod tests {
             None,
             "nullability is independent of the errors projection"
         );
+    }
+
+    /// Issue #2007: rows are decoded from the list column's offsets rather than
+    /// from a freshly allocated per-row array, so a *sliced* batch — whose
+    /// offsets no longer start at zero — must still read each row's own values.
+    #[test]
+    fn a_sliced_batch_decodes_each_row_from_its_own_offsets() {
+        let batch = sample_batch().slice(1, 2);
+        let columns = DiscoveryBatchColumns::resolve(&batch, true).expect("columns resolve");
+
+        assert_eq!(columns.num_rows(), 2, "the slice covers rows 1 and 2");
+
+        let first = columns.decode_row(0).expect("row decodes");
+        assert_eq!(first.neuron_uuid, "neuron-b");
+        assert!(first.errors.is_empty(), "row 1's list is empty");
+
+        let second = columns.decode_row(1).expect("row decodes");
+        assert_eq!(second.neuron_uuid, "neuron-a");
+        assert_eq!(second.errors, vec![0.3, 0.4, 0.5], "row 2's own values");
     }
 
     #[test]

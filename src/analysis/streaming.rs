@@ -474,10 +474,13 @@ impl StreamingRecordCache {
                         record.errors.len(),
                         parquet_file,
                     )?;
-                    records_by_neuron
-                        .entry(record.neuron_uuid.clone())
-                        .or_default()
-                        .push(record);
+                    // Issue #2007: only a neuron's first row in this block
+                    // allocates a map key; `entry` would clone every row's UUID.
+                    if let Some(existing) = records_by_neuron.get_mut(&record.neuron_uuid) {
+                        existing.push(record);
+                    } else {
+                        records_by_neuron.insert(record.neuron_uuid.clone(), vec![record]);
+                    }
                 }
 
                 rows_in_block += 1;
