@@ -217,6 +217,15 @@ computing contexts).
 - All dependencies must be Apache-2.0 compatible (see the `[licenses]` allow-list
   in [`deny.toml`](deny.toml), enforced by `cargo deny check`).
 
+### Cite Code by Symbol, Never by Line Number (Issue #1942)
+
+When documentation points at a call site, cite it as `<file>.rs::<function>` —
+never `<file>.rs:<line>`. Line numbers rot on the next refactor, silently, and a
+whole catalogue of them rotted at once in `docs/COST_FUNCTION_NOTES.md`. A symbol
+survives the refactor, and a test can verify the symbol still exists; nothing can
+verify a stale line number. This applies to every doc, comment, and PR summary in
+the repository, not just the catalogue where the rot was found.
+
 ### Avoid Over-engineering
 
 - Only make changes that are directly requested or clearly necessary.
@@ -286,6 +295,27 @@ Tests that mutate shared global state (environment variables, deadline
 overrides, watchdog) are marked with `#[serial]` from the `serial_test` crate.
 GPU-dependent tests include `skip_without_gpu!()` and are skipped automatically
 on machines without a GPU.
+
+**A process-wide singleton needs an injectable value seam — `#[serial]` alone is
+not enough (Issues #1929, #1930).** `#[serial]` orders tests; it does not undo
+what one of them latched. The GPU circuit breaker is a one-way latch, so the
+first test to trip the global instance refused GPU work for every test that ran
+afterwards and cascaded into 12 unrelated failures. Serialising them changed
+nothing, because the damage outlives the test that caused it.
+
+So write the singleton as a **value** and let production hold the global:
+
+- Production calls `global_gpu_breaker()` — one instance, so a trip anywhere
+  stops GPU work everywhere.
+- Tests construct their own `GpuCircuitBreaker` and point the subject at it, so
+  a tripped state cannot escape the test that created it.
+- The `RequestEvaluator` / `EvaluatorFactory` seam (#1929) is the same pattern:
+  it is what lets the queue tests assert the analyser is *never* called, on CI
+  machines with no GPU.
+
+Reach for `#[serial]` for state a test can genuinely restore (an environment
+variable it sets and unsets). For anything latched, one-way, or expensive to
+reset, inject the value instead.
 
 ### Guard Wiring at the Shipped Entry Point (Issues #1795, #1806, #1815)
 

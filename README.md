@@ -422,9 +422,21 @@ production.
 # cannot run its build.rs on your machine (Issue #1223, #1912).
 cargo install --locked --version 0.13.2 cargo-fuzz
 
-# Ensure the nightly toolchain is available
+# Ensure the nightly toolchain is available. The channel deliberately floats —
+# do NOT pin it to `nightly-YYYY-MM-DD` (see below).
 rustup toolchain install nightly
 ```
+
+**The nightly channel is deliberately not date-pinned (Issue #1912).** Every
+`cargo install` in this repository is pinned with `--locked --version` and a
+committed gate (`quality/cargo_install_pinning.sh`) enforces that — but the
+nightly *toolchain* is an explicit exception, not an oversight. `cargo-fuzz`
+builds the fuzz targets with `-Z sanitizer`, and a dated `nightly-YYYY-MM-DD`
+goes stale against the sanitiser and `libfuzzer-sys` support those targets need,
+so fuzzing silently stops building. The toolchain comes from rustup's signed
+channel rather than crates.io, so it carries no third-party `build.rs` — the
+supply-chain risk the tool pin closes does not apply to it. A future
+"pin everything" sweep must leave this channel floating.
 
 **Available targets:**
 
