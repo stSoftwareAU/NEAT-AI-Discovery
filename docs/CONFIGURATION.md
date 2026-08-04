@@ -35,12 +35,20 @@ default rather than aborting.
 
 ## Streaming & Parquet
 
+> **Reach (Issue #1987).** The first four rows below are **defined and parsed,
+> but not consumed by `analyze_parallel`** — they configure the tiered/streaming
+> caches, which are constructed only by tests and benches (see
+> [CACHE_TUNING.md § Appendix](CACHE_TUNING.md#appendix--tiered-cache-test-and-bench-only)).
+> To tune the production analysis cache use `max_analysis_memory_mb`,
+> `NEAT_AI_DISCOVERY_FOCUS_RANKING_MEMORY_MARGIN_MB` or
+> `NEAT_AI_DISCOVERY_MAX_PARQUET_DECODE_MB` instead.
+
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `NEAT_AI_DISCOVERY_MAX_CACHED_BLOCKS` | adaptive | Max blocks in the streaming Parquet cache. |
-| `NEAT_AI_DISCOVERY_PREFETCH_DEPTH` | 2 | Streaming prefetch depth. |
-| `NEAT_AI_DISCOVERY_PRELOAD_ALL` | off | Disable streaming and use full Parquet preload. |
-| `NEAT_AI_DISCOVERY_BLOCK_SIZE` | 10000 | Streaming block size in records. |
+| `NEAT_AI_DISCOVERY_MAX_CACHED_BLOCKS` | adaptive | Max blocks in the streaming Parquet cache. Defined, parsed, **not consumed by `analyze_parallel`**: the only in-tree `StreamingRecordCache::new` call site passes `None`, and `LruRecordCache` — its other reader — is never constructed in production. |
+| `NEAT_AI_DISCOVERY_PREFETCH_DEPTH` | 2 | Streaming prefetch depth. Defined, parsed, **not consumed by `analyze_parallel`**: read only by `get_streaming_config_from_env`, which has no caller. |
+| `NEAT_AI_DISCOVERY_PRELOAD_ALL` | off | Disable streaming and use full Parquet preload. Defined, parsed, **not consumed by `analyze_parallel`**: it feeds `is_streaming_enabled()`, which no production code calls. It does **not** force the production cache to pre-load, in either direction. |
+| `NEAT_AI_DISCOVERY_BLOCK_SIZE` | 10000 | Streaming block size in records. Defined, parsed, **not consumed by `analyze_parallel`**: only `StreamingRecordCache` reads it. |
 | `NEAT_AI_DISCOVERY_SESSION_TTL_SECS` | 3600 | Streaming session TTL for orphan cleanup. |
 
 ## Focus selection & ranking
