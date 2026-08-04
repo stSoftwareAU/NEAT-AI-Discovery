@@ -8,6 +8,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+#### `--no-network` is reported for the whole run (Issue #1994)
+
+`bump-deps.sh` printed its offline notice inside the `command -v cargo-upgrade`
+branch, so a host without cargo-edit took the "external bumps skipped" branch
+and never logged that the run was offline — `tests/bump_deps_test.sh` Test 11
+failed purely because of the host's toolchain. Offline is a mode of the whole
+run, so the notice now prints with the run header, before any tool-availability
+branch.
+
 #### `analyze_parallel` honours the documented phase gating (Issue #1937)
 
 `docs/FFI_API.md` documented `includeSynapseAnalysis` / `includeNeuronAnalysis`
