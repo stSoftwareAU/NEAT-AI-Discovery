@@ -3,9 +3,10 @@
 **Issue:** #875
 **Status:** ⏳ **Pending proposal — not yet implemented.** No `cargo doc` step
 exists in any workflow under `.github/workflows/`. The only documentation check
-in CI today is the "Check documentation" step in `ci.yml` (`ci.yml:362-379`),
-which merely greps `src/lib.rs` for `///` doc comments — it does **not** build
-the docs or fail on broken doc links.
+in CI today is the "Check documentation" step in the `validation` job
+(`ci.yml:404-423`), which merely checks `README.md` is not a stub and greps
+`src/lib.rs` for `///` doc comments — it does **not** build the docs or fail on
+broken doc links.
 
 The following step should be added to the `quality` job in `.github/workflows/ci.yml`,
 after the "Run tests" step and before any release build step:

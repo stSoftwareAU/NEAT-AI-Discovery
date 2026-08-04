@@ -53,7 +53,10 @@ for target in "${FUZZ_TARGETS[@]}"; do
     echo ""
     echo "▶ Running fuzz target: ${target} (max ${MAX_TIME}s)"
     echo "---------------------------------------------------"
-    if cargo +nightly fuzz run "${target}" -- -max_total_time="${MAX_TIME}"; then
+    # `--locked` keeps the run on the committed `fuzz/Cargo.lock` resolution the
+    # README promises; without it cargo re-resolves the graph and the run is no
+    # longer reproducible (Issue #1992).
+    if cargo +nightly fuzz run --locked "${target}" -- -max_total_time="${MAX_TIME}"; then
         echo "✅ ${target} completed without crashes"
     else
         echo "❌ ${target} failed"
