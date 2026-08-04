@@ -40,7 +40,7 @@ if [[ "$*" == *"fuzz --version"* ]]; then
     [[ "{fuzz_installed}" == "true" ]] && exit 0
     exit 1
 fi
-if [[ "$*" == *"fuzz run {failing_target} "* ]]; then
+if [[ "$*" == *"fuzz run --locked {failing_target} "* ]]; then
     exit 1
 fi
 exit 0
@@ -129,7 +129,9 @@ fn both_fuzz_targets_still_run_with_the_requested_budget() {
     let log = sandbox.log();
     for target in ["fuzz_ffi_deserialisation", "fuzz_ffi_entry_points"] {
         assert!(
-            log.contains(&format!("+nightly fuzz run {target} -- -max_total_time=7")),
+            log.contains(&format!(
+                "+nightly fuzz run --locked {target} -- -max_total_time=7"
+            )),
             "target {target} did not run with the requested budget:\n{log}"
         );
     }
