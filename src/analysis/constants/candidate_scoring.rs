@@ -4,6 +4,8 @@
 //! boosts, pessimism discounts, prediction calibration, coordinated-structural
 //! validation, and NaN-safe comparison helpers.
 
+use crate::config::helpers::parse_env;
+
 // =============================================================================
 // Candidate Diversification
 // =============================================================================
@@ -54,9 +56,7 @@ pub const MAX_ADD_NEURON_CANDIDATES_PER_TARGET_CEILING: usize = 32;
 /// values fall back to `MAX_ADD_NEURON_CANDIDATES_PER_TARGET`.
 #[must_use]
 pub fn max_add_neuron_candidates_per_target() -> usize {
-    std::env::var("NEAT_AI_DISCOVERY_MAX_ADD_NEURON_PER_TARGET")
-        .ok()
-        .and_then(|v| v.trim().parse::<usize>().ok())
+    parse_env::<usize>("NEAT_AI_DISCOVERY_MAX_ADD_NEURON_PER_TARGET")
         .unwrap_or(MAX_ADD_NEURON_CANDIDATES_PER_TARGET)
         .clamp(
             MIN_ADD_NEURON_CANDIDATES_PER_TARGET,
@@ -107,9 +107,7 @@ pub const MAX_COORDINATED_PER_TARGET_OUTPUT_CEILING: usize = 32;
 /// fall back to `MAX_COORDINATED_PER_TARGET_OUTPUT`.
 #[must_use]
 pub fn max_coordinated_per_target_output() -> usize {
-    std::env::var("NEAT_AI_DISCOVERY_MAX_COORDINATED_PER_TARGET")
-        .ok()
-        .and_then(|v| v.trim().parse::<usize>().ok())
+    parse_env::<usize>("NEAT_AI_DISCOVERY_MAX_COORDINATED_PER_TARGET")
         .unwrap_or(MAX_COORDINATED_PER_TARGET_OUTPUT)
         .clamp(
             MIN_COORDINATED_PER_TARGET_OUTPUT,
@@ -155,9 +153,7 @@ pub const MIN_DISTINCT_TARGETS_PER_BATCH_CEILING: usize = 32;
 /// fall back to `MIN_DISTINCT_TARGETS_PER_BATCH`.
 #[must_use]
 pub fn min_distinct_targets_per_batch() -> usize {
-    std::env::var("NEAT_AI_DISCOVERY_MIN_DISTINCT_TARGETS_PER_BATCH")
-        .ok()
-        .and_then(|v| v.trim().parse::<usize>().ok())
+    parse_env::<usize>("NEAT_AI_DISCOVERY_MIN_DISTINCT_TARGETS_PER_BATCH")
         .unwrap_or(MIN_DISTINCT_TARGETS_PER_BATCH)
         .clamp(
             MIN_DISTINCT_TARGETS_PER_BATCH_FLOOR,
@@ -507,9 +503,7 @@ pub fn is_risky_target_squash(squash: &str) -> bool {
 /// non-finite, or missing values fall back to [`RISKY_SQUASH_PRIOR_DEFAULT`].
 #[must_use]
 pub fn risky_squash_prior() -> f32 {
-    std::env::var("NEAT_AI_DISCOVERY_RISKY_SQUASH_PRIOR")
-        .ok()
-        .and_then(|v| v.trim().parse::<f32>().ok())
+    parse_env::<f32>("NEAT_AI_DISCOVERY_RISKY_SQUASH_PRIOR")
         .filter(|v| v.is_finite())
         .unwrap_or(RISKY_SQUASH_PRIOR_DEFAULT)
         .clamp(MIN_RISKY_SQUASH_PRIOR, MAX_RISKY_SQUASH_PRIOR)
@@ -849,9 +843,7 @@ pub const MIN_EXPECTED_CREATURE_SCORE_GAIN_CEILING: f32 = 1e-2;
 /// [`MIN_EXPECTED_CREATURE_SCORE_GAIN`].
 #[must_use]
 pub fn min_expected_creature_score_gain() -> f32 {
-    std::env::var("NEAT_AI_DISCOVERY_MIN_EXPECTED_GAIN")
-        .ok()
-        .and_then(|v| v.trim().parse::<f32>().ok())
+    parse_env::<f32>("NEAT_AI_DISCOVERY_MIN_EXPECTED_GAIN")
         .filter(|v| v.is_finite() && *v >= 0.0)
         .unwrap_or(MIN_EXPECTED_CREATURE_SCORE_GAIN)
         .clamp(
@@ -997,9 +989,7 @@ pub const NEURON_RANKING_GAIN_REFERENCE: f32 = 1e-3;
 /// values fall back to [`NEURON_RANKING_RELIABILITY_BANDS`].
 #[must_use]
 pub fn neuron_ranking_reliability_bands() -> u32 {
-    std::env::var("NEAT_AI_DISCOVERY_NEURON_RANKING_BANDS")
-        .ok()
-        .and_then(|v| v.trim().parse::<u32>().ok())
+    parse_env::<u32>("NEAT_AI_DISCOVERY_NEURON_RANKING_BANDS")
         .unwrap_or(NEURON_RANKING_RELIABILITY_BANDS)
         .clamp(
             MIN_NEURON_RANKING_RELIABILITY_BANDS,
@@ -1058,9 +1048,7 @@ pub const MIN_BYPASS_WEIGHT_FOR_COLLAPSE_CEILING: f32 = 0.1;
 /// [`MIN_BYPASS_WEIGHT_FOR_COLLAPSE`].
 #[must_use]
 pub fn min_bypass_weight_for_collapse() -> f32 {
-    std::env::var("NEAT_AI_DISCOVERY_MIN_BYPASS_WEIGHT_FOR_COLLAPSE")
-        .ok()
-        .and_then(|v| v.trim().parse::<f32>().ok())
+    parse_env::<f32>("NEAT_AI_DISCOVERY_MIN_BYPASS_WEIGHT_FOR_COLLAPSE")
         .filter(|v| v.is_finite() && *v >= 0.0)
         .unwrap_or(MIN_BYPASS_WEIGHT_FOR_COLLAPSE)
         .clamp(
@@ -1213,9 +1201,7 @@ pub const COORDINATED_NOISE_FLOOR_MULTIPLIER_CEILING: f32 = 100.0;
 #[inline]
 #[must_use]
 pub fn coordinated_noise_floor_multiplier() -> f32 {
-    std::env::var("NEAT_AI_DISCOVERY_COORDINATED_NOISE_FLOOR_MULTIPLIER")
-        .ok()
-        .and_then(|v| v.trim().parse::<f32>().ok())
+    parse_env::<f32>("NEAT_AI_DISCOVERY_COORDINATED_NOISE_FLOOR_MULTIPLIER")
         .filter(|v| v.is_finite() && *v > 0.0)
         .map_or(1.0, |v| {
             v.clamp(
@@ -1540,10 +1526,7 @@ pub fn remove_low_impact_noise_floor(cost_of_growth: f32) -> f32 {
 /// Read a finite, non-negative `f32` from `name`, or `None` when unset or
 /// invalid (Issue #1814).
 fn env_f32_non_negative(name: &str) -> Option<f32> {
-    std::env::var(name)
-        .ok()
-        .and_then(|v| v.trim().parse::<f32>().ok())
-        .filter(|v| v.is_finite() && *v >= 0.0)
+    parse_env::<f32>(name).filter(|v| v.is_finite() && *v >= 0.0)
 }
 
 /// Lock protecting every test that reads or writes either

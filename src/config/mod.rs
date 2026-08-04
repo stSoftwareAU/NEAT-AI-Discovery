@@ -97,7 +97,7 @@
 
 mod detection;
 mod drought_mitigation;
-mod helpers;
+pub(crate) mod helpers;
 mod observability;
 mod user_facing;
 

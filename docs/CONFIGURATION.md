@@ -14,6 +14,15 @@ accept `1`/`true`/`yes` to enable unless noted otherwise; unset means the
 documented default applies. Invalid or out-of-range values fall back to the
 default rather than aborting.
 
+**Surrounding whitespace is always tolerated** on numeric variables
+(Issue #2006) — `" 5 "` and `"5\n"` tune the knob exactly as `"5"` does, so a
+value carried in from a shell heredoc or a YAML `env:` block is not silently
+dropped.
+Every numeric accessor goes through the one
+[`config::helpers::parse_env`](../src/config/helpers.rs) rule: missing → unset,
+whitespace trimmed, unparsable → unset. The per-variable fallback, range filter
+and clamp documented in the tables below then apply on top of that.
+
 ## Library & logging
 
 | Variable | Default | Description |
