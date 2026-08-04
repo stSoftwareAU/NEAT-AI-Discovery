@@ -644,6 +644,13 @@ echo "🔄 bump-deps.sh — refresh dependencies"
 echo "   quarantine_hours = $QUARANTINE_HOURS"
 echo "   dry_run          = $DRY_RUN"
 echo "   no_network       = $NO_NETWORK"
+# Offline is a mode of the whole run, so it is reported before any
+# tool-availability branch. The notice used to sit inside the cargo-upgrade
+# branch, so a host without cargo-edit never logged that the run was offline
+# (Issue #1994).
+if [[ "$NO_NETWORK" -eq 1 ]]; then
+    echo "   --no-network set: offline run — skipping network lookups; all new versions are treated as inside quarantine."
+fi
 echo ""
 
 # ── Temp files ────────────────────────────────────────────────────────
@@ -720,7 +727,7 @@ if [[ -f "$CARGO_MANIFEST" ]]; then
     else
         echo "🔍 External Cargo deps — checking for upgrades…"
         if [[ "$NO_NETWORK" -eq 1 ]]; then
-            echo "   --no-network set: skipping network lookups; treating all new versions as inside quarantine."
+            echo "   (offline: upgrade discovery skipped)"
             EXTERNAL_PLAN="(skipped: --no-network)"
         else
             # Use cargo upgrade --dry-run to discover candidates.
