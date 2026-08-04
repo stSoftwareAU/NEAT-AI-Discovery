@@ -685,10 +685,10 @@ gdb -p <pid> -ex 'thread apply all bt' -ex 'quit'
 
 Before loading a parquet file, the library checks whether there's enough
 available memory. Parquet files are compressed, so they typically expand to
-2–4× their file size when loaded. The conservative memory model behind this
-check — the ×3 decompression estimate, the half-of-RAM cap, and the resulting
-maximum file sizes by RAM — is documented once in
-[docs/CACHE_TUNING.md § Tier Selection Logic](CACHE_TUNING.md#tier-selection-logic).
+2–4× their file size when loaded. The memory model behind this check — the
+footer-derived projection, its ×3 compressed-size floor, and the budget /
+available-memory bound it is compared against — is documented once in
+[docs/CACHE_TUNING.md § Preload Decision Logic](CACHE_TUNING.md#preload-decision-logic).
 
 To reduce parquet file size:
 - Lower `discoverySampleRate` (e.g., from 0.05 to 0.02)
@@ -697,34 +697,45 @@ To reduce parquet file size:
 
 ### 🔄 Streaming Parquet Loading (Issue #193)
 
-For very large datasets, the library supports streaming parquet loading with block-based
-caching and prefetch.
+`StreamingRecordCache` supports block-based parquet loading with LRU block
+eviction and prefetch, but it is **not wired into `analyze_parallel`** — it is
+constructed only by tests and benches (Issue #1987). What production runs is the
+binary eager-pre-load-vs-lazy decision documented in
+[docs/CACHE_TUNING.md § Preload Decision Logic](CACHE_TUNING.md#preload-decision-logic).
 
 **Configuration:** the streaming knobs (`NEAT_AI_DISCOVERY_MAX_CACHED_BLOCKS`,
 `NEAT_AI_DISCOVERY_PREFETCH_DEPTH`, `NEAT_AI_DISCOVERY_PRELOAD_ALL`,
-`NEAT_AI_DISCOVERY_BLOCK_SIZE`) — with their defaults and valid ranges — live in
-the single authoritative reference,
+`NEAT_AI_DISCOVERY_BLOCK_SIZE`) — with their defaults, valid ranges, and the
+reach each actually has — live in the single authoritative reference,
 [docs/CONFIGURATION.md § Streaming & Parquet](CONFIGURATION.md#streaming--parquet).
+All four are parsed but never consumed by `analyze_parallel`; to tune the
+production analysis cache use `max_analysis_memory_mb`,
+`NEAT_AI_DISCOVERY_FOCUS_RANKING_MEMORY_MARGIN_MB` or
+`NEAT_AI_DISCOVERY_MAX_PARQUET_DECODE_MB`.
 
 ### 🧠 Memory-Constrained Streaming (Issue #420)
 
-For systems with limited memory, the library provides additional adaptive behaviour:
-
 #### 🌡️ Memory Pressure Detection
 
-The library detects memory pressure at runtime and adapts accordingly:
+The library samples memory pressure at three analysis phase boundaries. The band
+is computed, but only `Critical` changes behaviour — it cancels the in-flight
+analysis so buffers are freed and partial results are returned (Issue #1099).
+No band resizes a cache, changes eviction, or changes block size.
 
 | Available/Total Ratio | Pressure Level | Behaviour |
 |----------------------|----------------|-----------|
-| > 30% | None | Normal operation |
-| 15-30% | Moderate | Reduced cache sizes, prefer compression |
-| 5-15% | High | Aggressive eviction, smaller blocks |
-| < 5% | Critical | Minimal caching, streaming only |
+| > 30% | None | No action |
+| 15-30% | Moderate | No action |
+| 5-15% | High | No action |
+| < 5% | Critical | Cancel in-flight analysis, return partial results |
 
 #### 📏 Adaptive Block Sizing
 
-Block size is automatically tuned based on available memory when
-`NEAT_AI_DISCOVERY_BLOCK_SIZE` is not explicitly set:
+**Not wired (Issue #1987).** `adaptive_block_size` is called only from tests; the
+production block size is the fixed `DEFAULT_BLOCK_SIZE` of 10,000 records
+(`src/config/user_facing.rs`), whatever the host's available memory, and it is
+read only by the test/bench-only `StreamingRecordCache`. The scale the helper
+implements is:
 
 | Available Memory | Block Size |
 |-----------------|------------|
@@ -735,17 +746,12 @@ Block size is automatically tuned based on available memory when
 | 16-32GB | 25,000 records |
 | > 32GB | 50,000 records |
 
-Smaller blocks reduce peak memory per cached block, allowing more blocks to be
-held simultaneously.
-
 #### 🗜️ Compressed In-Memory Cache (LZ4)
 
-The library includes an LZ4-compressed LRU cache that trades CPU time for memory:
+**Not wired (Issue #1987).** `CompressedLruRecordCache` is constructed only by
+tests and `benches/cache_eviction.rs`; nothing selects it, under memory pressure
+or otherwise. Its properties, for anyone benchmarking it:
 
 - Discovery records contain repetitive floating-point data that compresses well
 - Typical compression ratios are 2-4x
 - LZ4 decompression is fast (~4 GB/s on modern hardware)
-- The compressed cache is selected automatically under memory pressure
-
-This allows the library to handle 2x larger creatures within the same memory
-budget by storing more neurons in cache before eviction.
