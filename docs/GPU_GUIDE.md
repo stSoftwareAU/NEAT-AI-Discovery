@@ -364,6 +364,14 @@ re-initialisation or a back-off sleep. Skips are counted as `stale_skipped` in
 sustained rise alongside `GPU work queue full - send timed out` means the queue
 is backing up with dead entries.
 
+Liveness is deliberately `Arc`/`Weak`-based rather than a receiver count:
+`crossbeam_channel::Sender` exposes no `receiver_count()` on the 0.5 line this
+crate depends on, so there is no way to ask the channel whether anyone is still
+listening. Instead the submitter holds a `CallerGuard` for exactly as long as it
+waits and the queued request carries the paired weak `CallerLiveness` handle;
+the guard dropping *is* the signal. Do not re-attempt the receiver-count
+approach — it does not exist to attempt.
+
 ```mermaid
 flowchart LR
     D[Dequeue request] --> S{Stale?}
@@ -410,6 +418,16 @@ thread count is published as `abandoned_threads` in `global_gpu_metrics()`
 (printed by `NEAT_AI_DISCOVERY_GPU_METRICS=1`); with the breaker in place it must
 never exceed 1 per process. Two or more `GPU thread did not exit` warnings in one
 run, or any GPU submission after the breaker warn, means the breaker regressed.
+
+**Fixture trap — never hold the exit-channel sender past the queue's own drop
+(Issue #1930).** A test that builds a `GpuWorkQueue` by hand and keeps the
+exit-channel **sender** alive makes `Drop` wait out the full
+`GPU_SHUTDOWN_TIMEOUT_SECS` and then report a GPU thread that was never spawned
+as abandoned. That costs 10s of dead wall clock per fixture (30s across the three
+`with_deadline` fixtures alone) and — far worse — it fabricates exactly the
+`abandoned_threads` signal described above, so the documented regression
+indicator lies. Drop the sender immediately; `Drop` then takes the disconnected
+path and both the false abandonment and the dead wall clock disappear.
 
 ```mermaid
 stateDiagram-v2
@@ -630,6 +648,15 @@ flowchart LR
 
 Grep field reports for `no backtraces captured` to find dumps where only the
 state block survived.
+
+**Raising the bound, or retrying the sampler, was evaluated and rejected.** The
+5 s + 500 ms bound is exported as `neat_ai_discovery::debug::SAMPLE_TIMEOUT_SECS`
+so tests can assert on it, and it stays where it is: the timeout only bounds how
+long an *already stuck* process waits on an *already stuck* tool. Now that the
+dump always carries the in-process state block, waiting longer buys no extra
+information and costs the wedged process more of the time an operator is trying
+to reclaim. Retrying the sampler multiplies the same cost for the same reason. Do
+not re-attempt either.
 
 #### The capture is private and transient (Issue #1905)
 
