@@ -624,6 +624,45 @@ rm -rf "$SHIM_DIR"
 rm -f "$ALLOC_LOG"
 echo ""
 
+# ── Test 25: --no-network is reported without cargo-edit (Issue #1994) ─
+
+echo "Test 25: --no-network mode is reported on a host without cargo-edit"
+NOEDIT_BIN="$(mktemp -d)"
+NOEDIT_HOME="$(mktemp -d)"
+# Expose cargo but nothing else from ~/.cargo/bin, and point HOME at an empty
+# directory so bump-deps.sh cannot source ~/.cargo/env back onto PATH.
+CARGO_BIN="$(command -v cargo || true)"
+if [[ -z "$CARGO_BIN" && -x "$HOME/.cargo/bin/cargo" ]]; then
+    CARGO_BIN="$HOME/.cargo/bin/cargo"
+fi
+if [[ -n "$CARGO_BIN" ]]; then
+    ln -s "$CARGO_BIN" "$NOEDIT_BIN/cargo"
+fi
+NOEDIT_PATH="$NOEDIT_BIN:/usr/bin:/bin"
+
+if PATH="$NOEDIT_PATH" command -v cargo-upgrade >/dev/null 2>&1; then
+    echo "  FAIL: could not build a cargo-edit-free PATH (cargo-upgrade still resolves)"
+    FAIL=$((FAIL + 1))
+    ERRORS="${ERRORS}  FAIL: cargo-edit-free PATH unavailable\n"
+else
+    set +e
+    OUTPUT=$(HOME="$NOEDIT_HOME" PATH="$NOEDIT_PATH" "$BUMP_DEPS" --dry-run --no-network 2>&1)
+    EXIT_CODE=$?
+    set -e
+    assert_output_contains "no-network notice printed without cargo-edit" \
+        "(skipping network|--no-network|offline)" "$OUTPUT"
+    if [[ -n "$CARGO_BIN" ]]; then
+        assert_exit_code "--dry-run --no-network exits 0 without cargo-edit" 0 "$EXIT_CODE"
+        assert_output_contains "cargo-edit-absent branch was actually taken" \
+            "cargo-edit not installed" "$OUTPUT"
+    else
+        echo "  NOTE: cargo not on PATH — exit-code assertions skipped"
+    fi
+fi
+
+rm -rf "$NOEDIT_BIN" "$NOEDIT_HOME"
+echo ""
+
 # ── Summary ──────────────────────────────────────────────────────────
 
 echo ""
