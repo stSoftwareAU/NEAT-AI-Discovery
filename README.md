@@ -1,3 +1,7 @@
+<p align="center">
+  <img width="720" src="https://raw.githubusercontent.com/stSoftwareAU/NEAT-AI/Develop/docs/brand/social-previews/neat-ai-discovery.png" alt="NEAT-AI-Discovery — magnifier on a new node">
+</p>
+
 # NEAT-AI-Discovery
 
 A high-performance Rust companion library for
