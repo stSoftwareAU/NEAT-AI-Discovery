@@ -144,4 +144,5 @@ fn lazy_reason_as_str_is_stable() {
     assert_eq!(CacheLazyReason::None.as_str(), "none");
     assert_eq!(CacheLazyReason::Budget.as_str(), "budget");
     assert_eq!(CacheLazyReason::MemoryPressure.as_str(), "memory_pressure");
+    assert_eq!(CacheLazyReason::Unworkable.as_str(), "unworkable");
 }

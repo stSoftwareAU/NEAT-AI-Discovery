@@ -646,10 +646,38 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
         input.max_analysis_memory_mb,
     );
 
+    // Issue #2013: projected ≫ budget — skip analysis rather than entering an
+    // unworkable lazy path that can sit silent past the logical deadline.
+    let cache_result = match cache_result {
+        Ok(None) => {
+            tracing::warn!(
+                "analysis phase skipped: projected pre-load unworkable relative to \
+                 memory budget (Issue #2013)"
+            );
+            return Ok(AnalyzeAllResult {
+                synapse: None,
+                neuron: None,
+                memory_budget_exceeded: false,
+                cancelled: true,
+                memory_pressure_cancelled: false,
+                gpu_wedged: false,
+                neuron_fingerprints: Some(current_fingerprints),
+                fingerprint_cache_hits,
+                fingerprint_cache_misses,
+                module_outcome_tracker: input.module_outcome_tracker.clone().unwrap_or_default(),
+                pass_rejection_breakdown: pass_breakdown_with_fingerprint_skips(
+                    fingerprint_cache_hits,
+                ),
+            });
+        }
+        other => other,
+    };
+
     // Issue #1047: If parquet loading was cancelled, return a clean partial
     // result instead of propagating the error.
     let shared_cache = match cache_result {
-        Ok(c) => Arc::new(c),
+        Ok(Some(c)) => Arc::new(c),
+        Ok(None) => unreachable!("SkipUnworkable handled above"),
         Err(_e) if crate::cancellation::is_cancelled() => {
             tracing::info!("parquet loading cancelled by host — returning empty result");
             return Ok(AnalyzeAllResult {
