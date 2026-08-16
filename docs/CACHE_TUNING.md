@@ -61,11 +61,11 @@ rather than exhausting the host (Issue #1869).
 
 Records are loaded on demand, one neuron per Parquet scan, and memoised in the
 cache as they arrive. This is the memory-constrained fallback for a **modest**
-overbook. Its per-neuron loads poll the shared analysis deadline (GRQ #4068)
+overbook. Its per-neuron loads poll the shared analysis deadline (Issue #2013)
 and emit a periodic INFO heartbeat every 60 s, so a legitimately slow lazy pass
 is curtailed rather than hanging in silence past the host's logical stop.
 
-### Skip unworkable (GRQ #4068)
+### Skip unworkable (Issue #2013)
 
 When the projected pre-load exceeds the supplied budget by more than 10×
 (e.g. 85 GB projected against a 4 GB budget), lazy mode cannot finish inside
