@@ -151,14 +151,15 @@ fn test_parquet() -> (tempfile::TempDir, String) {
 }
 
 // ---------------------------------------------------------------------------
-// 1. Production has two modes, not three tiers.
+// 1. Production has eager / lazy / skip — not three LRU tiers.
 // ---------------------------------------------------------------------------
 
-/// The production analysis cache makes a **binary** eager-vs-lazy decision, so
-/// the operator-facing guide must describe two modes, not three tiers.
+/// The production analysis cache chooses eager, lazy, or unworkable-skip, so
+/// the operator-facing guide must describe those outcomes — not three LRU
+/// tiers.
 #[test]
 fn production_cache_selection_is_binary_and_the_guide_says_so() {
-    // Budget path: fits → eager, over budget → lazy. There is no third outcome.
+    // Budget path: fits → eager, modest overbook → lazy, >10× → skip (GRQ #4068).
     assert_eq!(
         decide_cache_preload_for_budget(2 * GB, 4096),
         (CachePreloadMode::Preload, CacheLazyReason::None),
@@ -169,8 +170,13 @@ fn production_cache_selection_is_binary_and_the_guide_says_so() {
         (CachePreloadMode::Lazy, CacheLazyReason::Budget),
         "an 8 GB projection over a 4 GB budget must fall back to lazy"
     );
+    assert_eq!(
+        decide_cache_preload_for_budget(50 * GB, 4096),
+        (CachePreloadMode::SkipUnworkable, CacheLazyReason::Unworkable),
+        "a 50 GB projection over a 4 GB budget must skip as unworkable"
+    );
 
-    // Auto-detect path: same two outcomes.
+    // Auto-detect path: eager vs lazy only (no budget → no 10× skip).
     assert_eq!(
         decide_cache_preload_for_available_memory(GB, 8 * GB, GB),
         (CachePreloadMode::Preload, CacheLazyReason::None),
@@ -184,8 +190,10 @@ fn production_cache_selection_is_binary_and_the_guide_says_so() {
 
     let live = operator_facing(CACHE_TUNING);
     assert!(
-        live.contains("eager pre-load") && live.contains("lazy"),
-        "the operator-facing guide must name the two production modes"
+        live.contains("eager pre-load")
+            && live.contains("lazy")
+            && live.contains("unworkable"),
+        "the operator-facing guide must name eager, lazy, and unworkable skip"
     );
     assert!(
         !live.contains("Tier 2 — LRU Cache"),
@@ -397,7 +405,8 @@ fn the_compressed_cache_is_not_auto_selected_and_the_claim_is_gone() {
     // The production constructor returns a plain `RecordCache` regardless of
     // how tight the budget is — never a compressed or tiered cache.
     let cache = RecordCache::new_adaptive_with_deadline_and_budget(&file, None, Some(0))
-        .expect("a zero budget must still yield a working lazy cache");
+        .expect("a zero budget must still yield a working lazy cache")
+        .expect("zero budget forces lazy, not skip");
     assert!(
         !cache
             .get("neuron-0")
@@ -434,7 +443,9 @@ fn troubleshooting_quotes_the_log_lines_production_emits() {
     let (_dir, file) = test_parquet();
     let (cache, logs) =
         capture_logs(|| RecordCache::new_adaptive_with_deadline_and_budget(&file, None, Some(0)));
-    cache.expect("a zero budget must still yield a working lazy cache");
+    cache
+        .expect("a zero budget must still yield a working lazy cache")
+        .expect("zero budget forces lazy, not skip");
 
     assert!(
         logs.contains("insufficient memory for pre-loading"),

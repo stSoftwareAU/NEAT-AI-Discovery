@@ -50,13 +50,9 @@ fn deadline_aware_loading_succeeds_with_generous_deadline() {
     // Deadline 10 minutes from now — plenty of time
     let deadline = std::time::SystemTime::now() + std::time::Duration::from_secs(600);
 
-    let cache = RecordCache::new_adaptive_with_deadline(&parquet_path, Some(deadline));
-    assert!(
-        cache.is_ok(),
-        "Loading should succeed with a generous deadline"
-    );
-
-    let cache = cache.unwrap();
+    let cache = RecordCache::new_adaptive_with_deadline(&parquet_path, Some(deadline))
+        .expect("Loading should succeed with a generous deadline")
+        .expect("generous deadline must not skip the cache");
     let records = cache.get("neuron-0").expect("Should retrieve neuron-0");
     assert_eq!(records.len(), 50, "neuron-0 should have 50 records");
 }
@@ -89,7 +85,8 @@ fn deadline_aware_loading_with_no_deadline_matches_adaptive() {
 
     // No deadline — should behave identically to new_adaptive
     let cache_with_deadline = RecordCache::new_adaptive_with_deadline(&parquet_path, None)
-        .expect("Loading without deadline should succeed");
+        .expect("Loading without deadline should succeed")
+        .expect("no-budget path must not skip the cache");
 
     let cache_standard =
         RecordCache::new_adaptive(&parquet_path).expect("Standard loading should succeed");

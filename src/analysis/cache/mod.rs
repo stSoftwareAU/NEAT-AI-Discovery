@@ -63,15 +63,25 @@ pub use super::streaming::{
 use crate::CreatureJson;
 use crate::types::{DiscoverRecord, SharedRecords};
 use anyhow::{Context, Result};
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 use std::collections::HashMap;
 use std::fs::File;
 use std::sync::{Arc, OnceLock};
+use std::time::{Duration, Instant, SystemTime};
 
 use crate::analysis::utils::{
-    bytes_to_mb_ceil, estimate_parquet_in_memory_bytes, get_memory_info,
+    bytes_to_mb_ceil, deadline_passed, estimate_parquet_in_memory_bytes, get_memory_info,
     parquet_preload_fits_available, verbose_enabled,
 };
+
+/// When the projected eager pre-load exceeds the supplied budget by more than
+/// this factor, lazy mode is treated as unworkable and the analysis phase is
+/// skipped instead (GRQ #4068). A ~20× overbook on a 16 GB host previously
+/// entered lazy mode and sat silent for hours past the logical deadline.
+pub const LAZY_OVERBOOK_SKIP_RATIO: u64 = 10;
+
+/// How often lazy/analysis cache progress emits an INFO heartbeat (GRQ #4068).
+const ANALYSIS_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(60);
 
 type RecordCacheLoader = dyn Fn(&str, &str) -> Result<Vec<DiscoverRecord>> + Send + Sync + 'static;
 type CachedNeuronRecords = OnceLock<Result<Arc<Vec<DiscoverRecord>>, String>>;
@@ -100,6 +110,15 @@ pub struct RecordCache {
     /// is active (Issue #1048). The field is never read — its `Drop` impl
     /// closes the handle when the cache is dropped.
     _file_guard: Option<File>,
+    /// Shared analysis deadline (GRQ #4068). Lazy per-neuron loads poll this
+    /// before each disk scan so a run past `#3866` stops cleanly instead of
+    /// hanging until the external wall-clock cap.
+    deadline: Option<SystemTime>,
+    /// Wall-clock start of this cache instance — used for heartbeat elapsed.
+    phase_started: Instant,
+    /// Last INFO heartbeat emission (rate-limited to
+    /// [`ANALYSIS_HEARTBEAT_INTERVAL`]).
+    last_heartbeat: Mutex<Instant>,
 }
 
 impl RecordCache {
@@ -115,7 +134,8 @@ impl RecordCache {
     /// This ensures discovery works on any modern Mac/PC, adapting to available resources.
     #[tracing::instrument(skip_all, fields(parquet_file))]
     pub fn new_adaptive(parquet_file: &str) -> Result<Self> {
-        Self::new_adaptive_with_deadline(parquet_file, None)
+        Self::new_adaptive_with_deadline(parquet_file, None)?
+            .ok_or_else(|| anyhow::anyhow!("analysis cache skipped as unworkable (GRQ #4068)"))
     }
 
     /// Create an adaptive cache with optional deadline checking (Issue #648).
@@ -127,16 +147,19 @@ impl RecordCache {
     /// loads.
     ///
     /// If no deadline is provided, behaves identically to `new_adaptive()`.
+    ///
+    /// Returns `Ok(None)` when the projection is so far over budget that lazy
+    /// mode is skipped as unworkable (GRQ #4068).
     #[tracing::instrument(skip_all, fields(parquet_file))]
     pub fn new_adaptive_with_deadline(
         parquet_file: &str,
-        deadline: Option<std::time::SystemTime>,
-    ) -> Result<Self> {
+        deadline: Option<SystemTime>,
+    ) -> Result<Option<Self>> {
         Self::new_adaptive_with_deadline_and_budget(parquet_file, deadline, None)
     }
 
     /// Create an adaptive cache honouring an optional supplied memory budget
-    /// (Issue #3176).
+    /// (Issue #3176) and the GRQ #4068 unworkable-lazy gate.
     ///
     /// This is the eager-vs-lazy pre-load decision, now aligned with focus
     /// ranking so the fleet behaves consistently across very different machine
@@ -146,36 +169,41 @@ impl RecordCache {
     ///   `--rustMemoryBudgetMB` value as `max_analysis_memory_mb`), the
     ///   projected in-memory pre-load size (parquet file × 3) is compared
     ///   against the budget. Eager pre-load is chosen when it fits.
+    /// - When the projection exceeds the budget by more than
+    ///   [`LAZY_OVERBOOK_SKIP_RATIO`] (GRQ #4068), analysis is skipped with a
+    ///   clear WARN rather than entering a lazy path that cannot finish.
     /// - When no budget is supplied, the decision uses the **corrected**
     ///   OS-available accounting from [`get_memory_info`] (Issue #3173) minus
     ///   the shared focus-ranking safety margin, via the same
-    ///   [`parquet_preload_fits_available`] primitive focus ranking uses. This
-    ///   removes the divergent 50%-of-total-RAM heuristic that forced a
-    ///   ~14.3 GB projection onto the slow lazy path on the 24 GB exemplar host
-    ///   despite ample reclaimable memory (Issue #3170).
+    ///   [`parquet_preload_fits_available`] primitive focus ranking uses.
     ///
-    /// Lazy mode is reserved for genuinely constrained hosts and still
-    /// completes: its per-neuron loads are bounded by the shared analysis
-    /// deadline the caller already threads through, so the cache pre-load has no
-    /// separate wall-clock net that needs scaling (unlike focus ranking's
-    /// independent 120 s budget in Issue #3172).
+    /// Lazy mode is reserved for modest overbooks and still completes: its
+    /// per-neuron loads poll the shared analysis deadline (GRQ #4068) and emit
+    /// a periodic INFO heartbeat so silence of multi-hour length is impossible.
+    ///
+    /// Returns `Ok(None)` when the phase was skipped as unworkable.
     #[tracing::instrument(skip_all, fields(parquet_file))]
     pub fn new_adaptive_with_deadline_and_budget(
         parquet_file: &str,
-        deadline: Option<std::time::SystemTime>,
+        deadline: Option<SystemTime>,
         budget_mb: Option<u64>,
-    ) -> Result<Self> {
+    ) -> Result<Option<Self>> {
         match plan_cache_preload(parquet_file, budget_mb) {
-            CachePreloadMode::Preload => {
+            CachePreloadPlan::Preload => {
                 Self::new_preloaded_with_deadline_and_budget(parquet_file, deadline, budget_mb)
+                    .map(Some)
             }
-            CachePreloadMode::Lazy => Self::new_lazy(parquet_file),
+            CachePreloadPlan::Lazy => Self::new_lazy(parquet_file, deadline).map(Some),
+            CachePreloadPlan::SkipUnworkable => Ok(None),
         }
     }
 
     /// Create a lazy-loading cache that loads records on-demand.
     /// Slower than pre-loaded mode but uses minimal memory.
-    fn new_lazy(parquet_file: &str) -> Result<Self> {
+    ///
+    /// `deadline` is polled on every `get` (GRQ #4068) so a host that fell
+    /// into lazy mode still honours the `#3866` logical stop.
+    fn new_lazy(parquet_file: &str, deadline: Option<SystemTime>) -> Result<Self> {
         use crate::parquet_format::read_records_from_parquet;
 
         tracing::info!("using lazy-loading mode for parquet file");
@@ -184,6 +212,7 @@ impl RecordCache {
         let file_guard = File::open(parquet_file)
             .with_context(|| format!("Failed to open parquet file guard: {parquet_file}"))?;
 
+        let now = Instant::now();
         Ok(Self {
             parquet_file: parquet_file.to_string(),
             cache: RwLock::new(HashMap::new()),
@@ -191,6 +220,9 @@ impl RecordCache {
                 read_records_from_parquet(file, neuron_uuid)
             }),
             _file_guard: Some(file_guard),
+            deadline,
+            phase_started: now,
+            last_heartbeat: Mutex::new(now),
         })
     }
 
@@ -217,7 +249,7 @@ impl RecordCache {
     /// detected only by the post-load budget check.
     fn new_preloaded_with_deadline_and_budget(
         parquet_file: &str,
-        deadline: Option<std::time::SystemTime>,
+        deadline: Option<SystemTime>,
         budget_mb: Option<u64>,
     ) -> Result<Self> {
         use crate::parquet_format::shared_records::load_grouped_records_shared_with_budget;
@@ -259,6 +291,7 @@ impl RecordCache {
         // In pre-loaded mode, if a neuron UUID wasn't in the parquet file,
         // return an empty vector. This matches the behaviour when the data simply
         // doesn't exist for that UUID.
+        let now = Instant::now();
         Ok(Self {
             parquet_file: parquet_file.to_string(),
             cache,
@@ -267,7 +300,34 @@ impl RecordCache {
                 Ok(Vec::new())
             }),
             _file_guard: Some(file_guard),
+            deadline,
+            phase_started: now,
+            last_heartbeat: Mutex::new(now),
         })
+    }
+
+    /// Emit a rate-limited INFO heartbeat and always refresh the watchdog
+    /// (GRQ #4068). Silence of multi-hour length must be impossible during
+    /// lazy analysis.
+    fn emit_progress_heartbeat(&self, neuron_uuid: &str) {
+        crate::watchdog::beat(format!(
+            "analysis-cache lazy load → neuron {neuron_uuid}"
+        ));
+        let mut last = self.last_heartbeat.lock();
+        if last.elapsed() < ANALYSIS_HEARTBEAT_INTERVAL {
+            return;
+        }
+        *last = Instant::now();
+        tracing::info!(
+            target: "neat_ai_discovery::analysis::cache",
+            phase = "analysis-cache",
+            mode = "lazy",
+            elapsed_s = self.phase_started.elapsed().as_secs(),
+            neurons_loaded = self.len(),
+            records_loaded = self.loaded_record_count(),
+            current_neuron = %neuron_uuid,
+            "Discovery analysis heartbeat (#4068)",
+        );
     }
 
     /// Get records for a specific neuron UUID.
@@ -280,6 +340,15 @@ impl RecordCache {
     /// After obtaining the cell, uses `OnceLock::get_or_try_init()` for thread-safe
     /// lazy initialisation without holding the cache lock.
     pub fn get(&self, neuron_uuid: &str) -> Result<Arc<Vec<DiscoverRecord>>> {
+        // GRQ #4068: poll the shared analysis deadline before each (potentially
+        // multi-minute) per-neuron parquet scan on the lazy path.
+        if deadline_passed(&self.deadline) {
+            anyhow::bail!(
+                "analysis deadline exceeded during lazy parquet load for neuron '{neuron_uuid}' (GRQ #4068)"
+            );
+        }
+        self.emit_progress_heartbeat(neuron_uuid);
+
         // Fast path: try to get with read lock first (allows concurrent reads)
         let cell = {
             let cache = self.cache.read();
@@ -466,11 +535,34 @@ impl RecordCache {
     /// Create a cache with a custom loader function.
     /// Used primarily for testing. Available in both unit tests and integration tests.
     pub fn with_loader(parquet_file: &str, loader: Arc<RecordCacheLoader>) -> Self {
+        let now = Instant::now();
         Self {
             parquet_file: parquet_file.to_string(),
             cache: RwLock::new(HashMap::new()),
             loader,
             _file_guard: None, // No file guard needed for test loaders
+            deadline: None,
+            phase_started: now,
+            last_heartbeat: Mutex::new(now),
+        }
+    }
+
+    /// Create a cache with a custom loader and an absolute analysis deadline
+    /// (GRQ #4068). Used by the over-deadline guard test.
+    pub fn with_loader_and_deadline(
+        parquet_file: &str,
+        loader: Arc<RecordCacheLoader>,
+        deadline: Option<SystemTime>,
+    ) -> Self {
+        let now = Instant::now();
+        Self {
+            parquet_file: parquet_file.to_string(),
+            cache: RwLock::new(HashMap::new()),
+            loader,
+            _file_guard: None,
+            deadline,
+            phase_started: now,
+            last_heartbeat: Mutex::new(now),
         }
     }
 
@@ -519,6 +611,7 @@ impl RecordCache {
                     format!("Failed to open parquet file guard: {parquet_file}")
                 })?;
 
+                let now = Instant::now();
                 Ok(Self {
                     parquet_file: parquet_file.to_string(),
                     cache: RwLock::new(HashMap::new()),
@@ -528,12 +621,15 @@ impl RecordCache {
                         Ok((*records).clone())
                     }),
                     _file_guard: Some(file_guard),
+                    deadline: None,
+                    phase_started: now,
+                    last_heartbeat: Mutex::new(now),
                 })
             }
             LoadingStrategy::Streaming => {
                 // Use the existing streaming cache
                 tracing::info!("using streaming mode for very large parquet file");
-                Self::new_lazy(parquet_file)
+                Self::new_lazy(parquet_file, None)
             }
         }
     }
@@ -543,17 +639,39 @@ impl RecordCache {
 /// pre-load decision (Issue #3176).
 const BYTES_PER_MB: u64 = 1024 * 1024;
 
-/// Whether the analysis-cache pre-load runs eager (whole-file, fast) or falls
-/// back to lazy on-demand loading (Issue #3176).
+/// Whether the analysis-cache pre-load runs eager (whole-file, fast), falls
+/// back to lazy on-demand loading, or skips the phase as unworkable (Issue
+/// #3176 / GRQ #4068).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CachePreloadMode {
     /// Pre-load the entire parquet file into memory (fast path).
     Preload,
     /// Load records on demand per neuron (memory-efficient fallback).
     Lazy,
+    /// Projection so far over budget that lazy cannot finish — skip analysis.
+    SkipUnworkable,
 }
 
-/// Why the analysis-cache pre-load selected lazy mode (Issue #3176).
+/// Internal plan returned by [`plan_cache_preload`] (includes the skip arm).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CachePreloadPlan {
+    Preload,
+    Lazy,
+    SkipUnworkable,
+}
+
+impl From<CachePreloadMode> for CachePreloadPlan {
+    fn from(mode: CachePreloadMode) -> Self {
+        match mode {
+            CachePreloadMode::Preload => Self::Preload,
+            CachePreloadMode::Lazy => Self::Lazy,
+            CachePreloadMode::SkipUnworkable => Self::SkipUnworkable,
+        }
+    }
+}
+
+/// Why the analysis-cache pre-load selected lazy mode or skipped (Issue #3176 /
+/// GRQ #4068).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CacheLazyReason {
     /// Eager pre-load selected — not a lazy fallback.
@@ -562,22 +680,29 @@ pub enum CacheLazyReason {
     Budget,
     /// No budget set and OS-available memory (minus margin) could not fit it.
     MemoryPressure,
+    /// Projection exceeds the budget by more than [`LAZY_OVERBOOK_SKIP_RATIO`].
+    Unworkable,
 }
 
 impl CacheLazyReason {
-    /// Stable string used in the structured lazy-fallback WARN log.
+    /// Stable string used in the structured lazy-fallback / skip WARN log.
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::None => "none",
             Self::Budget => "budget",
             Self::MemoryPressure => "memory_pressure",
+            Self::Unworkable => "unworkable",
         }
     }
 }
 
-/// Budget-path decision (Issue #3176): eager when the projected pre-load fits
-/// the supplied budget, lazy otherwise.
+/// Budget-path decision (Issue #3176 / GRQ #4068): eager when the projected
+/// pre-load fits the supplied budget, lazy for a modest overbook, skip when
+/// the overbook exceeds [`LAZY_OVERBOOK_SKIP_RATIO`].
+///
+/// A zero budget is treated as "force lazy" (tests / operators) and never
+/// triggers the unworkable skip — otherwise every non-empty parquet would skip.
 ///
 /// Mirrors the focus-ranking budget decision so both phases treat a supplied
 /// `--rustMemoryBudgetMB` identically. Pure so it is unit-testable without a
@@ -588,7 +713,11 @@ pub fn decide_cache_preload_for_budget(
     budget_mb: u64,
 ) -> (CachePreloadMode, CacheLazyReason) {
     let budget_bytes = budget_mb.saturating_mul(BYTES_PER_MB);
-    if projected_bytes > budget_bytes {
+    if budget_mb > 0
+        && projected_bytes > budget_bytes.saturating_mul(LAZY_OVERBOOK_SKIP_RATIO)
+    {
+        (CachePreloadMode::SkipUnworkable, CacheLazyReason::Unworkable)
+    } else if projected_bytes > budget_bytes {
         (CachePreloadMode::Lazy, CacheLazyReason::Budget)
     } else {
         (CachePreloadMode::Preload, CacheLazyReason::None)
@@ -616,7 +745,7 @@ pub fn decide_cache_preload_for_available_memory(
 }
 
 /// Decide the analysis-cache pre-load mode and log a structured WARN on a lazy
-/// fallback (Issue #3176).
+/// fallback or unworkable skip (Issue #3176 / GRQ #4068).
 ///
 /// Uses the supplied budget when present, otherwise the corrected OS-available
 /// accounting minus the shared focus-ranking margin. The WARN keeps the
@@ -624,12 +753,28 @@ pub fn decide_cache_preload_for_available_memory(
 /// matches) but now carries projection, budget, available and margin so the
 /// eager-vs-lazy trade-off is visible at the decision point rather than being
 /// implicit in an opaque memory-check error.
-fn plan_cache_preload(parquet_file: &str, budget_mb: Option<u64>) -> CachePreloadMode {
+fn plan_cache_preload(parquet_file: &str, budget_mb: Option<u64>) -> CachePreloadPlan {
     let projected_bytes = estimate_parquet_in_memory_bytes(parquet_file);
     let projected_mb = bytes_to_mb_ceil(projected_bytes);
 
     if let Some(budget) = budget_mb {
         let (mode, reason) = decide_cache_preload_for_budget(projected_bytes, budget);
+        if mode == CachePreloadMode::SkipUnworkable {
+            let (available_bytes, _total) = get_memory_info();
+            tracing::warn!(
+                target: "neat_ai_discovery::analysis::cache",
+                mode = "skip",
+                reason = reason.as_str(),
+                budget_mb = budget,
+                projected_mb,
+                available_mb = bytes_to_mb_ceil(available_bytes),
+                overbook_ratio = LAZY_OVERBOOK_SKIP_RATIO,
+                "projected pre-load exceeds configured budget by more than \
+                 {LAZY_OVERBOOK_SKIP_RATIO}× — skipping analysis as unworkable \
+                 rather than entering a lazy path that cannot finish (GRQ #4068)",
+            );
+            return CachePreloadPlan::SkipUnworkable;
+        }
         if mode == CachePreloadMode::Lazy {
             let (available_bytes, _total) = get_memory_info();
             tracing::warn!(
@@ -643,7 +788,7 @@ fn plan_cache_preload(parquet_file: &str, budget_mb: Option<u64>) -> CachePreloa
                  projected pre-load exceeds configured budget",
             );
         }
-        return mode;
+        return mode.into();
     }
 
     // Auto-detect: base the decision on real OS-available memory (corrected
@@ -669,9 +814,13 @@ fn plan_cache_preload(parquet_file: &str, budget_mb: Option<u64>) -> CachePreloa
             "insufficient memory for pre-loading — falling back to lazy-loading mode",
         );
     }
-    mode
+    mode.into()
 }
 
 #[cfg(test)]
 #[path = "preload_decision_tests.rs"]
 mod preload_decision_tests;
+
+#[cfg(test)]
+#[path = "lazy_deadline_tests.rs"]
+mod lazy_deadline_tests;

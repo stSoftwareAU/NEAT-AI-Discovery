@@ -19,26 +19,26 @@ reads), see [STREAMING_GUIDE.md](STREAMING_GUIDE.md).
 ## Overview
 
 After recording, the analysis phase loads neuron records from a Parquet file.
-The record cache sits between the analysis engine and the Parquet file. It has
-**two modes**, chosen once when the cache is built, by a single binary
-eager-vs-lazy decision:
+The record cache sits between the analysis engine and the Parquet file. It
+chooses once when the cache is built:
 
 ```mermaid
 flowchart TD
     A[analyze_parallel] --> B[RecordCache::new_adaptive_with_deadline_and_budget]
     B --> C[plan_cache_preload]
     C -->|projection fits| D[Eager pre-load<br/>whole file grouped in memory]
-    C -->|projection does not fit| E[Lazy per-neuron<br/>one Parquet scan per neuron]
+    C -->|modest overbook| E[Lazy per-neuron<br/>one Parquet scan per neuron]
+    C -->|overbook greater than 10x| S[Skip analysis<br/>unworkable lazy path]
     D --> F[Parquet File]
     E --> F
 ```
 
-| | Eager pre-load | Lazy per-neuron |
-|---|---|---|
-| **Speed** | Fastest — all data in memory | Slower — one Parquet scan per neuron |
-| **Memory** | Highest — whole dataset resident | Minimal — one neuron's records at a time |
-| **I/O** | Single bulk read at startup | On-demand per `get(neuron_uuid)` |
-| **Log line** | `pre-loaded neurons from parquet` (verbose only) | `using lazy-loading mode for parquet file` |
+| | Eager pre-load | Lazy per-neuron | Skip (unworkable) |
+|---|---|---|---|
+| **Speed** | Fastest — all data in memory | Slower — one Parquet scan per neuron | Immediate return |
+| **Memory** | Highest — whole dataset resident | Minimal — one neuron's records at a time | None |
+| **I/O** | Single bulk read at startup | On-demand per `get(neuron_uuid)` | None |
+| **Log line** | `pre-loaded neurons from parquet` (verbose only) | `using lazy-loading mode for parquet file` | `skipping analysis as unworkable` |
 
 ---
 
@@ -60,9 +60,17 @@ rather than exhausting the host (Issue #1869).
 ### Lazy per-neuron
 
 Records are loaded on demand, one neuron per Parquet scan, and memoised in the
-cache as they arrive. This is the memory-constrained fallback. Its per-neuron
-loads are bounded by the shared analysis deadline the caller already threads
-through, so a legitimately slow lazy pass is curtailed rather than hanging.
+cache as they arrive. This is the memory-constrained fallback for a **modest**
+overbook. Its per-neuron loads poll the shared analysis deadline (GRQ #4068)
+and emit a periodic INFO heartbeat every 60 s, so a legitimately slow lazy pass
+is curtailed rather than hanging in silence past the host's logical stop.
+
+### Skip unworkable (GRQ #4068)
+
+When the projected pre-load exceeds the supplied budget by more than 10×
+(e.g. 85 GB projected against a 4 GB budget), lazy mode cannot finish inside
+the step budget. The phase is skipped with a structured WARN
+(`reason="unworkable"`) instead of entering that path.
 
 ---
 
@@ -79,8 +87,9 @@ projected = max(footer_rows × per_record_bytes + error_values × 4,
                 file_size_bytes × 3)
 
 if max_analysis_memory_mb was supplied:
-    projected <= budget            → eager pre-load
-    otherwise                      → lazy   (reason = "budget")
+    projected <= budget                       → eager pre-load
+    projected <= budget × 10                 → lazy   (reason = "budget")
+    projected >  budget × 10                  → skip   (reason = "unworkable")
 
 else:
     projected <= available − margin → eager pre-load
