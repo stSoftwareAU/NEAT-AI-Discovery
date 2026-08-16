@@ -534,6 +534,11 @@ All dependencies build automatically on remote, unattended machines.
   auto-bumps the patch version on **every pull request** (unless the PR branch
   already carries a bump), not only when `src/` changes — see
   `.github/workflows/ci.yml`.
+- A PR whose `Cargo.toml` version is **strictly behind** `origin/Develop` fails
+  CI (Issue #2015 / `scripts/check-version-no-downgrade.sh`). Equal versions may
+  still auto-patch-bump; versions already ahead are accepted without a second
+  bump. Merge conflicts must never ship a downgrade — remote `runlib.sh`
+  rebuilds key off this crate version.
 - Local and remote runs use a distributed build pattern via `scripts/runlib.sh`:
   the library is installed to `~/.cargo/lib/` and tracked with a version marker at
   `~/.cargo/lib/.neat_ai_discovery.version`.
