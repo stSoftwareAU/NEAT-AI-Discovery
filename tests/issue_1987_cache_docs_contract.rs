@@ -172,7 +172,10 @@ fn production_cache_selection_is_binary_and_the_guide_says_so() {
     );
     assert_eq!(
         decide_cache_preload_for_budget(50 * GB, 4096),
-        (CachePreloadMode::SkipUnworkable, CacheLazyReason::Unworkable),
+        (
+            CachePreloadMode::SkipUnworkable,
+            CacheLazyReason::Unworkable
+        ),
         "a 50 GB projection over a 4 GB budget must skip as unworkable"
     );
 
@@ -190,9 +193,7 @@ fn production_cache_selection_is_binary_and_the_guide_says_so() {
 
     let live = operator_facing(CACHE_TUNING);
     assert!(
-        live.contains("eager pre-load")
-            && live.contains("lazy")
-            && live.contains("unworkable"),
+        live.contains("eager pre-load") && live.contains("lazy") && live.contains("unworkable"),
         "the operator-facing guide must name eager, lazy, and unworkable skip"
     );
     assert!(

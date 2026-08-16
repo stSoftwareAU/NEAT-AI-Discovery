@@ -310,9 +310,7 @@ impl RecordCache {
     /// (GRQ #4068). Silence of multi-hour length must be impossible during
     /// lazy analysis.
     fn emit_progress_heartbeat(&self, neuron_uuid: &str) {
-        crate::watchdog::beat(format!(
-            "analysis-cache lazy load → neuron {neuron_uuid}"
-        ));
+        crate::watchdog::beat(format!("analysis-cache lazy load → neuron {neuron_uuid}"));
         let mut last = self.last_heartbeat.lock();
         if last.elapsed() < ANALYSIS_HEARTBEAT_INTERVAL {
             return;
@@ -713,10 +711,11 @@ pub fn decide_cache_preload_for_budget(
     budget_mb: u64,
 ) -> (CachePreloadMode, CacheLazyReason) {
     let budget_bytes = budget_mb.saturating_mul(BYTES_PER_MB);
-    if budget_mb > 0
-        && projected_bytes > budget_bytes.saturating_mul(LAZY_OVERBOOK_SKIP_RATIO)
-    {
-        (CachePreloadMode::SkipUnworkable, CacheLazyReason::Unworkable)
+    if budget_mb > 0 && projected_bytes > budget_bytes.saturating_mul(LAZY_OVERBOOK_SKIP_RATIO) {
+        (
+            CachePreloadMode::SkipUnworkable,
+            CacheLazyReason::Unworkable,
+        )
     } else if projected_bytes > budget_bytes {
         (CachePreloadMode::Lazy, CacheLazyReason::Budget)
     } else {
