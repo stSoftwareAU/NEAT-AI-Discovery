@@ -120,8 +120,7 @@ fn version_increment_step_invokes_no_downgrade_guard() {
     let after = &body[start..];
     let next = after[header.len()..]
         .find("\n    - name: ")
-        .map(|i| header.len() + i)
-        .unwrap_or(after.len());
+        .map_or(after.len(), |i| header.len() + i);
     let step = &after[..next];
 
     assert!(
