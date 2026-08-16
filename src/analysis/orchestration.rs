@@ -646,13 +646,13 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
         input.max_analysis_memory_mb,
     );
 
-    // GRQ #4068: projected ≫ budget — skip analysis rather than entering an
+    // Issue #2013: projected ≫ budget — skip analysis rather than entering an
     // unworkable lazy path that can sit silent past the logical deadline.
     let cache_result = match cache_result {
         Ok(None) => {
             tracing::warn!(
                 "analysis phase skipped: projected pre-load unworkable relative to \
-                 memory budget (GRQ #4068)"
+                 memory budget (Issue #2013)"
             );
             return Ok(AnalyzeAllResult {
                 synapse: None,

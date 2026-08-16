@@ -159,7 +159,7 @@ fn test_parquet() -> (tempfile::TempDir, String) {
 /// tiers.
 #[test]
 fn production_cache_selection_is_binary_and_the_guide_says_so() {
-    // Budget path: fits → eager, modest overbook → lazy, >10× → skip (GRQ #4068).
+    // Budget path: fits → eager, modest overbook → lazy, >10× → skip (Issue #2013).
     assert_eq!(
         decide_cache_preload_for_budget(2 * GB, 4096),
         (CachePreloadMode::Preload, CacheLazyReason::None),

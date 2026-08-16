@@ -76,11 +76,11 @@ use crate::analysis::utils::{
 
 /// When the projected eager pre-load exceeds the supplied budget by more than
 /// this factor, lazy mode is treated as unworkable and the analysis phase is
-/// skipped instead (GRQ #4068). A ~20× overbook on a 16 GB host previously
+/// skipped instead (Issue #2013). A ~20× overbook on a 16 GB host previously
 /// entered lazy mode and sat silent for hours past the logical deadline.
 pub const LAZY_OVERBOOK_SKIP_RATIO: u64 = 10;
 
-/// How often lazy/analysis cache progress emits an INFO heartbeat (GRQ #4068).
+/// How often lazy/analysis cache progress emits an INFO heartbeat (Issue #2013).
 const ANALYSIS_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(60);
 
 type RecordCacheLoader = dyn Fn(&str, &str) -> Result<Vec<DiscoverRecord>> + Send + Sync + 'static;
@@ -110,7 +110,7 @@ pub struct RecordCache {
     /// is active (Issue #1048). The field is never read — its `Drop` impl
     /// closes the handle when the cache is dropped.
     _file_guard: Option<File>,
-    /// Shared analysis deadline (GRQ #4068). Lazy per-neuron loads poll this
+    /// Shared analysis deadline (Issue #2013). Lazy per-neuron loads poll this
     /// before each disk scan so a run past `#3866` stops cleanly instead of
     /// hanging until the external wall-clock cap.
     deadline: Option<SystemTime>,
@@ -135,7 +135,7 @@ impl RecordCache {
     #[tracing::instrument(skip_all, fields(parquet_file))]
     pub fn new_adaptive(parquet_file: &str) -> Result<Self> {
         Self::new_adaptive_with_deadline(parquet_file, None)?
-            .ok_or_else(|| anyhow::anyhow!("analysis cache skipped as unworkable (GRQ #4068)"))
+            .ok_or_else(|| anyhow::anyhow!("analysis cache skipped as unworkable (Issue #2013)"))
     }
 
     /// Create an adaptive cache with optional deadline checking (Issue #648).
@@ -149,7 +149,7 @@ impl RecordCache {
     /// If no deadline is provided, behaves identically to `new_adaptive()`.
     ///
     /// Returns `Ok(None)` when the projection is so far over budget that lazy
-    /// mode is skipped as unworkable (GRQ #4068).
+    /// mode is skipped as unworkable (Issue #2013).
     #[tracing::instrument(skip_all, fields(parquet_file))]
     pub fn new_adaptive_with_deadline(
         parquet_file: &str,
@@ -159,7 +159,7 @@ impl RecordCache {
     }
 
     /// Create an adaptive cache honouring an optional supplied memory budget
-    /// (Issue #3176) and the GRQ #4068 unworkable-lazy gate.
+    /// (Issue #3176) and the Issue #2013 unworkable-lazy gate.
     ///
     /// This is the eager-vs-lazy pre-load decision, now aligned with focus
     /// ranking so the fleet behaves consistently across very different machine
@@ -170,7 +170,7 @@ impl RecordCache {
     ///   projected in-memory pre-load size (parquet file × 3) is compared
     ///   against the budget. Eager pre-load is chosen when it fits.
     /// - When the projection exceeds the budget by more than
-    ///   [`LAZY_OVERBOOK_SKIP_RATIO`] (GRQ #4068), analysis is skipped with a
+    ///   [`LAZY_OVERBOOK_SKIP_RATIO`] (Issue #2013), analysis is skipped with a
     ///   clear WARN rather than entering a lazy path that cannot finish.
     /// - When no budget is supplied, the decision uses the **corrected**
     ///   OS-available accounting from [`get_memory_info`] (Issue #3173) minus
@@ -178,7 +178,7 @@ impl RecordCache {
     ///   [`parquet_preload_fits_available`] primitive focus ranking uses.
     ///
     /// Lazy mode is reserved for modest overbooks and still completes: its
-    /// per-neuron loads poll the shared analysis deadline (GRQ #4068) and emit
+    /// per-neuron loads poll the shared analysis deadline (Issue #2013) and emit
     /// a periodic INFO heartbeat so silence of multi-hour length is impossible.
     ///
     /// Returns `Ok(None)` when the phase was skipped as unworkable.
@@ -201,7 +201,7 @@ impl RecordCache {
     /// Create a lazy-loading cache that loads records on-demand.
     /// Slower than pre-loaded mode but uses minimal memory.
     ///
-    /// `deadline` is polled on every `get` (GRQ #4068) so a host that fell
+    /// `deadline` is polled on every `get` (Issue #2013) so a host that fell
     /// into lazy mode still honours the `#3866` logical stop.
     fn new_lazy(parquet_file: &str, deadline: Option<SystemTime>) -> Result<Self> {
         use crate::parquet_format::read_records_from_parquet;
@@ -307,7 +307,7 @@ impl RecordCache {
     }
 
     /// Emit a rate-limited INFO heartbeat and always refresh the watchdog
-    /// (GRQ #4068). Silence of multi-hour length must be impossible during
+    /// (Issue #2013). Silence of multi-hour length must be impossible during
     /// lazy analysis.
     fn emit_progress_heartbeat(&self, neuron_uuid: &str) {
         crate::watchdog::beat(format!("analysis-cache lazy load → neuron {neuron_uuid}"));
@@ -338,11 +338,11 @@ impl RecordCache {
     /// After obtaining the cell, uses `OnceLock::get_or_try_init()` for thread-safe
     /// lazy initialisation without holding the cache lock.
     pub fn get(&self, neuron_uuid: &str) -> Result<Arc<Vec<DiscoverRecord>>> {
-        // GRQ #4068: poll the shared analysis deadline before each (potentially
+        // Issue #2013: poll the shared analysis deadline before each (potentially
         // multi-minute) per-neuron parquet scan on the lazy path.
         if deadline_passed(&self.deadline) {
             anyhow::bail!(
-                "analysis deadline exceeded during lazy parquet load for neuron '{neuron_uuid}' (GRQ #4068)"
+                "analysis deadline exceeded during lazy parquet load for neuron '{neuron_uuid}' (Issue #2013)"
             );
         }
         self.emit_progress_heartbeat(neuron_uuid);
@@ -546,7 +546,7 @@ impl RecordCache {
     }
 
     /// Create a cache with a custom loader and an absolute analysis deadline
-    /// (GRQ #4068). Used by the over-deadline guard test.
+    /// (Issue #2013). Used by the over-deadline guard test.
     pub fn with_loader_and_deadline(
         parquet_file: &str,
         loader: Arc<RecordCacheLoader>,
@@ -639,7 +639,7 @@ const BYTES_PER_MB: u64 = 1024 * 1024;
 
 /// Whether the analysis-cache pre-load runs eager (whole-file, fast), falls
 /// back to lazy on-demand loading, or skips the phase as unworkable (Issue
-/// #3176 / GRQ #4068).
+/// #3176 / Issue #2013).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CachePreloadMode {
     /// Pre-load the entire parquet file into memory (fast path).
@@ -669,7 +669,7 @@ impl From<CachePreloadMode> for CachePreloadPlan {
 }
 
 /// Why the analysis-cache pre-load selected lazy mode or skipped (Issue #3176 /
-/// GRQ #4068).
+/// Issue #2013).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CacheLazyReason {
     /// Eager pre-load selected — not a lazy fallback.
@@ -695,7 +695,7 @@ impl CacheLazyReason {
     }
 }
 
-/// Budget-path decision (Issue #3176 / GRQ #4068): eager when the projected
+/// Budget-path decision (Issue #3176 / Issue #2013): eager when the projected
 /// pre-load fits the supplied budget, lazy for a modest overbook, skip when
 /// the overbook exceeds [`LAZY_OVERBOOK_SKIP_RATIO`].
 ///
@@ -744,7 +744,7 @@ pub fn decide_cache_preload_for_available_memory(
 }
 
 /// Decide the analysis-cache pre-load mode and log a structured WARN on a lazy
-/// fallback or unworkable skip (Issue #3176 / GRQ #4068).
+/// fallback or unworkable skip (Issue #3176 / Issue #2013).
 ///
 /// Uses the supplied budget when present, otherwise the corrected OS-available
 /// accounting minus the shared focus-ranking margin. The WARN keeps the
@@ -770,7 +770,7 @@ fn plan_cache_preload(parquet_file: &str, budget_mb: Option<u64>) -> CachePreloa
                 overbook_ratio = LAZY_OVERBOOK_SKIP_RATIO,
                 "projected pre-load exceeds configured budget by more than \
                  {LAZY_OVERBOOK_SKIP_RATIO}× — skipping analysis as unworkable \
-                 rather than entering a lazy path that cannot finish (GRQ #4068)",
+                 rather than entering a lazy path that cannot finish (Issue #2013)",
             );
             return CachePreloadPlan::SkipUnworkable;
         }

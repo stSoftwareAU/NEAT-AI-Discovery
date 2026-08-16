@@ -1,4 +1,4 @@
-//! Guard tests for GRQ #4068: lazy analysis must honour the shared deadline
+//! Guard tests for Issue #2013: lazy analysis must honour the shared deadline
 //! and skip when the projected pre-load is unworkably over budget.
 
 use super::*;
@@ -11,7 +11,7 @@ const MB: u64 = 1024 * 1024;
 
 #[test]
 fn budget_path_skips_when_projection_exceeds_budget_by_more_than_10x() {
-    // GRQ-22 shape: projected 85113 MB vs budget 4004 MB ≈ 21×.
+    // observed host shape: projected 85113 MB vs budget 4004 MB ≈ 21×.
     let projected = 85_113 * MB;
     let budget_mb = 4004;
     let (mode, reason) = decide_cache_preload_for_budget(projected, budget_mb);
@@ -58,7 +58,7 @@ fn lazy_get_returns_at_deadline() {
         .expect_err("past deadline must abort lazy get");
     let msg = format!("{err:#}");
     assert!(
-        msg.contains("deadline exceeded") || msg.contains("GRQ #4068"),
+        msg.contains("deadline exceeded") || msg.contains("Issue #2013"),
         "unexpected error: {msg}"
     );
     assert_eq!(
