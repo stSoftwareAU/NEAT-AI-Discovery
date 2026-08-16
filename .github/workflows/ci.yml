@@ -125,7 +125,22 @@ jobs:
           BASE_BRANCH="develop"
         fi
         
-        # FIRST: Check if a version increment commit already exists in this PR branch
+        # FIRST: Refuse a Cargo.toml downgrade vs the base branch (Issue #2015).
+        # A merge conflict that silently takes Develop's older version used to
+        # look "already different" to the skip logic below and ship a
+        # downgrade — remote runlib.sh rebuilds key off this crate version.
+        if git show-ref --verify --quiet refs/remotes/origin/$BASE_BRANCH; then
+          BASE_VERSION=$(git show origin/$BASE_BRANCH:Cargo.toml 2>/dev/null | grep '^version = ' | sed 's/version = "\(.*\)"/\1/' || echo "")
+          CURRENT_VERSION=$(grep '^version = ' Cargo.toml | sed 's/version = "\(.*\)"/\1/')
+
+          if [ -n "$BASE_VERSION" ] && [ -n "$CURRENT_VERSION" ]; then
+            echo "Base branch version: $BASE_VERSION"
+            echo "PR branch version: $CURRENT_VERSION"
+            ./scripts/check-version-no-downgrade.sh "$BASE_VERSION" "$CURRENT_VERSION"
+          fi
+        fi
+
+        # SECOND: Check if a version increment commit already exists in this PR branch
         # This is the most reliable way to prevent duplicate increments
         if git show-ref --verify --quiet refs/remotes/origin/$BASE_BRANCH; then
           # Check if there's already a version increment commit in PR branch that's not in base branch
@@ -137,20 +152,16 @@ jobs:
           fi
         fi
         
-        # SECOND: Check if version is already different from the base branch
-        # If the version on the PR branch differs from base branch, skip increment (already done)
-        # This prevents duplicate version increments on the same PR
+        # THIRD: Check if version is already ahead of the base branch
+        # If the PR version is strictly greater than base, skip increment (already done).
+        # Downgrades were rejected above (Issue #2015); equal versions fall through to bump.
         if git show-ref --verify --quiet refs/remotes/origin/$BASE_BRANCH; then
           BASE_VERSION=$(git show origin/$BASE_BRANCH:Cargo.toml 2>/dev/null | grep '^version = ' | sed 's/version = "\(.*\)"/\1/' || echo "")
           CURRENT_VERSION=$(grep '^version = ' Cargo.toml | sed 's/version = "\(.*\)"/\1/')
           
           if [ -n "$BASE_VERSION" ] && [ -n "$CURRENT_VERSION" ]; then
-            echo "Base branch version: $BASE_VERSION"
-            echo "PR branch version: $CURRENT_VERSION"
-            
-            # If versions are different, version has already been incremented for this PR
             if [ "$CURRENT_VERSION" != "$BASE_VERSION" ]; then
-              echo "✅ Version is already different from base branch ($BASE_VERSION -> $CURRENT_VERSION)"
+              echo "✅ Version is already ahead of base branch ($BASE_VERSION -> $CURRENT_VERSION)"
               echo "Skipping version increment to avoid duplicate commits"
               exit 0
             fi

@@ -466,8 +466,11 @@ CI auto-increments the `Cargo.toml` patch version on **every pull request**
 (unless the PR branch already carries a bump), not only when `src/` changes — so
 in the normal PR workflow you do not need to bump it yourself. If you commit
 **directly** (outside the PR workflow, where CI does not run), you must manually
-increment the patch version. The authoritative version-bump policy lives in the
-README [Distributed Build & Versioning](README.md#-distributed-build--versioning)
+increment the patch version. A PR version that is **strictly behind**
+`origin/Develop` fails CI rather than being treated as “already bumped”
+(Issue #2015) — never resolve a merge conflict by taking the older Develop
+token. The authoritative version-bump policy lives in the README
+[Distributed Build & Versioning](README.md#-distributed-build--versioning)
 section. Call `get_library_version()` to confirm what a worker has loaded.
 
 ### 🚀 Deployment Checklist
