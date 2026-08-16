@@ -562,6 +562,33 @@ The NEAT-AI project is split across seven public repositories. Each focuses on o
 | [NEAT-AI-Explore](https://github.com/stSoftwareAU/NEAT-AI-Explore) | Visualiser for creatures that reads NEAT-AI-Snapshot data. |
 | [NEAT-AI-Examples](https://github.com/stSoftwareAU/NEAT-AI-Examples) | Worked examples and tutorials that depend on NEAT-AI. |
 
+### Family previews
+
+Every sibling shares the same lockup — smiley-neuron soma, teal/coral dendrites,
+capability pills — with its own subtitle and motif. Artwork is transparent so it
+reads in light and dark modes. Canonical sources live in
+[NEAT-AI `docs/brand`](https://github.com/stSoftwareAU/NEAT-AI/tree/Develop/docs/brand)
+(hot-linked below; not vendored here).
+
+<table>
+  <tr>
+    <td><img width="380" src="https://raw.githubusercontent.com/stSoftwareAU/NEAT-AI/Develop/docs/brand/social-previews/neat-ai-core.png" alt="NEAT-AI-core: shared Rust compute crate, vendored as WASM"></td>
+    <td><img width="380" src="https://raw.githubusercontent.com/stSoftwareAU/NEAT-AI/Develop/docs/brand/social-previews/neat-ai-discovery.png" alt="NEAT-AI-Discovery: Rust FFI extension for structural analysis"></td>
+  </tr>
+  <tr>
+    <td><img width="380" src="https://raw.githubusercontent.com/stSoftwareAU/NEAT-AI/Develop/docs/brand/social-previews/neat-ai-scorer.png" alt="NEAT-AI-scorer: Rust scoring application for creature fitness"></td>
+    <td><img width="380" src="https://raw.githubusercontent.com/stSoftwareAU/NEAT-AI/Develop/docs/brand/social-previews/neat-ai-backpropagation.png" alt="NEAT-AI-Backpropagation: gradient training for evolved topologies"></td>
+  </tr>
+  <tr>
+    <td><img width="380" src="https://raw.githubusercontent.com/stSoftwareAU/NEAT-AI/Develop/docs/brand/social-previews/neat-ai-lamarck.png" alt="NEAT-AI-Lamarck: learned traits passed to the next generation"></td>
+    <td><img width="380" src="https://raw.githubusercontent.com/stSoftwareAU/NEAT-AI/Develop/docs/brand/social-previews/neat-ai-snapshot.png" alt="NEAT-AI-Snapshot: portable snapshots shared between machines"></td>
+  </tr>
+  <tr>
+    <td><img width="380" src="https://raw.githubusercontent.com/stSoftwareAU/NEAT-AI/Develop/docs/brand/social-previews/neat-ai-explore.png" alt="NEAT-AI-Explore: visualise creature topology and behaviour"></td>
+    <td><img width="380" src="https://raw.githubusercontent.com/stSoftwareAU/NEAT-AI/Develop/docs/brand/social-previews/neat-ai-examples.png" alt="NEAT-AI-Examples: worked TypeScript projects you can run today"></td>
+  </tr>
+</table>
+
 ### Dependency graph
 
 ```mermaid
