@@ -73,7 +73,8 @@ Everything in this repository serves that objective:
 
    This script:
    - Installs Rust and Cargo if missing (no sudo required)
-   - Builds the library in release mode
+   - Builds the library in **release** mode (`opt-level = 3`, fat LTO,
+     `codegen-units = 1` — see [CONTRIBUTING.md — Build profiles](CONTRIBUTING.md#build-profiles-issue-2017))
    - Installs it to `~/.cargo/lib/` with version tracking
    - Signs it on macOS for FFI compatibility
 

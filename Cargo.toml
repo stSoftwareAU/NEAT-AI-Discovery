@@ -1,6 +1,6 @@
 [package]
 name = "neat_ai_discovery"
-version = "0.74.220"
+version = "0.74.221"
 edition = "2024"
 license = "Apache-2.0"
 description = "High-performance Rust library for recording neuron activations and errors during NEAT-AI discovery, and scanning the recorded data to identify beneficial new synapses/neurons."
@@ -223,7 +223,17 @@ harness = false
 name = "cpu_pre_reject"
 harness = false
 
+# Build profiles (Issue #2017):
+#   - Dev compiles as fast as possible (line tables keep panic file:line).
+#   - Release is the most optimised artefact possible (compile time irrelevant).
+# Stable Rust only — no nightly, no -Zthreads, no Cranelift.
+# No -C target-cpu=native: this crate is a cdylib/rlib consumed via FFI on
+# other hosts, not a same-host binary.
+[profile.dev]
+debug = "line-tables-only"
+
 [profile.release]
+opt-level = 3
 lto = "fat"
 codegen-units = 1
 

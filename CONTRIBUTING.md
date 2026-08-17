@@ -38,6 +38,20 @@ This script installs Rust and Cargo if missing (no sudo required), builds the
 library in release mode, installs it to `~/.cargo/lib/` with version tracking,
 and signs it on macOS for FFI compatibility.
 
+#### Build profiles (Issue #2017)
+
+Cargo profiles live in the root [`Cargo.toml`](Cargo.toml) and follow the
+fleet rule (fast stable-Rust dev builds; maximally optimised release artefacts):
+
+| Profile | Goal | Settings |
+|---------|------|----------|
+| `dev` (`cargo build`) | Compile as fast as possible | `debug = "line-tables-only"` (panic file:line kept; full DWARF dropped). Default `opt-level = 0` and incremental stay. |
+| `release` (`cargo build --release` / `./scripts/runlib.sh`) | Most optimised artefact | `opt-level = 3`, `lto = "fat"`, `codegen-units = 1`. Compile time is irrelevant. |
+
+Stable Rust only — no nightly, no `-Zthreads`, no Cranelift.
+`-C target-cpu=native` is **not** set: this crate ships a `cdylib`/`rlib`
+consumed via Deno FFI on other hosts, not a same-host binary.
+
 The Rust bootstrap goes through `./scripts/install-rustup.sh`, which downloads
 the pinned `rustup-init` binary for the host target and executes it **only**
 when its SHA-256 matches the digest committed in `scripts/rustup-init.sha256`.
