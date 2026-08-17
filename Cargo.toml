@@ -223,7 +223,17 @@ harness = false
 name = "cpu_pre_reject"
 harness = false
 
+# Build profiles (Issue #2017 / VibeCoding#4159):
+#   - Dev compiles as fast as possible (line tables keep panic file:line).
+#   - Release is the most optimised artefact possible (compile time irrelevant).
+# Stable Rust only — no nightly, no -Zthreads, no Cranelift.
+# No -C target-cpu=native: this crate is a cdylib/rlib consumed via FFI on
+# other hosts, not a same-host binary.
+[profile.dev]
+debug = "line-tables-only"
+
 [profile.release]
+opt-level = 3
 lto = "fat"
 codegen-units = 1
 
