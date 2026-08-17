@@ -71,17 +71,6 @@ it manually (e.g. `0.43.8` → `0.43.9`). Confirm the loaded version with
 
 ---
 
-## Build Profiles
-
-Dev builds favour compile speed (`debug = "line-tables-only"`); release builds
-favour the most optimised artefact (`opt-level = 3`, fat LTO, `codegen-units =
-1`). Do not add nightly-only compiler flags or `-C target-cpu=native` (this
-crate is a library consumed elsewhere). Canonical table:
-[CONTRIBUTING.md — Build profiles](CONTRIBUTING.md#build-profiles-issue-2017)
-(Issue #2017 / VibeCoding#4159).
-
----
-
 ## Dead Levers — Delete the Component *and* Its Config Surface
 
 **An operator lever that silently does nothing is worse than no lever** — it is
