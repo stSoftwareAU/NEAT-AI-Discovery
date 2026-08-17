@@ -41,7 +41,7 @@ and signs it on macOS for FFI compatibility.
 #### Build profiles (Issue #2017)
 
 Cargo profiles live in the root [`Cargo.toml`](Cargo.toml) and follow the
-fleet rule from [VibeCoding#4159](https://github.com/stSoftwareAU/VibeCoding/issues/4159):
+fleet rule (fast stable-Rust dev builds; maximally optimised release artefacts):
 
 | Profile | Goal | Settings |
 |---------|------|----------|

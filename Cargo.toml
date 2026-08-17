@@ -223,7 +223,7 @@ harness = false
 name = "cpu_pre_reject"
 harness = false
 
-# Build profiles (Issue #2017 / VibeCoding#4159):
+# Build profiles (Issue #2017):
 #   - Dev compiles as fast as possible (line tables keep panic file:line).
 #   - Release is the most optimised artefact possible (compile time irrelevant).
 # Stable Rust only — no nightly, no -Zthreads, no Cranelift.
