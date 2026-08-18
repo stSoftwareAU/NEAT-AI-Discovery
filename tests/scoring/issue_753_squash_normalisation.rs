@@ -17,8 +17,8 @@ fn squash_normalised_to_uppercase_on_deserialise() {
             {"uuid": "n5", "type": "hidden", "squash": "softPlus", "bias": 0.0}
         ],
         "synapses": [],
-        "input": 0,
-        "output": 0
+        "input": 1,
+        "output": 1
     }"#;
 
     let creature: CreatureJson = serde_json::from_str(json).unwrap();
@@ -38,8 +38,8 @@ fn default_squash_is_uppercase() {
             {"uuid": "n1", "type": "constant"}
         ],
         "synapses": [],
-        "input": 0,
-        "output": 0
+        "input": 1,
+        "output": 1
     }"#;
 
     let creature: CreatureJson = serde_json::from_str(json).unwrap();
@@ -54,8 +54,8 @@ fn whitespace_squash_normalises_to_empty() {
             {"uuid": "n1", "type": "hidden", "squash": "  ", "bias": 0.0}
         ],
         "synapses": [],
-        "input": 0,
-        "output": 0
+        "input": 1,
+        "output": 1
     }"#;
 
     let creature: CreatureJson = serde_json::from_str(json).unwrap();

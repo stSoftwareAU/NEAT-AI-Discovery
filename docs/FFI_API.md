@@ -1251,6 +1251,26 @@ Every entry point that accepts a `creature` also bounds `creature.input`:
   neurons are implied by the count and are not listed in `creature.neurons`
   (the example payload above pairs `"input": 20` with a single listed neuron).
 
+### 🚧 Observation Width — `input >= 1`, `output >= 1` (Issue #2020)
+
+`creature.input` and `creature.output` are the creature's observation width
+and are **authoritative**: `neurons` lists only non-input neurons, so the
+width cannot be re-derived from it. Both fields are required (no default) and
+both must be at least one:
+
+- `"input": 0` or `"output": 0` (or a missing field) returns `success: false`
+  with `errorKind: "data_validation"` from **every** entry point that accepts a
+  `creature` — `record_discovery`, `start_discovery_session`,
+  `analyze_parallel`, `rank_focus_neurons`, `export_visualisation_snapshot` —
+  before any work starts. The message mirrors the NEAT-AI reference:
+  `Must have at least one input neurons was: 0` (or `... output ...`).
+- The library never emits a creature without its width: any creature JSON it
+  writes (for example the `creature` block of a visualisation snapshot) carries
+  the caller's `input` / `output` unchanged, and serialising a creature whose
+  width is below one is an error rather than a payload.
+- There is no fallback and no derived default — a width-less creature is
+  corrupt, and the unit of work stops.
+
 ---
 
 ## 📁 File Format

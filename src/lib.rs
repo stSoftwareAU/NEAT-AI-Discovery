@@ -137,8 +137,10 @@ pub use ffi_types::{
     error_fields,
     error_fields_from_anyhow,
     no_error_fields,
+    // Observation-width rejection message (Issue #2020).
+    observation_width_error,
     panic_error_fields,
-    // Creature input-bound validation helper (Issue #1867).
+    // Creature input-bound validation helper (Issues #1867, #2020).
     validate_creature_input_bounds,
     // Forward-only validation helper.
     validate_forward_only_synapses,

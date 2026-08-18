@@ -119,7 +119,7 @@ Discovery assumes **forward-only** networks (no recurrent feedback):
 - No cross-sample state — each recorded activation/error is for a single
   training sample.
 
-#### Validated FFI Surface (Issue #1184, #1188, #1867)
+#### Validated FFI Surface (Issue #1184, #1188, #1867, #2020)
 
 `validate_forward_only_synapses` (in `src/ffi_types/forward_only_validation.rs`)
 and `validate_creature_input_bounds` (in `src/ffi_types/creature_bounds.rs`) are
@@ -135,6 +135,10 @@ aborts the process via `handle_alloc_error` — an abort `panic::catch_unwind`
 cannot intercept (Issue #1867). The cap is absolute, **not** relative to
 `creature.neurons.len()`: input neurons are implied by the count and are not
 listed in `creature.neurons`.
+
+It also enforces the **lower** bound (Issue #2020): `input < 1` / `output < 1` is
+never accepted — the counts are the observation width, not derivable from `neurons`.
+`CreatureJson`'s serde impl rejects a zero width on read and refuses to emit one.
 
 | FFI entry point | Accepts `CreatureJson` | Validates | Notes |
 |-----------------|------------------------|-----------|-------|

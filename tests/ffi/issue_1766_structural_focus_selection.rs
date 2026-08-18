@@ -43,7 +43,7 @@ fn stalled_shape_creature(n_hidden: usize) -> Value {
     json!({
         "neurons": neurons,
         "synapses": synapses,
-        "input": 0,
+        "input": 1,
         "output": 1
     })
 }

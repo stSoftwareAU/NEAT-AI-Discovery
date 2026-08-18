@@ -46,7 +46,7 @@ fn analyze_parallel_input_with_lowercase_task_descriptor_falls_back_to_neutral()
     let payload = format!(
         r#"{{
             "parquetFile": "/tmp/x.parquet",
-            "creature": {{"neurons": [], "synapses": [], "input": 0, "output": 0}},
+            "creature": {{"neurons": [], "synapses": [], "input": 1, "output": 1}},
             "focusNeurons": [],
             "taskDescriptor": {NEAT_AI_MSE_TASK_DESCRIPTOR}
         }}"#
@@ -70,7 +70,7 @@ fn analyze_parallel_internal_does_not_return_input_json_parse_error() {
     let payload = format!(
         r#"{{
             "parquetFile": "/tmp/nonexistent-issue-1402.parquet",
-            "creature": {{"neurons": [], "synapses": [], "input": 0, "output": 0}},
+            "creature": {{"neurons": [], "synapses": [], "input": 1, "output": 1}},
             "focusNeurons": [],
             "taskDescriptor": {NEAT_AI_MSE_TASK_DESCRIPTOR}
         }}"#
@@ -92,7 +92,7 @@ fn record_discovery_input_with_lowercase_task_descriptor_falls_back_to_neutral()
     // RecordDiscoveryInput uses snake_case at the top level.
     let payload = format!(
         r#"{{
-            "creature": {{"neurons": [], "synapses": [], "input": 0, "output": 0}},
+            "creature": {{"neurons": [], "synapses": [], "input": 1, "output": 1}},
             "training_data": [],
             "temp_dir": "/tmp/x",
             "task_descriptor": {NEAT_AI_MSE_TASK_DESCRIPTOR}
@@ -111,7 +111,7 @@ fn rank_focus_neurons_input_with_lowercase_task_descriptor_falls_back_to_neutral
     let payload = format!(
         r#"{{
             "parquetFile": "/tmp/x.parquet",
-            "creature": {{"neurons": [], "synapses": [], "input": 0, "output": 0}},
+            "creature": {{"neurons": [], "synapses": [], "input": 1, "output": 1}},
             "taskDescriptor": {NEAT_AI_MSE_TASK_DESCRIPTOR}
         }}"#
     );
@@ -145,7 +145,7 @@ fn lowercase_enum_strings_never_fail_top_level_parse() {
         let payload = format!(
             r#"{{
                 "parquetFile": "/tmp/x.parquet",
-                "creature": {{"neurons": [], "synapses": [], "input": 0, "output": 0}},
+                "creature": {{"neurons": [], "synapses": [], "input": 1, "output": 1}},
                 "focusNeurons": [],
                 "taskDescriptor": {descriptor}
             }}"#
@@ -169,7 +169,7 @@ fn lowercase_enum_strings_never_fail_top_level_parse() {
 fn non_object_task_descriptor_falls_back_to_neutral() {
     let payload = r#"{
         "parquetFile": "/tmp/x.parquet",
-        "creature": {"neurons": [], "synapses": [], "input": 0, "output": 0},
+        "creature": {"neurons": [], "synapses": [], "input": 1, "output": 1},
         "focusNeurons": [],
         "taskDescriptor": "unbounded"
     }"#;

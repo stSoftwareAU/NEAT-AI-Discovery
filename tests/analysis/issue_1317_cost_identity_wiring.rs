@@ -183,7 +183,7 @@ fn analyze_parallel_input_round_trips_cost_name() {
 
     let payload_without = r#"{
         "parquetFile": "/tmp/x.parquet",
-        "creature": {"neurons": [], "synapses": [], "input": 0, "output": 0},
+        "creature": {"neurons": [], "synapses": [], "input": 1, "output": 1},
         "focusNeurons": []
     }"#;
     let parsed: AnalyzeParallelInput = serde_json::from_str(payload_without).expect("parse");
@@ -194,7 +194,7 @@ fn analyze_parallel_input_round_trips_cost_name() {
 
     let payload_with = r#"{
         "parquetFile": "/tmp/x.parquet",
-        "creature": {"neurons": [], "synapses": [], "input": 0, "output": 0},
+        "creature": {"neurons": [], "synapses": [], "input": 1, "output": 1},
         "focusNeurons": [],
         "costName": "MAPE"
     }"#;

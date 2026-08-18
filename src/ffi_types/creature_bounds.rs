@@ -21,8 +21,32 @@
 //! `docs/FFI_API.md`, which pairs `"input": 20` with a single listed
 //! neuron), so a neuron-count-relative bound would reject ordinary
 //! creatures.
+//!
+//! The same gate enforces the **lower** bound (Issue #2020): `input < 1` or
+//! `output < 1` is never accepted anywhere. The top-level counts are the
+//! observation width and cannot be re-derived — `neurons` carries no input
+//! neurons — so a zero is a corrupt creature, not an empty one. The
+//! `CreatureJson` serde impl already rejects it at deserialisation and refuses
+//! to emit it at serialisation; this gate is the belt-and-braces check for
+//! creatures constructed in Rust and handed to an entry point directly.
 
 use super::{CreatureJson, DiscoveryError};
+
+/// Return the Issue #2020 rejection message when an observation-width count
+/// (`input` or `output`) is below one, or `None` when the count is valid.
+///
+/// The wording mirrors the TypeScript reference (`CreatureValidate.ts`):
+/// `Must have at least one input neurons was: N`.
+#[must_use]
+pub fn observation_width_error(field: &str, count: usize) -> Option<String> {
+    (count < 1).then(|| {
+        format!(
+            "Must have at least one {field} neurons was: {count} (Issue #2020). \
+             The creature's top-level `{field}` count is the observation width \
+             and cannot be derived from `neurons`."
+        )
+    })
+}
 
 /// Maximum accepted `creature.input` (inclusive).
 ///
@@ -32,16 +56,25 @@ use super::{CreatureJson, DiscoveryError};
 /// allocation abort, so it is deliberately generous rather than tuned.
 pub const MAX_CREATURE_INPUT_NEURONS: usize = 1_000_000;
 
-/// Verify that `creature.input` is within [`MAX_CREATURE_INPUT_NEURONS`]
-/// (Issue #1867).
+/// Verify that `creature.input` is within `1..=`[`MAX_CREATURE_INPUT_NEURONS`]
+/// and `creature.output >= 1` (Issues #1867, #2020).
 ///
 /// Runs at every FFI entry point that accepts a `CreatureJson`, immediately
 /// after JSON deserialisation and before any business logic, alongside
 /// [`super::validate_forward_only_synapses`].
 ///
 /// Returns `DiscoveryError::InvalidInput` — classified as
-/// `data_validation` — when the count exceeds the cap.
+/// `data_validation` — when either count is below one or the input count
+/// exceeds the cap.
 pub fn validate_creature_input_bounds(creature: &CreatureJson) -> Result<(), DiscoveryError> {
+    // Issue #2020: the lower bound comes first — a zero width is the more
+    // fundamental corruption and its message names the field.
+    if let Some(detail) = observation_width_error("input", creature.input)
+        .or_else(|| observation_width_error("output", creature.output))
+    {
+        return Err(DiscoveryError::InvalidInput { detail });
+    }
+
     if creature.input > MAX_CREATURE_INPUT_NEURONS {
         return Err(DiscoveryError::InvalidInput {
             detail: format!(
@@ -92,8 +125,39 @@ mod tests {
     }
 
     #[test]
-    fn zero_inputs_is_accepted() {
-        validate_creature_input_bounds(&creature(0, 1)).expect("zero inputs must validate");
+    fn zero_inputs_is_rejected_as_data_validation() {
+        // Issue #2020: `input < 1` is never accepted — the count is the
+        // observation width and cannot be derived from `neurons`.
+        let err = validate_creature_input_bounds(&creature(0, 1))
+            .expect_err("zero inputs must be rejected");
+        assert_eq!(err.error_kind(), DiscoveryErrorKind::DataValidation);
+        let msg = err.to_string();
+        assert!(
+            msg.contains("Must have at least one input neurons was: 0"),
+            "msg should mirror the TS reference wording: {msg}"
+        );
+    }
+
+    #[test]
+    fn zero_outputs_is_rejected_as_data_validation() {
+        let mut zero_output = creature(2, 1);
+        zero_output.output = 0;
+        let err = validate_creature_input_bounds(&zero_output)
+            .expect_err("zero outputs must be rejected");
+        assert_eq!(err.error_kind(), DiscoveryErrorKind::DataValidation);
+        let msg = err.to_string();
+        assert!(
+            msg.contains("Must have at least one output neurons was: 0"),
+            "msg should mirror the TS reference wording: {msg}"
+        );
+    }
+
+    #[test]
+    fn observation_width_error_only_fires_below_one() {
+        assert!(observation_width_error("input", 0).is_some());
+        assert!(observation_width_error("output", 0).is_some());
+        assert!(observation_width_error("input", 1).is_none());
+        assert!(observation_width_error("output", usize::MAX).is_none());
     }
 
     #[test]

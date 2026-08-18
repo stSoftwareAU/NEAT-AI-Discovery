@@ -15,13 +15,16 @@ mod session;
 // Re-export all sub-module types to preserve the existing public API.
 pub use candidates::*;
 pub use cleanup::*;
-pub use creature_bounds::{MAX_CREATURE_INPUT_NEURONS, validate_creature_input_bounds};
+pub use creature_bounds::{
+    MAX_CREATURE_INPUT_NEURONS, observation_width_error, validate_creature_input_bounds,
+};
 pub use error_classification::*;
 pub use forward_only_validation::validate_forward_only_synapses;
 pub use requests::*;
 pub use responses::*;
 pub use session::*;
 
+use serde::ser::Error as SerialiseError; // codespell:ignore ser
 use serde::{Deserialize, Deserializer, Serialize};
 
 // ============================================================================
@@ -81,15 +84,94 @@ where
 }
 
 // ============================================================================
+// Observation width validation (Issue #2020)
+// ============================================================================
+
+/// Deserialise the creature's `input` count, rejecting `input < 1`
+/// (Issue #2020).
+///
+/// The top-level `input` integer is the observation width and cannot be
+/// re-derived — `neurons` lists only non-input neurons — so a zero here is a
+/// corrupt creature, not a creature with no inputs. Fail at the boundary.
+fn deserialise_input_width<'de, D>(deserialiser: D) -> Result<usize, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let raw = usize::deserialize(deserialiser)?;
+    if let Some(detail) = observation_width_error("input", raw) {
+        return Err(serde::de::Error::custom(detail));
+    }
+    Ok(raw)
+}
+
+/// Deserialise the creature's `output` count, rejecting `output < 1`
+/// (Issue #2020).
+fn deserialise_output_width<'de, D>(deserialiser: D) -> Result<usize, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let raw = usize::deserialize(deserialiser)?;
+    if let Some(detail) = observation_width_error("output", raw) {
+        return Err(serde::de::Error::custom(detail));
+    }
+    Ok(raw)
+}
+
+/// Serialise the creature's `input` count, refusing to emit `input < 1`
+/// (Issue #2020).
+///
+/// A creature that leaves this library without its observation width cannot
+/// be repaired downstream, so a width-less creature is an error at the point
+/// of emission rather than a payload the host has to reject later.
+fn serialise_input_width<S>(value: &usize, serialiser: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    if let Some(detail) = observation_width_error("input", *value) {
+        return Err(SerialiseError::custom(detail));
+    }
+    value.serialize(serialiser)
+}
+
+/// Serialise the creature's `output` count, refusing to emit `output < 1`
+/// (Issue #2020).
+fn serialise_output_width<S>(value: &usize, serialiser: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    if let Some(detail) = observation_width_error("output", *value) {
+        return Err(SerialiseError::custom(detail));
+    }
+    value.serialize(serialiser)
+}
+
+// ============================================================================
 // Creature / Neuron / Synapse representations
 // ============================================================================
 
 /// JSON representation of Creature
+///
+/// `input` and `output` are the creature's observation width — the number of
+/// input and output neurons. Input neurons are **not** listed in `neurons`
+/// (only non-input neurons are), so these two integers are authoritative and
+/// cannot be re-derived from the neuron list. Both are required (no serde
+/// default) and both must be `>= 1`: a value below one is rejected at
+/// deserialisation and refused at serialisation (Issue #2020).
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct CreatureJson {
     pub neurons: Vec<NeuronJson>,
     pub synapses: Vec<SynapseJson>,
+    /// Number of input neurons (observation width). Must be `>= 1`.
+    #[serde(
+        deserialize_with = "deserialise_input_width",
+        serialize_with = "serialise_input_width"
+    )]
     pub input: usize,
+    /// Number of output neurons. Must be `>= 1`.
+    #[serde(
+        deserialize_with = "deserialise_output_width",
+        serialize_with = "serialise_output_width"
+    )]
     pub output: usize,
 }
 
