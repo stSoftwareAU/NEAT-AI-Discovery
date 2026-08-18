@@ -432,8 +432,8 @@ mod tests {
             creature: CreatureJson {
                 neurons: vec![],
                 synapses: vec![],
-                input: 0,
-                output: 0,
+                input: 1,
+                output: 1,
             },
             recording: RecordingData {
                 obs_indices: vec![],
@@ -464,6 +464,26 @@ mod tests {
             msg.contains("Failed to flush JSON snapshot to: out.json"),
             "error should name the flush failure and target file, got: {msg}",
         );
+    }
+
+    /// A snapshot whose creature has lost its observation width is refused
+    /// at serialisation rather than written (Issue #2020): `input`/`output`
+    /// cannot be re-derived by whoever reads the snapshot back.
+    #[test]
+    fn write_snapshot_json_refuses_widthless_creature() {
+        for (input, output) in [(0, 1), (1, 0)] {
+            let mut snapshot = minimal_snapshot();
+            snapshot.creature.input = input;
+            snapshot.creature.output = output;
+            let mut buf: Vec<u8> = Vec::new();
+            let err = write_snapshot_json(&mut buf, &snapshot, "out.json")
+                .expect_err("a widthless creature must not be written");
+            let msg = format!("{err:#}");
+            assert!(
+                msg.contains("Must have at least one"),
+                "error should name the zero width, got: {msg}",
+            );
+        }
     }
 
     /// A writer with no I/O errors serialises and flushes successfully.

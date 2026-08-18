@@ -28,7 +28,7 @@ use tempfile::TempDir;
 fn rank_focus_input_new_fields_default_to_none() {
     let payload = r#"{
         "parquetFile": "/tmp/x.parquet",
-        "creature": {"neurons": [], "synapses": [], "input": 0, "output": 0}
+        "creature": {"neurons": [], "synapses": [], "input": 1, "output": 1}
     }"#;
     let parsed: RankFocusNeuronsInput = serde_json::from_str(payload).expect("parse");
     assert!(parsed.epochs_since_last_accepted_candidate.is_none());
@@ -39,7 +39,7 @@ fn rank_focus_input_new_fields_default_to_none() {
 fn rank_focus_input_new_fields_round_trip() {
     let payload = r#"{
         "parquetFile": "/tmp/x.parquet",
-        "creature": {"neurons": [], "synapses": [], "input": 0, "output": 0},
+        "creature": {"neurons": [], "synapses": [], "input": 1, "output": 1},
         "epochsSinceLastAcceptedCandidate": 42,
         "focusSetSize": 6
     }"#;
@@ -99,7 +99,7 @@ fn build_plateau_parquet(n_hidden: usize) -> (Value, String, TempDir) {
     let creature = json!({
         "neurons": neurons,
         "synapses": synapses,
-        "input": 0,
+        "input": 1,
         "output": 1
     });
 
@@ -108,7 +108,7 @@ fn build_plateau_parquet(n_hidden: usize) -> (Value, String, TempDir) {
     let record_input = json!({
         "creature": creature,
         "training_data": [{
-            "input": [],
+            "input": [0.0],
             "output": [0.5],
             "neuron_data": neuron_data
         }],
@@ -263,14 +263,14 @@ fn rank_focus_input_focus_selection_cursor_round_trips() {
     // None (backwards compatible).
     let without = r#"{
         "parquetFile": "/tmp/x.parquet",
-        "creature": {"neurons": [], "synapses": [], "input": 0, "output": 0}
+        "creature": {"neurons": [], "synapses": [], "input": 1, "output": 1}
     }"#;
     let parsed: RankFocusNeuronsInput = serde_json::from_str(without).expect("parse");
     assert!(parsed.focus_selection_cursor.is_none());
 
     let with = r#"{
         "parquetFile": "/tmp/x.parquet",
-        "creature": {"neurons": [], "synapses": [], "input": 0, "output": 0},
+        "creature": {"neurons": [], "synapses": [], "input": 1, "output": 1},
         "focusSelectionCursor": 123
     }"#;
     let parsed: RankFocusNeuronsInput = serde_json::from_str(with).expect("parse");

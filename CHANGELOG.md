@@ -8,6 +8,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+#### FFI `CreatureJson` rejects `input < 1` / `output < 1`; emitted creatures keep the observation width (Issue #2020)
+
+The creature's top-level `input` / `output` integers are the observation
+width and cannot be re-derived — `neurons` lists only non-input neurons — yet
+nothing at the FFI boundary rejected `"input": 0` or `"output": 0`. Both fields
+now carry a serde guard in the style of the Issue #952 UUID check: a value
+below one fails deserialisation with `Must have at least one input neurons
+was: 0` (mirroring the NEAT-AI `CreatureValidate.ts` wording), so every entry
+point that accepts a creature — `record_discovery`, `start_discovery_session`,
+`analyze_parallel`, `rank_focus_neurons`, `export_visualisation_snapshot` —
+returns the structured `data_validation` error instead of carrying a widthless
+creature into the pipeline. `validate_creature_input_bounds` enforces the same
+lower bound for creatures constructed in Rust, and serialising a `CreatureJson`
+whose width is below one is now an error, so the library never emits a creature
+without its width (the visualisation snapshot's `creature` block carries the
+caller's counts unchanged). No fallback, no `#[serde(default)]`.
+
 #### Numeric env overrides are whitespace-tolerant everywhere (Issue #2006)
 
 The rule for turning a numeric `NEAT_AI_DISCOVERY_*` override into a value —

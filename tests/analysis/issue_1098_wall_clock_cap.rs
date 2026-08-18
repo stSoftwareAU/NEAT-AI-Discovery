@@ -202,7 +202,7 @@ fn wall_clock_capped_deadline_round_trips_via_absolute_ms() {
 fn ffi_input_deserialises_wall_clock_cap() {
     let json = r#"{
         "parquetFile": "/tmp/test.parquet",
-        "creature": {"neurons": [], "synapses": [], "input": 0, "output": 0},
+        "creature": {"neurons": [], "synapses": [], "input": 1, "output": 1},
         "focusNeurons": ["n1"],
         "maxDiscoveryWallClockMinutes": 20
     }"#;
@@ -217,7 +217,7 @@ fn ffi_input_deserialises_wall_clock_cap() {
 fn ffi_input_defaults_wall_clock_cap_to_none() {
     let json = r#"{
         "parquetFile": "/tmp/test.parquet",
-        "creature": {"neurons": [], "synapses": [], "input": 0, "output": 0},
+        "creature": {"neurons": [], "synapses": [], "input": 1, "output": 1},
         "focusNeurons": ["n1"]
     }"#;
 

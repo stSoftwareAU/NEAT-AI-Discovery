@@ -18,7 +18,7 @@ fn rank_focus_input_omits_analysis_deadline_to_none() {
     // RankFocusNeuronsInput uses camelCase field names.
     let payload = r#"{
         "parquetFile": "/tmp/x.parquet",
-        "creature": {"neurons": [], "synapses": [], "input": 0, "output": 0}
+        "creature": {"neurons": [], "synapses": [], "input": 1, "output": 1}
     }"#;
     let parsed: RankFocusNeuronsInput = serde_json::from_str(payload).expect("parse");
     assert!(
@@ -32,7 +32,7 @@ fn rank_focus_input_supplied_analysis_deadline_round_trips() {
     // An absolute ms-since-epoch deadline well above the year-2000 threshold.
     let payload = r#"{
         "parquetFile": "/tmp/x.parquet",
-        "creature": {"neurons": [], "synapses": [], "input": 0, "output": 0},
+        "creature": {"neurons": [], "synapses": [], "input": 1, "output": 1},
         "analysisDeadlineMs": 1893456000000
     }"#;
     let parsed: RankFocusNeuronsInput = serde_json::from_str(payload).expect("parse");
@@ -50,7 +50,7 @@ fn rank_focus_input_accepts_relative_deadline_duration() {
     // heuristic.
     let payload = r#"{
         "parquetFile": "/tmp/x.parquet",
-        "creature": {"neurons": [], "synapses": [], "input": 0, "output": 0},
+        "creature": {"neurons": [], "synapses": [], "input": 1, "output": 1},
         "analysisDeadlineMs": 120000
     }"#;
     let parsed: RankFocusNeuronsInput = serde_json::from_str(payload).expect("parse");

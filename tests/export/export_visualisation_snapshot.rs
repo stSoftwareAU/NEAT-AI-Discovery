@@ -146,6 +146,25 @@ fn test_export_creates_valid_json() {
         snapshot.recording.neurons.contains_key("output-0"),
         "Should have output-0 in recording"
     );
+
+    // Issue #2020: the emitted creature must carry the source observation
+    // width unchanged. `input` cannot be re-derived downstream — the input
+    // neurons are not listed in `neurons` — so the snapshot's copy is
+    // authoritative for whoever reads it back.
+    assert_eq!(
+        snapshot.creature.input, creature.input,
+        "emitted creature must preserve the source input width"
+    );
+    assert_eq!(
+        snapshot.creature.output, creature.output,
+        "emitted creature must preserve the source output width"
+    );
+    let raw: serde_json::Value = serde_json::from_reader(BufReader::new(
+        File::open(&snapshot_path).expect("Failed to reopen snapshot"),
+    ))
+    .expect("snapshot must be valid JSON");
+    assert_eq!(raw["creature"]["input"], 2, "raw JSON input width");
+    assert_eq!(raw["creature"]["output"], 1, "raw JSON output width");
 }
 
 #[test]

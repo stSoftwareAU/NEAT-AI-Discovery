@@ -364,11 +364,13 @@ mod tests {
         assert!(flagged.contains("h-const"));
     }
 
-    /// An empty creature is handled without panicking and flags nothing.
+    /// A creature with no listed neurons is handled without panicking and
+    /// flags nothing. (`input`/`output` stay `>= 1` — a zero width is rejected
+    /// at deserialisation, Issue #2020.)
     #[test]
     fn empty_creature_flags_nothing() {
         let creature: CreatureJson =
-            serde_json::from_str(r#"{"input":0,"output":0,"neurons":[],"synapses":[]}"#)
+            serde_json::from_str(r#"{"input":1,"output":1,"neurons":[],"synapses":[]}"#)
                 .expect("valid creature JSON");
         assert!(functionally_constant_neuron_uuids(&creature).is_empty());
     }

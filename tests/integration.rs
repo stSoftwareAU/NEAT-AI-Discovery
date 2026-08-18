@@ -198,7 +198,7 @@ fn test_impact_with_very_small_incoming_weight_is_not_zeroed() {
             weight: 1e-12,
             synapse_type: None,
         }],
-        input: 0,
+        input: 1,
         output: 1,
     };
 
@@ -209,7 +209,7 @@ fn test_impact_with_very_small_incoming_weight_is_not_zeroed() {
     let input_json = serde_json::json!({
         "creature": creature,
         "training_data": [{
-            "input": [],
+            "input": [0.0],
             "output": [0.5],
             "neuron_data": [
                 {"neuron_uuid": "hidden-1", "activation": 0.5, "value": 0.5, "errors": [0.1]},

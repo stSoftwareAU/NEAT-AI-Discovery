@@ -29,7 +29,7 @@ use neat_ai_discovery::{AnalyzeParallelInput, RankFocusNeuronsInput, RecordDisco
 fn record_discovery_input_omits_task_descriptor_to_none() {
     // RecordDiscoveryInput uses snake_case at the top level.
     let payload = r#"{
-        "creature": {"neurons": [], "synapses": [], "input": 0, "output": 0},
+        "creature": {"neurons": [], "synapses": [], "input": 1, "output": 1},
         "training_data": [],
         "temp_dir": "/tmp/x"
     }"#;
@@ -48,7 +48,7 @@ fn record_discovery_input_omits_task_descriptor_to_none() {
 #[test]
 fn record_discovery_input_supplied_task_descriptor_round_trips() {
     let payload = r#"{
-        "creature": {"neurons": [], "synapses": [], "input": 0, "output": 0},
+        "creature": {"neurons": [], "synapses": [], "input": 1, "output": 1},
         "training_data": [],
         "temp_dir": "/tmp/x",
         "task_descriptor": {
@@ -77,7 +77,7 @@ fn record_discovery_input_supplied_task_descriptor_round_trips() {
 fn analyze_parallel_input_omits_task_descriptor_to_none() {
     let payload = r#"{
         "parquetFile": "/tmp/x.parquet",
-        "creature": {"neurons": [], "synapses": [], "input": 0, "output": 0},
+        "creature": {"neurons": [], "synapses": [], "input": 1, "output": 1},
         "focusNeurons": []
     }"#;
     let parsed: AnalyzeParallelInput = serde_json::from_str(payload).expect("parse");
@@ -95,7 +95,7 @@ fn analyze_parallel_input_omits_task_descriptor_to_none() {
 fn analyze_parallel_input_supplied_task_descriptor_round_trips() {
     let payload = r#"{
         "parquetFile": "/tmp/x.parquet",
-        "creature": {"neurons": [], "synapses": [], "input": 0, "output": 0},
+        "creature": {"neurons": [], "synapses": [], "input": 1, "output": 1},
         "focusNeurons": [],
         "taskDescriptor": {
             "targetTopology": "Margin",
@@ -119,7 +119,7 @@ fn analyze_parallel_input_supplied_task_descriptor_round_trips() {
 fn analyze_parallel_input_accepts_neutral_descriptor() {
     let payload = r#"{
         "parquetFile": "/tmp/x.parquet",
-        "creature": {"neurons": [], "synapses": [], "input": 0, "output": 0},
+        "creature": {"neurons": [], "synapses": [], "input": 1, "output": 1},
         "focusNeurons": [],
         "taskDescriptor": {
             "targetTopology": "Unknown",
@@ -141,7 +141,7 @@ fn analyze_parallel_input_accepts_neutral_descriptor() {
 fn rank_focus_neurons_input_omits_task_descriptor_to_none() {
     let payload = r#"{
         "parquetFile": "/tmp/x.parquet",
-        "creature": {"neurons": [], "synapses": [], "input": 0, "output": 0}
+        "creature": {"neurons": [], "synapses": [], "input": 1, "output": 1}
     }"#;
     let parsed: RankFocusNeuronsInput = serde_json::from_str(payload).expect("parse");
     assert!(
@@ -158,7 +158,7 @@ fn rank_focus_neurons_input_omits_task_descriptor_to_none() {
 fn rank_focus_neurons_input_supplied_task_descriptor_round_trips() {
     let payload = r#"{
         "parquetFile": "/tmp/x.parquet",
-        "creature": {"neurons": [], "synapses": [], "input": 0, "output": 0},
+        "creature": {"neurons": [], "synapses": [], "input": 1, "output": 1},
         "taskDescriptor": {
             "targetTopology": "Independent",
             "targetRange": "Unbounded",
@@ -188,7 +188,7 @@ fn payload_without_task_descriptor_still_parses_all_existing_fields() {
     // is parsed. This is the "no behaviour change" guard from the issue.
     let payload = r#"{
         "parquetFile": "/tmp/x.parquet",
-        "creature": {"neurons": [], "synapses": [], "input": 0, "output": 0},
+        "creature": {"neurons": [], "synapses": [], "input": 1, "output": 1},
         "focusNeurons": ["a", "b"],
         "maxSynapseCandidates": 16,
         "maxNeuronCandidates": 8,

@@ -23,7 +23,7 @@ fn create_minimal_output_creature() -> CreatureJson {
             bias: 0.0,
         }],
         synapses: vec![],
-        input: 0,
+        input: 1,
         output: 1,
     }
 }
