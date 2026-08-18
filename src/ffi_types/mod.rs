@@ -24,6 +24,7 @@ pub use requests::*;
 pub use responses::*;
 pub use session::*;
 
+use serde::ser::Error as SerialiseError; // codespell:ignore ser
 use serde::{Deserialize, Deserializer, Serialize};
 
 // ============================================================================
@@ -127,7 +128,7 @@ where
     S: serde::Serializer,
 {
     if let Some(detail) = observation_width_error("input", *value) {
-        return Err(serde::ser::Error::custom(detail));
+        return Err(SerialiseError::custom(detail));
     }
     value.serialize(serialiser)
 }
@@ -139,7 +140,7 @@ where
     S: serde::Serializer,
 {
     if let Some(detail) = observation_width_error("output", *value) {
-        return Err(serde::ser::Error::custom(detail));
+        return Err(SerialiseError::custom(detail));
     }
     value.serialize(serialiser)
 }
