@@ -470,14 +470,14 @@ mod tests {
     /// at serialisation rather than written (Issue #2020): `input`/`output`
     /// cannot be re-derived by whoever reads the snapshot back.
     #[test]
-    fn write_snapshot_json_refuses_widthless_creature() {
+    fn write_snapshot_json_refuses_width_less_creature() {
         for (input, output) in [(0, 1), (1, 0)] {
             let mut snapshot = minimal_snapshot();
             snapshot.creature.input = input;
             snapshot.creature.output = output;
             let mut buf: Vec<u8> = Vec::new();
             let err = write_snapshot_json(&mut buf, &snapshot, "out.json")
-                .expect_err("a widthless creature must not be written");
+                .expect_err("a width_less creature must not be written");
             let msg = format!("{err:#}");
             assert!(
                 msg.contains("Must have at least one"),

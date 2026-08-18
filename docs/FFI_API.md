@@ -1268,7 +1268,7 @@ both must be at least one:
   writes (for example the `creature` block of a visualisation snapshot) carries
   the caller's `input` / `output` unchanged, and serialising a creature whose
   width is below one is an error rather than a payload.
-- There is no fallback and no derived default — a widthless creature is
+- There is no fallback and no derived default — a width-less creature is
   corrupt, and the unit of work stops.
 
 ---

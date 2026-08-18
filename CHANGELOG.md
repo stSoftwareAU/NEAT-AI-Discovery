@@ -18,7 +18,7 @@ below one fails deserialisation with `Must have at least one input neurons
 was: 0` (mirroring the NEAT-AI `CreatureValidate.ts` wording), so every entry
 point that accepts a creature — `record_discovery`, `start_discovery_session`,
 `analyze_parallel`, `rank_focus_neurons`, `export_visualisation_snapshot` —
-returns the structured `data_validation` error instead of carrying a widthless
+returns the structured `data_validation` error instead of carrying a width-less
 creature into the pipeline. `validate_creature_input_bounds` enforces the same
 lower bound for creatures constructed in Rust, and serialising a `CreatureJson`
 whose width is below one is now an error, so the library never emits a creature
