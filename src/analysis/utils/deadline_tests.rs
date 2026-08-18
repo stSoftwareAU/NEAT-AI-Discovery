@@ -158,41 +158,32 @@ fn build_deadline_handles_absolute_timestamps_and_relative_durations() {
 
 #[test]
 fn build_deadline_validates_duration_bounds() {
-    // Test that build_deadline validates and defaults to 10 minutes for invalid values
+    // Test that build_deadline skips sub-minimum values and clamps over-maximum
+    // values rather than inflating either to the 10-minute default (Issue #4139).
     let now = SystemTime::now();
 
-    // Test 1: Duration below minimum (3 seconds) should default to 10 minutes
+    // Test 1: Duration below minimum (3 seconds) is unusable — skip, do not inflate.
     let too_short_ms = 1_000u64; // 1 second
     let deadline = build_deadline(Some(too_short_ms));
-    assert!(deadline.is_some());
-    let deadline_time = deadline.unwrap();
-    if let Ok(duration) = deadline_time.duration_since(now) {
-        // Should default to 10 minutes (600000 ms)
-        let expected_min = Duration::from_millis(DEFAULT_DURATION_MS) - Duration::from_secs(1);
-        let expected_max = Duration::from_millis(DEFAULT_DURATION_MS) + Duration::from_secs(1);
-        assert!(
-            duration >= expected_min && duration <= expected_max,
-            "Duration below 3 seconds should default to 10 minutes, got {duration:?}"
-        );
-    } else {
-        panic!("Default deadline should be in the future");
-    }
+    assert!(
+        deadline.is_none(),
+        "Duration below 3 seconds must skip analysis, not inflate to 10 minutes"
+    );
 
-    // Test 2: Duration above maximum (1 hour) should default to 10 minutes
+    // Test 2: Duration above maximum (1 hour) clamps to MAX, not the 10-minute default.
     let too_long_ms = 4_000_000u64; // ~66 minutes
     let deadline = build_deadline(Some(too_long_ms));
     assert!(deadline.is_some());
     let deadline_time = deadline.unwrap();
     if let Ok(duration) = deadline_time.duration_since(now) {
-        // Should default to 10 minutes (600000 ms)
-        let expected_min = Duration::from_millis(DEFAULT_DURATION_MS) - Duration::from_secs(1);
-        let expected_max = Duration::from_millis(DEFAULT_DURATION_MS) + Duration::from_secs(1);
+        let expected_min = Duration::from_millis(MAX_DURATION_MS) - Duration::from_secs(1);
+        let expected_max = Duration::from_millis(MAX_DURATION_MS) + Duration::from_secs(1);
         assert!(
             duration >= expected_min && duration <= expected_max,
-            "Duration above 1 hour should default to 10 minutes, got {duration:?}"
+            "Duration above 1 hour should clamp to MAX_DURATION_MS, got {duration:?}"
         );
     } else {
-        panic!("Default deadline should be in the future");
+        panic!("Clamped deadline should be in the future");
     }
 
     // Test 3: Valid duration (10 minutes) should pass through unchanged
@@ -280,22 +271,21 @@ fn calculate_effective_timeout_ms_matches_build_deadline_logic() {
         "Absolute timestamp should convert to ~15 minutes, got {effective_ms}ms"
     );
 
-    // Test 3: Duration below minimum (1 second) should default to 10 minutes
+    // Test 3: Duration below minimum (1 second) is skipped, not inflated
     let too_short_ms = 1_000u64;
     let result = calculate_effective_timeout_ms(Some(too_short_ms));
     assert_eq!(
-        result,
-        Some(DEFAULT_DURATION_MS),
-        "Duration below 3 seconds should default to 10 minutes"
+        result, None,
+        "Duration below 3 seconds must skip analysis, not inflate to 10 minutes"
     );
 
-    // Test 4: Duration above maximum (2 hours) should default to 10 minutes
+    // Test 4: Duration above maximum (2 hours) clamps to MAX, not the 10-minute default
     let too_long_ms = 2 * 3_600_000u64;
     let result = calculate_effective_timeout_ms(Some(too_long_ms));
     assert_eq!(
         result,
-        Some(DEFAULT_DURATION_MS),
-        "Duration above 1 hour should default to 10 minutes"
+        Some(MAX_DURATION_MS),
+        "Duration above 1 hour should clamp to MAX_DURATION_MS"
     );
 
     // Test 5: Past absolute timestamp should return None
@@ -515,13 +505,12 @@ fn calculate_gpu_batch_timeout_clamps_to_max() {
 // ============================================================================
 
 #[test]
-fn effective_timeout_just_below_minimum_defaults_to_ten_minutes() {
-    // 2999ms is just below the 3000ms minimum
+fn effective_timeout_just_below_minimum_is_skipped() {
+    // 2999ms is just below the 3000ms minimum — skip, do not inflate (Issue #4139).
     let result = calculate_effective_timeout_ms(Some(MIN_DURATION_MS - 1));
     assert_eq!(
-        result,
-        Some(DEFAULT_DURATION_MS),
-        "Duration just below minimum should fall back to default"
+        result, None,
+        "Duration just below minimum must skip analysis, not fall back to default"
     );
 }
 
@@ -566,22 +555,55 @@ fn effective_timeout_at_exact_maximum_passes_through() {
 }
 
 #[test]
-fn effective_timeout_just_above_maximum_defaults_to_ten_minutes() {
+fn effective_timeout_just_above_maximum_clamps_to_max() {
     let result = calculate_effective_timeout_ms(Some(MAX_DURATION_MS + 1));
     assert_eq!(
         result,
-        Some(DEFAULT_DURATION_MS),
-        "Duration just above maximum should fall back to default"
+        Some(MAX_DURATION_MS),
+        "Duration just above maximum should clamp to MAX_DURATION_MS, not the 10-minute default"
     );
 }
 
 #[test]
-fn effective_timeout_zero_defaults_to_ten_minutes() {
+fn effective_timeout_zero_is_skipped() {
     let result = calculate_effective_timeout_ms(Some(0));
     assert_eq!(
+        result, None,
+        "Zero duration must skip analysis, not inflate to 10 minutes"
+    );
+}
+
+/// Exact GRQ-26 observed remainder: 0.89 s was inflated to 600 s (Issue #4139).
+#[test]
+fn sub_minimum_deadline_0_89s_is_skipped_not_inflated() {
+    let result = calculate_effective_timeout_ms(Some(890));
+    assert_eq!(
+        result, None,
+        "890ms must skip analysis rather than grant DEFAULT_DURATION_MS"
+    );
+    assert_ne!(
         result,
         Some(DEFAULT_DURATION_MS),
-        "Zero duration should fall back to default"
+        "must never inflate a sub-minimum remainder to the 10-minute default"
+    );
+    assert!(
+        build_deadline(Some(890)).is_none(),
+        "build_deadline must propagate the skip"
+    );
+    assert!(
+        deadline_too_short_to_analyse(Some(890), "test_caller"),
+        "skip helper must recognise the GRQ-26 remainder"
+    );
+}
+
+#[test]
+fn over_maximum_deadline_clamps_to_max_not_default() {
+    let result = calculate_effective_timeout_ms(Some(MAX_DURATION_MS + 60_000));
+    assert_eq!(result, Some(MAX_DURATION_MS));
+    assert_ne!(
+        result,
+        Some(DEFAULT_DURATION_MS),
+        "over-maximum must clamp to MAX, not reset to the 10-minute default"
     );
 }
 

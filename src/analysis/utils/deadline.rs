@@ -53,10 +53,14 @@ pub const GPU_QUEUE_TIMEOUT_MAX_SECS: u64 = 300;
 ///
 /// This function applies the following logic:
 /// 1. Converts absolute timestamps (values >= year 2000 in ms) to relative durations
-/// 2. Clamps values outside the 3-second to 1-hour range to the 10-minute default
+/// 2. Sub-minimum durations (`< `[`MIN_DURATION_MS`]) return `None` so the caller
+///    skips analysis rather than inventing a 10-minute budget (Issue #4139)
+/// 3. Over-maximum durations are clamped to [`MAX_DURATION_MS`]
 ///
-/// Returns `None` if the deadline is in the past (for absolute timestamps), or
-/// `Some(effective_duration_ms)` otherwise.
+/// Returns `None` if the deadline is in the past (for absolute timestamps) or
+/// below the 3-second minimum, or `Some(effective_duration_ms)` otherwise.
+/// An absent deadline (`None` input) still defaults to 10 minutes so unbounded
+/// analysis cannot run away.
 ///
 /// Used by both `build_deadline` (to create the `SystemTime`) and `log_analysis_start`
 /// (to display the effective timeout to users).
@@ -86,35 +90,55 @@ pub fn calculate_effective_timeout_ms(deadline_ms: Option<u64>) -> Option<u64> {
         target_ms - now_ms
     };
 
-    // Validate duration bounds: minimum 3 seconds, maximum 1 hour
-    // If invalid, default to 10 minutes (expected typical value)
-    // NOTE: If these warnings appear, it's a bug in the calling code (NEAT-AI or the host layer)
-    // that should be fixed to pass valid timeout values.
-    let validated_ms = if relative_ms < MIN_DURATION_MS {
-        let duration_secs = relative_ms as f64 / 1000.0;
-        tracing::warn!(
-            duration_secs,
-            min_secs = 3.0,
-            default_secs = DEFAULT_DURATION_MS as f64 / 1000.0,
-            "analysis_deadline_ms is below minimum — falling back to default 10 minute timeout. \
-             The calling code (NEAT-AI or the host layer) should pass a valid timeout."
-        );
-        DEFAULT_DURATION_MS
-    } else if relative_ms > MAX_DURATION_MS {
+    // Sub-minimum: there is no usable budget left. Returning the 10-minute
+    // default here previously inflated a 0.89 s remainder into a 10-minute
+    // grant (Issue #4139 / GRQ-26). Callers must treat `None` as skip.
+    if relative_ms < MIN_DURATION_MS {
+        return None;
+    }
+
+    // Over-maximum: honour as much of the request as the cap allows rather
+    // than resetting to the 10-minute default.
+    if relative_ms > MAX_DURATION_MS {
         let duration_secs = relative_ms as f64 / 1000.0;
         tracing::warn!(
             duration_secs,
             max_secs = MAX_DURATION_MS as f64 / 1000.0,
-            default_secs = DEFAULT_DURATION_MS as f64 / 1000.0,
-            "analysis_deadline_ms exceeds maximum — falling back to default 10 minute timeout. \
-             The calling code (NEAT-AI or the host layer) should pass a valid timeout."
+            clamped_secs = MAX_DURATION_MS as f64 / 1000.0,
+            "analysis_deadline_ms exceeds maximum — clamping to 1 hour"
         );
-        DEFAULT_DURATION_MS
-    } else {
-        relative_ms
-    };
+        return Some(MAX_DURATION_MS);
+    }
 
-    Some(validated_ms)
+    Some(relative_ms)
+}
+
+/// `true` when a supplied deadline is unusable (already passed or below
+/// [`MIN_DURATION_MS`]) so analysis must be skipped, not inflated (Issue #4139).
+///
+/// An absent deadline (`deadline_ms == None`) is usable: it still maps to the
+/// 10-minute default. Logs `"analysis skipped — no budget remaining"` with
+/// `caller` identified; never mentions a 10-minute fallback.
+#[must_use]
+pub fn deadline_too_short_to_analyse(deadline_ms: Option<u64>, caller: &str) -> bool {
+    if calculate_effective_timeout_ms(deadline_ms).is_some() {
+        return false;
+    }
+    let duration_secs = deadline_ms.map_or(0.0, |ms| {
+        if ms < YEAR_2000_MS {
+            ms as f64 / 1000.0
+        } else {
+            0.0
+        }
+    });
+    tracing::warn!(
+        caller,
+        analysis_deadline_ms = deadline_ms,
+        duration_secs,
+        min_secs = MIN_DURATION_MS as f64 / 1000.0,
+        "analysis skipped — no budget remaining"
+    );
+    true
 }
 
 /// Build a deadline from a timeout value in milliseconds.
@@ -393,9 +417,16 @@ pub fn log_analysis_start(
     shuffled_order: &[String],
 ) {
     // Calculate the effective deadline duration using the same logic as build_deadline.
-    // This ensures the logged timeout matches what's actually used.
-    let deadline_duration_ms =
-        calculate_effective_timeout_ms(deadline_ms).unwrap_or(DEFAULT_DURATION_MS);
+    // This ensures the logged timeout matches what's actually used. A sub-minimum
+    // remainder is a skip, not a 10-minute grant (Issue #4139).
+    let Some(deadline_duration_ms) = calculate_effective_timeout_ms(deadline_ms) else {
+        tracing::warn!(
+            caller = analysis_type,
+            analysis_deadline_ms = deadline_ms,
+            "analysis skipped — no budget remaining"
+        );
+        return;
+    };
     let deadline_secs = deadline_duration_ms as f64 / 1000.0;
 
     // Debug: Log the raw deadline_ms value if verbose to help diagnose timeout issues

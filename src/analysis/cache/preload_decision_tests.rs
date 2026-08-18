@@ -143,6 +143,73 @@ fn auto_detect_decision_matches_shared_fits_primitive() {
 fn lazy_reason_as_str_is_stable() {
     assert_eq!(CacheLazyReason::None.as_str(), "none");
     assert_eq!(CacheLazyReason::Budget.as_str(), "budget");
+    assert_eq!(CacheLazyReason::NoBudget.as_str(), "no_budget");
     assert_eq!(CacheLazyReason::MemoryPressure.as_str(), "memory_pressure");
     assert_eq!(CacheLazyReason::Unworkable.as_str(), "unworkable");
+}
+
+// =============================================================================
+// Combined decision (Issue #4138) — named acceptance cases
+// =============================================================================
+
+#[test]
+fn budget_supplied_sufficient_selects_preload() {
+    // GRQ-26-class 8 GB host, 3547 MB projection, 4096 MB budget that fits.
+    let projected = 3547 * MB;
+    let (mode, reason, logged) =
+        decide_analysis_cache_preload(projected, Some(4096), 8 * GB, GB, 8192);
+    assert_eq!(mode, CachePreloadMode::Preload);
+    assert_eq!(reason, CacheLazyReason::None);
+    assert_eq!(
+        logged, 4096,
+        "logged budget must be the supplied (clamped) value, not 0"
+    );
+}
+
+#[test]
+fn budget_supplied_insufficient_selects_lazy() {
+    let projected = 3547 * MB;
+    let (mode, reason, logged) =
+        decide_analysis_cache_preload(projected, Some(1024), 8 * GB, GB, 8192);
+    assert_eq!(mode, CachePreloadMode::Lazy);
+    assert_eq!(reason, CacheLazyReason::Budget);
+    assert_eq!(logged, 1024);
+    assert_ne!(reason, CacheLazyReason::NoBudget);
+}
+
+#[test]
+fn budget_absent_falls_back_to_available_memory() {
+    let projected = 14_297 * MB;
+    let (mode, reason, logged) =
+        decide_analysis_cache_preload(projected, None, 11 * GB, GB, 24 * 1024);
+    assert_eq!(mode, CachePreloadMode::Lazy);
+    assert_eq!(
+        reason,
+        CacheLazyReason::NoBudget,
+        "absent budget must log reason=no_budget, not memory_pressure"
+    );
+    assert_eq!(logged, 0, "absent budget logs budget_mb=0");
+
+    // The same projection on a host with enough available RAM pre-loads.
+    let (mode_ok, reason_ok, logged_ok) =
+        decide_analysis_cache_preload(projected, None, 20 * GB, GB, 24 * 1024);
+    assert_eq!(mode_ok, CachePreloadMode::Preload);
+    assert_eq!(reason_ok, CacheLazyReason::None);
+    assert_eq!(logged_ok, 0);
+}
+
+#[test]
+fn budget_above_host_memory_is_clamped() {
+    // GRQ-26: 5.47 GB budget on a host reporting 3457 MB total.
+    let supplied = 5223u64;
+    let host_total = 3457u64;
+    assert_eq!(clamp_budget_mb_to_host(supplied, host_total), host_total);
+
+    let projected = 200 * MB;
+    let (mode, reason, logged) =
+        decide_analysis_cache_preload(projected, Some(supplied), 8 * GB, GB, host_total);
+    assert_eq!(logged, host_total, "decision must use the clamped budget");
+    assert_ne!(logged, supplied);
+    assert_eq!(mode, CachePreloadMode::Preload);
+    assert_eq!(reason, CacheLazyReason::None);
 }

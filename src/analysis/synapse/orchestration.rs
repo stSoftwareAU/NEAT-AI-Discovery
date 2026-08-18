@@ -109,6 +109,7 @@ pub(crate) fn analyze_synapses_with_cache_impl(
         Arc::new(crate::analysis::evaluation_drops::EvaluationDropCounters::new());
     // Issue #1802: per-pass candidate reconciliation ledger for this surface.
     let ledger = Arc::new(crate::analysis::candidate_reconciliation::CandidateLedger::new());
+    let saturation_aborted = Arc::new(AtomicBool::new(false));
     let ctx = Arc::new(target_analysis::TargetAnalysisContext {
         ordered_neurons: Arc::new(lookups.ordered_neurons),
         order_map: Arc::new(lookups.order_map),
@@ -132,6 +133,8 @@ pub(crate) fn analyze_synapses_with_cache_impl(
         within_batch_failures: within_batch_failures.clone(),
         evaluation_drops: evaluation_drops.clone(),
         ledger: ledger.clone(),
+        saturation_aborted: saturation_aborted.clone(),
+        any_candidates: Arc::new(AtomicBool::new(false)),
     });
 
     // Phase 6: Process each focus neuron in parallel — thread-local collection (Issue #744)
@@ -141,8 +144,13 @@ pub(crate) fn analyze_synapses_with_cache_impl(
     let per_target_results: Vec<Option<target_analysis::TargetAnalysisResults>> = focus_order
         .par_iter()
         .map(|target_uuid| -> Result<Option<target_analysis::TargetAnalysisResults>> {
-            if analysis_timed_out.load(Ordering::Relaxed) || deadline_passed(&deadline) {
-                analysis_timed_out.store(true, Ordering::Relaxed);
+            if analysis_timed_out.load(Ordering::Relaxed)
+                || saturation_aborted.load(Ordering::Relaxed)
+                || deadline_passed(&deadline)
+            {
+                if deadline_passed(&deadline) {
+                    analysis_timed_out.store(true, Ordering::Relaxed);
+                }
                 return Ok(None);
             }
 

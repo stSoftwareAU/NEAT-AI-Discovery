@@ -12,7 +12,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::SystemTime;
 
-use crate::analysis::diagnostics::NeuronDiagnostics;
+use crate::analysis::diagnostics::{NeuronDiagnostics, target_saturated_should_abort_pass};
 use crate::analysis::gpu::GpuWorkQueue;
 use crate::analysis::samples::{HelpfulSample, compute_source_variance_discount};
 use crate::analysis::scoring::cross_validation::{
@@ -66,6 +66,9 @@ pub(crate) struct NeuronEvalContext<'a> {
     /// leaves the two out of balance, which fails the invariant instead of
     /// losing the candidate silently.
     pub ledger: &'a Arc<crate::analysis::candidate_reconciliation::CandidateLedger>,
+    /// Issue #4140: set when `target_saturated` dominates so remaining
+    /// sources and later targets are skipped.
+    pub saturation_aborted: &'a Arc<AtomicBool>,
 }
 
 /// Evaluate neuron candidates for all sources with samples against a single
@@ -82,8 +85,10 @@ pub(crate) fn evaluate_neuron_candidates(
 ) -> Result<()> {
     for result in work_results {
         // Check deadline before each evaluation batch
-        if deadline_passed(deadline) {
-            analysis_timed_out.store(true, Ordering::Relaxed);
+        if deadline_passed(deadline) || ctx.saturation_aborted.load(Ordering::Relaxed) {
+            if deadline_passed(deadline) {
+                analysis_timed_out.store(true, Ordering::Relaxed);
+            }
             break;
         }
 
@@ -178,6 +183,7 @@ fn evaluate_relu_split(
         ctx.diagnostics
             .record_target_saturated_drops(u32::try_from(formed).unwrap_or(u32::MAX));
         ctx.ledger.record_accounted(formed);
+        maybe_abort_saturated_pass(ctx);
         return Ok(());
     }
 
@@ -321,6 +327,7 @@ fn evaluate_activation_specs(
             u32::try_from(batched_candidates.len()).unwrap_or(u32::MAX),
         );
         ctx.ledger.record_accounted(batched_candidates.len());
+        maybe_abort_saturated_pass(ctx);
         return Ok(());
     }
 
@@ -351,6 +358,7 @@ fn evaluate_activation_specs(
             // instead of vanishing.
             ctx.diagnostics.record_target_saturated_drops(1);
             ctx.ledger.record_accounted(1);
+            maybe_abort_saturated_pass(ctx);
             continue;
         }
 
@@ -452,5 +460,70 @@ fn apply_cross_validation_penalty(candidate: &mut CandidateNeuronJson, samples: 
                 "Neuron candidate cross-validation brittleness penalty applied"
             );
         }
+    }
+}
+
+/// Issue #4140: abort the rest of the pass when `target_saturated` dominates.
+fn maybe_abort_saturated_pass(ctx: &NeuronEvalContext<'_>) {
+    if ctx.saturation_aborted.load(Ordering::Relaxed) {
+        return;
+    }
+    let saturated = ctx.diagnostics.target_saturated_drop_count();
+    let considered = ctx.ledger.considered();
+    let within_batch = ctx.within_batch_failures.skip_count();
+    // Within-batch short-circuit only ends a batch — exclude it from the
+    // sample. Saturated source-drops may never hit the ledger (synapse path);
+    // formed-then-saturated items are already in `considered`. Take the max so
+    // a 0-proposal / 3080-rejection pass still trips, without double-counting.
+    let other = considered.saturating_sub(within_batch);
+    let total_rejections = saturated.max(other);
+    let candidates_kept = ctx
+        .helpful_map
+        .try_lock()
+        .is_some_and(|map| !map.is_empty());
+    if target_saturated_should_abort_pass(saturated, total_rejections, candidates_kept) {
+        ctx.saturation_aborted.store(true, Ordering::Relaxed);
+        tracing::warn!(
+            saturated_drops = saturated,
+            total_rejections,
+            proposals_formed = considered,
+            "pass aborted: saturation-dominant (target_saturated), remaining \
+             targets skipped"
+        );
+    }
+}
+
+#[cfg(test)]
+mod saturation_early_exit_tests {
+    use crate::analysis::diagnostics::{
+        NeuronDiagnostics, TARGET_SATURATED_EARLY_EXIT_MIN_SAMPLE,
+        target_saturated_should_abort_pass,
+    };
+
+    #[test]
+    fn saturated_pass_exits_early_with_zero_candidate_summary() {
+        let diagnostics = NeuronDiagnostics::new_for_tests(&["output-0"]);
+        diagnostics.record_target_saturated_drops(TARGET_SATURATED_EARLY_EXIT_MIN_SAMPLE);
+        let saturated = diagnostics.target_saturated_drop_count();
+        assert!(
+            target_saturated_should_abort_pass(saturated, saturated, false),
+            "a saturation-dominated sample must trip the early exit"
+        );
+        assert_eq!(
+            saturated, TARGET_SATURATED_EARLY_EXIT_MIN_SAMPLE,
+            "trip uses target_saturated_drop_count(), not a parallel counter"
+        );
+    }
+
+    #[test]
+    fn non_saturated_pass_candidate_count_unchanged() {
+        // Minority saturation (or any kept candidate) must not abort — the
+        // productive fixture's candidate count is unchanged.
+        assert!(!target_saturated_should_abort_pass(10, 100, false));
+        assert!(!target_saturated_should_abort_pass(
+            TARGET_SATURATED_EARLY_EXIT_MIN_SAMPLE,
+            TARGET_SATURATED_EARLY_EXIT_MIN_SAMPLE,
+            true,
+        ));
     }
 }

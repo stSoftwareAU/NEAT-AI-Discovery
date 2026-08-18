@@ -26,7 +26,8 @@ use crate::analysis::shared::{AnalyzeNeuronsResult, TimingScope};
 
 // Import utilities
 use crate::analysis::utils::{
-    build_deadline, deadline_passed, log_analysis_start, shuffle_slice, verbose_enabled,
+    build_deadline, deadline_passed, deadline_too_short_to_analyse, log_analysis_start,
+    shuffle_slice, verbose_enabled,
 };
 
 // Import diagnostics and rejection tracking (Issue #271)
@@ -101,6 +102,18 @@ pub fn analyze_neurons(input: &AnalyzeNeuronsInput) -> Result<AnalyzeNeuronsResu
     // Validate focus_neurons before expensive pre-loading
     require_unique_focus(&input.focus_neurons, "Neuron analysis")
         .context("neuron analysis input validation failed")?;
+
+    if deadline_too_short_to_analyse(input.analysis_deadline_ms, "analyze_neurons") {
+        return Ok(crate::analysis::shared::AnalyzeNeuronsResult {
+            helpful_neurons: Vec::new(),
+            gpu_used: false,
+            no_candidate_reasons: Vec::new(),
+            metadata: crate::analysis::shared::NeuronAnalysisMetadata {
+                total_focus_neurons: input.focus_neurons.len(),
+                ..Default::default()
+            },
+        });
+    }
 
     // Pre-load all records for faster analysis (1 scan vs ~2000 scans)
     let cache = Arc::new(
@@ -251,6 +264,8 @@ pub fn analyze_neurons_with_cache_and_gpu_queue(
     // Issue #1802: per-pass candidate reconciliation ledger for this surface.
     // Same lifetime and sharing model as the counters above.
     let ledger = Arc::new(crate::analysis::candidate_reconciliation::CandidateLedger::new());
+    // Issue #4140: abort remaining targets once target_saturated dominates.
+    let saturation_aborted = Arc::new(AtomicBool::new(false));
 
     let focus_order_arc = Arc::new(focus_order);
     let ordered_neurons_arc = Arc::new(ordered_neurons);
@@ -279,8 +294,13 @@ pub fn analyze_neurons_with_cache_and_gpu_queue(
         .try_fold(
             Vec::<f32>::new,
             |mut error_acc, target_uuid| -> Result<Vec<f32>> {
-            if analysis_timed_out.load(Ordering::Relaxed) || deadline_passed(&deadline) {
-                analysis_timed_out.store(true, Ordering::Relaxed);
+            if analysis_timed_out.load(Ordering::Relaxed)
+                || saturation_aborted.load(Ordering::Relaxed)
+                || deadline_passed(&deadline)
+            {
+                if deadline_passed(&deadline) {
+                    analysis_timed_out.store(true, Ordering::Relaxed);
+                }
                 return Ok(error_acc);
             }
 
@@ -440,6 +460,7 @@ pub fn analyze_neurons_with_cache_and_gpu_queue(
                     within_batch_failures: &within_batch_failures,
                     evaluation_drops: &evaluation_drops,
                     ledger: &ledger,
+                    saturation_aborted: &saturation_aborted,
                 };
                 evaluation::evaluate_neuron_candidates(
                     &work_results,

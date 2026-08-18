@@ -29,7 +29,11 @@ pub(crate) use focus_filter::{
     FocusTargetFilterResult, filter_focus_targets_for_neuron_analysis, require_unique_focus,
 };
 pub(crate) use neuron_tracking::NeuronDiagnostics;
-pub(crate) use rejection::{TargetDiagnostics, ThresholdContext};
+pub(crate) use rejection::{
+    TargetDiagnostics, ThresholdContext, target_saturated_should_abort_pass,
+};
+#[cfg(test)]
+pub(crate) use rejection::TARGET_SATURATED_EARLY_EXIT_MIN_SAMPLE;
 pub use rejection_reasons::RejectionBreakdown;
 pub(crate) use target_data::TargetMap;
 

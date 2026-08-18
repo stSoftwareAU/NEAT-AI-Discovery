@@ -87,13 +87,15 @@ projected = max(footer_rows × per_record_bytes + error_values × 4,
                 file_size_bytes × 3)
 
 if max_analysis_memory_mb was supplied:
-    projected <= budget                       → eager pre-load
-    projected <= budget × 10                 → lazy   (reason = "budget")
-    projected >  budget × 10                  → skip   (reason = "unworkable")
+    budget is first clamped to host-reported total memory
+    projected <= clamped_budget               → eager pre-load
+      (unless available − margin cannot hold it → lazy, reason = "memory_pressure")
+    projected <= clamped_budget × 10         → lazy   (reason = "budget")
+    projected >  clamped_budget × 10          → skip   (reason = "unworkable")
 
 else:
     projected <= available − margin → eager pre-load
-    otherwise                       → lazy   (reason = "memory_pressure")
+    otherwise                       → lazy   (reason = "no_budget")
 ```
 
 `available` is the corrected OS-available accounting from `get_memory_info`
@@ -118,8 +120,8 @@ larger. Margin is the 1 GB default.
 | 10 MB | unset | 8 GB | 30 MB | Eager pre-load |
 | 500 MB | unset | 8 GB | 1.5 GB | Eager pre-load |
 | 500 MB | 1024 MB | 8 GB | 1.5 GB | Lazy (`budget`) |
-| 4 GB | unset | 8 GB | 12 GB | Lazy (`memory_pressure`) |
-| 100 MB | unset | 1 GB | 300 MB | Lazy (`memory_pressure`) |
+| 4 GB | unset | 8 GB | 12 GB | Lazy (`no_budget`) |
+| 100 MB | unset | 1 GB | 300 MB | Lazy (`no_budget`) |
 
 ---
 
@@ -188,7 +190,7 @@ interaction is:
 1. Enable verbose logging: `NEAT_AI_DISCOVERY_VERBOSE=1`
 2. Look for either of the two lines the lazy path emits:
    - the structured WARN `insufficient memory for pre-loading` — it carries
-     `reason` (`budget` or `memory_pressure`), `projected_mb`, `budget_mb`,
+     `reason` (`budget`, `no_budget`, or `memory_pressure`), `projected_mb`, `budget_mb`,
      `available_mb` and `margin_mb`, so the trade-off is visible at the decision
      point;
    - the INFO line `using lazy-loading mode for parquet file`.
@@ -196,6 +198,7 @@ interaction is:
    which bound was hit.
 
 **Fix:** If `reason` is `budget`, raise `max_analysis_memory_mb`. If it is
+`no_budget`, forward the caller budget as `maxAnalysisMemoryMb`. If it is
 `memory_pressure`, free memory or lower
 `NEAT_AI_DISCOVERY_FOCUS_RANKING_MEMORY_MARGIN_MB`.
 

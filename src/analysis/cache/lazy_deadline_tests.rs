@@ -8,6 +8,7 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 const MB: u64 = 1024 * 1024;
+const GB: u64 = 1024 * 1024 * 1024;
 
 #[test]
 fn budget_path_skips_when_projection_exceeds_budget_by_more_than_10x() {
@@ -35,6 +36,22 @@ fn budget_path_zero_budget_still_forces_lazy_not_skip() {
     let (mode, reason) = decide_cache_preload_for_budget(200 * MB, 0);
     assert_eq!(mode, CachePreloadMode::Lazy);
     assert_eq!(reason, CacheLazyReason::Budget);
+}
+
+/// Issue #4138: a supplied budget that would pre-load still falls back to lazy
+/// when host-available memory cannot hold the projection.
+#[test]
+fn lazy_engages_under_genuine_memory_pressure_with_budget_present() {
+    let projected = 4 * 1024 * MB; // 4 GB
+    let budget_mb = 8192; // 8 GB budget would otherwise pre-load
+    let available = 2 * 1024 * MB; // 2 GB reclaimable
+    let margin = GB;
+    let (mode, reason, logged) =
+        decide_analysis_cache_preload(projected, Some(budget_mb), available, margin, 8192);
+    assert_eq!(mode, CachePreloadMode::Lazy);
+    assert_eq!(reason, CacheLazyReason::MemoryPressure);
+    assert_eq!(logged, budget_mb, "budget_mb in the log must stay non-zero");
+    assert_ne!(reason, CacheLazyReason::NoBudget);
 }
 
 #[test]
