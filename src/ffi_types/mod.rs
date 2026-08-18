@@ -120,7 +120,7 @@ where
 /// (Issue #2020).
 ///
 /// A creature that leaves this library without its observation width cannot
-/// be repaired downstream, so a width_less creature is an error at the point
+/// be repaired downstream, so a width-less creature is an error at the point
 /// of emission rather than a payload the host has to reject later.
 fn serialise_input_width<S>(value: &usize, serialiser: S) -> Result<S::Ok, S::Error>
 where

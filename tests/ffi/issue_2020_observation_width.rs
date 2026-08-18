@@ -309,7 +309,7 @@ fn export_visualisation_snapshot_rejects_zero_input() {
     );
     assert!(
         !out.exists(),
-        "no snapshot may be written for a width_less creature"
+        "no snapshot may be written for a width-less creature"
     );
 }
 
