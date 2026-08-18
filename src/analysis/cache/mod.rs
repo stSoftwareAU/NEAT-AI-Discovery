@@ -704,9 +704,10 @@ impl CacheLazyReason {
 /// Clamp a caller-supplied memory budget to host-reported total memory
 /// (Issue #4138).
 ///
-/// A budget above what the host reports is never trusted verbatim — GRQ-26
-/// forwarded `nativeBudgetBytes ≈ 5.47 GB` on a host that reported
-/// `totalMB=3457`. `host_total_mb == 0` (unknown) leaves the budget unchanged.
+/// A budget above what the host reports is never trusted verbatim — a
+/// recorded 8 GB host forwarded `nativeBudgetBytes ≈ 5.47 GB` while
+/// reporting `totalMB=3457`. `host_total_mb == 0` (unknown) leaves the
+/// budget unchanged.
 #[must_use]
 pub fn clamp_budget_mb_to_host(budget_mb: u64, host_total_mb: u64) -> u64 {
     if host_total_mb > 0 && budget_mb > host_total_mb {

@@ -573,7 +573,7 @@ fn effective_timeout_zero_is_skipped() {
     );
 }
 
-/// Exact GRQ-26 observed remainder: 0.89 s was inflated to 600 s (Issue #4139).
+/// Exact observed remainder: 0.89 s was inflated to 600 s (Issue #4139).
 #[test]
 fn sub_minimum_deadline_0_89s_is_skipped_not_inflated() {
     let result = calculate_effective_timeout_ms(Some(890));
@@ -592,7 +592,7 @@ fn sub_minimum_deadline_0_89s_is_skipped_not_inflated() {
     );
     assert!(
         deadline_too_short_to_analyse(Some(890), "test_caller"),
-        "skip helper must recognise the GRQ-26 remainder"
+        "skip helper must recognise the 0.89 s remainder"
     );
 }
 

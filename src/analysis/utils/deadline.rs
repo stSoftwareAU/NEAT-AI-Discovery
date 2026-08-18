@@ -92,7 +92,7 @@ pub fn calculate_effective_timeout_ms(deadline_ms: Option<u64>) -> Option<u64> {
 
     // Sub-minimum: there is no usable budget left. Returning the 10-minute
     // default here previously inflated a 0.89 s remainder into a 10-minute
-    // grant (Issue #4139 / GRQ-26). Callers must treat `None` as skip.
+    // grant (Issue #4139). Callers must treat `None` as skip.
     if relative_ms < MIN_DURATION_MS {
         return None;
     }

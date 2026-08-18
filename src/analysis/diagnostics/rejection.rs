@@ -568,7 +568,7 @@ impl TargetDiagnostics {
 
 /// Minimum rejection sample before a saturation-dominant pass may abort.
 ///
-/// Chosen from the GRQ-26 recorded diagnostics: the 40-minute zero-candidate
+/// Chosen from the recorded 40-minute zero-candidate diagnostics: the
 /// pass had `upstream_rejections=3080` with `dominant_rejection_reason=
 /// "target_saturated"`. Eighty rejections is large enough to be a meaningful
 /// sample and small enough to trip well before a tens-of-minutes deadline.
@@ -641,10 +641,10 @@ mod saturation_early_exit_tests {
         ));
     }
 
-    /// GRQ-26 recorded shape: 3080 `target_saturated` rejections, 52 proposals,
+    /// Recorded shape: 3080 `target_saturated` rejections, 52 proposals,
     /// zero candidates. Must trip well before a tens-of-minutes deadline.
     #[test]
-    fn grq26_saturation_shape_trips() {
+    fn recorded_saturation_shape_trips() {
         let saturated = 3080;
         let proposals_formed = 52;
         let total_rejections = saturated.max(proposals_formed);

@@ -154,7 +154,7 @@ fn lazy_reason_as_str_is_stable() {
 
 #[test]
 fn budget_supplied_sufficient_selects_preload() {
-    // GRQ-26-class 8 GB host, 3547 MB projection, 4096 MB budget that fits.
+    // 8 GB host, 3547 MB projection, 4096 MB budget that fits.
     let projected = 3547 * MB;
     let (mode, reason, logged) =
         decide_analysis_cache_preload(projected, Some(4096), 8 * GB, GB, 8192);
@@ -200,7 +200,7 @@ fn budget_absent_falls_back_to_available_memory() {
 
 #[test]
 fn budget_above_host_memory_is_clamped() {
-    // GRQ-26: 5.47 GB budget on a host reporting 3457 MB total.
+    // 5.47 GB budget on a host reporting 3457 MB total.
     let supplied = 5223u64;
     let host_total = 3457u64;
     assert_eq!(clamp_budget_mb_to_host(supplied, host_total), host_total);

@@ -1103,7 +1103,7 @@ mod phase_gating_wiring_tests {
 mod issue_4139_deadline_skip_tests {
     //! Sub-minimum analysis deadlines skip as a non-fatal outcome (Issue #4139).
     //!
-    //! GRQ-26 asked for 0.89 s and previously received a 10-minute grant. The
+    //! The caller asked for 0.89 s and previously received a 10-minute grant. The
     //! skip must happen *before* GPU availability is checked so hosts without
     //! a GPU still see `success: true` rather than
     //! `Rust neuron analysis unavailable (failed during analysis dispatch)`.
