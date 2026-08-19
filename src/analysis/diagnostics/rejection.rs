@@ -561,3 +561,97 @@ impl TargetDiagnostics {
             .collect()
     }
 }
+
+// =============================================================================
+// Target-saturation early abort (Issue #4140)
+// =============================================================================
+
+/// Minimum rejection sample before a saturation-dominant pass may abort.
+///
+/// Chosen from the recorded 40-minute zero-candidate diagnostics: the
+/// pass had `upstream_rejections=3080` with `dominant_rejection_reason=
+/// "target_saturated"`. Eighty rejections is large enough to be a meaningful
+/// sample and small enough to trip well before a tens-of-minutes deadline.
+pub const TARGET_SATURATED_EARLY_EXIT_MIN_SAMPLE: u32 = 80;
+
+/// Fraction of the rejection sample that must be `target_saturated` to abort.
+///
+/// 80 % is "overwhelming majority": a productive mix of other rejections keeps
+/// the pass running, while a pass that is almost entirely saturation-blocked
+/// stops immediately. `within_batch_target_short_circuit` is **not** counted
+/// here — it only ends a batch, not the whole pass.
+pub const TARGET_SATURATED_EARLY_EXIT_RATIO: f64 = 0.80;
+
+/// Whether a pass should abort because `target_saturated` dominates.
+///
+/// `target_saturated_drops` must come from
+/// [`TargetDiagnostics::target_saturated_drop_count`] /
+/// [`crate::analysis::diagnostics::NeuronDiagnostics::target_saturated_drop_count`]
+/// — do not introduce a parallel counter. `total_rejections` must **exclude**
+/// `within_batch_target_short_circuit`. Returns `false` when `candidates_kept`
+/// is true so a productive fixture is unchanged.
+#[must_use]
+pub fn target_saturated_should_abort_pass(
+    target_saturated_drops: u32,
+    total_rejections: u32,
+    candidates_kept: bool,
+) -> bool {
+    if candidates_kept {
+        return false;
+    }
+    if target_saturated_drops < TARGET_SATURATED_EARLY_EXIT_MIN_SAMPLE {
+        return false;
+    }
+    if total_rejections == 0 {
+        return false;
+    }
+    let ratio = f64::from(target_saturated_drops) / f64::from(total_rejections);
+    ratio >= TARGET_SATURATED_EARLY_EXIT_RATIO
+}
+
+#[cfg(test)]
+mod saturation_early_exit_tests {
+    use super::*;
+
+    #[test]
+    fn saturated_pass_trips_from_target_saturated_drop_count() {
+        let diagnostics = TargetDiagnostics::new_for_tests(&["output-0"]);
+        diagnostics.record_target_saturated_drops(TARGET_SATURATED_EARLY_EXIT_MIN_SAMPLE);
+        let saturated = diagnostics.target_saturated_drop_count();
+        assert!(
+            target_saturated_should_abort_pass(saturated, saturated, false),
+            "trip threshold must be computed from target_saturated_drop_count()"
+        );
+    }
+
+    #[test]
+    fn within_batch_short_circuit_does_not_abort_the_pass() {
+        // A batch-local skip is not terminal. Even a large within-batch count
+        // with zero saturation drops must not trip.
+        assert!(!target_saturated_should_abort_pass(0, 0, false));
+        assert!(!target_saturated_should_abort_pass(10, 200, false));
+    }
+
+    #[test]
+    fn productive_pass_does_not_abort() {
+        assert!(!target_saturated_should_abort_pass(
+            TARGET_SATURATED_EARLY_EXIT_MIN_SAMPLE,
+            TARGET_SATURATED_EARLY_EXIT_MIN_SAMPLE,
+            true,
+        ));
+    }
+
+    /// Recorded shape: 3080 `target_saturated` rejections, 52 proposals,
+    /// zero candidates. Must trip well before a tens-of-minutes deadline.
+    #[test]
+    fn recorded_saturation_shape_trips() {
+        let saturated = 3080;
+        let proposals_formed = 52;
+        let total_rejections = saturated.max(proposals_formed);
+        assert!(target_saturated_should_abort_pass(
+            saturated,
+            total_rejections,
+            false
+        ));
+    }
+}

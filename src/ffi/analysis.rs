@@ -136,6 +136,8 @@ pub unsafe extern "C" fn rank_focus_neurons(
                     rejection_breakdown: None,
                     loading_mode: None,
                     lazy_reason: None,
+                    // No parsed input on this anyhow path, so the caller budget
+                    // cannot be echoed (Issue #4138).
                     budget_mb: None,
                     projected_mb: None,
                     error: Some(err_msg),

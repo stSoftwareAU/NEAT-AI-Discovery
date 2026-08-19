@@ -676,7 +676,12 @@ pub enum CacheLazyReason {
     None,
     /// A supplied memory budget was smaller than the projected pre-load.
     Budget,
-    /// No budget set and OS-available memory (minus margin) could not fit it.
+    /// No budget was supplied, so the decision fell back to OS-available memory
+    /// (Issue #4138). Distinct from [`Self::MemoryPressure`] so `budget_mb=0` in
+    /// the log is greppable as missing plumbing rather than genuine pressure.
+    NoBudget,
+    /// A budget was supplied but host-available memory (minus margin) cannot
+    /// hold the projection — the lazy safety valve (Issue #4138).
     MemoryPressure,
     /// Projection exceeds the budget by more than [`LAZY_OVERBOOK_SKIP_RATIO`].
     Unworkable,
@@ -689,9 +694,77 @@ impl CacheLazyReason {
         match self {
             Self::None => "none",
             Self::Budget => "budget",
+            Self::NoBudget => "no_budget",
             Self::MemoryPressure => "memory_pressure",
             Self::Unworkable => "unworkable",
         }
+    }
+}
+
+/// Clamp a caller-supplied memory budget to host-reported total memory
+/// (Issue #4138).
+///
+/// A budget above what the host reports is never trusted verbatim — a
+/// recorded 8 GB host forwarded `nativeBudgetBytes ≈ 5.47 GB` while
+/// reporting `totalMB=3457`. `host_total_mb == 0` (unknown) leaves the
+/// budget unchanged.
+#[must_use]
+pub fn clamp_budget_mb_to_host(budget_mb: u64, host_total_mb: u64) -> u64 {
+    if host_total_mb > 0 && budget_mb > host_total_mb {
+        budget_mb.min(host_total_mb)
+    } else {
+        budget_mb
+    }
+}
+
+/// Combined analysis-cache pre-load decision (Issue #4138).
+///
+/// Returns `(mode, reason, logged_budget_mb)` where `logged_budget_mb` is `0`
+/// only when no budget was supplied (`reason="no_budget"`). A supplied budget
+/// is clamped to `host_total_mb` before use. When the clamped budget would
+/// pre-load, a genuine available-memory check still engages lazy mode with
+/// `reason="memory_pressure"` so the safety valve is not disabled.
+#[must_use]
+pub fn decide_analysis_cache_preload(
+    projected_bytes: u64,
+    budget_mb: Option<u64>,
+    available_bytes: u64,
+    margin_bytes: u64,
+    host_total_mb: u64,
+) -> (CachePreloadMode, CacheLazyReason, u64) {
+    if let Some(raw_budget) = budget_mb {
+        let budget = clamp_budget_mb_to_host(raw_budget, host_total_mb);
+        let (mode, reason) = decide_cache_preload_for_budget(projected_bytes, budget);
+        if mode == CachePreloadMode::SkipUnworkable || mode == CachePreloadMode::Lazy {
+            return (mode, reason, budget);
+        }
+        // Budget says pre-load — keep lazy as a genuine safety valve when the
+        // host cannot actually hold the projection.
+        let (avail_mode, _) = decide_cache_preload_for_available_memory(
+            projected_bytes,
+            available_bytes,
+            margin_bytes,
+        );
+        if avail_mode == CachePreloadMode::Lazy {
+            return (
+                CachePreloadMode::Lazy,
+                CacheLazyReason::MemoryPressure,
+                budget,
+            );
+        }
+        (CachePreloadMode::Preload, CacheLazyReason::None, budget)
+    } else {
+        let (mode, _) = decide_cache_preload_for_available_memory(
+            projected_bytes,
+            available_bytes,
+            margin_bytes,
+        );
+        let reason = if mode == CachePreloadMode::Lazy {
+            CacheLazyReason::NoBudget
+        } else {
+            CacheLazyReason::None
+        };
+        (mode, reason, 0)
     }
 }
 
@@ -755,60 +828,55 @@ pub fn decide_cache_preload_for_available_memory(
 fn plan_cache_preload(parquet_file: &str, budget_mb: Option<u64>) -> CachePreloadPlan {
     let projected_bytes = estimate_parquet_in_memory_bytes(parquet_file);
     let projected_mb = bytes_to_mb_ceil(projected_bytes);
-
-    if let Some(budget) = budget_mb {
-        let (mode, reason) = decide_cache_preload_for_budget(projected_bytes, budget);
-        if mode == CachePreloadMode::SkipUnworkable {
-            let (available_bytes, _total) = get_memory_info();
-            tracing::warn!(
-                target: "neat_ai_discovery::analysis::cache",
-                mode = "skip",
-                reason = reason.as_str(),
-                budget_mb = budget,
-                projected_mb,
-                available_mb = bytes_to_mb_ceil(available_bytes),
-                overbook_ratio = LAZY_OVERBOOK_SKIP_RATIO,
-                "projected pre-load exceeds configured budget by more than \
-                 {LAZY_OVERBOOK_SKIP_RATIO}× — skipping analysis as unworkable \
-                 rather than entering a lazy path that cannot finish (Issue #2013)",
-            );
-            return CachePreloadPlan::SkipUnworkable;
-        }
-        if mode == CachePreloadMode::Lazy {
-            let (available_bytes, _total) = get_memory_info();
-            tracing::warn!(
-                target: "neat_ai_discovery::analysis::cache",
-                mode = "lazy",
-                reason = reason.as_str(),
-                budget_mb = budget,
-                projected_mb,
-                available_mb = bytes_to_mb_ceil(available_bytes),
-                "insufficient memory for pre-loading — falling back to lazy-loading mode: \
-                 projected pre-load exceeds configured budget",
-            );
-        }
-        return mode.into();
-    }
-
-    // Auto-detect: base the decision on real OS-available memory (corrected
-    // reclaimable accounting, Issue #3173) minus the shared focus-ranking safety
-    // margin, rather than the old 50%-of-total-RAM cap that dropped a fitting
-    // projection onto the slow lazy path while GBs of RAM were reclaimable.
-    let (available_bytes, _total) = get_memory_info();
+    let (available_bytes, total_bytes) = get_memory_info();
+    let host_total_mb = bytes_to_mb_ceil(total_bytes);
     let margin_mb = crate::config::focus_ranking_memory_margin_mb();
     let margin_bytes = margin_mb.saturating_mul(BYTES_PER_MB);
-    let (mode, reason) =
-        decide_cache_preload_for_available_memory(projected_bytes, available_bytes, margin_bytes);
+
+    if let Some(raw_budget) = budget_mb {
+        let clamped = clamp_budget_mb_to_host(raw_budget, host_total_mb);
+        if clamped < raw_budget {
+            tracing::warn!(
+                target: "neat_ai_discovery::analysis::cache",
+                supplied_budget_mb = raw_budget,
+                host_total_mb,
+                clamped_budget_mb = clamped,
+                "caller memory budget exceeds host-reported memory — clamping (Issue #4138)",
+            );
+        }
+    }
+
+    let (mode, reason, logged_budget_mb) = decide_analysis_cache_preload(
+        projected_bytes,
+        budget_mb,
+        available_bytes,
+        margin_bytes,
+        host_total_mb,
+    );
+
+    if mode == CachePreloadMode::SkipUnworkable {
+        tracing::warn!(
+            target: "neat_ai_discovery::analysis::cache",
+            mode = "skip",
+            reason = reason.as_str(),
+            budget_mb = logged_budget_mb,
+            projected_mb,
+            available_mb = bytes_to_mb_ceil(available_bytes),
+            overbook_ratio = LAZY_OVERBOOK_SKIP_RATIO,
+            "projected pre-load exceeds configured budget by more than \
+             {LAZY_OVERBOOK_SKIP_RATIO}× — skipping analysis as unworkable \
+             rather than entering a lazy path that cannot finish (Issue #2013)",
+        );
+        return CachePreloadPlan::SkipUnworkable;
+    }
     if mode == CachePreloadMode::Lazy {
         tracing::warn!(
             target: "neat_ai_discovery::analysis::cache",
             mode = "lazy",
             reason = reason.as_str(),
+            budget_mb = logged_budget_mb,
             projected_mb,
             available_mb = bytes_to_mb_ceil(available_bytes),
-            // No explicit budget on the auto-detect path; log 0 so the field is
-            // uniform with the budget path's lazy log.
-            budget_mb = 0u64,
             margin_mb,
             "insufficient memory for pre-loading — falling back to lazy-loading mode",
         );

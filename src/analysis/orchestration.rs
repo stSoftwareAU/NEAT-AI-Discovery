@@ -490,6 +490,25 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
         });
     }
 
+    // Issue #4139: a sub-minimum (or already-passed) deadline means there is
+    // no usable analysis budget. Skip with a normal empty result rather than
+    // inflating to 10 minutes or returning `failed during analysis dispatch`.
+    if utils::deadline_too_short_to_analyse(input.analysis_deadline_ms, "analyze_all") {
+        return Ok(AnalyzeAllResult {
+            synapse: None,
+            neuron: None,
+            memory_budget_exceeded: false,
+            cancelled: true,
+            memory_pressure_cancelled: false,
+            gpu_wedged: false,
+            neuron_fingerprints: Some(current_fingerprints),
+            fingerprint_cache_hits,
+            fingerprint_cache_misses,
+            module_outcome_tracker: input.module_outcome_tracker.clone().unwrap_or_default(),
+            pass_rejection_breakdown: pass_breakdown_with_fingerprint_skips(fingerprint_cache_hits),
+        });
+    }
+
     // Issue #1028: Check memory budget before expensive GPU work.
     if utils::is_memory_budget_exceeded(input.max_analysis_memory_mb) {
         tracing::warn!(

@@ -83,6 +83,10 @@ pub(crate) struct TargetAnalysisContext<'a> {
     /// candidate; every disposition in that loop — accept or counted rejection —
     /// counts once on the accounted side.
     pub ledger: Arc<crate::analysis::candidate_reconciliation::CandidateLedger>,
+    /// Issue #4140: remaining targets are skipped once `target_saturated` dominates.
+    pub saturation_aborted: Arc<std::sync::atomic::AtomicBool>,
+    /// Issue #4140: a productive pass must not abort even if later targets saturate.
+    pub any_candidates: Arc<std::sync::atomic::AtomicBool>,
 }
 
 /// Results from analysing a single target neuron.
@@ -347,6 +351,23 @@ pub(crate) fn analyse_single_target(
             let dropped = u32::try_from(sources_to_process.len()).unwrap_or(u32::MAX);
             ctx.diagnostics.record_target_saturated_drops(dropped);
             sources_to_process.clear();
+            let saturated = ctx.diagnostics.target_saturated_drop_count();
+            let candidates_kept = ctx
+                .any_candidates
+                .load(std::sync::atomic::Ordering::Relaxed);
+            if crate::analysis::diagnostics::target_saturated_should_abort_pass(
+                saturated,
+                saturated,
+                candidates_kept,
+            ) {
+                ctx.saturation_aborted
+                    .store(true, std::sync::atomic::Ordering::Relaxed);
+                tracing::warn!(
+                    saturated_drops = saturated,
+                    "pass aborted: saturation-dominant (target_saturated), \
+                     remaining targets skipped"
+                );
+            }
         }
     }
 
@@ -445,6 +466,12 @@ pub(crate) fn analyse_single_target(
             cache,
             &mut results,
         )?;
+    }
+
+    if !results.helpful.is_empty() || !results.harmful.is_empty() || !results.coordinated.is_empty()
+    {
+        ctx.any_candidates
+            .store(true, std::sync::atomic::Ordering::Relaxed);
     }
 
     Ok(results)

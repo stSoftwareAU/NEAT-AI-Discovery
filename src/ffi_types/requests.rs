@@ -424,6 +424,14 @@ pub struct RankFocusNeuronsInput {
     /// [`DEFAULT_FOCUS_SET_SIZE`].
     #[serde(default)]
     pub focus_set_size: Option<usize>,
+    /// Memory budget in megabytes forwarded from the caller (Issue #4138).
+    ///
+    /// Same wire name as [`AnalyzeParallelInput::max_analysis_memory_mb`].
+    /// Reported on the response so operators can confirm the budget reached
+    /// this entry point; focus selection itself is structure-only and does not
+    /// pre-load parquet.
+    #[serde(default)]
+    pub max_analysis_memory_mb: Option<u64>,
 }
 
 /// Default final focus-set size `N` when `focusSetSize` is not supplied

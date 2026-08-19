@@ -121,6 +121,25 @@ pub fn analyze_synapses(input: &AnalyzeSynapsesInput) -> Result<AnalyzeSynapsesR
     require_unique_focus(&input.focus_neurons, "Synapse analysis")
         .context("synapse analysis input validation failed")?;
 
+    if crate::analysis::utils::deadline_too_short_to_analyse(
+        input.analysis_deadline_ms,
+        "analyze_synapses",
+    ) {
+        return Ok(crate::analysis::shared::AnalyzeSynapsesResult {
+            helpful_synapses: Vec::new(),
+            harmful_synapses: Vec::new(),
+            synapse_weight_updates: Vec::new(),
+            coordinated_structural_candidates: Vec::new(),
+            candidate_clusters: Vec::new(),
+            gpu_used: false,
+            no_candidate_reasons: Vec::new(),
+            metadata: crate::analysis::shared::SynapseAnalysisMetadata {
+                total_focus_neurons: input.focus_neurons.len(),
+                ..Default::default()
+            },
+        });
+    }
+
     // Pre-load all records for faster analysis (1 scan vs ~2000 scans)
     let cache = Arc::new(
         RecordCache::new_adaptive(&input.parquet_file)

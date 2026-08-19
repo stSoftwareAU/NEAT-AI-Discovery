@@ -578,6 +578,7 @@ pub fn rank_focus_neurons_internal(input_json: &str) -> Result<String> {
                 rejection_breakdown: None,
                 loading_mode: None,
                 lazy_reason: None,
+                // Parse failed before the caller budget was available (Issue #4138).
                 budget_mb: None,
                 projected_mb: None,
                 error: Some(typed.to_string()),
@@ -610,7 +611,7 @@ pub fn rank_focus_neurons_internal(input_json: &str) -> Result<String> {
             rejection_breakdown: None,
             loading_mode: None,
             lazy_reason: None,
-            budget_mb: None,
+            budget_mb: input.max_analysis_memory_mb,
             projected_mb: None,
             error: Some(typed.to_string()),
             error_kind: Some(kind),
@@ -711,29 +712,41 @@ pub fn rank_focus_neurons_internal(input_json: &str) -> Result<String> {
     // downstream ever revisited the deferral. The pass runs strictly *after*
     // focus selection (already complete above) and is bounded by the shared
     // discovery deadline, so it cannot recreate the #1766 focus stall.
-    let removal_outcome = focus::identify_removal_candidates_for_focus(
-        &input.creature,
-        input.cost_of_growth,
-        &input.parquet_file,
-        build_deadline(input.analysis_deadline_ms),
+    // Issue #4139: a sub-minimum deadline skips parquet-backed removal triage
+    // rather than inflating the remainder to 10 minutes. Focus selection itself
+    // is already complete above and is structure-only.
+    let skip_removal = crate::analysis::utils::deadline_too_short_to_analyse(
+        input.analysis_deadline_ms,
+        "rank_focus_neurons",
     );
-    let rejection_breakdown = removal_outcome.rejection_breakdown();
-    let removal_candidates: Vec<RemovalCandidateJson> = removal_outcome
-        .candidates
-        .into_iter()
-        .map(|c| RemovalCandidateJson {
-            neuron_uuid: c.neuron_uuid,
-            total_error: c.total_error,
-            impact: c.impact,
-            mean_activation: c.mean_activation,
-            activation_weighted_impact: c.activation_weighted_impact,
-            incoming_synapses: c.incoming_synapses,
-            outgoing_synapses: c.outgoing_synapses,
-            removal_savings: c.removal_savings,
-            expected_error_reduction: c.expected_error_reduction,
-            reason: c.reason,
-        })
-        .collect();
+    let (rejection_breakdown, removal_candidates) = if skip_removal {
+        (std::collections::HashMap::new(), Vec::new())
+    } else {
+        let removal_outcome = focus::identify_removal_candidates_for_focus(
+            &input.creature,
+            input.cost_of_growth,
+            &input.parquet_file,
+            build_deadline(input.analysis_deadline_ms),
+        );
+        let breakdown = removal_outcome.rejection_breakdown();
+        let candidates: Vec<RemovalCandidateJson> = removal_outcome
+            .candidates
+            .into_iter()
+            .map(|c| RemovalCandidateJson {
+                neuron_uuid: c.neuron_uuid,
+                total_error: c.total_error,
+                impact: c.impact,
+                mean_activation: c.mean_activation,
+                activation_weighted_impact: c.activation_weighted_impact,
+                incoming_synapses: c.incoming_synapses,
+                outgoing_synapses: c.outgoing_synapses,
+                removal_savings: c.removal_savings,
+                expected_error_reduction: c.expected_error_reduction,
+                reason: c.reason,
+            })
+            .collect();
+        (breakdown, candidates)
+    };
 
     let (error_kind, retryable) = no_error_fields();
     let output = RankFocusNeuronsOutput {
@@ -763,10 +776,12 @@ pub fn rank_focus_neurons_internal(input_json: &str) -> Result<String> {
         },
         // No parquet is loaded on the focus path (Issue #1766), so the loading-mode
         // observability fields are omitted rather than reporting a decode that
-        // never happened.
+        // never happened. `budget_mb` still reports the caller-supplied analysis
+        // budget so the four FFI sites no longer hard-code `None` when a value
+        // was provided (Issue #4138).
         loading_mode: None,
         lazy_reason: None,
-        budget_mb: None,
+        budget_mb: input.max_analysis_memory_mb,
         projected_mb: None,
         error: None,
         error_kind,
@@ -1071,5 +1086,115 @@ mod phase_gating_wiring_tests {
         let converted = convert("");
         assert_eq!(converted.include_synapse_analysis, None);
         assert_eq!(converted.include_neuron_analysis, None);
+    }
+
+    /// Issue #4138: `analyze_parallel` must forward the caller budget into
+    /// `AnalyzeAllInput.max_analysis_memory_mb`, which `analyze_all` then
+    /// passes to `RecordCache::new_adaptive_with_deadline_and_budget` rather
+    /// than hard-coding `None`.
+    #[test]
+    fn analyze_parallel_forwards_caller_memory_budget() {
+        let converted = convert(r#", "maxAnalysisMemoryMb": 3457"#);
+        assert_eq!(converted.max_analysis_memory_mb, Some(3457));
+    }
+}
+
+#[cfg(test)]
+mod issue_4139_deadline_skip_tests {
+    //! Sub-minimum analysis deadlines skip as a non-fatal outcome (Issue #4139).
+    //!
+    //! The caller asked for 0.89 s and previously received a 10-minute grant. The
+    //! skip must happen *before* GPU availability is checked so hosts without
+    //! a GPU still see `success: true` rather than
+    //! `Rust neuron analysis unavailable (failed during analysis dispatch)`.
+
+    use super::*;
+
+    fn skip_payload(deadline_ms: u64) -> String {
+        format!(
+            r#"{{
+                "parquetFile": "/tmp/does-not-need-to-exist.parquet",
+                "creature": {{
+                    "neurons": [
+                        {{ "uuid": "input-1", "type": "input", "squash": "IDENTITY", "bias": 0.0 }},
+                        {{ "uuid": "output-1", "type": "output", "squash": "LOGISTIC", "bias": 0.0 }}
+                    ],
+                    "synapses": [
+                        {{ "from_uuid": "input-1", "to_uuid": "output-1", "weight": 1.0 }}
+                    ],
+                    "input": 1,
+                    "output": 1
+                }},
+                "focusNeurons": ["output-1"],
+                "analysisDeadlineMs": {deadline_ms},
+                "randomSeed": 42
+            }}"#
+        )
+    }
+
+    #[test]
+    fn sub_minimum_deadline_is_non_fatal_skip_not_dispatch_error() {
+        let json = analyze_parallel_internal(&skip_payload(890))
+            .expect("skip path must return Ok JSON, not Err");
+        let value: serde_json::Value =
+            serde_json::from_str(&json).expect("skip path must be valid JSON");
+
+        assert_eq!(
+            value["success"], true,
+            "budget skip is a normal outcome, got: {value}"
+        );
+        assert!(
+            value.get("error").is_none() || value["error"].is_null(),
+            "skip must not surface an error field, got: {value}"
+        );
+        let dump = value.to_string();
+        assert!(
+            !dump.contains("failed during analysis dispatch"),
+            "skip must not be classified as a dispatch failure: {dump}"
+        );
+        assert!(
+            !dump.contains("Rust neuron analysis unavailable"),
+            "skip must not be the generic neuron-analysis-unavailable error: {dump}"
+        );
+        assert_eq!(
+            value["cancelled"], true,
+            "skip is signalled as cancelled so the host can distinguish it from \
+             search exhaustion, got: {value}"
+        );
+    }
+}
+
+#[cfg(test)]
+mod issue_4138_budget_ffi_tests {
+    //! Caller memory budget reaches the analysis FFI types (Issue #4138).
+
+    use super::*;
+
+    #[test]
+    fn rank_focus_reports_supplied_budget_mb() {
+        let input = r#"{
+            "parquetFile": "/tmp/does-not-need-to-exist.parquet",
+            "creature": {
+                "neurons": [
+                    { "uuid": "hidden-0", "type": "hidden", "squash": "IDENTITY", "bias": 0.0 },
+                    { "uuid": "output-0", "type": "output", "squash": "IDENTITY", "bias": 0.0 }
+                ],
+                "synapses": [
+                    { "from_uuid": "hidden-0", "to_uuid": "output-0", "weight": 1.0 }
+                ],
+                "input": 1,
+                "output": 1
+            },
+            "maxAnalysisMemoryMb": 3457,
+            "analysisDeadlineMs": 890
+        }"#;
+        let json = rank_focus_neurons_internal(input).expect("rank_focus must return JSON");
+        let value: serde_json::Value =
+            serde_json::from_str(&json).expect("rank_focus JSON must parse");
+        assert_eq!(value["success"], true, "got: {value}");
+        assert_eq!(
+            value["budgetMb"], 3457,
+            "supplied budget must be reported, not hard-coded null: {value}"
+        );
     }
 }
