@@ -717,7 +717,7 @@ mod tests {
         let mut recs = max_records();
         // Force obs 0: abs branch contributes +5 (impossible for a true ABSOLUTE
         // ×(−1) branch, but the gate must not trust the label blindly).
-        recs.retain(|r| !(r.obs_index == 0));
+        recs.retain(|r| r.obs_index != 0);
         recs.push(record(0, "neuron-abs", -5.0)); // contribution = (−1)×(−5) = +5
         recs.push(record(0, "neuron-relu", 1.0));
         recs.push(record(0, "neuron-max", 5.0));
