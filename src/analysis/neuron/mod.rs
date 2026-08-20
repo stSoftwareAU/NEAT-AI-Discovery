@@ -266,6 +266,9 @@ pub fn analyze_neurons_with_cache_and_gpu_queue(
     let ledger = Arc::new(crate::analysis::candidate_reconciliation::CandidateLedger::new());
     // Issue #4140: abort remaining targets once target_saturated dominates.
     let saturation_aborted = Arc::new(AtomicBool::new(false));
+    // Issue #4140: lock-free "this pass kept something" flag — a productive
+    // pass must never abort for saturation.
+    let any_candidates = Arc::new(AtomicBool::new(false));
 
     let focus_order_arc = Arc::new(focus_order);
     let ordered_neurons_arc = Arc::new(ordered_neurons);
@@ -461,6 +464,7 @@ pub fn analyze_neurons_with_cache_and_gpu_queue(
                     evaluation_drops: &evaluation_drops,
                     ledger: &ledger,
                     saturation_aborted: &saturation_aborted,
+                    any_candidates: &any_candidates,
                 };
                 evaluation::evaluate_neuron_candidates(
                     &work_results,

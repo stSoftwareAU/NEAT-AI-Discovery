@@ -69,6 +69,27 @@ pub(crate) struct NeuronEvalContext<'a> {
     /// Issue #4140: set when `target_saturated` dominates so remaining
     /// sources and later targets are skipped.
     pub saturation_aborted: &'a Arc<AtomicBool>,
+    /// Issue #4140: set the moment any candidate is admitted, so a productive
+    /// pass can never be aborted for saturation.
+    ///
+    /// This is a lock-free flag on purpose. Reading "did we keep anything?"
+    /// off `helpful_map.try_lock()` reports *no candidates* whenever another
+    /// rayon worker happens to hold the map, which would abort a productive
+    /// pass and lose every remaining target's candidates.
+    pub any_candidates: &'a Arc<AtomicBool>,
+}
+
+impl NeuronEvalContext<'_> {
+    /// Admit a candidate to the surface's map and mark the pass productive.
+    ///
+    /// Every accept site goes through here so the kept-candidate signal
+    /// (Issue #4140) cannot drift from the map it describes.
+    fn admit_candidate(&self, candidate: CandidateNeuronJson) -> Result<()> {
+        let mut map = lock_or_bail(self.helpful_map, "helpful_map")?;
+        upsert_candidate(&mut map, candidate);
+        self.any_candidates.store(true, Ordering::Relaxed);
+        Ok(())
+    }
 }
 
 /// Evaluate neuron candidates for all sources with samples against a single
@@ -233,8 +254,7 @@ fn evaluate_relu_split(
             // Issue #1802: admitted to the surface's candidate map — the
             // accounted side of the reconciliation identity.
             ctx.ledger.record_accounted(1);
-            let mut map = lock_or_bail(ctx.helpful_map, "helpful_map")?;
-            upsert_candidate(&mut map, candidate);
+            ctx.admit_candidate(candidate)?;
         }
     }
 
@@ -281,8 +301,7 @@ fn evaluate_relu_split(
             // Issue #1802: admitted to the surface's candidate map — the
             // accounted side of the reconciliation identity.
             ctx.ledger.record_accounted(1);
-            let mut map = lock_or_bail(ctx.helpful_map, "helpful_map")?;
-            upsert_candidate(&mut map, candidate);
+            ctx.admit_candidate(candidate)?;
         }
     }
 
@@ -390,8 +409,7 @@ fn evaluate_activation_specs(
         ctx.diagnostics.mark_candidate_selected(target_uuid);
         // Issue #1802: admitted to the surface's candidate map.
         ctx.ledger.record_accounted(1);
-        let mut map = lock_or_bail(ctx.helpful_map, "helpful_map")?;
-        upsert_candidate(&mut map, candidate);
+        ctx.admit_candidate(candidate)?;
     }
 
     Ok(())
@@ -463,6 +481,26 @@ fn apply_cross_validation_penalty(candidate: &mut CandidateNeuronJson, samples: 
     }
 }
 
+/// Issue #4140: does the recorded rejection mix end the whole neuron pass?
+///
+/// Split out from [`maybe_abort_saturated_pass`] so the verdict is testable
+/// without a live GPU context. `within_batch` is the
+/// `within_batch_target_short_circuit` count, which only ends a *batch* and is
+/// therefore excluded from the sample.
+fn should_abort_neuron_pass(
+    saturated: u32,
+    considered: u32,
+    within_batch: u32,
+    any_candidates: bool,
+) -> bool {
+    // Saturated source-drops may never hit the ledger (synapse path);
+    // formed-then-saturated items are already in `considered`. Take the max so
+    // a 0-proposal / 3080-rejection pass still trips, without double-counting.
+    let other = considered.saturating_sub(within_batch);
+    let total_rejections = saturated.max(other);
+    target_saturated_should_abort_pass(saturated, total_rejections, any_candidates)
+}
+
 /// Issue #4140: abort the rest of the pass when `target_saturated` dominates.
 fn maybe_abort_saturated_pass(ctx: &NeuronEvalContext<'_>) {
     if ctx.saturation_aborted.load(Ordering::Relaxed) {
@@ -471,17 +509,11 @@ fn maybe_abort_saturated_pass(ctx: &NeuronEvalContext<'_>) {
     let saturated = ctx.diagnostics.target_saturated_drop_count();
     let considered = ctx.ledger.considered();
     let within_batch = ctx.within_batch_failures.skip_count();
-    // Within-batch short-circuit only ends a batch — exclude it from the
-    // sample. Saturated source-drops may never hit the ledger (synapse path);
-    // formed-then-saturated items are already in `considered`. Take the max so
-    // a 0-proposal / 3080-rejection pass still trips, without double-counting.
-    let other = considered.saturating_sub(within_batch);
-    let total_rejections = saturated.max(other);
-    let candidates_kept = ctx
-        .helpful_map
-        .try_lock()
-        .is_some_and(|map| !map.is_empty());
-    if target_saturated_should_abort_pass(saturated, total_rejections, candidates_kept) {
+    let total_rejections = saturated.max(considered.saturating_sub(within_batch));
+    // Lock-free: a contended `helpful_map` must never read as "kept nothing"
+    // and abort a productive pass.
+    let candidates_kept = ctx.any_candidates.load(Ordering::Relaxed);
+    if should_abort_neuron_pass(saturated, considered, within_batch, candidates_kept) {
         ctx.saturation_aborted.store(true, Ordering::Relaxed);
         tracing::warn!(
             saturated_drops = saturated,
@@ -525,5 +557,51 @@ mod saturation_early_exit_tests {
             TARGET_SATURATED_EARLY_EXIT_MIN_SAMPLE,
             true,
         ));
+    }
+
+    /// The recorded 3080-rejection / 52-proposal shape ends the pass, and the
+    /// within-batch short-circuit count is excluded from the sample.
+    #[test]
+    fn recorded_saturated_shape_aborts_and_within_batch_is_excluded() {
+        assert!(
+            super::should_abort_neuron_pass(3080, 52, 0, false),
+            "the recorded saturation-dominant pass must abort"
+        );
+        assert!(
+            !super::should_abort_neuron_pass(0, 200, 200, false),
+            "within_batch_target_short_circuit alone is not terminal"
+        );
+    }
+
+    /// Regression: the kept-candidate signal must be lock-free.
+    ///
+    /// It used to be read from `helpful_map.try_lock()`, so a productive pass
+    /// whose map happened to be held by another rayon worker reported "kept
+    /// nothing" and aborted, discarding every remaining target's candidates.
+    #[test]
+    fn productive_pass_does_not_abort_while_helpful_map_is_locked() {
+        use parking_lot::Mutex;
+        use std::collections::HashMap;
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        let helpful_map: Arc<Mutex<HashMap<u64, crate::CandidateNeuronJson>>> =
+            Arc::new(Mutex::new(HashMap::new()));
+        let any_candidates = Arc::new(AtomicBool::new(false));
+
+        // A candidate was admitted earlier in the pass.
+        any_candidates.store(true, Ordering::Relaxed);
+
+        // Another worker is holding the map right now.
+        let _held = helpful_map.lock();
+        assert!(
+            helpful_map.try_lock().is_none(),
+            "precondition: the map must be contended"
+        );
+
+        assert!(
+            !super::should_abort_neuron_pass(3080, 3200, 0, any_candidates.load(Ordering::Relaxed)),
+            "a pass that kept candidates must not abort because the map was locked"
+        );
     }
 }
