@@ -390,17 +390,18 @@ pub fn render_thread_dump() -> String {
         "THREAD DUMP - {timestamp} (SIGUSR1 received: external stop signal)"
     );
     let _ = writeln!(out, "Process ID: {pid}");
-    // GRQ#4142: "kill -USR1 received" was technically accurate and
-    // operationally useless — it did not say who sent it, or that a cap kill
-    // is the routine, expected source. Readers repeatedly triaged this dump
-    // as a suspected hang. Say what it is in the banner itself.
+    // "kill -USR1 received" was technically accurate and operationally
+    // useless — it did not say who sent the signal, or that a caller's
+    // wall-clock task cap is the routine, expected source. Readers of
+    // production worker logs repeatedly triaged this dump as a suspected
+    // hang. Say what it is in the banner itself.
     let _ = writeln!(
         out,
         "This process is terminating on an external signal (typically the \
-         caller's wall-clock cap, e.g. GRQ's `timeout -s USR1`). The dump \
+         caller's wall-clock task cap, e.g. `timeout -s USR1`). The dump \
          below is EXPECTED shutdown diagnostics for that termination — not a \
-         detected hang or deadlock. Pair it with the caller's `[cap-failure]` \
-         block (GRQ#4142)."
+         detected hang or deadlock. Pair it with the caller's own \
+         cap-failure diagnostics."
     );
     let _ = writeln!(out, "{rule}\n");
 
@@ -566,10 +567,10 @@ mod tests {
         );
     }
 
-    /// GRQ#4142: a reader who sees only the dump must know it is expected
-    /// shutdown diagnostics from an external stop signal — not a detected
-    /// hang. The old "(kill -USR1 received)" wording was repeatedly triaged
-    /// as a suspected hang.
+    /// A reader who sees only the dump must know it is expected shutdown
+    /// diagnostics from an external stop signal — not a detected hang. The
+    /// old "(kill -USR1 received)" wording was repeatedly triaged as a
+    /// suspected hang in production worker logs.
     #[test]
     fn the_banner_labels_the_dump_as_expected_shutdown_diagnostics() {
         let dump = render_thread_dump();
