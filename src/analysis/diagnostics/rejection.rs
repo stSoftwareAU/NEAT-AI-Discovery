@@ -582,21 +582,42 @@ pub const TARGET_SATURATED_EARLY_EXIT_MIN_SAMPLE: u32 = 80;
 /// here — it only ends a batch, not the whole pass.
 pub const TARGET_SATURATED_EARLY_EXIT_RATIO: f64 = 0.80;
 
+/// Minimum candidates the pass must have evaluated before it may abort.
+///
+/// A saturated target drops **every** eligible source at once, and the source
+/// budget is unlimited by default, so one heavily-connected saturated target
+/// can push `target_saturated_drop_count()` past the min-sample floor before
+/// the pass has evaluated a single candidate. Aborting there would skip every
+/// remaining target on the evidence of one — the over-aggression Issue #4140's
+/// second acceptance criterion forbids. Requiring the pass to have considered
+/// real candidates first keeps the abort meaning "we tried and it is hopeless".
+///
+/// 32 sits well below the recorded regression (`proposals_formed=52`), so the
+/// 40-minute pass still trips, and well above zero, so a first-target drop
+/// cannot end the pass on its own.
+pub const TARGET_SATURATED_EARLY_EXIT_MIN_CONSIDERED: u32 = 32;
+
 /// Whether a pass should abort because `target_saturated` dominates.
 ///
 /// `target_saturated_drops` must come from
 /// [`TargetDiagnostics::target_saturated_drop_count`] /
 /// [`crate::analysis::diagnostics::NeuronDiagnostics::target_saturated_drop_count`]
 /// — do not introduce a parallel counter. `total_rejections` must **exclude**
-/// `within_batch_target_short_circuit`. Returns `false` when `candidates_kept`
-/// is true so a productive fixture is unchanged.
+/// `within_batch_target_short_circuit`. `candidates_considered` is the pass's
+/// [`crate::analysis::candidate_reconciliation::CandidateLedger::considered`]
+/// count. Returns `false` when `candidates_kept` is true so a productive
+/// fixture is unchanged.
 #[must_use]
 pub fn target_saturated_should_abort_pass(
     target_saturated_drops: u32,
     total_rejections: u32,
+    candidates_considered: u32,
     candidates_kept: bool,
 ) -> bool {
     if candidates_kept {
+        return false;
+    }
+    if candidates_considered < TARGET_SATURATED_EARLY_EXIT_MIN_CONSIDERED {
         return false;
     }
     if target_saturated_drops < TARGET_SATURATED_EARLY_EXIT_MIN_SAMPLE {
@@ -613,13 +634,17 @@ pub fn target_saturated_should_abort_pass(
 mod saturation_early_exit_tests {
     use super::*;
 
+    /// Enough evaluated candidates that the "we actually tried" floor is met,
+    /// so each test below exercises the signal it names.
+    const TRIED: u32 = TARGET_SATURATED_EARLY_EXIT_MIN_CONSIDERED;
+
     #[test]
     fn saturated_pass_trips_from_target_saturated_drop_count() {
         let diagnostics = TargetDiagnostics::new_for_tests(&["output-0"]);
         diagnostics.record_target_saturated_drops(TARGET_SATURATED_EARLY_EXIT_MIN_SAMPLE);
         let saturated = diagnostics.target_saturated_drop_count();
         assert!(
-            target_saturated_should_abort_pass(saturated, saturated, false),
+            target_saturated_should_abort_pass(saturated, saturated, TRIED, false),
             "trip threshold must be computed from target_saturated_drop_count()"
         );
     }
@@ -628,8 +653,8 @@ mod saturation_early_exit_tests {
     fn within_batch_short_circuit_does_not_abort_the_pass() {
         // A batch-local skip is not terminal. Even a large within-batch count
         // with zero saturation drops must not trip.
-        assert!(!target_saturated_should_abort_pass(0, 0, false));
-        assert!(!target_saturated_should_abort_pass(10, 200, false));
+        assert!(!target_saturated_should_abort_pass(0, 0, TRIED, false));
+        assert!(!target_saturated_should_abort_pass(10, 200, TRIED, false));
     }
 
     #[test]
@@ -637,8 +662,36 @@ mod saturation_early_exit_tests {
         assert!(!target_saturated_should_abort_pass(
             TARGET_SATURATED_EARLY_EXIT_MIN_SAMPLE,
             TARGET_SATURATED_EARLY_EXIT_MIN_SAMPLE,
+            TRIED,
             true,
         ));
+    }
+
+    /// One heavily-connected saturated target drops every eligible source at
+    /// once. That alone must not end a pass which has not yet evaluated
+    /// anything — otherwise every remaining target is skipped on the evidence
+    /// of one.
+    #[test]
+    fn a_single_saturated_target_does_not_abort_before_the_pass_has_tried() {
+        assert!(
+            !target_saturated_should_abort_pass(500, 500, 0, false),
+            "500 drops from one target with nothing evaluated is not a verdict"
+        );
+        assert!(!target_saturated_should_abort_pass(
+            500,
+            500,
+            TARGET_SATURATED_EARLY_EXIT_MIN_CONSIDERED - 1,
+            false
+        ));
+        assert!(
+            target_saturated_should_abort_pass(
+                500,
+                500,
+                TARGET_SATURATED_EARLY_EXIT_MIN_CONSIDERED,
+                false
+            ),
+            "once the pass has evaluated candidates and kept none, saturation is terminal"
+        );
     }
 
     /// Recorded shape: 3080 `target_saturated` rejections, 52 proposals,
@@ -651,6 +704,7 @@ mod saturation_early_exit_tests {
         assert!(target_saturated_should_abort_pass(
             saturated,
             total_rejections,
+            proposals_formed,
             false
         ));
     }

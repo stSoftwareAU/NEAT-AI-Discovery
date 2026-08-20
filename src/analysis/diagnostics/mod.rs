@@ -30,7 +30,9 @@ pub(crate) use focus_filter::{
 };
 pub(crate) use neuron_tracking::NeuronDiagnostics;
 #[cfg(test)]
-pub(crate) use rejection::TARGET_SATURATED_EARLY_EXIT_MIN_SAMPLE;
+pub(crate) use rejection::{
+    TARGET_SATURATED_EARLY_EXIT_MIN_CONSIDERED, TARGET_SATURATED_EARLY_EXIT_MIN_SAMPLE,
+};
 pub(crate) use rejection::{
     TargetDiagnostics, ThresholdContext, target_saturated_should_abort_pass,
 };

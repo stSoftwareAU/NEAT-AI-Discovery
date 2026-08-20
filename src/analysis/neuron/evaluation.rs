@@ -498,7 +498,7 @@ fn should_abort_neuron_pass(
     // a 0-proposal / 3080-rejection pass still trips, without double-counting.
     let other = considered.saturating_sub(within_batch);
     let total_rejections = saturated.max(other);
-    target_saturated_should_abort_pass(saturated, total_rejections, any_candidates)
+    target_saturated_should_abort_pass(saturated, total_rejections, considered, any_candidates)
 }
 
 /// Issue #4140: abort the rest of the pass when `target_saturated` dominates.
@@ -528,9 +528,12 @@ fn maybe_abort_saturated_pass(ctx: &NeuronEvalContext<'_>) {
 #[cfg(test)]
 mod saturation_early_exit_tests {
     use crate::analysis::diagnostics::{
-        NeuronDiagnostics, TARGET_SATURATED_EARLY_EXIT_MIN_SAMPLE,
-        target_saturated_should_abort_pass,
+        NeuronDiagnostics, TARGET_SATURATED_EARLY_EXIT_MIN_CONSIDERED,
+        TARGET_SATURATED_EARLY_EXIT_MIN_SAMPLE, target_saturated_should_abort_pass,
     };
+
+    /// Enough evaluated candidates that the "we actually tried" floor is met.
+    const TRIED: u32 = TARGET_SATURATED_EARLY_EXIT_MIN_CONSIDERED;
 
     #[test]
     fn saturated_pass_exits_early_with_zero_candidate_summary() {
@@ -538,7 +541,7 @@ mod saturation_early_exit_tests {
         diagnostics.record_target_saturated_drops(TARGET_SATURATED_EARLY_EXIT_MIN_SAMPLE);
         let saturated = diagnostics.target_saturated_drop_count();
         assert!(
-            target_saturated_should_abort_pass(saturated, saturated, false),
+            target_saturated_should_abort_pass(saturated, saturated, TRIED, false),
             "a saturation-dominated sample must trip the early exit"
         );
         assert_eq!(
@@ -551,12 +554,25 @@ mod saturation_early_exit_tests {
     fn non_saturated_pass_candidate_count_unchanged() {
         // Minority saturation (or any kept candidate) must not abort — the
         // productive fixture's candidate count is unchanged.
-        assert!(!target_saturated_should_abort_pass(10, 100, false));
+        assert!(!target_saturated_should_abort_pass(10, 100, TRIED, false));
         assert!(!target_saturated_should_abort_pass(
             TARGET_SATURATED_EARLY_EXIT_MIN_SAMPLE,
             TARGET_SATURATED_EARLY_EXIT_MIN_SAMPLE,
+            TRIED,
             true,
         ));
+    }
+
+    /// A pass that has not evaluated anything yet has no verdict to give: one
+    /// saturated target dropping its whole source list must not skip every
+    /// remaining target.
+    #[test]
+    fn single_saturated_target_does_not_abort_before_the_pass_has_tried() {
+        assert!(!super::should_abort_neuron_pass(500, 0, 0, false));
+        assert!(
+            super::should_abort_neuron_pass(500, TRIED, 0, false),
+            "once candidates have been evaluated and none kept, saturation is terminal"
+        );
     }
 
     /// The recorded 3080-rejection / 52-proposal shape ends the pass, and the

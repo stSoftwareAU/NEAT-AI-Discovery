@@ -355,15 +355,25 @@ pub(crate) fn analyse_single_target(
             let candidates_kept = ctx
                 .any_candidates
                 .load(std::sync::atomic::Ordering::Relaxed);
+            // Same sample as the neuron path: within-batch short-circuits only
+            // end a batch, so they are excluded, and `considered` is what the
+            // pass actually evaluated. Logging both lets a captured run log be
+            // judged against the documented threshold.
+            let considered = ctx.ledger.considered();
+            let within_batch = ctx.within_batch_failures.skip_count();
+            let total_rejections = saturated.max(considered.saturating_sub(within_batch));
             if crate::analysis::diagnostics::target_saturated_should_abort_pass(
                 saturated,
-                saturated,
+                total_rejections,
+                considered,
                 candidates_kept,
             ) {
                 ctx.saturation_aborted
                     .store(true, std::sync::atomic::Ordering::Relaxed);
                 tracing::warn!(
                     saturated_drops = saturated,
+                    total_rejections,
+                    proposals_formed = considered,
                     "pass aborted: saturation-dominant (target_saturated), \
                      remaining targets skipped"
                 );
