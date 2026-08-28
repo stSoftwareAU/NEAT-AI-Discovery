@@ -473,3 +473,51 @@ change in NEAT-AI.
 `tests/issue_1942_cost_function_notes_contract.rs` pins the parts of this
 document a refactor can silently falsify: the §1 premise, and the existence of
 every symbol §3 and §4–§6 cite.
+
+---
+
+## 9. Repeated Selection on One Corpus — the Multiple-Comparisons Exposure
+
+§1–§8 cover *which residual semantics* the SSE proxy assumes. This section
+covers the other half of the statistical exposure: **how many times that proxy
+is queried against the same data** (Issue #2025).
+
+Around fifty detectors propose candidates against **one** recorded corpus, and
+each proposal is admitted on a measured improvement computed from that same
+corpus. That is a large **multiple-comparisons** surface: with enough
+proposals, the best-looking measured gain is partly the largest noise draw
+rather than the largest real effect. The exposure compounds because selection
+is **adaptive** — failure caches, per-type discounting and threshold
+calibration all feed the previous rounds' outcomes back into what gets proposed
+next, so the corpus is not queried once but repeatedly, by a process that has
+already seen its answers. That is exactly the regime analysed by the reusable
+holdout (Dwork et al. 2015) and the Ladder (Blum & Hardt 2015); see
+[PRIOR_ART.md § 8](PRIOR_ART.md#8-statistical-exposure).
+
+### What we do about it
+
+| Defence | Where | What it actually covers |
+|---------|-------|-------------------------|
+| Controller ablation test | NEAT-AI clones the creature, applies the candidate, re-scores the **full training set** | The strongest filter — a candidate must improve a real score, not just the SSE proxy. But it re-scores against the **same corpus** every time, so it does not escape adaptive overfitting, it only raises the bar |
+| Per-candidate hold-out split | `src/analysis/synapse/holdout_validation.rs` (Issue #893) | Selection bias from the 9-variant weight grid **within one candidate**, when ≥ `HOLDOUT_MIN_SAMPLE_COUNT` (20) samples exist. It says nothing about selection **across** detectors or candidates |
+| Pessimism discounting and gain floors | `src/analysis/synapse/scoring/discounting.rs`, the per-op noise floors (Issue #1272) | Shrinks optimistic predictions and rejects small measured gains — a blunt but real reduction in the number of noise-sized proposals that reach evaluation |
+| Success/failure caches | Caller-supplied `failureCache` | Stops re-proposing what already failed. Note this is itself *adaptive* — it is part of the exposure as well as a mitigation |
+
+### What we do not do
+
+Stated plainly, because silence here reads as a claim:
+
+- There is **no fresh-corpus validation**. No candidate is ever re-checked
+  against data that had no part in proposing it.
+- There is **no query budget** against the corpus, and no
+  differential-privacy-style noise on reported improvements — the two
+  mechanisms Dwork et al. 2015 and Blum & Hardt 2015 use to keep an adaptively
+  reused holdout valid.
+- There is **no family-wise or false-discovery-rate correction** across the
+  ~50 detectors proposing per pass.
+
+The practical consequence: production success rates measured on the same corpus
+that produced the candidates are **upper bounds**, and a detector's apparent
+gain can be partly selection effect. Evolution is the backstop — a candidate
+that only fitted the scorer stops paying off in later generations and is bred
+out — but that is a slow, indirect correction, not a statistical guarantee.
