@@ -215,6 +215,30 @@ For detailed analysis workflow, coordinated structural discovery, discrete
 activation function handling, and detection algorithms, see
 [docs/ANALYSIS_DEEP_DIVE.md](docs/ANALYSIS_DEEP_DIVE.md).
 
+### 📖 What this is, in the literature's words
+
+That loop is a **surrogate-assisted evolutionary algorithm** (Jin 2011). The
+cheap **surrogate** is the SSE reduction derived from recorded residuals: it
+proposes and ranks candidates without ever running the network. The expensive
+**true evaluation** is the controller's full-corpus re-score, which accepts or
+rejects. Accepted candidates re-enter an evolving population, which is the
+"evolutionary" half.
+
+The quantity discovery ranks by — **expected improvement** — is the standard
+acquisition function of efficient global optimisation (Jones et al. 1998). The
+term was arrived at here independently, from the plain meaning of the words;
+the correspondence is real and worth citing either way.
+
+The second framing is that **"impact" is an attribution (saliency) measure**:
+normalised path-weight propagation is the same move as layer-wise relevance
+propagation and DeepLIFT, and removing the lowest-impact units is Optimal Brain
+Damage and Taylor-criterion pruning. See
+[docs/IMPACT_CALCULATION.md](docs/IMPACT_CALCULATION.md).
+
+Every detector, every pipeline stage, and the full bibliography are mapped in
+[docs/PRIOR_ART.md](docs/PRIOR_ART.md). Detector names are the caller-facing
+contract and are not renamed to match the literature.
+
 ## 🗺️ Discovery Scenarios
 
 For a **visual, beginner-friendly overview** of every discovery scenario — with
@@ -619,6 +643,7 @@ graph TD
 | [AGENTS.md](AGENTS.md) | Agent-only invariants and rules (conventions live in CONTRIBUTING.md) |
 | [docs/CONFIGURATION.md](docs/CONFIGURATION.md) | Authoritative reference for every `NEAT_AI_DISCOVERY_*` environment variable |
 | [docs/DISCOVERY_TYPES.md](docs/DISCOVERY_TYPES.md) | All discovery types with success/failure rates |
+| [docs/PRIOR_ART.md](docs/PRIOR_ART.md) | The published work behind the pipeline, the impact model, and every detector — with the bibliography the `Prior art` column cites |
 | [docs/IMPACT_CALCULATION.md](docs/IMPACT_CALCULATION.md) | Neuron impact calculation details |
 | [docs/FOCUS_SELECTION.md](docs/FOCUS_SELECTION.md) | Focus-selection design end-to-end: why ~6 neurons, random → impact-weighted ranking, the wall-clock budget guard, and the error-guided fallback |
 | [docs/ANALYSIS_DEEP_DIVE.md](docs/ANALYSIS_DEEP_DIVE.md) | Detailed analysis workflow and detection algorithms |

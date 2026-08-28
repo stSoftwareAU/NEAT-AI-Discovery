@@ -10,6 +10,7 @@ is a crucial metric that determines:
 ## Table of Contents
 
 - [What is Impact?](#what-is-impact)
+- [Prior Art — Impact as an Attribution Measure](#-prior-art--impact-as-an-attribution-measure)
 - [Basic Impact Calculation](#basic-impact-calculation)
 - [Visual Examples](#visual-examples)
 - [Special Squash Function Handling](#special-squash-function-handling)
@@ -34,6 +35,45 @@ For **hidden neurons**, impact depends on:
 1. The weights of synapses connecting them to outputs (directly or indirectly)
 2. The squash functions of neurons they connect through
 3. Their activation patterns
+
+---
+
+## 🔗 Prior Art — Impact as an Attribution Measure
+
+Impact is house vocabulary for a measure the literature already names. The
+normalised path-weight propagation below starts a conserved quantity at the
+output neurons and redistributes it upstream in proportion to each unit's share
+of the inbound signal — the same move as **layer-wise relevance propagation**
+(Bach et al. 2015) and **DeepLIFT** (Shrikumar et al. 2017). Using the result to
+decide what to remove is **Optimal Brain Damage** (LeCun et al. 1989), and the
+first-order activation-times-sensitivity form used in practice is
+**Taylor-criterion pruning** (Molchanov et al. 2017).
+
+### Why impact discounting exists, and what the exact version would cost
+
+Per-unit attributions **do not sum to the whole-network effect**. Two neurons
+that each score 0.4 are not jointly worth 0.8 when their paths overlap, so
+naively adding per-candidate predictions overstates a creature-level gain — the
+`apply_impact_to_helpful()` discount exists to pull those predictions back.
+
+The principled treatment of that allocation problem is the **Shapley value**
+(Lundberg & Lee 2017): a unit's credit is its average marginal contribution over
+every subset of the others, which is the unique allocation that is efficient
+(the parts sum to the whole), symmetric, and additive. Discovery does not
+compute it. Exact Shapley allocation over $n$ units evaluates $2^n$ coalitions —
+on a 447-neuron creature that is $2^{447}$, and even a sampled approximation
+costs one forward pass per sampled coalition per unit, against a
+[project mission](../README.md#-project-mission) that measures discovery in
+seconds. Discounting buys a constant-time approximation of the same correction
+and gives up the axioms.
+
+The honest summary: impact is an attribution measure with a known-biased
+allocation rule, and the bias is in the direction the discount corrects. Where a
+prediction has to be trusted rather than merely ranked, the controller's
+full-corpus ablation test (Zhou et al. 2018) is what settles it.
+
+The full map from this repository's vocabulary onto the published work — for the
+pipeline as well as the impact model — is in [PRIOR_ART.md](PRIOR_ART.md).
 
 ---
 
@@ -429,6 +469,12 @@ for the opposite-axes rule that governs both.
 ---
 
 ## ♻️ Remove-Neuron Weight-Redistribution Compensation (Issue #1559)
+
+> **Prior art**: repairing the surviving parameters after a structural removal
+> is standard practice in network compression — bias correction after a
+> distribution shift (Nagel et al. 2019) and least-squares reconstruction of the
+> removed unit's output onto survivors (ThiNet, Luo et al. 2017). See
+> [PRIOR_ART.md](PRIOR_ART.md).
 
 A hygiene-forced `removeNeuron` is usually **regressive**: NEAT-AI's
 mean-preserving **bias** compensation cancels only the *mean* of the removed

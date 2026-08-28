@@ -6,6 +6,46 @@ overview, see [README.md](../README.md).
 
 ---
 
+## 🧭 How to Read This — The Two Framings
+
+Everything below is described in house vocabulary. Two published framings put
+that vocabulary in context, and both are mapped in full — with a bibliography —
+in [PRIOR_ART.md](PRIOR_ART.md).
+
+**1. The pipeline is a surrogate-assisted evolutionary algorithm** (Jin 2011).
+A cheap surrogate — the SSE reduction computed from `DiscoverRecord.errors` —
+proposes and ranks candidates without running the network; an expensive true
+evaluator — the controller's full-corpus re-score — accepts them; accepted
+candidates re-enter an evolving population. The ranking quantity, **expected
+improvement**, is the standard acquisition function from efficient global
+optimisation (Jones et al. 1998); the term was arrived at here independently
+but the correspondence holds. Discovery's surrogate is analytic rather than a
+fitted Gaussian process, so it carries no posterior variance: the ranking is a
+predicted mean gain, not a probability-weighted integral.
+
+Individual stages have names too — candidate clustering for redundancy
+reduction is batch acquisition with a diversity penalty (González et al. 2016);
+randomising within the top-K under a deadline is ε-greedy exploration (Auer et
+al. 2002); the success and failure caches are tabu-search memory (Glover 1986)
+with adaptive operator credit assignment (Fialho et al. 2010); and
+temperature-scaled acceptance is Metropolis–Hastings, annealed
+(Kirkpatrick et al. 1983) —
+audited in [CANDIDATE_PIPELINE_MCMC_AUDIT.md](CANDIDATE_PIPELINE_MCMC_AUDIT.md).
+
+**2. "Impact" is an attribution (saliency) measure.** The normalised
+path-weight propagation in [IMPACT_CALCULATION.md](IMPACT_CALCULATION.md)
+redistributes a conserved output quantity to upstream units, which is what
+layer-wise relevance propagation (Bach et al. 2015) and DeepLIFT (Shrikumar et
+al. 2017) do; removing the lowest-scoring units on that basis is Optimal Brain
+Damage (LeCun et al. 1989) and Taylor-criterion pruning (Molchanov et al.
+2017). The controller's clone-and-re-score validation is a unit-ablation study
+(Zhou et al. 2018).
+
+Per-detector citations live in the `Prior art` column of
+[DISCOVERY_TYPES.md](DISCOVERY_TYPES.md#-discovery-type-summary).
+
+---
+
 ## ⚙️ Analysis Workflow Details
 
 - Call `analyze_parallel` with your chosen focus targets. Passing a single focus

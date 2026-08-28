@@ -4,7 +4,7 @@ This document is the **single source of truth** for all discovery types used by
 NEAT-AI-Discovery. It covers detection criteria, recommended actions, candidate
 output format, and production success/failure rates.
 
-> **Last updated**: 5 Apr 2026
+> **Last updated**: 28 Aug 2026
 
 ## 📑 Table of Contents
 
@@ -141,83 +141,91 @@ checklist for adding a new cost to NEAT-AI, see
 
 ## 📋 Discovery Type Summary
 
+Each table carries a **Prior art** column naming the published work the detector
+implements or rediscovers. The citations are keys into the bibliography in
+[PRIOR_ART.md](PRIOR_ART.md#-bibliography), which holds the full reference and a
+link for each one. Detector names are the caller-facing contract and are **not**
+renamed to match the literature (Issue #2025); where a detector has no close
+published precedent the cell says so rather than reaching for the nearest famous
+paper.
+
 ### 🧠 Activation & Neuron State
 
-| Discovery Type | Source Module | Issue | Candidate Operations | Status |
-|----------------|--------------|-------|---------------------|--------|
-| [Saturated Neuron](#saturated-neuron-detection) | `detection/saturation.rs` | #342 | `changeSquash`, `setBias` | 🟢 Active |
-| [Dead Neuron](#dead-neuron-detection) | `detection/dead_neuron.rs` | #341 | `removeNeuron` | 🟢 Active |
-| [Oscillating Neuron](#oscillating-neuron-detection) | `detection/oscillating_neuron.rs` | #358 | `changeSquash`, `setBias` | 🟢 Active |
-| [Bimodal Neuron](#bimodal-neuron-detection) | `detection/bimodal_neuron.rs` | #640 | `addNeuron` | 🟢 Active |
-| [Restricted Range](#restricted-range-detection) | `detection/restricted_range.rs` | #399 | `changeSquash`, `setBias`, `setWeight` | 🟢 Active |
-| [Operating Point](#operating-point-analysis) | `detection/operating_point.rs` | #401 | `setBias`, `setWeight` | 🟢 Active |
-| [Unbounded Capping](#unbounded-capping-detection) | `detection/unbounded_capping.rs` | #441 | `changeSquash` | 🟢 Active |
-| [Activation Mismatch](#activation-mismatch-detection) | `detection/activation_mismatch.rs` | #543 | `changeSquash`, `setBias` | 🟢 Active |
-| [Monotonicity](#monotonicity-detection) | `detection/monotonicity.rs` | #643 | `addNeuron`, `changeSquash` | 🟢 Active |
-| [Error Plateau](#error-plateau-detection) | `detection/error_plateau.rs` | #545 | `changeSquash`, `setBias` | 🟢 Active |
-| [Output Range Compression](#output-range-compression-detection) | `detection/output_range_compression.rs` | #645 | `changeSquash` | 🟢 Active |
-| [Output Squash Mismatch](#output-squash-mismatch-detection) | `detection/output_squash_mismatch.rs` | #545 | `changeSquash` | 🟢 Active |
-| [Activation Recommendation](#activation-function-recommendation) | `recommendation/activation_recommendation.rs` | #431 | `changeSquash` | 🟢 Active |
-| [Bias Perturbation](#bias-perturbation-detection) | `detection/bias_perturbation.rs` | #551 | `setBias` | 🟢 Active |
-| [Squash + Weight Rescale](#squash--weight-rescale-detection) | `detection/squash_weight_rescale.rs` | #548 | `changeSquash`, `setWeight` | 🟢 Active |
-| [High Error Squash Exploration](#high-error-squash-exploration) | `detection/high_error_squash_exploration.rs` | #788 | `changeSquash` | 🟢 Active |
-| [Low-Impact Neuron](#low-impact-neuron-detection) | `detection/low_impact_neuron.rs` | #793 | `removeNeuron` | 🟢 Active |
+| Discovery Type | Source Module | Issue | Candidate Operations | Status | Prior art |
+|----------------|--------------|-------|---------------------|--------|--------|
+| [Saturated Neuron](#saturated-neuron-detection) | `detection/saturation.rs` | #342 | `changeSquash`, `setBias` | 🟢 Active | Glorot & Bengio 2010; Ioffe & Szegedy 2015 |
+| [Dead Neuron](#dead-neuron-detection) | `detection/dead_neuron.rs` | #341 | `removeNeuron` | 🟢 Active | Lu et al. 2019 (dying ReLU) |
+| [Oscillating Neuron](#oscillating-neuron-detection) | `detection/oscillating_neuron.rs` | #358 | `changeSquash`, `setBias` | 🟢 Active | No close precedent found (nearest: Riedmiller & Braun 1993, sign-change damping) |
+| [Bimodal Neuron](#bimodal-neuron-detection) | `detection/bimodal_neuron.rs` | #640 | `addNeuron` | 🟢 Active | Wu et al. 2020 (Firefly neuron splitting) |
+| [Restricted Range](#restricted-range-detection) | `detection/restricted_range.rs` | #399 | `changeSquash`, `setBias`, `setWeight` | 🟢 Active | Glorot & Bengio 2010; Ioffe & Szegedy 2015 |
+| [Operating Point](#operating-point-analysis) | `detection/operating_point.rs` | #401 | `setBias`, `setWeight` | 🟢 Active | Glorot & Bengio 2010; LeCun et al. 1998 |
+| [Unbounded Capping](#unbounded-capping-detection) | `detection/unbounded_capping.rs` | #441 | `changeSquash` | 🟢 Active | Howard et al. 2017 (ReLU6) |
+| [Activation Mismatch](#activation-mismatch-detection) | `detection/activation_mismatch.rs` | #543 | `changeSquash`, `setBias` | 🟢 Active | Ramachandran et al. 2017; He et al. 2015 |
+| [Monotonicity](#monotonicity-detection) | `detection/monotonicity.rs` | #643 | `addNeuron`, `changeSquash` | 🟢 Active | Sill 1997 |
+| [Error Plateau](#error-plateau-detection) | `detection/error_plateau.rs` | #545 | `changeSquash`, `setBias` | 🟢 Active | No close precedent found (nearest: Glorot & Bengio 2010, saturation-induced flat regions) |
+| [Output Range Compression](#output-range-compression-detection) | `detection/output_range_compression.rs` | #645 | `changeSquash` | 🟢 Active | Ioffe & Szegedy 2015 |
+| [Output Squash Mismatch](#output-squash-mismatch-detection) | `detection/output_squash_mismatch.rs` | #545 | `changeSquash` | 🟢 Active | Ramachandran et al. 2017; Agostinelli et al. 2015 |
+| [Activation Recommendation](#activation-function-recommendation) | `recommendation/activation_recommendation.rs` | #431 | `changeSquash` | 🟢 Active | Ramachandran et al. 2017; He et al. 2015; Agostinelli et al. 2015 |
+| [Bias Perturbation](#bias-perturbation-detection) | `detection/bias_perturbation.rs` | #551 | `setBias` | 🟢 Active | Zeiler & Fergus 2014 (occlusion sensitivity) |
+| [Squash + Weight Rescale](#squash--weight-rescale-detection) | `detection/squash_weight_rescale.rs` | #548 | `changeSquash`, `setWeight` | 🟢 Active | Chen et al. 2016; Nagel et al. 2019 |
+| [High Error Squash Exploration](#high-error-squash-exploration) | `detection/high_error_squash_exploration.rs` | #788 | `changeSquash` | 🟢 Active | Ramachandran et al. 2017; Auer et al. 2002 |
+| [Low-Impact Neuron](#low-impact-neuron-detection) | `detection/low_impact_neuron.rs` | #793 | `removeNeuron` | 🟢 Active | LeCun et al. 1989 (OBD); Molchanov et al. 2017 |
 
 ### ⚖️ Weight & Synapse
 
-| Discovery Type | Source Module | Issue | Candidate Operations | Status |
-|----------------|--------------|-------|---------------------|--------|
-| [Dormant Synapse](#dormant-synapse-detection) | `detection/dormant_synapse.rs` | #359 | `removeSynapse` | 🟢 Active |
-| [Opposing Synapse](#opposing-synapse-detection) | `detection/opposing_synapse.rs` | #360 | `removeSynapse`, `setWeight` | 🟢 Active |
-| [Weight Coherence](#weight-coherence-detection) | `detection/weight_coherence.rs` | #437 | `setWeight`, `removeSynapse` | 🟢 Active |
-| [Weight Magnitude Reset](#weight-magnitude-reset-detection) | `detection/weight_magnitude_reset.rs` | #550 | `setWeight` | 🟢 Active |
-| [Weight Polarity Flip](#weight-polarity-flip-detection) | `detection/weight_polarity_flip.rs` | #644 | `setWeight` | 🟢 Active |
-| [Noise-to-Signal](#noise-to-signal-ratio-detection) | `detection/noise_signal.rs` | #434 | `removeNeuron`, `removeSynapse`, `setWeight` | 🟢 Active |
-| [Fan-in Polarity Conflict](#fan-in-polarity-conflict-detection) | `detection/fanin_polarity_conflict.rs` | #641 | `addNeuron`, `addSynapse` | 🟢 Active |
-| [Gradient Discovery](#gradient-based-synapse-adjustment) | `recommendation/gradient_discovery.rs` | #421 | `setWeight` | 🟢 Active |
-| [Compound Degradation](#compound-degradation-detection) | `detection/compound_degradation.rs` | #929 | `coordinatedStructural` (`setBias` + `setWeight`) | 🟢 Active |
+| Discovery Type | Source Module | Issue | Candidate Operations | Status | Prior art |
+|----------------|--------------|-------|---------------------|--------|--------|
+| [Dormant Synapse](#dormant-synapse-detection) | `detection/dormant_synapse.rs` | #359 | `removeSynapse` | 🟢 Active | Han et al. 2015 |
+| [Opposing Synapse](#opposing-synapse-detection) | `detection/opposing_synapse.rs` | #360 | `removeSynapse`, `setWeight` | 🟢 Active | Han et al. 2015; Srinivas & Babu 2015 |
+| [Weight Coherence](#weight-coherence-detection) | `detection/weight_coherence.rs` | #437 | `setWeight`, `removeSynapse` | 🟢 Active | Molchanov et al. 2019 |
+| [Weight Magnitude Reset](#weight-magnitude-reset-detection) | `detection/weight_magnitude_reset.rs` | #550 | `setWeight` | 🟢 Active | Frankle & Carbin 2019 |
+| [Weight Polarity Flip](#weight-polarity-flip-detection) | `detection/weight_polarity_flip.rs` | #644 | `setWeight` | 🟢 Active | Riedmiller & Braun 1993 (RPROP) |
+| [Noise-to-Signal](#noise-to-signal-ratio-detection) | `detection/noise_signal.rs` | #434 | `removeNeuron`, `removeSynapse`, `setWeight` | 🟢 Active | Han et al. 2015; LeCun et al. 1989 |
+| [Fan-in Polarity Conflict](#fan-in-polarity-conflict-detection) | `detection/fanin_polarity_conflict.rs` | #641 | `addNeuron`, `addSynapse` | 🟢 Active | Wu et al. 2020 |
+| [Gradient Discovery](#gradient-based-synapse-adjustment) | `recommendation/gradient_discovery.rs` | #421 | `setWeight` | 🟢 Active | Rumelhart et al. 1986; LeCun et al. 1998 |
+| [Compound Degradation](#compound-degradation-detection) | `detection/compound_degradation.rs` | #929 | `coordinatedStructural` (`setBias` + `setWeight`) | 🟢 Active | Harik & Goldberg 1997 (linkage learning) |
 
 ### 🏗️ Structural & Topology
 
-| Discovery Type | Source Module | Issue | Candidate Operations | Status |
-|----------------|--------------|-------|---------------------|--------|
-| [Bottleneck Neuron](#bottleneck-neuron-detection) | `detection/bottleneck.rs` | #343 | `addNeuron`, `addSynapse` | 🟢 Active |
-| [Correlated Error](#correlated-error-pattern-detection) | `detection/correlated_error.rs` | #344 | `addNeuron`, `addSynapse` | 🟢 Active |
-| [Redundant Path](#redundant-path-pruning) | `detection/redundant_path.rs` | #164 | `removeSynapse`, `setWeight` | 🟢 Active |
-| [Topology Structure](#topology-aware-structure-analysis) | `detection/topology.rs` | #422 | `addSynapse` | 🟢 Active |
-| [Topology Diversification](#topology-diversification-detection) | `detection/topology_diversification.rs` | #549 | `addNeuron` | 🟢 Active |
-| [Skip Connection](#skip-connection-detection) | `detection/skip_connection.rs` | #570 | `addSynapse` | 🟢 Active |
-| [Symmetry Breaking](#symmetry-breaking-detection) | `detection/symmetry_breaking.rs` | #569 | `setBias`, `setWeight`, `changeSquash` | 🟢 Active |
-| [Co-Adaptation](#co-adaptation-detection) | `detection/co_adaptation.rs` | #571 | `removeNeuron`, `setWeight` | 🟢 Active |
-| [Merge Redundant Neuron](#merge-redundant-neuron-detection) | `merge_redundant_neuron.rs` | #1633 | `setWeight`/`addSynapse`, `setBias`, `removeNeuron` | 🟢 Active |
-| [Output Conflict](#output-conflict-detection) | `detection/output_conflict.rs` | #639 | `addSynapse`, `addNeuron` | 🟢 Active |
-| [Hard Sample Cluster](#hard-sample-cluster-detection) | `detection/hard_sample_cluster.rs` | #642 | `addNeuron`, `addSynapse` | 🟢 Active |
-| [Multi-Hop](#multi-hop-candidate-analysis) | `recommendation/multi_hop.rs` | #230 | `addNeuron`, `addSynapse` | 🟢 Active |
-| [Combo Successful](#combo-successful) | `recommendation/epistatic/` | #415 | Multiple | 🟡 Fixed |
-| [Fan-in Candidates](#fan-in-candidates) | `recommendation/fan_in.rs` | #908 | `coordinatedStructural` (`addNeuron` + `addSynapse`) | 🟢 Active |
-| [Cross-Detection Synthesis](#cross-detection-synthesis) | `detection/cross_detection_synthesis.rs` | #963 | `coordinatedStructural` (multiple) | 🟢 Active |
+| Discovery Type | Source Module | Issue | Candidate Operations | Status | Prior art |
+|----------------|--------------|-------|---------------------|--------|--------|
+| [Bottleneck Neuron](#bottleneck-neuron-detection) | `detection/bottleneck.rs` | #343 | `addNeuron`, `addSynapse` | 🟢 Active | Chen et al. 2016; Evci et al. 2022 |
+| [Correlated Error](#correlated-error-pattern-detection) | `detection/correlated_error.rs` | #344 | `addNeuron`, `addSynapse` | 🟢 Active | Fahlman & Lebiere 1990 (Cascade-Correlation) |
+| [Redundant Path](#redundant-path-pruning) | `detection/redundant_path.rs` | #164 | `removeSynapse`, `setWeight` | 🟢 Active | Srinivas & Babu 2015; Luo et al. 2017 |
+| [Topology Structure](#topology-aware-structure-analysis) | `detection/topology.rs` | #422 | `addSynapse` | 🟢 Active | Elsken et al. 2019 |
+| [Topology Diversification](#topology-diversification-detection) | `detection/topology_diversification.rs` | #549 | `addNeuron` | 🟢 Active | Lehman & Stanley 2011 (novelty search) |
+| [Skip Connection](#skip-connection-detection) | `detection/skip_connection.rs` | #570 | `addSynapse` | 🟢 Active | He et al. 2016 (ResNet) |
+| [Symmetry Breaking](#symmetry-breaking-detection) | `detection/symmetry_breaking.rs` | #569 | `setBias`, `setWeight`, `changeSquash` | 🟢 Active | Wu et al. 2020; Chen et al. 2016 |
+| [Co-Adaptation](#co-adaptation-detection) | `detection/co_adaptation.rs` | #571 | `removeNeuron`, `setWeight` | 🟢 Active | Hinton et al. 2012 (dropout framing) |
+| [Merge Redundant Neuron](#merge-redundant-neuron-detection) | `merge_redundant_neuron.rs` | #1633 | `setWeight`/`addSynapse`, `setBias`, `removeNeuron` | 🟢 Active | Srinivas & Babu 2015 |
+| [Output Conflict](#output-conflict-detection) | `detection/output_conflict.rs` | #639 | `addSynapse`, `addNeuron` | 🟢 Active | Yu et al. 2020 (gradient surgery) |
+| [Hard Sample Cluster](#hard-sample-cluster-detection) | `detection/hard_sample_cluster.rs` | #642 | `addNeuron`, `addSynapse` | 🟢 Active | Freund & Schapire 1997; Shrivastava et al. 2016; Lin et al. 2017 |
+| [Multi-Hop](#multi-hop-candidate-analysis) | `recommendation/multi_hop.rs` | #230 | `addNeuron`, `addSynapse` | 🟢 Active | Bach et al. 2015 (path credit assignment) |
+| [Combo Successful](#combo-successful) | `recommendation/epistatic/` | #415 | Multiple | 🟡 Fixed | Harik & Goldberg 1997; Thierens 2010 |
+| [Fan-in Candidates](#fan-in-candidates) | `recommendation/fan_in.rs` | #908 | `coordinatedStructural` (`addNeuron` + `addSynapse`) | 🟢 Active | Evci et al. 2022; Wu et al. 2020 |
+| [Cross-Detection Synthesis](#cross-detection-synthesis) | `detection/cross_detection_synthesis.rs` | #963 | `coordinatedStructural` (multiple) | 🟢 Active | Thierens 2010 |
 
 ### 📐 Range & Input Analysis
 
-| Discovery Type | Source Module | Issue | Candidate Operations | Status |
-|----------------|--------------|-------|---------------------|--------|
-| [Bounded Range](#bounded-range-detection) | `detection/bounded_range.rs` | #395 | `addNeuron`, `addSynapse` | 🟢 Active |
-| [Sentinel Gating](#sentinel-gating-detection) | `detection/sentinel_gating.rs` | #400 | `addNeuron`, `addSynapse` | 🟢 Active |
-| [Observation Utilisation](#observation-utilisation-detection) | `detection/observation_utilisation.rs` | #543 | `addNeuron`, `addSynapse` | 🟢 Active |
-| [Input Sensitivity](#input-sensitivity-detection) | `detection/input_sensitivity.rs` | #435 | `setWeight`, `addNeuron`, `setBias` | 🟢 Active |
+| Discovery Type | Source Module | Issue | Candidate Operations | Status | Prior art |
+|----------------|--------------|-------|---------------------|--------|--------|
+| [Bounded Range](#bounded-range-detection) | `detection/bounded_range.rs` | #395 | `addNeuron`, `addSynapse` | 🟢 Active | LeCun et al. 1998 |
+| [Sentinel Gating](#sentinel-gating-detection) | `detection/sentinel_gating.rs` | #400 | `addNeuron`, `addSynapse` | 🟢 Active | Little & Rubin 2002 (missing-data indicators) |
+| [Observation Utilisation](#observation-utilisation-detection) | `detection/observation_utilisation.rs` | #543 | `addNeuron`, `addSynapse` | 🟢 Active | Guyon & Elisseeff 2003 |
+| [Input Sensitivity](#input-sensitivity-detection) | `detection/input_sensitivity.rs` | #435 | `setWeight`, `addNeuron`, `setBias` | 🟢 Active | Simonyan et al. 2014 (gradient saliency) |
 
 ### 💡 Scoring & Recommendation
 
-| Discovery Type | Source Module | Issue | Candidate Operations | Status |
-|----------------|--------------|-------|---------------------|--------|
-| [Output Bias Drift](#output-bias-drift-detection) | `recommendation/output_bias_drift.rs` | #361 | `setBias` | 🟢 Active |
-| [Sample-Weighted](#sample-weighted-discovery) | `recommendation/sample_weighted.rs` | #423 | `setBias` | 🟢 Active |
-| [Add Neurons](#add-neurons) | `neuron/` | — | `addNeuron` | 🟢 Active |
-| [Add Synapses](#add-synapses) | `synapse/` | #413 | `addSynapse` | 🟡 Fixed |
-| [Remove Low-Impact](#remove-low-impact-neurons) | `neuron/` | — | `removeNeuron` | 🟢 Active |
-| [Remove Harmful Synapse](#remove-harmful-synapse) | `synapse/` | #416 | `removeSynapse` | 🟢 Active |
-| [Remove Neuron (Error)](#remove-neuron-high-error) | `focus/` | #414 | `removeNeuron` | ⛔ Disabled |
-| [Batch-Successful Grouping](#batch-successful-grouping) | `recommendation/batch_successful/` | #965 | `coordinatedStructural` (multiple) | ⛔ Disabled by default |
+| Discovery Type | Source Module | Issue | Candidate Operations | Status | Prior art |
+|----------------|--------------|-------|---------------------|--------|--------|
+| [Output Bias Drift](#output-bias-drift-detection) | `recommendation/output_bias_drift.rs` | #361 | `setBias` | 🟢 Active | Nagel et al. 2019 (bias correction) |
+| [Sample-Weighted](#sample-weighted-discovery) | `recommendation/sample_weighted.rs` | #423 | `setBias` | 🟢 Active | Freund & Schapire 1997; Lin et al. 2017 |
+| [Add Neurons](#add-neurons) | `neuron/` | — | `addNeuron` | 🟢 Active | Fahlman & Lebiere 1990; Chen et al. 2016; Wu et al. 2020; Evci et al. 2022 |
+| [Add Synapses](#add-synapses) | `synapse/` | #413 | `addSynapse` | 🟡 Fixed | Evci et al. 2022 (GradMax) |
+| [Remove Low-Impact](#remove-low-impact-neurons) | `neuron/` | — | `removeNeuron` | 🟢 Active | LeCun et al. 1989; Molchanov et al. 2017 |
+| [Remove Harmful Synapse](#remove-harmful-synapse) | `synapse/` | #416 | `removeSynapse` | 🟢 Active | Hassibi & Stork 1993 (OBS); Molchanov et al. 2017 |
+| [Remove Neuron (Error)](#remove-neuron-high-error) | `focus/` | #414 | `removeNeuron` | ⛔ Disabled | LeCun et al. 1989; Zhou et al. 2018 |
+| [Batch-Successful Grouping](#batch-successful-grouping) | `recommendation/batch_successful/` | #965 | `coordinatedStructural` (multiple) | ⛔ Disabled by default | Harik & Goldberg 1997; González et al. 2016 |
 
 ### 🏷️ Status Legend
 
@@ -2162,6 +2170,8 @@ All 7 operation types are implemented in NEAT-AI's
 
 ## 📚 Related Documentation
 
+- [Prior Art](PRIOR_ART.md) — The bibliography behind the `Prior art` column,
+  and the framings for the pipeline and the impact model
 - [Impact Calculation](IMPACT_CALCULATION.md) — How neuron impact is computed
 - [Analysis Deep Dive](ANALYSIS_DEEP_DIVE.md) — Detailed analysis workflow and
   detection algorithms
