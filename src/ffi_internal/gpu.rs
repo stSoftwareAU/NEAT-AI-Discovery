@@ -141,6 +141,32 @@ mod tests {
         );
     }
 
+    /// An operator-disabled GPU (GRQ#4405) must reach the caller as a
+    /// **permanent, non-retryable** verdict that still names the variable —
+    /// never a hard error, and never something the host retries as though the
+    /// driver had blipped.
+    #[test]
+    fn operator_disabled_gpu_is_a_permanent_non_error_verdict() {
+        let output = build_check_gpu_output(crate::analysis::gpu::gpu_disabled_result());
+
+        assert!(output.success, "the probe answered; it did not fail");
+        assert!(!output.gpu_available);
+        assert_eq!(output.error_kind, Some(DiscoveryErrorKind::GpuPermanent));
+        assert_eq!(output.retryable, Some(false));
+        assert!(
+            output.error.is_none(),
+            "a configuration choice is not an error"
+        );
+        assert!(
+            output
+                .reason
+                .as_deref()
+                .unwrap_or_default()
+                .contains("NEAT_AI_DISCOVERY_GPU=off"),
+            "the verdict must name the variable that caused it"
+        );
+    }
+
     /// A transient GPU failure (device lost / creation failure) must classify
     /// as retryable so the caller retries rather than skipping the host.
     #[test]

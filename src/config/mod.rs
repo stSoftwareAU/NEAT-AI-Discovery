@@ -34,6 +34,7 @@
 //! | `NEAT_AI_DISCOVERY_MAX_SOURCES_PER_TARGET` | usize | unlimited | Cap the number of priority-ordered source neurons evaluated (sample-build + GPU) per focus target (Issue #1542). `0`/unset/invalid = unlimited (back-compat). |
 //! | `NEAT_AI_DISCOVERY_ZERO_COPY` | Option\<bool\> | auto | Force-enable/disable zero-copy buffers |
 //! | `NEAT_AI_DISCOVERY_QUIET_GPU` | bool | `false` | Suppress Mesa/libEGL debug output (Linux) |
+//! | `NEAT_AI_DISCOVERY_GPU` | `auto`/`on`/`off` | `auto` | Host GPU policy (GRQ#4405). `off` (also `0`/`false`/`no`) creates no `wgpu` instance, requests no adapter and creates no device, so a host whose driver loses the device mid-run cannot be taken down by a probe; discovery is GPU-only, so it then reports the same permanent, non-retryable unavailable verdict a GPU-less host receives. `auto`/`on`/unset probe as before; an unrecognised value is logged and treated as `auto`. Must be set **outside** the process — the library never writes its own GPU variables (Issue #1873). |
 //! | `NEAT_AI_DISCOVERY_MH_TEMPERATURE` | f32 | disabled | Metropolis-Hastings temperature for probabilistic acceptance (0.01–5.0) |
 //! | `NEAT_AI_DISCOVERY_SESSION_TTL_SECS` | u64 | `3600` | Streaming session TTL for orphan cleanup (60–86400) |
 //! | `NEAT_AI_DISCOVERY_BATCH_SUCCESSFUL` | bool | `false` | Re-enable disabled batch-successful module (Issue #1059) |
@@ -147,6 +148,44 @@ mod tests {
         assert_eq!(truthy("no"), Some(false));
         assert_eq!(truthy("maybe"), None);
         assert_eq!(truthy(""), None);
+    }
+
+    /// The `NEAT_AI_DISCOVERY_GPU` mode selector (GRQ#4405). Parsed as a pure
+    /// function so the vocabulary is asserted without mutating the process
+    /// environment, which every other thread in this suite shares.
+    #[test]
+    fn gpu_mode_off_words_disable_the_gpu() {
+        for raw in ["off", "OFF", " off ", "0", "false", "FALSE", "no"] {
+            assert_eq!(
+                parse_gpu_mode(Some(raw)),
+                Some(false),
+                "{raw} must turn the GPU off"
+            );
+        }
+    }
+
+    #[test]
+    fn gpu_mode_defaults_to_probing() {
+        // Unset and empty both mean "unchanged", as does every on/auto word:
+        // a host that never opted out must keep probing exactly as before.
+        for raw in [
+            None,
+            Some(""),
+            Some("auto"),
+            Some("on"),
+            Some("1"),
+            Some("true"),
+        ] {
+            assert_eq!(parse_gpu_mode(raw), Some(true), "{raw:?} must keep the GPU");
+        }
+    }
+
+    #[test]
+    fn gpu_mode_rejects_an_unrecognised_word() {
+        // `None` is the "I do not understand this" verdict the caller reports
+        // rather than silently guessing a mode the operator did not ask for.
+        assert_eq!(parse_gpu_mode(Some("maybe")), None);
+        assert_eq!(parse_gpu_mode(Some("vulkan")), None);
     }
 
     #[test]

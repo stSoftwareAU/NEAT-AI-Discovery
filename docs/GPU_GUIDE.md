@@ -221,6 +221,31 @@ The same applies to the Mesa variables written for `NEAT_AI_DISCOVERY_QUIET_GPU=
 (`EGL_LOG_LEVEL`, `MESA_GLSL_CACHE_DISABLE`, `MESA_DEBUG`) — export them yourself
 when the process is already multi-threaded at first GPU use.
 
+### 🚫 Turning the GPU off entirely (`NEAT_AI_DISCOVERY_GPU=off`)
+
+Some hosts should never touch their GPU — an old card whose driver loses the
+device mid-run takes the whole process with it, and the operator would rather
+the machine were simply slower (GRQ#4405). Export the mode before starting the
+process:
+
+```bash
+export NEAT_AI_DISCOVERY_GPU=off   # auto (default) | on | off
+```
+
+`off` short-circuits `create_wgpu_instance_safely`, the single chokepoint every
+GPU path funnels through: **no instance, no adapter request, no device**, and
+therefore no Vulkan/Metal probe and no `XDG_RUNTIME_DIR`/Mesa environment setup.
+Discovery is GPU-only, so `check_gpu_available` then returns the same
+permanent, non-retryable *unavailable* verdict a GPU-less host already receives
+— the caller skips discovery and evolution continues on the CPU. `GpuAnalyzer::new`
+fails loudly with the same reason rather than handing back a device-less
+analyser.
+
+`auto` (the default), `on`, or leaving the variable unset probe exactly as
+before, so nothing changes for hosts that never opt out. An unrecognised value
+is logged once and treated as `auto` — a typo must not silently disable
+discovery across a fleet.
+
 ### 🔐 EGL/DRI permission denied warnings on Linux
 
 If you see warnings like `libEGL warning: failed to open /dev/dri/renderD128: Permission denied`

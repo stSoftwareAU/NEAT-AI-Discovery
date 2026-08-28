@@ -10,8 +10,9 @@ use anyhow::Result;
 use std::time::Duration;
 
 use crate::analysis::gpu::device::{
-    GpuAvailabilityResult, GpuPerformanceTier, create_wgpu_instance_safely, detect_gpu_tier,
-    detect_unified_memory, get_adapter_info_internal, no_gpu_result, poll_device_until_idle,
+    GPU_DISABLED_REASON, GpuAvailabilityResult, GpuPerformanceTier, create_wgpu_instance_safely,
+    detect_gpu_tier, detect_unified_memory, get_adapter_info_internal, gpu_disabled_result,
+    no_gpu_result, poll_device_until_idle,
 };
 
 use crate::analysis::gpu::shaders::GPU_INIT_TIMEOUT_SECS;
@@ -257,6 +258,13 @@ impl GpuAnalyzer {
 
     /// Check GPU availability with detailed diagnostics and error classification.
     pub fn check_gpu_availability() -> GpuAvailabilityResult {
+        // An operator who declared this host CPU-only (GRQ#4405) is answered
+        // before anything touches the GPU — including the environment setup
+        // below, which exists only to make a probe quieter.
+        if !crate::config::gpu_enabled() {
+            return gpu_disabled_result();
+        }
+
         // Check minimum system requirements FIRST before any GPU operations.
         // This prevents hangs on very old/constrained machines by disabling discovery early.
         if let Some(result) = check_minimum_system_requirements() {
@@ -345,6 +353,17 @@ impl GpuAnalyzer {
 
     /// Create a new `GpuAnalyzer` with all pipelines initialised (~100ms; reuse the instance).
     pub fn new() -> Result<Self> {
+        // A CPU-only host (GRQ#4405) fails loudly here rather than quietly
+        // constructing an analyser with no device: discovery is GPU-only, and a
+        // caller that reached `new()` without checking `check_gpu_available`
+        // must be told why it cannot run.
+        if !crate::config::gpu_enabled() {
+            anyhow::bail!(
+                "{GPU_DISABLED_REASON}. Discovery requires GPU acceleration; unset the \
+                 variable (or set it to `auto`) to probe for a GPU again."
+            );
+        }
+
         // Suppress Mesa/libEGL warnings if requested and set XDG_RUNTIME_DIR
         // (required by wgpu on Linux/Wayland). The writes only happen while the
         // process is observably single-threaded; otherwise they are skipped and

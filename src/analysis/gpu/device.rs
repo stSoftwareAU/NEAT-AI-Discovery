@@ -175,8 +175,18 @@ pub fn detect_gpu_tier(adapter_info: &wgpu::AdapterInfo) -> GpuPerformanceTier {
 ///
 /// Returns `None` if instance creation fails or panics, allowing callers to handle
 /// the failure gracefully (e.g., treating missing GPU as discovery-disabled on Linux).
+///
+/// `NEAT_AI_DISCOVERY_GPU=off` short-circuits here (GRQ#4405): this is the one
+/// chokepoint every GPU path goes through, so refusing the instance is what
+/// guarantees no adapter is requested and no device is created on a host the
+/// operator has declared CPU-only.
 pub fn create_wgpu_instance_safely() -> Option<wgpu::Instance> {
     use std::panic;
+
+    if !crate::config::gpu_enabled() {
+        log_gpu_disabled_once();
+        return None;
+    }
 
     // On Linux, avoid GL/GLES backend which can panic on EGL initialisation
     // when /dev/dri devices are missing or inaccessible.
@@ -385,6 +395,53 @@ pub fn wait_for_buffer_maps_batch(
         }
         thread::sleep(Duration::from_millis(10));
     }
+}
+
+// =============================================================================
+// Operator-disabled GPU (GRQ#4405)
+// =============================================================================
+
+/// The reason reported when `NEAT_AI_DISCOVERY_GPU=off` refuses the GPU.
+///
+/// The wording carries `GPU unavailable` deliberately: that is the phrase
+/// `classify_error` maps to a **permanent, non-retryable** verdict, so a host
+/// the operator deliberately put on the CPU is never retried as if its driver
+/// had blipped.
+pub const GPU_DISABLED_REASON: &str = "GPU unavailable: disabled by NEAT_AI_DISCOVERY_GPU=off";
+
+/// The availability verdict for an operator-disabled GPU.
+///
+/// Unlike [`no_gpu_result`], this is **never** a hard error — not even on
+/// macOS, where a missing Metal adapter would be. The operator asked for it, so
+/// it is a deliberate configuration, not a broken host.
+pub fn gpu_disabled_result() -> GpuAvailabilityResult {
+    GpuAvailabilityResult {
+        available: false,
+        reason: Some(format!(
+            "{GPU_DISABLED_REASON}. Discovery analysis is GPU-only, so it yields no \
+             proposals on this host; evolution is unaffected. Unset the variable (or set \
+             it to `auto`) to probe for a GPU again."
+        )),
+        is_error: false,
+    }
+}
+
+/// Log the operator-disabled verdict once per process.
+///
+/// Once, because every GPU entry point funnels through
+/// [`create_wgpu_instance_safely`] and a per-call line would repeat for every
+/// analysis pass; at `info` rather than `warn`, because a configured CPU-only
+/// host is working as asked.
+fn log_gpu_disabled_once() {
+    use std::sync::Once;
+
+    static LOGGED: Once = Once::new();
+    LOGGED.call_once(|| {
+        tracing::info!(
+            "{GPU_DISABLED_REASON}: no wgpu instance, adapter or device will be created \
+             in this process."
+        );
+    });
 }
 
 // =============================================================================
@@ -634,5 +691,98 @@ mod tests {
         // The function should handle empty receivers gracefully
         // We can't actually call it without a device, but the behaviour is documented
         assert!(receivers.is_empty());
+    }
+
+    /// `NEAT_AI_DISCOVERY_GPU=off` must refuse the wgpu instance outright
+    /// (GRQ#4405). This is the chokepoint every GPU path funnels through, so a
+    /// `None` here is what proves no adapter is requested and no device is
+    /// created on a host the operator declared CPU-only.
+    #[test]
+    #[serial_test::serial]
+    fn gpu_off_refuses_the_wgpu_instance() {
+        with_gpu_env(Some("off"), || {
+            assert!(
+                create_wgpu_instance_safely().is_none(),
+                "an instance was created despite NEAT_AI_DISCOVERY_GPU=off"
+            );
+        });
+    }
+
+    /// The availability probe answers from configuration alone — before the
+    /// memory gate, the environment setup, or any wgpu call.
+    #[test]
+    #[serial_test::serial]
+    fn gpu_off_reports_unavailable_without_probing() {
+        with_gpu_env(Some("off"), || {
+            let result = crate::analysis::GpuAnalyzer::check_gpu_availability();
+
+            assert!(!result.available, "GPU reported available while off");
+            assert!(
+                !result.is_error,
+                "an operator-disabled GPU is a configuration, not a broken host — \
+                 even on macOS, where a missing Metal adapter would be an error"
+            );
+            let reason = result.reason.unwrap_or_default();
+            assert!(
+                reason.contains("NEAT_AI_DISCOVERY_GPU=off"),
+                "the reason must name the variable that caused it: {reason}"
+            );
+        });
+    }
+
+    /// Constructing the analyser fails loudly rather than handing back a
+    /// device-less analyser that would fail later, further from the cause.
+    #[test]
+    #[serial_test::serial]
+    fn gpu_off_fails_analyser_construction_loudly() {
+        with_gpu_env(Some("off"), || {
+            let Err(error) = crate::analysis::GpuAnalyzer::new() else {
+                panic!("GpuAnalyzer::new must refuse to build with the GPU off");
+            };
+
+            assert!(
+                error.to_string().contains("NEAT_AI_DISCOVERY_GPU=off"),
+                "the error must name the variable that caused it: {error}"
+            );
+        });
+    }
+
+    /// An unrecognised value keeps the pre-existing behaviour: probing stays on
+    /// rather than a typo silently disabling discovery fleet-wide.
+    #[test]
+    #[serial_test::serial]
+    fn an_unrecognised_gpu_mode_keeps_probing_enabled() {
+        with_gpu_env(Some("maybe"), || {
+            assert!(crate::config::gpu_enabled());
+        });
+    }
+
+    /// Set `NEAT_AI_DISCOVERY_GPU` to `value` (or clear it), run `body`, then
+    /// restore whatever the environment held before.
+    ///
+    /// Every caller is `#[serial]`, which is what makes the `set_var` sound.
+    fn with_gpu_env<T>(value: Option<&str>, body: impl FnOnce() -> T) -> T {
+        const KEY: &str = "NEAT_AI_DISCOVERY_GPU";
+        let previous = std::env::var(KEY).ok();
+
+        // SAFETY: Serialised via #[serial]; no other thread reads the
+        // environment while these tests run.
+        unsafe {
+            match value {
+                Some(v) => std::env::set_var(KEY, v),
+                None => std::env::remove_var(KEY),
+            }
+        }
+
+        let result = body();
+
+        // SAFETY: Serialised via #[serial], as above.
+        unsafe {
+            match previous {
+                Some(v) => std::env::set_var(KEY, v),
+                None => std::env::remove_var(KEY),
+            }
+        }
+        result
     }
 }

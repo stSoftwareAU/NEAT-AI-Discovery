@@ -6,6 +6,28 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+#### `NEAT_AI_DISCOVERY_GPU=off` turns the GPU off on a host that must stay CPU-only (GRQ#4405)
+
+Old Linux hosts probed Vulkan, and one lost the device mid-run
+(`Parent device is lost`) and killed a 1075-second stage. The operator's
+position is that those machines run CPU-only and are simply slower, but the
+crate offered no way to say so: `NEAT_AI_DISCOVERY_QUIET_GPU` only quiets Mesa,
+and the backends are chosen in code. `NEAT_AI_DISCOVERY_GPU` now borrows the
+scorer's `auto|on|off` vocabulary and is honoured at
+`create_wgpu_instance_safely` — the single chokepoint every GPU path funnels
+through — so `off` creates **no instance, no adapter and no device**, and
+neither the Vulkan/Metal probe nor the `XDG_RUNTIME_DIR`/Mesa environment setup
+runs. Discovery is GPU-only, so `check_gpu_available` reports the same
+permanent, non-retryable *unavailable* verdict a GPU-less host already receives
+(never a hard error, not even on macOS, because this is a configuration and not
+a broken host), and `GpuAnalyzer::new` fails loudly with the same reason.
+`auto`/`on`/unset probe exactly as before; an unrecognised value is logged once
+and treated as `auto` so a typo cannot silently disable discovery fleet-wide.
+The mode must be set from outside the process — the library still never writes
+its own GPU variables (Issue #1873).
+
 ### Fixed
 
 #### FFI `CreatureJson` rejects `input < 1` / `output < 1`; emitted creatures keep the observation width (Issue #2020)

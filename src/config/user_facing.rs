@@ -427,6 +427,53 @@ pub fn quiet_gpu() -> bool {
     std::env::var("NEAT_AI_DISCOVERY_QUIET_GPU").is_ok()
 }
 
+/// Whether this host may use its GPU at all (GRQ#4405).
+///
+/// `NEAT_AI_DISCOVERY_GPU` borrows the scorer's `NEAT_SCORER_GPU` vocabulary so
+/// one host policy can turn both off with the same word:
+/// - `off` / `0` / `false` / `no`: never create a `wgpu` instance. No adapter
+///   is requested, no device is created, and no Vulkan/Metal probe runs, so a
+///   host whose driver loses the device mid-run cannot be taken down by one.
+///   Discovery is GPU-only, so it reports itself unavailable — the same
+///   permanent, non-retryable verdict a GPU-less host already receives.
+/// - `auto` (the default) / `on` / `1` / `true` / `yes` / unset / empty: probe
+///   as before.
+///
+/// An operator can only express this from **outside** the process: the GPU path
+/// initialises lazily on a multi-threaded process, where writing the
+/// environment would race a concurrent `getenv`, so the library never sets its
+/// own GPU variables (Issue #1873).
+pub fn gpu_enabled() -> bool {
+    let raw = std::env::var("NEAT_AI_DISCOVERY_GPU").ok();
+    match parse_gpu_mode(raw.as_deref()) {
+        Some(enabled) => enabled,
+        None => {
+            tracing::warn!(
+                raw_value = raw.as_deref().unwrap_or_default(),
+                "Ignoring unrecognised NEAT_AI_DISCOVERY_GPU (expected auto|on|off); \
+                 GPU probing stays enabled"
+            );
+            true
+        }
+    }
+}
+
+/// Parse the `NEAT_AI_DISCOVERY_GPU` mode.
+///
+/// `Some(true)` = probe, `Some(false)` = never touch the GPU, `None` = the
+/// value is not a mode this crate understands and the caller must report it
+/// rather than guessing.
+pub(crate) fn parse_gpu_mode(raw: Option<&str>) -> Option<bool> {
+    let Some(value) = raw else {
+        return Some(true);
+    };
+    match value.trim().to_lowercase().as_str() {
+        "" | "auto" | "on" | "1" | "true" | "yes" => Some(true),
+        "off" | "0" | "false" | "no" => Some(false),
+        _ => None,
+    }
+}
+
 /// Default constant source effect threshold.
 pub const DEFAULT_CONSTANT_SOURCE_EFFECT_THRESHOLD: f32 = 1e-7;
 
