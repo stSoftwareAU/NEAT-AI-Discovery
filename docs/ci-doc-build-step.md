@@ -4,7 +4,7 @@
 **Status:** ⏳ **Pending proposal — not yet implemented.** No `cargo doc` step
 exists in any workflow under `.github/workflows/`. The only documentation check
 in CI today is the "Check documentation" step in the `validation` job
-(`ci.yml:415-434`), which merely checks `README.md` is not a stub and greps
+(`ci.yml:408-427`), which merely checks `README.md` is not a stub and greps
 `src/lib.rs` for `///` doc comments — it does **not** build the docs or fail on
 broken doc links.
 

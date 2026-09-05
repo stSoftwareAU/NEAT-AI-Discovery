@@ -234,6 +234,16 @@ during the runner's *Prepare all required actions* phase — a fetch with a fixe
 100 s timeout and a 3-attempt retry policy that a workflow cannot tune, so a
 codeload stall failed the job before any repository code ran (Issue #1891).
 
+That script is invoked from exactly one place: the
+`.github/actions/setup-rust` composite action, which every bootstrap call site
+references as `uses: ./.github/actions/setup-rust` (with
+`components: rustfmt, clippy` where the job formats or lints). Change the
+bootstrap sequence there once rather than in five jobs (Issue #2036). The
+checkout stays in each job — GitHub loads a local action from the runner's
+workspace, so the repository must already be checked out before the action file
+exists — and the jobs' checkouts differ in `ref`, `fetch-depth` and `token`
+anyway.
+
 **Do NOT modify `.github/workflows/ci.yml` without explicit approval.**
 
 ---
