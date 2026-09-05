@@ -22,12 +22,16 @@ jobs:
     # (Issue #1287).
     timeout-minutes: 10
     container:
-      # Pinned to semgrep/semgrep 1.163.0 (Issue #1258). The multi-arch
-      # manifest digest below is immutable; Renovate's github-actions
-      # manager does not track jobs.<job>.container.image, so the 24h
-      # quarantine in renovate.json does not protect this surface — pin
-      # to a content digest and let bump-deps.sh rotate it.
-      image: semgrep/semgrep@sha256:7cad2bc2d1e44f87f0bf4be6d1fa23aa90fb72015bebc89fb91385d813987a03
+      # Pinned to semgrep/semgrep 1.163.0 (Issue #1258), carrying BOTH the
+      # release tag and the multi-arch manifest digest (Issue #2035). The
+      # digest is what the runner resolves, so the image stays immutable;
+      # the tag is the version an updater resolves a bump *from* — a bare
+      # digest names no version, so Renovate's github-actions manager,
+      # Dependabot's docker ecosystem and bump-deps.sh alike have nothing
+      # to key a rotation off and the pin freezes forever. Both parts must
+      # move together: `tests/issue_2035_container_image_tag_pin.rs`
+      # enforces the shape.
+      image: semgrep/semgrep:1.163.0@sha256:7cad2bc2d1e44f87f0bf4be6d1fa23aa90fb72015bebc89fb91385d813987a03
     steps:
       # Pinned to actions/checkout v6.0.2 (Node.js 24). Replaces v4.2.2.
       # persist-credentials: false — this job only reads the tree for the

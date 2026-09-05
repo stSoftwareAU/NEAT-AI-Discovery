@@ -210,7 +210,12 @@ the gate runs on milestone sub-issue PRs too, not just the rollup into `Develop`
   `markdownlint-cli2` over every `**/*.md`, configured by
   `.markdownlint-cli2.jsonc`
 - `Semgrep` (separate workflow `.github/workflows/semgrep.yml`) — SAST scan over
-  the tree, in a SHA-pinned `semgrep/semgrep` container
+  the tree, in a `semgrep/semgrep` container pinned as
+  `<tag>@sha256:<digest>`. Every workflow container image carries **both**: the
+  digest makes it immutable, the tag is the version an updater resolves a bump
+  from — a bare digest names no version, so nothing (Renovate, Dependabot or
+  `./bump-deps.sh`) can rotate it and the pin freezes (Issue #2035). Enforced by
+  `tests/issue_2035_container_image_tag_pin.rs`
 - `Gitleaks` (separate workflow `.github/workflows/gitleaks.yml`) — secret-scans
   the PR diff
 - `actionlint` (separate workflow `.github/workflows/actionlint.yml`) — lints
