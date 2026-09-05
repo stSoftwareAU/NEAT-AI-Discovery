@@ -13,7 +13,10 @@
 //! codes, the commands actually invoked, stderr) rather than on source text.
 //!
 //! The workflow assertions at the end guard the regression itself: the action
-//! must not reappear at any of the five call sites.
+//! must not reappear at any of the five call sites. Those call sites now reach
+//! the script through the `.github/actions/setup-rust` composite action rather
+//! than invoking it inline (Issue #2036), so the assertions follow that one
+//! step of indirection; what they enforce is unchanged.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -336,6 +339,12 @@ fn workflow(name: &str) -> String {
     fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()))
 }
 
+/// The composite action every call site bootstraps Rust through (Issue #2036).
+fn setup_rust_action() -> String {
+    let path = repo_root().join(".github/actions/setup-rust/action.yml");
+    fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()))
+}
+
 const WORKFLOWS_WITH_TOOLCHAIN: [(&str, usize); 3] =
     [("ci.yml", 3), ("security.yml", 1), ("cargo-quality.yml", 1)];
 
@@ -348,30 +357,44 @@ fn no_workflow_downloads_the_rust_toolchain_action() {
             "{name} still downloads dtolnay/rust-toolchain from codeload (Issue #1891)"
         );
     }
+    assert!(
+        !setup_rust_action().contains("dtolnay/rust-toolchain"),
+        "the setup-rust composite action must not reintroduce dtolnay/rust-toolchain \
+         (Issue #1891)"
+    );
 }
 
 #[test]
 fn every_toolchain_call_site_uses_the_committed_script() {
+    // The call sites reference the composite action, which is the single caller
+    // of the committed script (Issue #2036).
     for (name, expected) in WORKFLOWS_WITH_TOOLCHAIN {
         let body = workflow(name);
-        let sites = body.matches("scripts/install-rust-toolchain.sh").count();
+        let sites = body.matches("uses: ./.github/actions/setup-rust").count();
         assert_eq!(
             sites, expected,
-            "{name} must invoke scripts/install-rust-toolchain.sh at {expected} site(s)"
+            "{name} must bootstrap Rust at {expected} site(s) via the setup-rust action"
         );
     }
+    assert!(
+        setup_rust_action().contains("./scripts/install-rust-toolchain.sh"),
+        "the setup-rust composite action must invoke the committed script (Issue #1891)"
+    );
 }
 
 #[test]
 fn call_sites_that_need_rustfmt_and_clippy_still_request_them() {
     // The quality and auto-format jobs in ci.yml previously asked the action
-    // for `components: rustfmt, clippy`; the script must be given the same.
+    // for `components: rustfmt, clippy`; the composite action must be given the
+    // same, and pass it to the script (Issue #2036).
     let body = workflow("ci.yml");
-    let with_components = body
-        .matches("scripts/install-rust-toolchain.sh stable rustfmt clippy")
-        .count();
+    let with_components = body.matches("components: rustfmt, clippy").count();
     assert_eq!(
         with_components, 2,
         "ci.yml must request rustfmt+clippy at the quality and auto-format jobs"
+    );
+    assert!(
+        setup_rust_action().contains("components:"),
+        "the setup-rust composite action must accept a `components` input"
     );
 }

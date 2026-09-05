@@ -1,0 +1,58 @@
+# Shared Rust bootstrap for every CI job that needs a toolchain (Issue #2036).
+#
+# Five jobs across three workflows — ci.yml (version-increment, quality,
+# auto-format), cargo-quality.yml (coverage) and security.yml (security) — each
+# hand-maintained the same invocation of scripts/install-rust-toolchain.sh
+# together with its rationale comment. Adding a required rustup component meant
+# five identical edits, and missing one silently left that job on the old
+# toolchain. The invocation lives here now; the call sites carry only what
+# differs.
+#
+# The checkout deliberately stays in each calling job. GitHub loads a local
+# action (`uses: ./…`) from the runner's workspace, so the repository must
+# already be checked out before this file exists on disk — a checkout folded in
+# here could never run. The jobs' checkouts also genuinely differ (ref,
+# fetch-depth, token), and their `persist-credentials: false` posture is
+# asserted per workflow (Issues #1567, #1643, #1647, #1868).
+
+name: Set up Rust
+description: >-
+  Install a Rust toolchain with the committed rustup bootstrap script,
+  scripts/install-rust-toolchain.sh (Issue #1891).
+
+inputs:
+  toolchain:
+    description: Toolchain to install, e.g. stable or nightly.
+    required: false
+    default: stable
+  components:
+    description: >-
+      Extra rustup components as a comma-separated list, e.g. "rustfmt, clippy".
+      Empty installs the minimal profile only.
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Install Rust toolchain
+      # Driven by the runner's preinstalled rustup instead of the
+      # dtolnay rust-toolchain action (Issue #1891). The action's tarball is
+      # fetched from codeload.github.com during "Prepare all required actions",
+      # where the 100 s HttpClient timeout and 3-attempt retry policy are
+      # runner-internal and not tunable from a workflow — a stall there fails
+      # the job before any repository code runs. The committed script keeps the
+      # immutable-code property of the SHA pin (Issue #1216) by removing the
+      # third-party action from the critical path altogether.
+      #
+      # Inputs reach the shell through `env:`, never `${{ }}` interpolation, so
+      # nothing a caller supplies is parsed as shell. The script itself then
+      # validates both names against a strict allowlist.
+      shell: bash
+      working-directory: ${{ github.workspace }}
+      env:
+        TOOLCHAIN: ${{ inputs.toolchain }}
+        COMPONENTS: ${{ inputs.components }}
+      run: |
+        set -euo pipefail
+        ./scripts/install-rust-toolchain.sh "$TOOLCHAIN" ${COMPONENTS:+"$COMPONENTS"}

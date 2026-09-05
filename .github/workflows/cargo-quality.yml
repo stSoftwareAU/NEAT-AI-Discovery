@@ -46,15 +46,10 @@ jobs:
           persist-credentials: false
 
       - name: Install Rust toolchain
-        # Driven by the runner's preinstalled rustup instead of
-        # the dtolnay rust-toolchain action (Issue #1891). The action's tarball is fetched
-        # from codeload.github.com during "Prepare all required actions", where
-        # the 100 s timeout and 3-attempt retry are runner-internal and not
-        # tunable from a workflow. The committed script keeps the
-        # immutable-code property of the SHA pin (Issue #1216) by dropping the
-        # third-party action entirely.
-        shell: bash
-        run: ./scripts/install-rust-toolchain.sh
+        # Shared bootstrap — the rationale and the rustup invocation live in
+        # .github/actions/setup-rust (Issues #1891, #2036). Local actions load
+        # from the workspace, so this must stay after the checkout above.
+        uses: ./.github/actions/setup-rust
 
       - name: Install ShellCheck (koalaman/shellcheck)
         # The test suite runs quality/shellcheck.sh, so this job needs the same
