@@ -83,4 +83,29 @@ Also updated:
 - `Cargo.toml` — patch version `0.74.226` → `0.74.227` (AGENTS.md requires a
   version bump on any code change).
 
-`./quality.sh` was run in full after the final edit.
+## Quality Gate
+
+`./quality.sh` was run in full after the final edit. Every stage passed —
+`bash -n`, ShellCheck, `cargo install` pinning, PR-summary layout,
+`cargo deny check`, build, `cargo fmt`, Clippy (`-D warnings`), `cargo check
+--all-targets --all-features` — and the test stage reported a single failure:
+
+```text
+tests/issue_1939_documented_commands.rs::runlib_aborts_when_invoked_from_a_directory_without_cargo_toml
+expected the missing-manifest abort, got stderr: Installing Rust (rustup + cargo)…
+ERROR: rustup installation appears incomplete.
+```
+
+That failure is **pre-existing and environmental**, not caused by this change:
+it was reproduced on the unmodified tree (`git stash -u`, same failure), and it
+is this container's non-standard `CARGO_HOME`
+(`/home/vibe/auto-issue-work/.container-state/cargo`) making `scripts/runlib.sh`
+abort on the rustup check before it reaches the missing-`Cargo.toml` guard the
+test asserts on. Nothing in this diff touches `runlib.sh`, the README commands,
+or the toolchain scripts.
+
+Because `cargo test` stops at the first failing target, the suite was re-run
+with `--no-fail-fast`: **180 test targets green, that one target the only
+failure**, including the new `issue_2035_container_image_tag_pin` (8 passed).
+`actionlint .github/workflows/semgrep.yml` and `markdownlint-cli2` over this
+summary both pass.
