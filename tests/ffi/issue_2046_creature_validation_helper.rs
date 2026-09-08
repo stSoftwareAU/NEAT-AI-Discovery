@@ -72,6 +72,21 @@ fn composed_gate_rejects_an_input_bounds_violation() {
     );
 }
 
+/// The lower observation-width bound (Issue #2020) also runs through the
+/// composed gate. A zero width cannot arrive as JSON — `CreatureJson`'s serde
+/// impl rejects it on read — so the creature is built directly.
+#[test]
+fn composed_gate_rejects_a_zero_observation_width() {
+    let mut creature = valid_creature();
+    creature.output = 0;
+
+    let err = validate_creature(&creature).expect_err("a zero output width must be rejected");
+    assert!(
+        err.to_string().contains("Issue #2020"),
+        "error must cite the observation-width issue: {err}"
+    );
+}
+
 /// Order matters: the forward-only check runs first, so a creature violating
 /// both invariants reports the topology fault, not the bound.
 #[test]
