@@ -16,6 +16,7 @@ pub mod correlated_error;
 pub mod cross_detection_synthesis;
 pub mod dead_neuron;
 pub mod dormant_synapse;
+pub mod error_dispersion;
 pub mod error_plateau;
 pub mod fanin_polarity_conflict;
 pub mod hard_sample_cluster;

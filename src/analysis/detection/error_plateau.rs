@@ -21,6 +21,7 @@
 //! the mean signed error, recentring the output after the squash change.
 
 #![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
+use super::error_dispersion::assess_error_plateau;
 use crate::analysis::constants::MIN_DISCOVERY_SAMPLE_COUNT as MIN_SAMPLES;
 use crate::types::DiscoverRecord;
 use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson};
@@ -161,29 +162,15 @@ pub fn detect_error_plateaus(
             .map(|r| r.errors.first().copied().unwrap_or(0.0).abs())
             .collect();
 
-        let n = errors.len() as f32;
-        let mean_error: f32 = errors.iter().sum::<f32>() / n;
-
-        // Skip if error is already low (converged)
-        if mean_error < MIN_PLATEAU_ERROR {
+        // Plateau = high error + low variance (tightly clustered around a
+        // non-zero mean). The shared rule lives in `error_dispersion`
+        // (Issue #2044).
+        let Some(dispersion) =
+            assess_error_plateau(&errors, MIN_PLATEAU_ERROR, MAX_COEFFICIENT_OF_VARIATION)
+        else {
             continue;
-        }
-
-        // Compute standard deviation
-        let variance: f32 = errors.iter().map(|e| (e - mean_error).powi(2)).sum::<f32>() / n;
-        let std_dev = variance.sqrt();
-
-        // Coefficient of variation: std_dev / mean
-        let cv = if mean_error > 1e-6 {
-            std_dev / mean_error
-        } else {
-            f32::INFINITY
         };
-
-        // Plateau = high error + low variance (tightly clustered around a non-zero mean)
-        if cv > MAX_COEFFICIENT_OF_VARIATION {
-            continue;
-        }
+        let (mean_error, std_dev, cv) = (dispersion.mean_error, dispersion.std_dev, dispersion.cv);
 
         let recommended = recommend_plateau_escape(squash, records);
 
@@ -197,7 +184,7 @@ pub fn detect_error_plateaus(
 
         // Confidence based on sample size and how tight the plateau is
         let sample_confidence = (records.len() as f32 / 100.0).min(1.0);
-        let plateau_tightness = (1.0 - cv / MAX_COEFFICIENT_OF_VARIATION).max(0.0);
+        let plateau_tightness = dispersion.plateau_tightness(MAX_COEFFICIENT_OF_VARIATION);
         let confidence =
             (sample_confidence * 0.4 + plateau_tightness * 0.4 + mean_error.min(1.0) * 0.2)
                 .clamp(0.0, 1.0);
