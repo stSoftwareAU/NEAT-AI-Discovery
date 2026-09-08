@@ -5,7 +5,7 @@
 //! JSON error response instead of panicking.
 
 use serde::Serialize;
-use std::ffi::CString;
+use std::ffi::{CStr, CString};
 
 /// Serialise a value to JSON and return it as an FFI-safe `*mut c_char`.
 ///
@@ -35,6 +35,63 @@ pub fn to_ffi_json<T: Serialize>(value: &T) -> *mut std::ffi::c_char {
 /// empty string, which is safer than unwinding across the FFI boundary.
 pub fn ffi_error_literal(msg: &str) -> *mut std::ffi::c_char {
     CString::new(msg).map_or(std::ptr::null_mut(), CString::into_raw)
+}
+
+/// Response-shape fields that `get_calibration_summary`'s error responses must
+/// carry in addition to `success` and `error` (Issue #2045).
+///
+/// A JSON object-body fragment, comma-terminated so it composes directly into
+/// the error response built by [`validate_c_str_input_with_fields`].
+pub const CALIBRATION_SUMMARY_FIELDS: &str = r#""calibrationSummary":[],"#;
+
+/// Build the input-guard error response for an entry point's response shape.
+///
+/// `extra_fields` is inserted verbatim between `success` and `error`; `message`
+/// is one of this module's own literals, so neither needs JSON escaping.
+fn input_guard_error(extra_fields: &str, message: &str) -> *mut std::ffi::c_char {
+    ffi_error_literal(&format!(
+        r#"{{"success":false,{extra_fields}"error":"{message}"}}"#
+    ))
+}
+
+/// Validate a `*const c_char` FFI input pointer and borrow it as `&str`
+/// (Issue #2045).
+///
+/// Rejects a null pointer and invalid UTF-8, returning the ready-made FFI
+/// error pointer for the caller to return directly. This is the single
+/// implementation of the guard every FFI entry point applies to its input.
+///
+/// # Safety
+///
+/// - `ptr` must be null, or a valid pointer to a null-terminated C string.
+/// - The string must stay alive and unmodified for the lifetime of the
+///   returned borrow.
+pub unsafe fn validate_c_str_input<'a>(
+    ptr: *const std::ffi::c_char,
+) -> Result<&'a str, *mut std::ffi::c_char> {
+    // SAFETY: the caller upholds this function's own pointer contract.
+    unsafe { validate_c_str_input_with_fields(ptr, "") }
+}
+
+/// [`validate_c_str_input`] for an entry point whose error response shape
+/// carries extra fields (e.g. [`CALIBRATION_SUMMARY_FIELDS`]).
+///
+/// # Safety
+///
+/// Same contract as [`validate_c_str_input`].
+pub unsafe fn validate_c_str_input_with_fields<'a>(
+    ptr: *const std::ffi::c_char,
+    extra_fields: &str,
+) -> Result<&'a str, *mut std::ffi::c_char> {
+    if ptr.is_null() {
+        return Err(input_guard_error(extra_fields, "Null input pointer"));
+    }
+    // SAFETY: `ptr` is non-null here, and the caller guarantees it points to a
+    // null-terminated C string that outlives the returned borrow.
+    match unsafe { CStr::from_ptr(ptr) }.to_str() {
+        Ok(s) => Ok(s),
+        Err(_) => Err(input_guard_error(extra_fields, "Invalid UTF-8 in input")),
+    }
 }
 
 /// Maximum number of bytes of a panic message embedded in an FFI error
@@ -220,5 +277,86 @@ mod tests {
         // Should be valid JSON despite special characters
         let json: serde_json::Value = serde_json::from_str(result.to_str().unwrap()).unwrap();
         assert_eq!(json["success"], false);
+    }
+
+    // ========================================================================
+    // validate_c_str_input — the shared null / UTF-8 input guard (Issue #2045)
+    // ========================================================================
+
+    /// Read an FFI error pointer back as JSON, freeing the allocation.
+    fn error_json(ptr: *mut std::ffi::c_char) -> serde_json::Value {
+        assert!(!ptr.is_null());
+        // SAFETY: `ptr` was produced by `ffi_error_literal` via
+        // `CString::into_raw` and is reclaimed exactly once here.
+        let owned = unsafe { CString::from_raw(ptr) };
+        serde_json::from_str(owned.to_str().unwrap()).unwrap()
+    }
+
+    #[test]
+    fn test_validate_c_str_input_accepts_valid_utf8() {
+        let input = CString::new(r#"{"a":"ü"}"#).unwrap();
+        // SAFETY: `input` is a valid C string that outlives the borrow.
+        let result = unsafe { validate_c_str_input(input.as_ptr()) };
+        assert_eq!(result.unwrap(), r#"{"a":"ü"}"#);
+    }
+
+    #[test]
+    fn test_validate_c_str_input_accepts_empty_string() {
+        let input = CString::new("").unwrap();
+        // SAFETY: `input` is a valid C string that outlives the borrow.
+        let result = unsafe { validate_c_str_input(input.as_ptr()) };
+        assert_eq!(result.unwrap(), "");
+    }
+
+    #[test]
+    fn test_validate_c_str_input_rejects_null_pointer() {
+        // SAFETY: a null pointer is an explicitly permitted input.
+        let err = unsafe { validate_c_str_input(std::ptr::null()) }.unwrap_err();
+        let json = error_json(err);
+        assert_eq!(json["success"], false);
+        assert_eq!(json["error"], "Null input pointer");
+        assert!(json.get("calibrationSummary").is_none());
+    }
+
+    #[test]
+    fn test_validate_c_str_input_rejects_invalid_utf8() {
+        // Lone continuation bytes — not valid UTF-8, no interior NUL.
+        let input = CString::new(vec![0xffu8, 0xfe]).unwrap();
+        // SAFETY: `input` is a valid C string that outlives the call.
+        let err = unsafe { validate_c_str_input(input.as_ptr()) }.unwrap_err();
+        let json = error_json(err);
+        assert_eq!(json["success"], false);
+        assert_eq!(json["error"], "Invalid UTF-8 in input");
+    }
+
+    #[test]
+    fn test_validate_c_str_input_with_fields_carries_extra_shape() {
+        // SAFETY: a null pointer is an explicitly permitted input.
+        let err = unsafe {
+            validate_c_str_input_with_fields(std::ptr::null(), CALIBRATION_SUMMARY_FIELDS)
+        }
+        .unwrap_err();
+        let json = error_json(err);
+        assert_eq!(json["success"], false);
+        assert_eq!(json["error"], "Null input pointer");
+        assert_eq!(json["calibrationSummary"], serde_json::json!([]));
+
+        let input = CString::new(vec![0xffu8, 0xfe]).unwrap();
+        // SAFETY: `input` is a valid C string that outlives the call.
+        let err =
+            unsafe { validate_c_str_input_with_fields(input.as_ptr(), CALIBRATION_SUMMARY_FIELDS) }
+                .unwrap_err();
+        let json = error_json(err);
+        assert_eq!(json["error"], "Invalid UTF-8 in input");
+        assert_eq!(json["calibrationSummary"], serde_json::json!([]));
+    }
+
+    #[test]
+    fn test_validate_c_str_input_with_fields_passes_valid_input_through() {
+        let input = CString::new(r#"{"discoveryHistory":[]}"#).unwrap();
+        // SAFETY: `input` is a valid C string that outlives the borrow.
+        let result =
+            unsafe { validate_c_str_input_with_fields(input.as_ptr(), CALIBRATION_SUMMARY_FIELDS) };
+        assert_eq!(result.unwrap(), r#"{"discoveryHistory":[]}"#);
     }
 }

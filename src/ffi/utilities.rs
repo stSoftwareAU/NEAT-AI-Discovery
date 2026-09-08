@@ -1,6 +1,9 @@
 //! Utility FFI entry points — merge, read, export, and version.
 
-use super::helpers::{ffi_error_literal, panic_to_ffi_json, to_ffi_json};
+use super::helpers::{
+    CALIBRATION_SUMMARY_FIELDS, ffi_error_literal, panic_to_ffi_json, to_ffi_json,
+    validate_c_str_input, validate_c_str_input_with_fields,
+};
 use crate::ffi_types::*;
 use crate::log_version_once;
 
@@ -17,7 +20,7 @@ use crate::log_version_once;
 pub unsafe extern "C" fn merge_discovery_parquet(
     input_json: *const std::ffi::c_char,
 ) -> *mut std::ffi::c_char {
-    use std::ffi::{CStr, CString};
+    use std::ffi::CString;
     use std::panic;
 
     // Catch any panics to prevent unwinding across FFI boundary
@@ -26,19 +29,10 @@ pub unsafe extern "C" fn merge_discovery_parquet(
         log_version_once();
 
         // SAFETY: caller must provide a valid, non-null pointer to a
-        // null-terminated C string. We validate null and UTF-8 before use.
-        let input_str = unsafe {
-            if input_json.is_null() {
-                return ffi_error_literal(r#"{"success":false,"error":"Null input pointer"}"#);
-            }
-            match CStr::from_ptr(input_json).to_str() {
-                Ok(s) => s,
-                Err(_) => {
-                    return ffi_error_literal(
-                        r#"{"success":false,"error":"Invalid UTF-8 in input"}"#,
-                    );
-                }
-            }
+        // null-terminated C string; the shared guard validates null and UTF-8.
+        let input_str = match unsafe { validate_c_str_input(input_json) } {
+            Ok(s) => s,
+            Err(err) => return err,
         };
 
         let json_result = match crate::merge_discovery_parquet_internal(input_str) {
@@ -81,7 +75,7 @@ pub unsafe extern "C" fn merge_discovery_parquet(
 pub unsafe extern "C" fn read_discovery_records_ffi(
     input_json: *const std::ffi::c_char,
 ) -> *mut std::ffi::c_char {
-    use std::ffi::{CStr, CString};
+    use std::ffi::CString;
     use std::panic;
 
     // Catch any panics to prevent unwinding across FFI boundary
@@ -90,19 +84,10 @@ pub unsafe extern "C" fn read_discovery_records_ffi(
         log_version_once();
 
         // SAFETY: caller must provide a valid, non-null pointer to a
-        // null-terminated C string. We validate null and UTF-8 before use.
-        let input_str = unsafe {
-            if input_json.is_null() {
-                return ffi_error_literal(r#"{"success":false,"error":"Null input pointer"}"#);
-            }
-            match CStr::from_ptr(input_json).to_str() {
-                Ok(s) => s,
-                Err(_) => {
-                    return ffi_error_literal(
-                        r#"{"success":false,"error":"Invalid UTF-8 in input"}"#,
-                    );
-                }
-            }
+        // null-terminated C string; the shared guard validates null and UTF-8.
+        let input_str = match unsafe { validate_c_str_input(input_json) } {
+            Ok(s) => s,
+            Err(err) => return err,
         };
 
         let json_result = match crate::read_discovery_records(input_str) {
@@ -167,26 +152,17 @@ pub unsafe extern "C" fn read_discovery_records_ffi(
 pub unsafe extern "C" fn export_visualisation_snapshot(
     input_json: *const std::ffi::c_char,
 ) -> *mut std::ffi::c_char {
-    use std::ffi::{CStr, CString};
+    use std::ffi::CString;
     use std::panic;
 
     panic::catch_unwind(panic::AssertUnwindSafe(|| {
         log_version_once();
 
         // SAFETY: caller must provide a valid, non-null pointer to a
-        // null-terminated C string. We validate null and UTF-8 before use.
-        let input_str = unsafe {
-            if input_json.is_null() {
-                return ffi_error_literal(r#"{"success":false,"error":"Null input pointer"}"#);
-            }
-            match CStr::from_ptr(input_json).to_str() {
-                Ok(s) => s,
-                Err(_) => {
-                    return ffi_error_literal(
-                        r#"{"success":false,"error":"Invalid UTF-8 in input"}"#,
-                    );
-                }
-            }
+        // null-terminated C string; the shared guard validates null and UTF-8.
+        let input_str = match unsafe { validate_c_str_input(input_json) } {
+            Ok(s) => s,
+            Err(err) => return err,
         };
 
         let json_result = match crate::export_visualisation_snapshot_internal(input_str) {
@@ -254,28 +230,20 @@ pub unsafe extern "C" fn export_visualisation_snapshot(
 pub unsafe extern "C" fn get_calibration_summary(
     input_json: *const std::ffi::c_char,
 ) -> *mut std::ffi::c_char {
-    use std::ffi::{CStr, CString};
+    use std::ffi::CString;
     use std::panic;
 
     panic::catch_unwind(panic::AssertUnwindSafe(|| {
         log_version_once();
 
         // SAFETY: caller must provide a valid, non-null pointer to a
-        // null-terminated C string. We validate null and UTF-8 before use.
-        let input_str = unsafe {
-            if input_json.is_null() {
-                return ffi_error_literal(
-                    r#"{"success":false,"calibrationSummary":[],"error":"Null input pointer"}"#,
-                );
-            }
-            match CStr::from_ptr(input_json).to_str() {
-                Ok(s) => s,
-                Err(_) => {
-                    return ffi_error_literal(
-                        r#"{"success":false,"calibrationSummary":[],"error":"Invalid UTF-8 in input"}"#,
-                    );
-                }
-            }
+        // null-terminated C string; the shared guard validates null and UTF-8.
+        // This endpoint's response shape always carries `calibrationSummary`.
+        let input_str = match unsafe {
+            validate_c_str_input_with_fields(input_json, CALIBRATION_SUMMARY_FIELDS)
+        } {
+            Ok(s) => s,
+            Err(err) => return err,
         };
 
         let json_result = match crate::get_calibration_summary_internal(input_str) {
@@ -378,24 +346,14 @@ pub extern "C" fn cleanup_discovery_lib() {
 pub unsafe extern "C" fn cleanup_discovery_dir(
     input_json: *const std::ffi::c_char,
 ) -> *mut std::ffi::c_char {
-    use std::ffi::CStr;
     use std::panic;
 
     panic::catch_unwind(panic::AssertUnwindSafe(|| {
         // SAFETY: caller must provide a valid, non-null pointer to a
-        // null-terminated C string. We validate null and UTF-8 before use.
-        let input_str = unsafe {
-            if input_json.is_null() {
-                return ffi_error_literal(r#"{"success":false,"error":"Null input pointer"}"#);
-            }
-            match CStr::from_ptr(input_json).to_str() {
-                Ok(s) => s,
-                Err(_) => {
-                    return ffi_error_literal(
-                        r#"{"success":false,"error":"Invalid UTF-8 in input"}"#,
-                    );
-                }
-            }
+        // null-terminated C string; the shared guard validates null and UTF-8.
+        let input_str = match unsafe { validate_c_str_input(input_json) } {
+            Ok(s) => s,
+            Err(err) => return err,
         };
 
         let input: CleanupDiscoveryDirInput = match serde_json::from_str(input_str) {
@@ -493,24 +451,14 @@ pub unsafe extern "C" fn cleanup_discovery_dir(
 pub unsafe extern "C" fn clean_orphaned_discovery_dirs(
     input_json: *const std::ffi::c_char,
 ) -> *mut std::ffi::c_char {
-    use std::ffi::CStr;
     use std::panic;
 
     panic::catch_unwind(panic::AssertUnwindSafe(|| {
         // SAFETY: caller must provide a valid, non-null pointer to a
-        // null-terminated C string. We validate null and UTF-8 before use.
-        let input_str = unsafe {
-            if input_json.is_null() {
-                return ffi_error_literal(r#"{"success":false,"error":"Null input pointer"}"#);
-            }
-            match CStr::from_ptr(input_json).to_str() {
-                Ok(s) => s,
-                Err(_) => {
-                    return ffi_error_literal(
-                        r#"{"success":false,"error":"Invalid UTF-8 in input"}"#,
-                    );
-                }
-            }
+        // null-terminated C string; the shared guard validates null and UTF-8.
+        let input_str = match unsafe { validate_c_str_input(input_json) } {
+            Ok(s) => s,
+            Err(err) => return err,
         };
 
         let input: CleanOrphanedDirsInput = match serde_json::from_str(input_str) {
