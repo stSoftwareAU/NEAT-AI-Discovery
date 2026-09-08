@@ -8,6 +8,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+#### Sentinel-cluster detection has one authoritative rule again (Issue #2042)
+
+`observation_range.rs` and `sentinel_gating.rs` each carried a copy of the
+sentinel-cluster decision, and the copies had diverged: the `observation_range`
+copy read
+`sentinel_error_var < non_sentinel_error_var || gap >= MIN_GAP` *after* already
+`continue`ing on `gap < MIN_GAP`, so the disjunct was unconditionally true and
+the error-variance half of the rule was dead code — any dense, well-separated
+cluster was accepted as a sentinel however informative its errors were. The
+decision now lives once in
+`src/analysis/detection/sentinel_cluster.rs::assess_sentinel_cluster`, which both
+detectors call: a cluster is a sentinel only when it is dense, separated by at
+least `MIN_SENTINEL_GAP`, **and** has lower error variance than the useful range
+— the rule `sentinel_gating.rs` already enforced and both module docs claimed.
+
 #### FFI `CreatureJson` rejects `input < 1` / `output < 1`; emitted creatures keep the observation width (Issue #2020)
 
 The creature's top-level `input` / `output` integers are the observation

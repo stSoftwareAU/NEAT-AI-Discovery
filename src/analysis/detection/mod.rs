@@ -36,6 +36,7 @@ pub mod output_squash_mismatch;
 pub mod redundant_path;
 pub mod restricted_range;
 pub mod saturation;
+pub mod sentinel_cluster;
 pub mod sentinel_gating;
 pub mod skip_connection;
 pub mod squash_weight_rescale;

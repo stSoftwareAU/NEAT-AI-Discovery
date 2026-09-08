@@ -30,8 +30,10 @@
 //!
 //! ## Dependency
 //!
-//! Uses error-correlation analysis similar to `observation_range` (Issue #398)
-//! for sentinel identification.
+//! The "is this cluster a sentinel?" decision is shared with `observation_range`
+//! (Issue #398) and defined once in
+//! [`sentinel_cluster::assess_sentinel_cluster`](super::sentinel_cluster::assess_sentinel_cluster)
+//! (Issue #2042).
 
 #![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use std::collections::HashSet;
@@ -41,9 +43,10 @@ use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson, Cre
 
 // Constants moved to constants.rs (Issue #424)
 use crate::analysis::constants::{
-    CANDIDATE_SENTINELS, MIN_DISCOVERY_SAMPLE_COUNT as MIN_SAMPLES, MIN_SENTINEL_FRACTION,
-    MIN_SENTINEL_GAP as MIN_GAP, SENTINEL_TOLERANCE,
+    CANDIDATE_SENTINELS, MIN_DISCOVERY_SAMPLE_COUNT as MIN_SAMPLES, SENTINEL_TOLERANCE,
 };
+// Shared sentinel-cluster rule (Issue #2042)
+use crate::analysis::detection::sentinel_cluster::assess_sentinel_cluster;
 
 /// Result of detecting a sentinel gating candidate on an observation.
 #[derive(Debug, Clone)]
@@ -132,67 +135,18 @@ fn analyse_observation_for_sentinel(
     let mut best: Option<SentinelGatingCandidate> = None;
 
     for &sentinel in &CANDIDATE_SENTINELS {
-        // Collect indices of samples at/near the sentinel
-        let sentinel_indices: Vec<usize> = activations
-            .iter()
-            .enumerate()
-            .filter(|&(_, &a)| (a - sentinel).abs() <= SENTINEL_TOLERANCE)
-            .map(|(i, _)| i)
-            .collect();
-
-        let sentinel_fraction = sentinel_indices.len() as f32 / n;
-        if sentinel_fraction < MIN_SENTINEL_FRACTION {
+        // The accept/reject rule lives in one place (Issue #2042): density,
+        // separation from the useful range, and lower error variance inside the
+        // cluster. `None` means this value is not a sentinel.
+        let Some(cluster) = assess_sentinel_cluster(&activations, &errors, sentinel) else {
             continue;
-        }
-
-        // Non-sentinel indices
-        let non_sentinel_indices: Vec<usize> = (0..activations.len())
-            .filter(|i| !sentinel_indices.contains(i))
-            .collect();
-
-        if non_sentinel_indices.is_empty() {
-            continue;
-        }
-
-        // Compute useful range
-        let useful_values: Vec<f32> = non_sentinel_indices
-            .iter()
-            .map(|&i| activations[i])
-            .collect();
-        let useful_min = useful_values.iter().copied().fold(f32::INFINITY, f32::min);
-        let useful_max = useful_values
-            .iter()
-            .copied()
-            .fold(f32::NEG_INFINITY, f32::max);
-
-        // Check gap between sentinel and useful range
-        let gap = if sentinel <= useful_min {
-            useful_min - (sentinel + SENTINEL_TOLERANCE)
-        } else if sentinel >= useful_max {
-            (sentinel - SENTINEL_TOLERANCE) - useful_max
-        } else {
-            0.0
         };
 
-        if gap < MIN_GAP {
-            continue;
-        }
-
-        // Error correlation analysis: sentinel should have LOWER error variance
-        let sentinel_error_var = compute_error_variance(&errors, &sentinel_indices);
-        let non_sentinel_error_var = compute_error_variance(&errors, &non_sentinel_indices);
-
-        if sentinel_error_var >= non_sentinel_error_var {
-            // Sentinel has higher or equal error variance — it may be informative,
-            // so do not gate it
-            continue;
-        }
-
         let improvement = estimate_gating_improvement(
-            sentinel_fraction,
-            gap,
-            sentinel_error_var,
-            non_sentinel_error_var,
+            cluster.sentinel_fraction,
+            cluster.gap,
+            cluster.sentinel_error_var,
+            cluster.non_sentinel_error_var,
             n,
         );
 
@@ -203,10 +157,10 @@ fn analyse_observation_for_sentinel(
         if is_better {
             best = Some(SentinelGatingCandidate {
                 neuron_uuid: uuid.to_string(),
-                sentinel_value: sentinel,
-                sentinel_fraction,
-                useful_range_min: useful_min,
-                useful_range_max: useful_max,
+                sentinel_value: cluster.sentinel_value,
+                sentinel_fraction: cluster.sentinel_fraction,
+                useful_range_min: cluster.useful_min,
+                useful_range_max: cluster.useful_max,
                 sample_count: records.len(),
                 estimated_improvement: improvement,
             });
@@ -214,23 +168,6 @@ fn analyse_observation_for_sentinel(
     }
 
     best
-}
-
-/// Compute the variance of error values at the given indices.
-fn compute_error_variance(errors: &[f32], indices: &[usize]) -> f32 {
-    if indices.is_empty() {
-        return 0.0;
-    }
-
-    let n = indices.len() as f32;
-    let sum: f32 = indices.iter().map(|&i| errors[i]).sum();
-    let mean = sum / n;
-
-    indices
-        .iter()
-        .map(|&i| (errors[i] - mean).powi(2))
-        .sum::<f32>()
-        / n
 }
 
 /// Estimate the score improvement from gating a sentinel observation.

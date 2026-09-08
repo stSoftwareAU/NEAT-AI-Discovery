@@ -15,8 +15,12 @@
 //! 1. For each observation, collect all activation values and their corresponding errors.
 //! 2. Check candidate sentinel values (-1, 0, +1) for density clusters.
 //! 3. Compare error variance in the sentinel cluster vs the non-sentinel (useful) range.
-//! 4. If the sentinel cluster has significantly lower error variance, it indicates
-//!    the sentinel values do not meaningfully influence the output.
+//! 4. If the sentinel cluster has lower error variance *and* is clear of the useful
+//!    range by at least `MIN_SENTINEL_GAP`, the sentinel values do not meaningfully
+//!    influence the output. That decision is shared with `sentinel_gating` (Issue #400)
+//!    and defined once in
+//!    [`sentinel_cluster::assess_sentinel_cluster`](super::sentinel_cluster::assess_sentinel_cluster)
+//!    (Issue #2042).
 //! 5. Compute `effective_min`, `effective_max` from the non-sentinel values.
 //! 6. Compute `utilisation_ratio` as the fraction of the full observed range that is effective.
 //!
@@ -35,8 +39,9 @@ use crate::types::DiscoverRecord;
 // Constants moved to constants.rs (Issue #424)
 use crate::analysis::constants::{
     CANDIDATE_SENTINELS, MIN_DISCOVERY_SAMPLE_COUNT as MIN_SAMPLES_FOR_RANGE,
-    MIN_SENTINEL_FRACTION, MIN_SENTINEL_GAP as MIN_GAP, SENTINEL_TOLERANCE,
 };
+// Shared sentinel-cluster rule (Issue #2042)
+use crate::analysis::detection::sentinel_cluster::assess_sentinel_cluster;
 
 /// Result of observation range analysis for a single input neuron.
 #[derive(Debug, Clone)]
@@ -121,8 +126,6 @@ fn analyse_observation_range(
         })
         .collect();
 
-    let n = activations.len() as f32;
-
     // Compute overall activation range
     let overall_min = activations.iter().copied().fold(f32::INFINITY, f32::min);
     let overall_max = activations
@@ -141,67 +144,12 @@ fn analyse_observation_range(
     let mut sentinel_indices: HashSet<usize> = HashSet::new();
 
     for &sentinel in &CANDIDATE_SENTINELS {
-        // Count and collect indices of samples near this sentinel
-        let cluster_indices: Vec<usize> = activations
-            .iter()
-            .enumerate()
-            .filter(|&(_, &a)| (a - sentinel).abs() <= SENTINEL_TOLERANCE)
-            .map(|(i, _)| i)
-            .collect();
-
-        let cluster_fraction = cluster_indices.len() as f32 / n;
-
-        if cluster_fraction < MIN_SENTINEL_FRACTION {
-            continue;
-        }
-
-        // Compute error variance for the sentinel cluster
-        let sentinel_error_var = compute_error_variance(&errors, &cluster_indices);
-
-        // Compute error variance for non-sentinel samples
-        let non_sentinel_indices: Vec<usize> = (0..activations.len())
-            .filter(|i| !cluster_indices.contains(i))
-            .collect();
-
-        if non_sentinel_indices.is_empty() {
-            continue;
-        }
-
-        let non_sentinel_error_var = compute_error_variance(&errors, &non_sentinel_indices);
-
-        // Check that sentinel cluster has lower error variance (less correlation)
-        // or that there is a sufficient gap between sentinel and useful range
-        let useful_values: Vec<f32> = non_sentinel_indices
-            .iter()
-            .map(|&i| activations[i])
-            .collect();
-
-        let useful_min = useful_values.iter().copied().fold(f32::INFINITY, f32::min);
-        let useful_max = useful_values
-            .iter()
-            .copied()
-            .fold(f32::NEG_INFINITY, f32::max);
-
-        // Check gap between sentinel and useful range
-        let gap = if sentinel <= useful_min {
-            useful_min - (sentinel + SENTINEL_TOLERANCE)
-        } else if sentinel >= useful_max {
-            (sentinel - SENTINEL_TOLERANCE) - useful_max
-        } else {
-            // Sentinel is inside the useful range — not a clear boundary
-            0.0
-        };
-
-        if gap < MIN_GAP {
-            continue;
-        }
-
-        // Accept if sentinel has lower error variance OR clear gap exists
-        let is_sentinel = sentinel_error_var < non_sentinel_error_var || gap >= MIN_GAP;
-
-        if is_sentinel {
-            detected_sentinels.push(sentinel);
-            sentinel_indices.extend(cluster_indices);
+        // The accept/reject rule lives in one place (Issue #2042): a cluster is a
+        // sentinel only when it is dense, clearly separated from the useful range,
+        // and carries lower error variance than that range.
+        if let Some(cluster) = assess_sentinel_cluster(&activations, &errors, sentinel) {
+            detected_sentinels.push(cluster.sentinel_value);
+            sentinel_indices.extend(cluster.sentinel_indices);
         }
     }
 
@@ -245,23 +193,4 @@ fn analyse_observation_range(
         utilisation_ratio,
         sample_count: records.len(),
     })
-}
-
-/// Compute the variance of error values at the given indices.
-fn compute_error_variance(errors: &[f32], indices: &[usize]) -> f32 {
-    if indices.is_empty() {
-        return 0.0;
-    }
-
-    let n = indices.len() as f32;
-    let sum: f32 = indices.iter().map(|&i| errors[i]).sum();
-    let mean = sum / n;
-
-    let variance: f32 = indices
-        .iter()
-        .map(|&i| (errors[i] - mean).powi(2))
-        .sum::<f32>()
-        / n;
-
-    variance
 }
