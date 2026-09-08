@@ -1,7 +1,7 @@
 //! Analysis FFI entry points — `rank_focus_neurons`, `analyze_parallel`,
 //! `cancel_analysis`, and `reset_cancellation`.
 
-use super::helpers::{ffi_error_literal, panic_to_ffi_json, to_ffi_json};
+use super::helpers::{ffi_error_literal, panic_to_ffi_json, to_ffi_json, validate_c_str_input};
 use crate::ffi_types::*;
 use crate::log_version_once;
 
@@ -94,7 +94,7 @@ pub extern "C" fn is_analysis_active() -> i32 {
 pub unsafe extern "C" fn rank_focus_neurons(
     input_json: *const std::ffi::c_char,
 ) -> *mut std::ffi::c_char {
-    use std::ffi::{CStr, CString};
+    use std::ffi::CString;
     use std::panic;
 
     // Catch any panics to prevent unwinding across FFI boundary
@@ -103,19 +103,10 @@ pub unsafe extern "C" fn rank_focus_neurons(
         log_version_once();
 
         // SAFETY: caller must provide a valid, non-null pointer to a
-        // null-terminated C string. We validate null and UTF-8 before use.
-        let input_str = unsafe {
-            if input_json.is_null() {
-                return ffi_error_literal(r#"{"success":false,"error":"Null input pointer"}"#);
-            }
-            match CStr::from_ptr(input_json).to_str() {
-                Ok(s) => s,
-                Err(_) => {
-                    return ffi_error_literal(
-                        r#"{"success":false,"error":"Invalid UTF-8 in input"}"#,
-                    );
-                }
-            }
+        // null-terminated C string; the shared guard validates null and UTF-8.
+        let input_str = match unsafe { validate_c_str_input(input_json) } {
+            Ok(s) => s,
+            Err(err) => return err,
         };
 
         let json_result = match crate::rank_focus_neurons_internal(input_str) {
@@ -171,7 +162,7 @@ pub unsafe extern "C" fn rank_focus_neurons(
 pub unsafe extern "C" fn analyze_parallel(
     input_json: *const std::ffi::c_char,
 ) -> *mut std::ffi::c_char {
-    use std::ffi::{CStr, CString};
+    use std::ffi::CString;
     use std::panic;
 
     // Catch any panics to prevent unwinding across FFI boundary
@@ -180,19 +171,10 @@ pub unsafe extern "C" fn analyze_parallel(
         log_version_once();
 
         // SAFETY: caller must provide a valid, non-null pointer to a
-        // null-terminated C string. We validate null and UTF-8 before use.
-        let input_str = unsafe {
-            if input_json.is_null() {
-                return ffi_error_literal(r#"{"success":false,"error":"Null input pointer"}"#);
-            }
-            match CStr::from_ptr(input_json).to_str() {
-                Ok(s) => s,
-                Err(_) => {
-                    return ffi_error_literal(
-                        r#"{"success":false,"error":"Invalid UTF-8 in input"}"#,
-                    );
-                }
-            }
+        // null-terminated C string; the shared guard validates null and UTF-8.
+        let input_str = match unsafe { validate_c_str_input(input_json) } {
+            Ok(s) => s,
+            Err(err) => return err,
         };
 
         let json_result = match crate::analyze_parallel_internal(input_str) {
