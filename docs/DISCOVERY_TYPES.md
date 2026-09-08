@@ -1577,10 +1577,14 @@ regions.
 
 1. **Sentinel value presence**: The input has a distinct cluster of values
    at a boundary (e.g., exactly -1 or 0).
-2. **Error correlation**: Samples with sentinel values have higher error
-   than samples with data values.
-3. **Input neurons only**: Only input neurons are analysed.
-4. **Minimum samples**: At least 20 samples for reliability.
+2. **Error decorrelation**: The sentinel cluster's error variance is *lower*
+   than the useful range's, indicating the sentinel does not influence the
+   output. Shared with observation range detection — the single accept/reject
+   rule lives in `src/analysis/detection/sentinel_cluster.rs` (Issue #2042).
+3. **Separation**: The cluster is clear of the useful range by at least
+   `MIN_SENTINEL_GAP`.
+4. **Input neurons only**: Only input neurons are analysed.
+5. **Minimum samples**: At least 20 samples for reliability.
 
 **Recommended actions**:
 
