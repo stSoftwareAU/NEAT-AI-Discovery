@@ -143,9 +143,7 @@ pub unsafe extern "C" fn start_discovery_session(
         // record written through that session.
         // Issue #1867: the same gate bounds the creature's input-neuron
         // count before the session captures the creature.
-        if let Err(typed) = validate_forward_only_synapses(&input.creature)
-            .and_then(|()| validate_creature_input_bounds(&input.creature))
-        {
+        if let Err(typed) = validate_creature(&input.creature) {
             let kind = typed.error_kind();
             let output = StartSessionOutput {
                 success: false,

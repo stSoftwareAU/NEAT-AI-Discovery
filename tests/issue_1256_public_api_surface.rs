@@ -44,6 +44,9 @@ use neat_ai_discovery::{
     MAX_CREATURE_INPUT_NEURONS, observation_width_error, validate_creature_input_bounds,
 };
 
+// Composed creature-validation gate — forward-only then bounds (Issue #2046).
+use neat_ai_discovery::validate_creature;
+
 // Request types.
 use neat_ai_discovery::{
     AnalyzeAllInput, AnalyzeNeuronsInput, AnalyzeParallelInput, AnalyzeSynapsesInput,

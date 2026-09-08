@@ -140,6 +140,8 @@ pub use ffi_types::{
     // Observation-width rejection message (Issue #2020).
     observation_width_error,
     panic_error_fields,
+    // Composed creature-validation gate — forward-only then bounds (Issue #2046).
+    validate_creature,
     // Creature input-bound validation helper (Issues #1867, #2020).
     validate_creature_input_bounds,
     // Forward-only validation helper.
