@@ -111,7 +111,7 @@ cargo-deny logs:
 - `reports_a_licence_rejection_by_its_own_check_and_diagnostic` — the general
   case: a `licenses FAILED` log is reported as `licenses`, not `advisories`
 - `an_unrecognisable_log_says_so_instead_of_inventing_an_offender` — fails loud
-  without mining a crate name out of an unparseable log
+  without mining a crate name out of an unparsable log
 - `a_missing_log_is_reported_rather_than_swallowed` — an unreadable log is
   stated, not silently treated as no information
 

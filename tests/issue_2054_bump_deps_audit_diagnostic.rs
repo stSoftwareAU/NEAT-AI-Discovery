@@ -182,12 +182,12 @@ fn an_unrecognisable_log_says_so_instead_of_inventing_an_offender() {
     let described = describe("cargo-deny exploded in some new way\nfoo v1.2.3\n");
     assert!(
         described.contains("cargo deny check rejected the tree"),
-        "an unparseable log must still produce a plain statement that the gate \
+        "an unparsable log must still produce a plain statement that the gate \
          rejected the tree (Issue #2054); got:\n{described}"
     );
     assert!(
         !described.contains("foo v1.2.3"),
-        "an unparseable log must not be mined for a crate name to blame \
+        "an unparsable log must not be mined for a crate name to blame \
          (Issue #2054); got:\n{described}"
     );
 }
