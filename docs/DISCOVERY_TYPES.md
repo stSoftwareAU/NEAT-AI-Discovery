@@ -2010,8 +2010,14 @@ experimentation.
 **Detection strategy**:
 
 1. **Evaluate individual candidates**: Source → target pairs from recorded data.
+   The synapse weight comes from the canonical
+   `calculate_optimal_outgoing_weight` (Issue #2043), so the same validity
+   checks apply here as everywhere else: an `EPSILON` activation-energy floor,
+   rejection of non-finite or below-epsilon weights, and the
+   `MAX_OUTGOING_WEIGHT` clamp.
 2. **Identify high-confidence candidates**: Candidates with high predicted
-   improvement (individually successful).
+   improvement (individually successful), measured against the emitted
+   (clamped) weight.
 3. **Check for conflicts**: No duplicate source → target pairs allowed.
 4. **Group non-conflicting candidates**: Batches of 2–4 operations.
 5. **Apply discount**: `COORDINATED_OPERATION_DISCOUNT^(N-1)` via the merge pipeline.

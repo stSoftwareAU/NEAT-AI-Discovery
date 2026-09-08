@@ -8,6 +8,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+#### Batch-successful detection reuses the canonical least-squares weight (Issue #2043)
+
+`batch_successful/detection.rs::evaluate_individual` reimplemented
+`w = Σ(error × activation) / Σ(activation²)` inline and had already diverged
+from the canonical `calculate_optimal_outgoing_weight`: it used an unnamed
+`1e-10` activation-energy floor instead of the module's `EPSILON` (`1e-8`), and
+omitted the finite / above-epsilon rejection and the `MAX_OUTGOING_WEIGHT`
+clamp entirely, so the detector could emit `addSynapse` weights the canonical
+path rejects as invalid or out of range. Detection now calls
+`calculate_optimal_outgoing_weight` (with `incoming_weight = 1.0`, the
+add-synapse case), so the validity checks apply uniformly and the reported
+improvement is the one the emitted weight actually delivers.
+
 #### Sentinel-cluster detection has one authoritative rule again (Issue #2042)
 
 `observation_range.rs` and `sentinel_gating.rs` each carried a copy of the

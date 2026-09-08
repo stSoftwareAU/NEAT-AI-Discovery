@@ -11,6 +11,7 @@ use std::collections::{HashMap, HashSet};
 use crate::CreatureJson;
 use crate::analysis::constants::MIN_DISCOVERY_SAMPLE_COUNT;
 use crate::analysis::quantised_error::is_quantised_zero_one;
+use crate::analysis::scoring::weights::calculate_optimal_outgoing_weight;
 use crate::types::DiscoverRecord;
 
 use super::IndividualCandidate;
@@ -180,13 +181,23 @@ fn evaluate_individual(
     }
 
     // Least-squares weight: w = Σ(act × err) / Σ(act²).
+    //
+    // Issue #2043: the formula and its validity checks are owned by
+    // `calculate_optimal_outgoing_weight` — the activation-energy floor
+    // (`Σ act² ≤ EPSILON`), the finite / above-epsilon rejection, and the
+    // `MAX_OUTGOING_WEIGHT` clamp. Recomputing it here let this path emit
+    // weights the canonical path rejects, and future tightenings of the
+    // weight-validity rules would have skipped it.
+    //
+    // The two sums are accumulated in `f64` to avoid catastrophic cancellation
+    // and narrowed to `f32` for the gate, the same shape as
+    // `synapse::cpu_pre_reject`. `incoming_weight` is 1.0 because these are
+    // add-synapse candidates, so the incoming/outgoing ratio check does not
+    // apply.
     let sum_act_sq: f64 = activations
         .iter()
         .map(|a| f64::from(*a) * f64::from(*a))
         .sum();
-    if sum_act_sq < 1e-10 {
-        return None;
-    }
 
     let sum_act_err: f64 = activations
         .iter()
@@ -194,9 +205,11 @@ fn evaluate_individual(
         .map(|(a, e)| f64::from(*a) * f64::from(*e))
         .sum();
 
-    let weight = (sum_act_err / sum_act_sq) as f32;
+    let weight = calculate_optimal_outgoing_weight(sum_act_err as f32, sum_act_sq as f32, 1.0)?;
 
-    // Compute error reduction: improvement = 1 - (residual_sse / original_sse).
+    // Compute error reduction: improvement = 1 - (residual_sse / original_sse),
+    // using the emitted weight so the reported improvement is the one the
+    // clamped weight actually delivers (Issue #2043).
     let original_sse: f64 = errors.iter().map(|e| f64::from(*e) * f64::from(*e)).sum();
     if original_sse < 1e-10 {
         return None;
