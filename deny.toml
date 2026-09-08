@@ -56,11 +56,13 @@ highlight = "lowest-version"
 # the check instead of warning, so a stale suppression is caught by the tooling
 # rather than by an audit years later (Issue #1917).
 unused-ignored-advisory = "deny"
-ignore = [
-    # paste is unmaintained but is a transitive dependency of parquet — we
-    # cannot replace it until upstream migrates.
-    { id = "RUSTSEC-2024-0436", reason = "transitive dep from parquet; awaiting upstream migration to pastey" },
-]
+# No advisory is suppressed. RUSTSEC-2024-0436 (paste, unmaintained) was
+# ignored while parquet pulled `paste` in transitively; parquet 59.3.0 completed
+# the migration to `pastey` the ignore was waiting on, so `paste` left
+# Cargo.lock and the ignore matched nothing. `unused-ignored-advisory = "deny"`
+# then failed every `cargo deny check`, which disabled dependency bumps for the
+# repo until the dead entry was removed (Issue #2054).
+ignore = []
 
 # =============================================================================
 # Sources — only allow crates from crates.io

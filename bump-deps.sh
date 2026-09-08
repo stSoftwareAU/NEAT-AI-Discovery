@@ -508,6 +508,56 @@ bump_deps::require_cargo_deny() {
     return 1
 }
 
+# bump_deps::describe_deny_failure LOG_PATH
+# Print why `cargo deny check` rejected the tree, read from its log.
+#
+# The gate used to report the first `<name> vX.Y.Z` token in the log as "the
+# offending crate", but cargo-deny prints an inclusion graph and yanked /
+# duplicate warnings *before* the failing diagnostic, so that token was almost
+# always an innocent bystander: a stale `ignore` in deny.toml was reported as
+# "offending crate: getrandom v0.2.17", sending three consecutive triage
+# attempts after a crate that had nothing to do with the failure (Issue #2054).
+#
+# Report what cargo-deny actually said instead — which checks failed, the
+# diagnostic headlines, and the file location each one points at. When the log
+# carries nothing recognisable, say so rather than naming a crate at random.
+bump_deps::describe_deny_failure() {
+    local log="${1:-}"
+    if [[ -z "$log" || ! -r "$log" ]]; then
+        echo "cargo deny check rejected the tree; its log could not be read"
+        return 0
+    fi
+
+    local failed diagnostics locations
+    # Summary line, e.g. `advisories FAILED, bans ok, licenses ok, sources ok`.
+    failed="$(grep -oE '(advisories|bans|licenses|sources) FAILED' "$log" \
+        | sed 's/ FAILED$//' | sort -u | tr '\n' ',' | sed 's/,$//')" || failed=""
+    # Diagnostic headlines, e.g. `error[advisory-not-detected]: <summary>`.
+    diagnostics="$(grep -E '^error(\[[^]]*\])?:' "$log" | sort -u | head -5)" || diagnostics=""
+    # The `path:line:col` cargo-deny prints directly beneath each *error*
+    # diagnostic. Anchoring on the error keeps a `warning[yanked]` location out
+    # of the report — it is not why the gate failed.
+    locations="$(grep -A2 -E '^error(\[[^]]*\])?:' "$log" | grep -F '┌─' \
+        | sed -E 's/.*┌─[[:space:]]*//' | sort -u | head -5)" || locations=""
+
+    if [[ -n "$failed" ]]; then
+        echo "failing checks: $failed"
+    fi
+    if [[ -n "$diagnostics" ]]; then
+        printf '%s\n' "$diagnostics"
+    fi
+    if [[ -n "$locations" ]]; then
+        while IFS= read -r LOCATION_LINE; do
+            [[ -z "$LOCATION_LINE" ]] && continue
+            echo "at: $LOCATION_LINE"
+        done <<< "$locations"
+    fi
+    if [[ -z "$failed" && -z "$diagnostics" ]]; then
+        echo "cargo deny check rejected the tree; see its output above"
+    fi
+    return 0
+}
+
 # When sourced by the test suite we stop before parsing arguments / running.
 if [[ "${BUMP_DEPS_SOURCE_ONLY:-0}" == "1" ]]; then
     # shellcheck disable=SC2317  # `exit 0` is the fallback when not sourced.
@@ -899,12 +949,11 @@ if [[ "$DRY_RUN" -eq 0 ]]; then
     fi
     echo "📜 Running audit gate (cargo deny check)…"
     if ! cargo deny check 2>&1 | tee "$DENY_LOG"; then
-        OFFENDER="$(grep -oE '[a-zA-Z0-9_-]+ v[0-9][^ ]*' "$DENY_LOG" | head -1 || true)"
-        if [[ -n "$OFFENDER" ]]; then
-            echo "ERROR: audit gate failed (offending crate: $OFFENDER)" >&2
-        else
-            echo "ERROR: audit gate failed (cargo deny check rejected the bumped tree)" >&2
-        fi
+        echo "ERROR: audit gate failed — cargo deny check rejected the tree" >&2
+        while IFS= read -r DENY_REASON_LINE; do
+            [[ -z "$DENY_REASON_LINE" ]] && continue
+            echo "       $DENY_REASON_LINE" >&2
+        done < <(bump_deps::describe_deny_failure "$DENY_LOG")
         exit 7
     fi
     AUDIT_RUN=1
