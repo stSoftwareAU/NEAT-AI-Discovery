@@ -22,6 +22,27 @@ detection behaviour are unchanged.
 
 ### Fixed
 
+#### `bump-deps.sh` no longer fails on every run (Issue #2054)
+
+`deny.toml` ignored `RUSTSEC-2024-0436` for `paste`, a transitive dependency of
+`parquet`, with the reason recording that the ignore would die once upstream
+migrated to `pastey`. `parquet 59.3.0` completed that migration, so `paste` left
+`Cargo.lock` and the ignore matched nothing — and
+`unused-ignored-advisory = "deny"` (Issue #1917) then failed the whole
+`cargo deny check`. `./bump-deps.sh` exited 7 on every run, the worker reverted
+each bump, and dependency bumps were disabled for the repository. The dead
+ignore is removed and the bumped lockfile (`parquet 59.3.0`, `wgpu 30.0.1`,
+`arrow 59.3.0` and friends) lands with it.
+
+Triage took three runs because the audit gate misreported the cause: it scraped
+the first `<name> vX.Y.Z` token out of the cargo-deny log and called it "the
+offending crate", but cargo-deny prints its inclusion graph and yanked-crate
+warnings before the failing diagnostic, so it blamed `getrandom v0.2.17`. The
+gate now reports the checks that failed, cargo-deny's own diagnostic headlines
+and the `file:line` beneath each one — and says plainly that the tree was
+rejected when the log carries nothing recognisable, rather than naming a crate
+at random.
+
 #### Batch-successful detection reuses the canonical least-squares weight (Issue #2043)
 
 `batch_successful/detection.rs::evaluate_individual` reimplemented

@@ -30,8 +30,9 @@ const RETIRED_ADVISORY: &str = "GHSA-2f9f-gq7v-9h6m";
 /// here, which forces its author to name the crate carrying the risk — and
 /// makes the suppression fail loudly once that crate leaves `Cargo.lock`.
 const JUSTIFIED_IGNORES: &[(&str, &str)] = &[
-    // paste is unmaintained; pulled in transitively by parquet.
-    ("RUSTSEC-2024-0436", "paste"),
+    // Empty: `deny.toml` suppresses no advisory. RUSTSEC-2024-0436 (paste)
+    // was retired when parquet 59.3.0 finished migrating to `pastey` and
+    // `paste` left the graph (Issue #2054).
 ];
 
 fn repo_root() -> &'static Path {
@@ -163,19 +164,22 @@ fn every_advisory_ignore_names_a_crate_still_in_the_graph() {
     }
 }
 
+/// Replaces `the_paste_suppression_is_still_required`, whose own message said
+/// to "drop this test with the ignore, not before". `paste` left `Cargo.lock`
+/// when parquet 59.3.0 completed the `pastey` migration, so the ignore was
+/// removed and the guard is inverted: neither the crate nor its suppression
+/// may quietly return (Issue #2054).
 #[test]
-fn the_paste_suppression_is_still_required() {
+fn the_retired_paste_suppression_does_not_come_back() {
+    if locked_crate_names().iter().any(|name| name == "paste") {
+        return;
+    }
     assert!(
-        ignored_advisory_ids()
+        !ignored_advisory_ids()
             .iter()
             .any(|id| id == "RUSTSEC-2024-0436"),
-        "RUSTSEC-2024-0436 (paste, unmaintained) was verified as still-needed \
-         while retiring the thrift entry — drop this test with the ignore, not \
-         before (Issue #1917)"
-    );
-    assert!(
-        locked_crate_names().iter().any(|name| name == "paste"),
-        "paste must still be in Cargo.lock for its ignore to be live \
-         (Issue #1917)"
+        "`paste` is not in Cargo.lock, so ignoring RUSTSEC-2024-0436 matches no \
+         crate — `unused-ignored-advisory = \"deny\"` fails every `cargo deny \
+         check`, which disables ./bump-deps.sh for the whole repo (Issue #2054)"
     );
 }

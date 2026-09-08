@@ -147,7 +147,10 @@ transitive packages included, plus every dependency table of every tracked
 manifest (`[build-dependencies]`, `[target.<spec>.*]` and `fuzz/Cargo.toml`
 included, Issue #1908) — or let Renovate raise the PR. `./bump-deps.sh`
 requires `cargo-deny`: its audit gate exits 9 rather than skipping when the tool
-is missing, so the bump can never pass unaudited (Issue #1870).
+is missing, so the bump can never pass unaudited (Issue #1870). When the gate
+rejects a tree it exits 7 and reports what cargo-deny actually said — the check
+that failed, its diagnostic, and the `file:line` it blamed — rather than naming
+the first crate in the inclusion graph (Issue #2054).
 
 **GPU tests are skipped in CI** (no GPU available). For full coverage, run
 `./quality.sh` locally before pushing.
