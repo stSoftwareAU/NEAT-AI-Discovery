@@ -30,6 +30,7 @@ use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson, Cre
 
 use crate::analysis::constants::MIN_DISCOVERY_SAMPLE_COUNT;
 
+use super::error_dispersion::error_dispersion;
 use super::helpers::build_record_map;
 
 /// Minimum mean absolute output error to consider the topology insufficient.
@@ -245,6 +246,10 @@ fn has_unhealthy_intermediates(
     // Check if any on-path hidden neuron has high error variance
     const HIGH_ERROR_CV_THRESHOLD: f32 = 0.8;
 
+    /// Mean absolute error below which a hidden neuron counts as converged, so
+    /// its error variance carries no diversification signal.
+    const MIN_MEAN_ERROR_FOR_CV: f32 = 0.001;
+
     for &h_uuid in &path_hidden_neurons {
         if let Some(records) = records_map.get(h_uuid) {
             if records.len() < MIN_DISCOVERY_SAMPLE_COUNT {
@@ -258,14 +263,13 @@ fn has_unhealthy_intermediates(
             if errors.is_empty() {
                 continue;
             }
-            let n = errors.len() as f32;
-            let mean = errors.iter().sum::<f32>() / n;
-            if mean < 0.001 {
+            // Same mean → std_dev → CV chain as the plateau detectors, but read
+            // in the opposite direction: high variance, not tight clustering
+            // (Issue #2044).
+            let Some(dispersion) = error_dispersion(&errors, MIN_MEAN_ERROR_FOR_CV) else {
                 continue;
-            }
-            let std_dev = (errors.iter().map(|e| (e - mean).powi(2)).sum::<f32>() / n).sqrt();
-            let cv = std_dev / mean;
-            if cv > HIGH_ERROR_CV_THRESHOLD {
+            };
+            if dispersion.cv > HIGH_ERROR_CV_THRESHOLD {
                 return true;
             }
         }

@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+#### One shared error coefficient-of-variation rule for three detectors (Issue #2044)
+
+`error_plateau.rs`, `weight_magnitude_reset.rs` and
+`topology_diversification.rs` each hand-rolled the same mean → variance →
+standard-deviation → coefficient-of-variation chain, and the third copy had
+collapsed the two floors into one: a single `mean < 0.001` guard stood in for
+both the business floor and the `1e-6` numerical floor that protects the
+division, with no `f32::INFINITY` fallback. The chain now lives once in
+`analysis::detection::error_dispersion`, which keeps the two floors distinct
+and derives `plateau_tightness` from the shared result. Thresholds and
+detection behaviour are unchanged.
+
 ### Fixed
 
 #### Batch-successful detection reuses the canonical least-squares weight (Issue #2043)

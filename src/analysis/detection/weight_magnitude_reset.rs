@@ -23,6 +23,7 @@
 //! this by only accepting changes that improve the score.
 
 #![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
+use super::error_dispersion::assess_error_plateau;
 use super::helpers::build_record_map;
 use crate::analysis::constants::MIN_DISCOVERY_SAMPLE_COUNT as MIN_SAMPLES;
 use crate::types::DiscoverRecord;
@@ -169,31 +170,13 @@ pub fn detect_stuck_synapse_weight_resets(
             .map(|r| r.errors.first().copied().unwrap_or(0.0).abs())
             .collect();
 
-        let n = target_errors.len() as f32;
-        let mean_error: f32 = target_errors.iter().sum::<f32>() / n;
-
-        // Skip if error is already low (converged)
-        if mean_error < MIN_STUCK_ERROR {
+        // Stuck = high error + low variance (plateau in the error landscape).
+        // The shared rule lives in `error_dispersion` (Issue #2044).
+        let Some(dispersion) = assess_error_plateau(&target_errors, MIN_STUCK_ERROR, MAX_ERROR_CV)
+        else {
             continue;
-        }
-
-        // Compute coefficient of variation
-        let variance: f32 = target_errors
-            .iter()
-            .map(|e| (e - mean_error).powi(2))
-            .sum::<f32>()
-            / n;
-        let std_dev = variance.sqrt();
-        let cv = if mean_error > 1e-6 {
-            std_dev / mean_error
-        } else {
-            f32::INFINITY
         };
-
-        // Stuck = high error + low variance (plateau in error landscape)
-        if cv > MAX_ERROR_CV {
-            continue;
-        }
+        let (mean_error, cv) = (dispersion.mean_error, dispersion.cv);
 
         // Compute sensitivity: how much the synapse contributes to the target
         // sensitivity ≈ mean(|source_activation × weight|)
@@ -207,7 +190,7 @@ pub fn detect_stuck_synapse_weight_resets(
 
         // Estimated improvement: proportional to error magnitude, plateau tightness,
         // and synapse sensitivity
-        let plateau_tightness = (1.0 - cv / MAX_ERROR_CV).max(0.0);
+        let plateau_tightness = dispersion.plateau_tightness(MAX_ERROR_CV);
         let sensitivity_factor = sensitivity.min(1.0);
         let estimated_improvement = mean_error * plateau_tightness * sensitivity_factor * 0.15;
 
