@@ -37,14 +37,17 @@ behavioural evidence is the test run below.
 - `cargo-clippy --all-targets --all-features -- -D warnings` — clean;
   `cargo-fmt --all -- --check` — clean; `cargo check --all-targets
   --all-features` — clean.
-- Full suite: `cargo test --lib --tests --all-features --no-fail-fast --
-  --test-threads=2` — 181 test binaries green, one **pre-existing environment**
-  failure unrelated to this diff:
-  `issue_1939_documented_commands::runlib_aborts_when_invoked_from_a_directory_without_cargo_toml`.
-  `scripts/runlib.sh` installs rustup into `$CARGO_HOME/bin`, which is not on
-  this container's `PATH`, so its `rustup show` check aborts before the
-  `Cargo.toml not found` path the test asserts. Reproduced directly with
-  `bash scripts/runlib.sh` from an empty directory — no Rust code involved.
+- Full gate: `./quality.sh` — **passed** (`✅ All quality checks passed!`),
+  182 test binaries green, 0 failures.
+- One container-only wrinkle worth noting for anyone reproducing locally:
+  `./quality.sh` first failed at
+  `issue_1939_documented_commands::runlib_aborts_when_invoked_from_a_directory_without_cargo_toml`
+  because `$CARGO_HOME/bin` was not on this container's `PATH`, so
+  `scripts/runlib.sh` aborted at its `rustup show` check instead of the
+  `Cargo.toml not found` path the test asserts. Reproduced with
+  `bash scripts/runlib.sh` from an empty directory — no Rust code involved — and
+  the gate passes end to end with `PATH="$CARGO_HOME/bin:$PATH"`. Unrelated to
+  this diff.
 
 ## Test Plan
 
