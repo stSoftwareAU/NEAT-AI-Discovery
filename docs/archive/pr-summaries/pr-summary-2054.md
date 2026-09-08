@@ -125,15 +125,18 @@ before"*, and the ignore is now gone. The replacement inverts the guard: while
 which is precisely the state that broke `bump-deps.sh`. No test was removed
 without a replacement guarding the same property.
 
-Gate status: `./quality.sh` was run and every stage passes except one
-**pre-existing, unrelated** failure —
+Gate status: `./quality.sh` passes end to end — `✅ All quality checks passed!`,
+exit 0 — covering bash syntax, ShellCheck (24 scripts), cargo-install pinning,
+PR-summary layout, `cargo deny check`, debug build, `cargo fmt`, Clippy
+`-D warnings`, `cargo check --all-targets --all-features`, the full test suite,
+`cargo doc` with `RUSTDOCFLAGS="-D warnings"`, and the release library build.
+
+The gate first failed on one **pre-existing, unrelated** test —
 `tests/issue_1939_documented_commands.rs::runlib_aborts_when_invoked_from_a_directory_without_cargo_toml`.
-`scripts/runlib.sh` is untouched by this PR; it fails on this container because
-`_require_tools` extends `PATH` with `$HOME/.cargo/bin` while `CARGO_HOME`
-points elsewhere, so its own rustup install is invisible to the `rustup show`
-check that follows. Filed as stSoftwareAU/NEAT-AI-Discovery#2055. The remaining
-stages were re-run to completion with only that test skipped: bash syntax,
-ShellCheck (24 scripts), cargo-install pinning, PR-summary layout,
-`cargo deny check`, debug build, `cargo fmt`, Clippy `-D warnings`,
-`cargo check --all-targets --all-features`, the full test suite, `cargo doc`
-with `RUSTDOCFLAGS="-D warnings"`, and the release library build.
+`scripts/runlib.sh` is byte-identical to `origin/Develop` here and untouched by
+this PR; it fails on a container whose `CARGO_HOME` is not `$HOME/.cargo`,
+because `_require_tools` extends `PATH` with `$HOME/.cargo/bin` only, so its own
+rustup install is invisible to the `rustup show` check that follows. That is
+stSoftwareAU/NEAT-AI-Discovery#2055, fixed there rather than here. With
+`$HOME/.cargo/bin` present the same test passes (11/11) and the whole gate is
+green, which is the run recorded above.
