@@ -8,6 +8,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+#### One composed creature-validation gate for the five creature FFI entry points (Issue #2046)
+
+The forward-only check and the input-bounds check were chained by hand at every
+FFI entry point that accepts a `CreatureJson`, so the documented invariant —
+both checks, in that order, before any business logic — relied on each new
+entry point re-typing the pair correctly. `validate_creature`
+(`src/ffi_types/creature_validation.rs`) composes them once and the five sites
+call it. Responses are unchanged.
+
 #### One shared error coefficient-of-variation rule for three detectors (Issue #2044)
 
 `error_plateau.rs`, `weight_magnitude_reset.rs` and

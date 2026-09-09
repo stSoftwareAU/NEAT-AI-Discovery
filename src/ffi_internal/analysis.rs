@@ -58,9 +58,7 @@ pub fn analyze_parallel_internal(input_json: &str) -> Result<String> {
     // `loadFrom` strip warnings) instead of letting it taint discovery.
     // Issue #1867: the same gate bounds the creature's input-neuron count,
     // which sizes per-input allocations downstream.
-    if let Err(typed) = validate_forward_only_synapses(&input.creature)
-        .and_then(|()| validate_creature_input_bounds(&input.creature))
-    {
+    if let Err(typed) = validate_creature(&input.creature) {
         let kind = typed.error_kind();
         let output = AnalyzeParallelOutput {
             success: false,
@@ -593,9 +591,7 @@ pub fn rank_focus_neurons_internal(input_json: &str) -> Result<String> {
     // unresolved synapses before ranking touches the topology.
     // Issue #1867: the same gate bounds the creature's input-neuron count,
     // which sizes per-input allocations downstream.
-    if let Err(typed) = validate_forward_only_synapses(&input.creature)
-        .and_then(|()| validate_creature_input_bounds(&input.creature))
-    {
+    if let Err(typed) = validate_creature(&input.creature) {
         let kind = typed.error_kind();
         let output = RankFocusNeuronsOutput {
             success: false,

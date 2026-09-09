@@ -21,6 +21,7 @@ mod issue_1923_activation_weighted_removal_gate;
 mod issue_1932_gpu_wedged_classification;
 mod issue_2020_observation_width;
 mod issue_2045_input_guard_helper;
+mod issue_2046_creature_validation_helper;
 mod issue_574_ffi_json_fuzz_edge_cases;
 mod issue_711_ffi_safety_unsafe_markers;
 mod issue_950_numeric_neuron_ids;

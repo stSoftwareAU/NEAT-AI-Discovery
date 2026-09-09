@@ -6,6 +6,7 @@
 mod candidates;
 mod cleanup;
 mod creature_bounds;
+mod creature_validation;
 mod error_classification;
 mod forward_only_validation;
 mod requests;
@@ -18,6 +19,7 @@ pub use cleanup::*;
 pub use creature_bounds::{
     MAX_CREATURE_INPUT_NEURONS, observation_width_error, validate_creature_input_bounds,
 };
+pub use creature_validation::validate_creature;
 pub use error_classification::*;
 pub use forward_only_validation::validate_forward_only_synapses;
 pub use requests::*;
