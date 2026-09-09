@@ -2,6 +2,7 @@
 
 use anyhow::Result;
 
+use super::sizing::records_per_sample;
 use crate::RecordDiscoveryInput;
 
 /// Validate that the creature has non-input neurons and resolve observation indices.
@@ -23,11 +24,7 @@ pub fn validate_and_resolve_indices(input: &RecordDiscoveryInput) -> Result<(usi
 
     let obs_indices = resolve_observation_indices(input)?;
 
-    // Issue #1867: checked so a caller-supplied `creature.input` near
-    // `usize::MAX` cannot wrap this count down to a plausible-looking value.
-    let records_per_sample = non_input_neuron_count
-        .checked_add(input.creature.input)
-        .ok_or_else(|| anyhow::anyhow!("Discovery records per sample would overflow usize"))?;
+    let records_per_sample = records_per_sample(non_input_neuron_count, input.creature.input)?;
     if input.training_data.is_empty() || records_per_sample == 0 {
         return Err(anyhow::anyhow!(
             "No discovery records were generated from the training data"

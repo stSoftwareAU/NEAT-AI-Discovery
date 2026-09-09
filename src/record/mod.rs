@@ -11,6 +11,7 @@
     clippy::cast_sign_loss
 )] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 mod processing;
+mod sizing;
 #[cfg(test)]
 mod tests;
 mod validation;
@@ -21,6 +22,8 @@ use std::path::Path;
 
 use crate::RecordDiscoveryInput;
 use crate::parquet_format::ParquetRecordWriter;
+
+pub use sizing::records_per_sample;
 
 /// Result of recording discovery data
 #[derive(Debug)]
@@ -44,13 +47,7 @@ pub fn record_discovery_data(input: &RecordDiscoveryInput) -> Result<RecordResul
 
     let (non_input_neuron_count, obs_indices) = validation::validate_and_resolve_indices(input)?;
 
-    // Issue #1867: `creature.input` is caller-supplied, so the addition is
-    // checked like the multiplication below it. Release builds set no
-    // `overflow-checks`, so a bare `+` would wrap silently and hand the
-    // Parquet writer a size unrelated to the real record count.
-    let records_per_sample = non_input_neuron_count
-        .checked_add(input.creature.input)
-        .ok_or_else(|| anyhow::anyhow!("Discovery records per sample would overflow usize"))?;
+    let records_per_sample = records_per_sample(non_input_neuron_count, input.creature.input)?;
 
     let estimated_total_records = input
         .training_data

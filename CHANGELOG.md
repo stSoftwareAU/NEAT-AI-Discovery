@@ -8,6 +8,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+#### One overflow-checked `records_per_sample` derivation for `src/record/` (Issue #2047)
+
+The rule *"records per sample is `non_input_neuron_count + creature.input`, and
+the addition must be `checked_add` because `creature.input` is caller-supplied"*
+(Issue #1867) was copy-pasted verbatim — the same `checked_add`, the same error
+message — into `record::record_discovery_data`,
+`validation::validate_and_resolve_indices` and
+`processing::process_training_data`. Nothing stopped a fourth call site
+reintroducing a bare `+` and silently regressing Issue #1867. The derivation now
+lives once in `record::records_per_sample` (`src/record/sizing.rs`) and the three
+sites call it. Behaviour and error messages are unchanged.
+
 #### One composed creature-validation gate for the five creature FFI entry points (Issue #2046)
 
 The forward-only check and the input-bounds check were chained by hand at every

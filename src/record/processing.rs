@@ -2,6 +2,7 @@
 
 use anyhow::{Context, Result};
 
+use super::sizing::records_per_sample;
 use crate::RecordDiscoveryInput;
 use crate::parquet_format::ParquetRecordWriter;
 use crate::types::DiscoverRecord;
@@ -33,11 +34,7 @@ pub fn process_training_data(
         .map(|index| format!("input-{index}"))
         .collect();
 
-    // Issue #1867: checked once up front — `creature.input` is caller-supplied
-    // and a wrapped sum would size every per-observation batch wrongly.
-    let records_per_sample = non_input_neuron_count
-        .checked_add(input.creature.input)
-        .ok_or_else(|| anyhow::anyhow!("Discovery records per sample would overflow usize"))?;
+    let records_per_sample = records_per_sample(non_input_neuron_count, input.creature.input)?;
 
     for (relative_idx, training_record) in input.training_data.iter().enumerate() {
         let obs_index_u32 = obs_indices[relative_idx];
