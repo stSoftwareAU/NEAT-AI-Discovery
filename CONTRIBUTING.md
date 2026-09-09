@@ -36,7 +36,9 @@ on machines without a GPU.
 
 This script installs Rust and Cargo if missing (no sudo required), builds the
 library in release mode, installs it to `~/.cargo/lib/` with version tracking,
-and signs it on macOS for FFI compatibility.
+and signs it on macOS for FFI compatibility. The toolchain is resolved from
+`$CARGO_HOME/bin` when `CARGO_HOME` is set, falling back to `~/.cargo/bin`, so a
+non-default toolchain root needs no extra configuration (Issue #2055).
 
 #### Build profiles (Issue #2017)
 

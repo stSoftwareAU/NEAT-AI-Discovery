@@ -22,7 +22,11 @@ _version_ge() {
 }
 
 _require_tools() {
-  export PATH="$HOME/.cargo/bin:$PATH"
+  # rustup and rustup-init install into $CARGO_HOME when it is set, so assuming
+  # $HOME/.cargo hides a toolchain that is already present — or one this script
+  # installs below — from every lookup that follows (Issue #2055).
+  local cargo_bin="${CARGO_HOME:-$HOME/.cargo}/bin"
+  export PATH="${cargo_bin}:$PATH"
   
   # Check for jq (should be system-wide)
   if ! command -v jq >/dev/null 2>&1; then
@@ -94,7 +98,7 @@ _require_tools() {
     # Never pipe a network download into a shell: install-rustup.sh verifies the
     # pinned rustup-init against a committed SHA-256 first (Issue #1911).
     "$(dirname "${BASH_SOURCE[0]}")/install-rustup.sh" -y >&2
-    export PATH="$HOME/.cargo/bin:$PATH"
+    export PATH="${cargo_bin}:$PATH"
     # Ensure PATH is set for future invocations
     if [[ -f "$HOME/.bashrc" ]] && ! grep -q "\.cargo/bin" "$HOME/.bashrc" 2>/dev/null; then
       # shellcheck disable=SC2016
