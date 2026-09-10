@@ -1,4 +1,16 @@
-//! Internal business-logic functions for recording FFI entry points.
+//! Rust-native counterpart of the recording entry point in
+//! `src/ffi/recording.rs`: `record_discovery` calls into
+//! `record_discovery_internal` here rather than inlining the logic, so the
+//! recording path is reachable from Rust integration tests without crossing
+//! the C boundary.
+//!
+//! **Contract** — JSON in, JSON out. A caller-input failure (unparseable JSON,
+//! a creature rejected by `validate_creature`, an unwritable temp directory)
+//! is returned as a `success: false` payload carrying `error` and
+//! `error_kind`, never as a Rust `Err` handed back to the caller; `Err` is
+//! reserved for a failure to serialise the response itself. The C-boundary
+//! concerns — null/invalid-UTF-8 pointer rejection, `catch_unwind` panic
+//! containment and `CString` conversion — stay one layer up in `src/ffi/`.
 
 use anyhow::Result;
 
