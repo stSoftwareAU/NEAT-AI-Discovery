@@ -1,4 +1,13 @@
-//! Input validation for discovery data recording.
+//! The preconditions discovery recording rejects, checked before any Parquet
+//! file is opened.
+//!
+//! Recording fails when the creature has no non-input neuron (input neurons
+//! are skipped, so such a creature yields nothing to record), when the
+//! training data is empty, or when the derived records-per-sample is zero —
+//! each reported as a distinct error rather than as an empty output file.
+//! Observation indices are resolved here too: caller-supplied
+//! `record_indices` must match the training-data length, be free of
+//! duplicates, and fit in `u32`; otherwise sequential indices are generated.
 
 use anyhow::Result;
 
