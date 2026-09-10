@@ -1,4 +1,16 @@
-//! Internal business-logic functions for GPU probe FFI entry points.
+//! Rust-native counterparts of the capability probes exposed over FFI:
+//! `check_gpu_available` (`src/ffi/gpu.rs`) and `get_library_version`
+//! (`src/ffi/utilities.rs`) call into the `*_internal` functions here rather
+//! than inlining the logic, so the probe verdicts are reachable from Rust
+//! integration tests without crossing the C boundary.
+//!
+//! **Contract** — these two take no caller input, and both always answer in
+//! JSON rather than with a Rust `Err`. An unusable GPU is a *verdict inside*
+//! the payload, not a transport failure: a hard probe error is
+//! `success: false`, while a GPU-less host is `success: true` with
+//! `gpuAvailable: false` and a classified `error_kind` (Issue #1419). The
+//! C-boundary concerns — `catch_unwind` panic containment and `CString`
+//! conversion — stay one layer up in `src/ffi/`.
 
 use anyhow::Result;
 

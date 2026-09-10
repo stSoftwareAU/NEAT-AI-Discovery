@@ -1,4 +1,17 @@
-//! Internal business-logic functions for analysis FFI entry points.
+//! Rust-native counterparts of the analysis entry points exposed over FFI:
+//! `rank_focus_neurons` and `analyze_parallel` (`src/ffi/analysis.rs`), plus
+//! `get_calibration_summary` (`src/ffi/utilities.rs`), call into the
+//! `*_internal` functions here rather than inlining the logic, so the same
+//! code path is reachable from Rust integration tests without crossing the C
+//! boundary.
+//!
+//! **Contract** — JSON in, JSON out. A caller-input failure (unparsable JSON,
+//! a creature rejected by `validate_creature`, an unreadable Parquet file) is
+//! returned as a `success: false` payload carrying `error` and `error_kind`,
+//! never as a Rust `Err` handed back to the caller; `Err` is reserved for a
+//! failure to serialise the response itself. The C-boundary concerns —
+//! null/invalid-UTF-8 pointer rejection, `catch_unwind` panic containment and
+//! `CString` conversion — stay one layer up in `src/ffi/`.
 
 #![allow(clippy::cast_possible_truncation)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use anyhow::Result;

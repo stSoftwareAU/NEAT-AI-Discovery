@@ -1,4 +1,17 @@
-//! Internal business-logic functions for utility FFI entry points.
+//! Rust-native counterparts of the utility entry points in
+//! `src/ffi/utilities.rs`: `merge_discovery_parquet`,
+//! `read_discovery_records_ffi` and `export_visualisation_snapshot` call into
+//! the `*_internal` functions here rather than inlining the logic, so the
+//! Parquet and visualisation paths are reachable from Rust integration tests
+//! without crossing the C boundary.
+//!
+//! **Contract** — JSON in, JSON out. A caller-input failure (unparsable JSON,
+//! a missing or corrupt Parquet file, an unwritable output path) is returned
+//! as a `success: false` payload carrying `error` and `error_kind`, never as a
+//! Rust `Err` handed back to the caller; `Err` is reserved for a failure to
+//! serialise the response itself. The C-boundary concerns —
+//! null/invalid-UTF-8 pointer rejection, `catch_unwind` panic containment and
+//! `CString` conversion — stay one layer up in `src/ffi/`.
 
 use anyhow::Result;
 
