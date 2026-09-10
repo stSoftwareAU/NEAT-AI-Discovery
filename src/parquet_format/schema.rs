@@ -1,4 +1,23 @@
-//! Schema definitions and validation for discovery Parquet records
+//! The single source of truth for the discovery Parquet layout — five fixed
+//! columns, in this order, shared by every writer and every reader:
+//!
+//! | column | Arrow type | nullable |
+//! | --- | --- | --- |
+//! | `obs_index` | `UInt32` | no |
+//! | `neuron_uuid` | `Utf8` | no |
+//! | `value` | `Float32` | **yes** — the only nullable column |
+//! | `activation` | `Float32` | no |
+//! | `errors` | `List<Float32>` | no |
+//!
+//! [`create_schema`] is the one place that layout is declared: the `writer`
+//! module builds every batch against it and the `reader` module validates each
+//! file's columns, types and nullability against it before decoding a row, so a
+//! change here changes both sides of the format at once.
+//!
+//! This module also owns the two bounds the format is keyed on: the
+//! `1..=100`-byte `neuron_uuid` range enforced by `validate_neuron_uuid`, and
+//! `MAX_ARROW_OFFSET` (`i32::MAX`), the Arrow offset ceiling that caps a
+//! writer's row capacity and its per-batch UUID and error-value budgets.
 
 use anyhow::Result;
 use arrow::datatypes::{DataType, Field, Schema};

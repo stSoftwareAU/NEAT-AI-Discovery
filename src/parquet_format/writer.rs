@@ -1,4 +1,23 @@
-//! Parquet writing and serialisation for discovery records
+//! Writing discovery records into Parquet, and the atomicity boundary callers
+//! must respect.
+//!
+//! [`ParquetRecordWriter`] streams into its destination file as records arrive:
+//! each batch is validated against
+//! [`create_schema`](crate::parquet_format::create_schema) and split so no
+//! batch exceeds Arrow's offset budget, then appended immediately. **The file
+//! is not a readable Parquet file until [`ParquetRecordWriter::finish`] writes
+//! the footer**, so a concurrent reader must never be pointed at a file still
+//! being written — write to a `.parquet.tmp` sibling and rename it into place
+//! once `finish` returns (what `src/streaming.rs` does, and what the reader's
+//! `.parquet.tmp` rejection backstops). [`merge_parquet_files`] is the one
+//! function here that publishes atomically on the caller's behalf, via the same
+//! temp-then-rename.
+//!
+//! Atomicity *within* a record is the caller's obligation, not this module's:
+//! per AGENTS.md "Atomic Record Writes", every field of a
+//! [`DiscoverRecord`](crate::types::DiscoverRecord) must come from one training
+//! record. The writer stores each record's fields exactly as supplied and never
+//! recombines them across rows, so it cannot detect a mixed record.
 
 use anyhow::{Context, Result};
 use arrow::array::{Float32Array, ListArray, StringArray, UInt32Array};
