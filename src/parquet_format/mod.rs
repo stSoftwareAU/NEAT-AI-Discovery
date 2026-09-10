@@ -1,9 +1,9 @@
 //! Parquet file format handling for discovery records
 //!
 //! Sub-modules:
-//! - `schema` — Schema definitions and validation
-//! - `writer` — Parquet writing and serialisation
-//! - `reader` — Parquet reading and deserialisation
+//! - `schema` — the five fixed columns every reader and writer agrees on
+//! - `writer` — streams records out; the footer lands only on `finish()`
+//! - `reader` — column-projected reads, schema-validated before decoding
 //! - `batch_columns` — the shared batch → `DiscoverRecord` decoder
 
 pub mod activation_summary;

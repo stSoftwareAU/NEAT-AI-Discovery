@@ -1,4 +1,21 @@
-//! Parquet reading and deserialisation for discovery records
+//! Column-projected reads of discovery Parquet files.
+//!
+//! Every read is projected through a [`ColumnProfile`] rather than decoding the
+//! whole file: `WithoutErrors` skips the `errors` `ListArray` — usually the
+//! bulk of the file — during both I/O and deserialisation, and `ActivationOnly`
+//! narrows further to `neuron_uuid` + `activation`. **Records returned under a
+//! projection that omits `errors` carry an empty `errors` vec**, so an empty
+//! list means "not read", not "no errors"; only [`ColumnProfile::Full`]
+//! distinguishes the two.
+//!
+//! Two guards apply before any row is decoded: the file's columns, Arrow types
+//! and nullability are validated against
+//! [`create_schema`](crate::parquet_format::create_schema) — a widened
+//! nullability would otherwise decode as `""` or `0.0` rather than failing —
+//! and a `.parquet.tmp` path is rejected outright as an in-progress write. The
+//! `_bounded` / `_with_deadline` variants additionally charge every
+//! materialised record against a [`DecodeBudget`] and abort part-way with a
+//! typed error instead of exhausting the host.
 
 use anyhow::{Context, Result};
 use arrow::datatypes::DataType;
