@@ -1,4 +1,16 @@
-//! Record building from training data.
+//! Per-observation atomicity for the recording path (AGENTS.md, "Atomic
+//! Record Writes").
+//!
+//! Every discovery record derived from one training observation — one per
+//! non-input neuron, plus one per input activation — is accumulated into a
+//! single batch and handed to the Parquet writer in one `write_records` call,
+//! so data from different training records is never mixed within a write and
+//! the analysis phase can match on `obs_index`. A failed write aborts the
+//! whole run: the error propagates before `ParquetRecordWriter::finish`, so
+//! the file is never finalised and no half-written observation is readable.
+//!
+//! Producing no records at all across the entire training set is an error, not
+//! an empty success.
 
 use anyhow::{Context, Result};
 
