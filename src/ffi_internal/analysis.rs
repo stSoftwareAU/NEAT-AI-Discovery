@@ -5,7 +5,7 @@
 //! code path is reachable from Rust integration tests without crossing the C
 //! boundary.
 //!
-//! **Contract** — JSON in, JSON out. A caller-input failure (unparseable JSON,
+//! **Contract** — JSON in, JSON out. A caller-input failure (unparsable JSON,
 //! a creature rejected by `validate_creature`, an unreadable Parquet file) is
 //! returned as a `success: false` payload carrying `error` and `error_kind`,
 //! never as a Rust `Err` handed back to the caller; `Err` is reserved for a

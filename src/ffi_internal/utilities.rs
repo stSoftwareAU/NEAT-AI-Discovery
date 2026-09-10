@@ -5,7 +5,7 @@
 //! Parquet and visualisation paths are reachable from Rust integration tests
 //! without crossing the C boundary.
 //!
-//! **Contract** — JSON in, JSON out. A caller-input failure (unparseable JSON,
+//! **Contract** — JSON in, JSON out. A caller-input failure (unparsable JSON,
 //! a missing or corrupt Parquet file, an unwritable output path) is returned
 //! as a `success: false` payload carrying `error` and `error_kind`, never as a
 //! Rust `Err` handed back to the caller; `Err` is reserved for a failure to
