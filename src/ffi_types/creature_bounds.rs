@@ -29,6 +29,13 @@
 //! `CreatureJson` serde impl already rejects it at deserialisation and refuses
 //! to emit it at serialisation; this gate is the belt-and-braces check for
 //! creatures constructed in Rust and handed to an entry point directly.
+//!
+//! `creature.output` carries the same pair of bounds (Issue #2078). The
+//! output width sizes the output-UUID `HashSet` in
+//! `CreatureTopologyCache::new` (`src/analysis/detection/topology_cache.rs`),
+//! so an unbounded count reproduces the Issue #1867 abort through the
+//! analysis path — `HashSet::with_capacity(usize::MAX)` is the same
+//! `handle_alloc_error` abort by another route.
 
 use super::{CreatureJson, DiscoveryError};
 
@@ -56,16 +63,26 @@ pub fn observation_width_error(field: &str, count: usize) -> Option<String> {
 /// allocation abort, so it is deliberately generous rather than tuned.
 pub const MAX_CREATURE_INPUT_NEURONS: usize = 1_000_000;
 
+/// Maximum accepted `creature.output` (inclusive).
+///
+/// The sibling of [`MAX_CREATURE_INPUT_NEURONS`] for the output width
+/// (Issue #2078). `CreatureTopologyCache::new` sizes an output-UUID
+/// `HashSet` from this count, so an unbounded value drives an
+/// attacker-chosen allocation whose failure aborts the process. One million
+/// output neurons already far exceeds any real NEAT creature, so the cap is
+/// deliberately generous rather than tuned.
+pub const MAX_CREATURE_OUTPUT_NEURONS: usize = 1_000_000;
+
 /// Verify that `creature.input` is within `1..=`[`MAX_CREATURE_INPUT_NEURONS`]
-/// and `creature.output >= 1` (Issues #1867, #2020).
+/// and `creature.output` within `1..=`[`MAX_CREATURE_OUTPUT_NEURONS`]
+/// (Issues #1867, #2020, #2078).
 ///
 /// Runs at every FFI entry point that accepts a `CreatureJson`, immediately
 /// after JSON deserialisation and before any business logic, alongside
 /// [`super::validate_forward_only_synapses`].
 ///
 /// Returns `DiscoveryError::InvalidInput` — classified as
-/// `data_validation` — when either count is below one or the input count
-/// exceeds the cap.
+/// `data_validation` — when either count is below one or above its cap.
 pub fn validate_creature_input_bounds(creature: &CreatureJson) -> Result<(), DiscoveryError> {
     // Issue #2020: the lower bound comes first — a zero width is the more
     // fundamental corruption and its message names the field.
@@ -83,6 +100,20 @@ pub fn validate_creature_input_bounds(creature: &CreatureJson) -> Result<(), Dis
                  it would drive an unbounded allocation that aborts the process \
                  rather than returning an error.",
                 creature.input, MAX_CREATURE_INPUT_NEURONS
+            ),
+        });
+    }
+
+    // Issue #2078: the output width sizes the output-UUID set in
+    // `CreatureTopologyCache::new`, so it needs the same upper bound.
+    if creature.output > MAX_CREATURE_OUTPUT_NEURONS {
+        return Err(DiscoveryError::InvalidInput {
+            detail: format!(
+                "creature declares {} output neurons, exceeding the maximum of {} \
+                 (Issue #2078). An output count this large is a corrupt creature: \
+                 it would drive an unbounded allocation that aborts the process \
+                 rather than returning an error.",
+                creature.output, MAX_CREATURE_OUTPUT_NEURONS
             ),
         });
     }
@@ -182,5 +213,33 @@ mod tests {
     fn usize_max_is_rejected() {
         validate_creature_input_bounds(&creature(usize::MAX, 1))
             .expect_err("usize::MAX must be rejected");
+    }
+
+    #[test]
+    fn output_limit_is_inclusive() {
+        let mut at_limit = creature(2, 1);
+        at_limit.output = MAX_CREATURE_OUTPUT_NEURONS;
+        validate_creature_input_bounds(&at_limit).expect("the output limit itself must validate");
+    }
+
+    #[test]
+    fn output_above_limit_is_rejected_as_data_validation() {
+        let mut above = creature(2, 1);
+        above.output = MAX_CREATURE_OUTPUT_NEURONS + 1;
+        let err = validate_creature_input_bounds(&above)
+            .expect_err("above the output limit must be rejected");
+        assert_eq!(err.error_kind(), DiscoveryErrorKind::DataValidation);
+        let msg = err.to_string();
+        assert!(
+            msg.contains("Issue #2078"),
+            "msg should cite the tracking issue: {msg}"
+        );
+    }
+
+    #[test]
+    fn usize_max_output_is_rejected() {
+        let mut above = creature(2, 1);
+        above.output = usize::MAX;
+        validate_creature_input_bounds(&above).expect_err("usize::MAX output must be rejected");
     }
 }

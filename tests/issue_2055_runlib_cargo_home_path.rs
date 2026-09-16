@@ -23,7 +23,7 @@
 mod common;
 
 use common::runlib_support::{
-    lib_file as lib_file_for, link_system_tools, resolve_tool, write_stub,
+    lib_file as lib_file_for, link_system_tools, resolve_tool, write_rustc_stub, write_stub,
 };
 use std::fs;
 use std::path::PathBuf;
@@ -101,7 +101,7 @@ esac
                 lib = lib_file(),
             ),
         );
-        write_stub(&bin, "rustc", r#"echo "rustc 1.99.0 (stub 2026-01-01)""#);
+        write_rustc_stub(&bin, "1.99.0");
         write_stub(&bin, "install_name_tool", "exit 0");
         write_stub(&bin, "codesign", "exit 0");
 

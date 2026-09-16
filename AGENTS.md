@@ -119,7 +119,7 @@ Discovery assumes **forward-only** networks (no recurrent feedback):
 - No cross-sample state — each recorded activation/error is for a single
   training sample.
 
-#### Validated FFI Surface (Issue #1184, #1188, #1867, #2020, #2046)
+#### Validated FFI Surface (Issue #1184, #1188, #1867, #2020, #2046, #2078)
 
 `validate_creature` (`src/ffi_types/creature_validation.rs`) is the
 defence-in-depth gate: it composes `validate_forward_only_synapses` then
@@ -130,12 +130,12 @@ business logic on every FFI entry point accepting a `CreatureJson`, returning
 `DiscoveryError::InvalidInput` with `error_kind: "data_validation"`.
 
 `validate_creature_input_bounds` caps `creature.input` at
-`MAX_CREATURE_INPUT_NEURONS` (1,000,000). The count is caller-supplied and sizes
-allocations in both the recording and analysis paths, so an unbounded value
-aborts the process via `handle_alloc_error` — an abort `panic::catch_unwind`
-cannot intercept (Issue #1867). The cap is absolute, **not** relative to
-`creature.neurons.len()`: input neurons are implied by the count and are not
-listed in `creature.neurons`.
+`MAX_CREATURE_INPUT_NEURONS` and `creature.output` at
+`MAX_CREATURE_OUTPUT_NEURONS` (both 1,000,000; Issues #1867, #2078). Both counts
+are caller-supplied and size allocations — `input` in the recording and analysis
+paths, `output` in `CreatureTopologyCache::new` — so an unbounded value aborts
+the process via `handle_alloc_error`, which `panic::catch_unwind` cannot
+intercept. The caps are absolute, not `creature.neurons.len()`-relative.
 
 It also enforces the **lower** bound (Issue #2020): `input < 1` / `output < 1` is
 never accepted — the counts are the observation width, not derivable from `neurons`.

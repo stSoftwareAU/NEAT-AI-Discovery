@@ -17,7 +17,8 @@ mod session;
 pub use candidates::*;
 pub use cleanup::*;
 pub use creature_bounds::{
-    MAX_CREATURE_INPUT_NEURONS, observation_width_error, validate_creature_input_bounds,
+    MAX_CREATURE_INPUT_NEURONS, MAX_CREATURE_OUTPUT_NEURONS, observation_width_error,
+    validate_creature_input_bounds,
 };
 pub use creature_validation::validate_creature;
 pub use error_classification::*;
