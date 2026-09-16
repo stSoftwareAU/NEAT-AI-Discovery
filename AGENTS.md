@@ -137,6 +137,11 @@ paths, `output` in `CreatureTopologyCache::new` — so an unbounded value aborts
 the process via `handle_alloc_error`, which `panic::catch_unwind` cannot
 intercept. The caps are absolute, not `creature.neurons.len()`-relative.
 
+`creature.output` carries the matching cap `MAX_CREATURE_OUTPUT_NEURONS`
+(1,000,000, Issue #2078): the output width sizes the output-UUID `HashSet` in
+`CreatureTopologyCache::new`, so an unbounded count reaches the same
+`handle_alloc_error` abort through the analysis path.
+
 It also enforces the **lower** bound (Issue #2020): `input < 1` / `output < 1` is
 never accepted — the counts are the observation width, not derivable from `neurons`.
 `CreatureJson`'s serde impl rejects a zero width on read and refuses to emit one.
