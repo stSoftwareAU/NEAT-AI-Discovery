@@ -57,7 +57,7 @@ Everything in this repository serves that objective:
 
 - **This library finds candidates, it does not "auto-fix" creatures**: NEAT-AI validates candidates by rescoring on the full training set.
 - **GPU required**: discovery is skipped when no compatible GPU is available (see `check_gpu_available()`).
-- **Build/install**: `./scripts/runlib.sh` (installs to `~/.cargo/lib/` with version tracking).
+- **Build/install**: `./scripts/runlib.sh` (installs to `~/.cargo/lib/` with version tracking, then removes `target/`; a matching install is skipped without running cargo at all).
 - **Preferred recording API**: streaming (`start_discovery_session` → `append_discovery_records` → `finish_discovery_session`) to avoid JS/V8 string limits.
 - **Free FFI results**: every FFI call returning a `char*` must be freed with `free_discovery_result()`.
 
@@ -72,11 +72,20 @@ Everything in this repository serves that objective:
    ```
 
    This script:
-   - Installs Rust and Cargo if missing (no sudo required)
-   - Builds the library in **release** mode (`opt-level = 3`, fat LTO,
-     `codegen-units = 1` — see [CONTRIBUTING.md — Build profiles](CONTRIBUTING.md#build-profiles-issue-2017))
-   - Installs it to `~/.cargo/lib/` with version tracking
-   - Signs it on macOS for FFI compatibility
+   - Bootstraps a missing Rust toolchain from a digest-pinned `rustup-init`
+     (no sudo required); `jq` is a precondition it does not install
+   - **Skips the build entirely** when `~/.cargo/lib/libneat_ai_discovery.*`
+     and `~/.cargo/lib/.neat_ai_discovery.version` already match the crate
+     version — it runs no `cargo` command at all and prints
+     `[neat_ai_discovery] already installed v<x>`. A missing `target/` is *not*
+     a reason to rebuild; delete the version stamp to force one
+   - Otherwise builds the library in **release** mode (`opt-level = 3`, fat
+     LTO, `codegen-units = 1` — see [CONTRIBUTING.md — Build profiles](CONTRIBUTING.md#build-profiles-issue-2017))
+   - Installs it to `~/.cargo/lib/` (or `$CARGO_HOME/lib`) with version
+     tracking, and signs it on macOS for FFI compatibility
+   - **Removes the checkout's `target/`** after a successful install, naming
+     the path removed and the bytes freed. A build directory outside the
+     checkout (a shared `CARGO_TARGET_DIR`) is kept and reported instead
 
    **From the NEAT-AI directory**, run it in a subshell that changes into this
    crate's root first — the script reads `Cargo.toml` from the current working
@@ -566,12 +575,32 @@ All dependencies build automatically on remote, unattended machines.
   rebuilds key off this crate version.
 - Local and remote runs use a distributed build pattern via `scripts/runlib.sh`:
   the library is installed to `~/.cargo/lib/` and tracked with a version marker at
-  `~/.cargo/lib/.neat_ai_discovery.version`.
+  `~/.cargo/lib/.neat_ai_discovery.version`. When artefact and marker match the
+  crate version the script runs no `cargo` command at all; after a build it
+  removes the checkout's `target/`, so a fleet host keeps the installed library
+  rather than a multi-gigabyte build tree.
+- **`scripts/runlib.sh` is a byte-identical copy, not local source.** Its one
+  home is `scripts/runlib.sh` on
+  [NEAT-AI-core](https://github.com/stSoftwareAU/NEAT-AI-core) `Develop` (core
+  #680). Behaviour changes are made there and re-copied outward; the
+  `family-sync` job in [`.github/workflows/family-sync.yml`](.github/workflows/family-sync.yml)
+  fetches core's copy on every pull request and commits the refreshed file onto
+  the PR branch when it differs. A fetch that fails, or a payload that is not a
+  script, fails the job rather than passing on a stale copy.
 - In the normal PR workflow you do not need to bump the version yourself — CI
   does it. If you commit **directly** (outside the PR workflow, where CI does not
   run), you **must** manually increment the patch version so cached builds pick
   up your change. This is the single authoritative version-bump policy; other
   docs link here.
+
+```mermaid
+flowchart TD
+    PR[Pull request opened / updated] --> Fetch[family-sync: fetch runlib.sh<br/>from NEAT-AI-core Develop]
+    Fetch -->|fetch fails| Fail[Job fails — never passes on a stale copy]
+    Fetch -->|byte-identical| Pass[Nothing to do]
+    Fetch -->|differs| Commit[Commit + rebase + push onto the PR branch]
+    Commit --> PR
+```
 
 ## 🔗 Related Repositories
 
