@@ -48,8 +48,10 @@ fn runlib_aborts_when_invoked_from_a_directory_without_cargo_toml() {
         "runlib.sh must fail when the caller's cwd has no Cargo.toml"
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
+    // Wording per the canonical NEAT-AI-core helper adopted in Issue #2072;
+    // the behaviour the README documents around it is unchanged.
     assert!(
-        stderr.contains("Cargo.toml not found"),
+        stderr.contains("no Cargo.toml in"),
         "expected the missing-manifest abort, got stderr: {stderr}"
     );
 }
