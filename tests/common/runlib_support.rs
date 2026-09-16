@@ -70,6 +70,50 @@ pub fn write_stub(dir: &Path, name: &str, body: &str) {
     make_executable(&path);
 }
 
+/// The host target triple the stub `rustc` reports, derived from the platform
+/// these tests are compiled for so the sandbox names the host it runs on.
+#[allow(dead_code)]
+pub fn host_triple() -> String {
+    let suffix = if cfg!(target_os = "macos") {
+        "apple-darwin"
+    } else if cfg!(target_env = "musl") {
+        "unknown-linux-musl"
+    } else {
+        "unknown-linux-gnu"
+    };
+    format!("{}-{suffix}", std::env::consts::ARCH)
+}
+
+/// Write the sandbox's stub `rustc` into `dir`.
+///
+/// It answers both surfaces the script reads: `rustc --version` for the
+/// toolchain gate's active version, and `rustc -vV` for the `host:` line that
+/// gate passes to `cargo metadata --filter-platform`. A stub that answered only
+/// the first made the script die on every run (`rustc -vV named no host
+/// target`), so the whole contract lives here rather than in each sandbox.
+#[allow(dead_code)]
+pub fn write_rustc_stub(dir: &Path, version: &str) {
+    write_stub(
+        dir,
+        "rustc",
+        &format!(
+            r#"if [[ "${{1:-}}" == "-vV" || "${{1:-}}" == "--version" && "${{2:-}}" == "--verbose" ]]; then
+  cat <<'EOF'
+rustc {version} (stub 2026-01-01)
+binary: rustc
+commit-hash: unknown
+commit-date: unknown
+host: {host}
+release: {version}
+EOF
+else
+  echo "rustc {version} (stub 2026-01-01)"
+fi"#,
+            host = host_triple(),
+        ),
+    );
+}
+
 /// Absolute path of a system utility, resolved through the host's own `PATH`.
 /// A utility the sandbox needs but the host does not have fails the test rather
 /// than quietly leaving a gap.
