@@ -1237,19 +1237,26 @@ Discovery assumes **forward-only** networks (no recurrent feedback). This is cri
 - **Discovered neurons must be inserted, not appended**: When applying an add-neuron candidate, the new neuron must be inserted at the correct index.
 - **No "remembering" across samples**: Discovery explicitly does **not** support recurrent connections.
 
-### 🚧 Creature Input Bound (Issue #1867)
+### 🚧 Creature Width Bounds (Issues #1867, #2078)
 
-Every entry point that accepts a `creature` also bounds `creature.input`:
+Every entry point that accepts a `creature` also bounds `creature.input` and
+`creature.output`:
 
 - The maximum accepted input-neuron count is **1,000,000**
-  (`MAX_CREATURE_INPUT_NEURONS`).
+  (`MAX_CREATURE_INPUT_NEURONS`), and the maximum accepted output-neuron count
+  is **1,000,000** (`MAX_CREATURE_OUTPUT_NEURONS`, Issue #2078). Both bounds are
+  inclusive.
 - A larger count returns `success: false` with
   `errorKind: "data_validation"` before any recording or analysis work starts.
   The count sizes allocations in both pipelines, so an unbounded value would
   abort the process rather than return an error.
-- The bound is absolute, **not** relative to `creature.neurons.length`: input
+- The bounds are absolute, **not** relative to `creature.neurons.length`: input
   neurons are implied by the count and are not listed in `creature.neurons`
   (the example payload above pairs `"input": 20` with a single listed neuron).
+- `creature.output` sizes the output-UUID set the analysis pipeline builds per
+  call (`CreatureTopologyCache`), so an unbounded count aborts the process the
+  same way — `"output": 18446744073709551615` now returns
+  `errorKind: "data_validation"` instead (Issue #2078).
 
 ### 🚧 Observation Width — `input >= 1`, `output >= 1` (Issue #2020)
 

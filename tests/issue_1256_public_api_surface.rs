@@ -39,9 +39,10 @@ use neat_ai_discovery::{
 // Forward-only validation helper.
 use neat_ai_discovery::validate_forward_only_synapses;
 
-// Creature input-bound validation helper (Issues #1867, #2020).
+// Creature width-bound validation helper (Issues #1867, #2020, #2078).
 use neat_ai_discovery::{
-    MAX_CREATURE_INPUT_NEURONS, observation_width_error, validate_creature_input_bounds,
+    MAX_CREATURE_INPUT_NEURONS, MAX_CREATURE_OUTPUT_NEURONS, observation_width_error,
+    validate_creature_input_bounds,
 };
 
 // Composed creature-validation gate — forward-only then bounds (Issue #2046).

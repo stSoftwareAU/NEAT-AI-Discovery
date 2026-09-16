@@ -43,6 +43,19 @@ detection behaviour are unchanged.
 
 ### Fixed
 
+#### `creature.output` is bounded at the FFI boundary (Issue #2078)
+
+`MAX_CREATURE_INPUT_NEURONS` (Issue #1867) capped `creature.input`, but its
+sibling `creature.output` was bounded only below (`output >= 1`, Issue #2020).
+`CreatureTopologyCache::new` sizes an output-UUID `HashSet` from that count, so
+`{"output": 18446744073709551615}` reaching `analyze_parallel` or
+`rank_focus_neurons` drove `HashSet::with_capacity(usize::MAX)` — an allocation
+failure that routes through `handle_alloc_error` and **aborts** the host
+process, which the `panic::catch_unwind` around every FFI entry point cannot
+intercept. `validate_creature_input_bounds` now caps `output` at
+`MAX_CREATURE_OUTPUT_NEURONS` (1,000,000), returning the same structured
+`data_validation` error as the `input` bound.
+
 #### `bump-deps.sh` no longer fails on every run (Issue #2054)
 
 `deny.toml` ignored `RUSTSEC-2024-0436` for `paste`, a transitive dependency of

@@ -119,7 +119,7 @@ Discovery assumes **forward-only** networks (no recurrent feedback):
 - No cross-sample state — each recorded activation/error is for a single
   training sample.
 
-#### Validated FFI Surface (Issue #1184, #1188, #1867, #2020, #2046)
+#### Validated FFI Surface (Issue #1184, #1188, #1867, #2020, #2046, #2078)
 
 `validate_creature` (`src/ffi_types/creature_validation.rs`) is the
 defence-in-depth gate: it composes `validate_forward_only_synapses` then
@@ -136,6 +136,11 @@ aborts the process via `handle_alloc_error` — an abort `panic::catch_unwind`
 cannot intercept (Issue #1867). The cap is absolute, **not** relative to
 `creature.neurons.len()`: input neurons are implied by the count and are not
 listed in `creature.neurons`.
+
+`creature.output` carries the matching cap `MAX_CREATURE_OUTPUT_NEURONS`
+(1,000,000, Issue #2078): the output width sizes the output-UUID `HashSet` in
+`CreatureTopologyCache::new`, so an unbounded count reaches the same
+`handle_alloc_error` abort through the analysis path.
 
 It also enforces the **lower** bound (Issue #2020): `input < 1` / `output < 1` is
 never accepted — the counts are the observation width, not derivable from `neurons`.
