@@ -168,6 +168,11 @@ Save a baseline on your machine before making performance-sensitive changes:
 
 This runs all 42 benchmark suites and stores results in `target/criterion/`.
 
+> **Baselines do not survive `./scripts/runlib.sh`.** That script removes the
+> checkout's `target/` after a successful install (Issue #2072), so copy any
+> baseline you need to keep out of `target/criterion/` first, or re-run the
+> benchmark after installing.
+
 ### 🔎 Detecting Regressions
 
 After making changes, compare against the baseline:

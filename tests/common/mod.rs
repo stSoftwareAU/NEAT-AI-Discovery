@@ -4,6 +4,10 @@
 //! - **GPU skip macro** — `skip_without_gpu!()` for tests requiring GPU access
 //! - **Fixture builders** — `neuron()`, `hidden()`, `output()`, `synapse()`, `make_creature()`
 //! - **Record helpers** — `record()` for creating `DiscoverRecord` instances
+//! - **runlib sandbox primitives** — [`runlib_support`], shared by the
+//!   `scripts/runlib.sh` tests (Issue #2072)
+
+pub mod runlib_support;
 
 #[allow(dead_code)]
 use std::path::PathBuf;

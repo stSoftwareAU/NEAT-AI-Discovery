@@ -12,7 +12,8 @@ covers everything you need to get started.
 
 ### 📋 Prerequisites
 
-**User-installable (automatically handled by `scripts/runlib.sh`):**
+**User-installable (bootstrapped by `scripts/runlib.sh` when `rustc` is absent,
+from a digest-pinned `rustup-init`):**
 - Rust (latest stable version)
 - Cargo
 
@@ -34,11 +35,34 @@ on machines without a GPU.
 ./scripts/runlib.sh
 ```
 
-This script installs Rust and Cargo if missing (no sudo required), builds the
-library in release mode, installs it to `~/.cargo/lib/` with version tracking,
-and signs it on macOS for FFI compatibility. The toolchain is resolved from
-`$CARGO_HOME/bin` when `CARGO_HOME` is set, falling back to `~/.cargo/bin`, so a
-non-default toolchain root needs no extra configuration (Issue #2055).
+`scripts/runlib.sh` is a **byte-identical copy** of the canonical helper that
+lives at `scripts/runlib.sh` on
+[NEAT-AI-core](https://github.com/stSoftwareAU/NEAT-AI-core) `Develop`
+(core #680). Do not edit it here — change it in NEAT-AI-core and let the
+`family-sync` job in
+[`.github/workflows/family-sync.yml`](.github/workflows/family-sync.yml)
+re-copy it outward. That job fetches core's copy on every pull request, commits
+the refreshed file onto the PR branch when it differs, and fails outright when
+core's copy cannot be fetched.
+
+The script bootstraps Rust and Cargo if `rustc` is missing (no sudo required),
+builds the library in release mode, installs it to `~/.cargo/lib/` with version
+tracking, and signs it on macOS for FFI compatibility. Two properties matter
+day to day:
+
+- **It runs no `cargo` command when the install is already current.** With
+  `~/.cargo/lib/libneat_ai_discovery.*` present and
+  `~/.cargo/lib/.neat_ai_discovery.version` matching the crate version, it
+  prints `[neat_ai_discovery] already installed v<x>` and exits. A missing
+  `target/` is not a rebuild trigger. There is no force flag — delete the
+  version stamp to force a rebuild.
+- **It removes the checkout's `target/` after a successful install**, naming the
+  path and the bytes freed. A build directory outside the checkout (a shared
+  `CARGO_TARGET_DIR`) is kept, and that is reported rather than passed over.
+
+The toolchain is resolved from `$CARGO_HOME/bin` when `CARGO_HOME` is set,
+falling back to `~/.cargo/bin`, so a non-default toolchain root needs no extra
+configuration (Issue #2055); the library is installed under that same root.
 
 #### Build profiles (Issue #2017)
 
@@ -54,13 +78,17 @@ Stable Rust only — no nightly, no `-Zthreads`, no Cranelift.
 `-C target-cpu=native` is **not** set: this crate ships a `cdylib`/`rlib`
 consumed via Deno FFI on other hosts, not a same-host binary.
 
-The Rust bootstrap goes through `./scripts/install-rustup.sh`, which downloads
-the pinned `rustup-init` binary for the host target and executes it **only**
-when its SHA-256 matches the digest committed in `scripts/rustup-init.sha256`.
-Nothing is ever piped from the network into a shell: a mismatch, a failed
-download, or an unpinned host target aborts non-zero without executing the
-downloaded file (Issue #1911). To bump rustup, change `RUSTUP_VERSION` in
-`scripts/install-rustup.sh` and replace every digest in
+Nothing is ever piped from the network into a shell. `scripts/runlib.sh`
+bootstraps a missing toolchain from a `rustup-init` pinned inside the canonical
+script itself, and executes it **only** when its SHA-256 matches that pin; a
+mismatch, a failed download, an unpinned host target, or a missing SHA-256 tool
+aborts non-zero without executing the downloaded file. That pin lives in
+NEAT-AI-core and is bumped there (Issues #1911, #2072).
+
+`./scripts/install-rustup.sh` remains the standalone bootstrap with the same
+guarantee, verifying the pinned `rustup-init` for the host target against the
+digests committed in `scripts/rustup-init.sha256`. To bump it, change
+`RUSTUP_VERSION` in `scripts/install-rustup.sh` and replace every digest in
 `scripts/rustup-init.sha256` with the corresponding `rustup-init.sha256`
 published by the Rust project for the new version — the two files must move
 together.
@@ -226,6 +254,11 @@ the gate runs on milestone sub-issue PRs too, not just the rollup into `Develop`
 - `actionlint` (separate workflow `.github/workflows/actionlint.yml`) — lints
   every workflow file under `.github/workflows/`, so a bad expression or an
   unsupported runner label fails on the PR rather than after merge (Issue #1292)
+- `Family Sync` (separate workflow `.github/workflows/family-sync.yml`) — keeps
+  `scripts/runlib.sh` byte-identical to NEAT-AI-core `Develop`, committing the
+  refreshed copy onto the PR branch when it differs and failing the job when
+  core's copy cannot be fetched (Issue #2072). Skipped on fork pull requests,
+  which carry no push credential
 
 Every one of these separate workflows triggers on `pull_request` against both
 `"*"` and `milestone/*` — the `*` glob does not cross `/`, so milestone
@@ -464,7 +497,7 @@ High-blast-radius paths are owned by the admin maintainers
 dependency manifests (`Cargo.toml` / `Cargo.lock`), and the security policy.
 The same block also owns the scripts that *enforce* a supply-chain control —
 `bump-deps.sh` (the quarantine gate), `quality.sh` (the audit gate), and the
-toolchain installers `scripts/runlib.sh` and `scripts/fuzz-ci.sh` — because
+toolchain bootstraps `scripts/runlib.sh` and `scripts/fuzz-ci.sh` — because
 editing the enforcement is equivalent to editing the declaration (Issue #1914).
 The block's inclusion criterion is "files that enforce or bypass a supply-chain
 control". A pull request touching any of these requires maintainer review.

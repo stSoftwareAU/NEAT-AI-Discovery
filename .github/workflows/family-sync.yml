@@ -1,0 +1,126 @@
+# Keep `scripts/runlib.sh` byte-identical to its one home — `scripts/runlib.sh`
+# on NEAT-AI-core `Develop` (core #680 copy contract, Issue #2072).
+#
+# Behaviour changes to the canonical helper are made in NEAT-AI-core and
+# re-copied outward, never edited downstream. This job is the copy: on every
+# pull request it fetches core's `Develop` copy and, when the branch's copy
+# differs, commits the refreshed file onto the PR branch and pushes it. The push
+# re-triggers CI, so every later job sees the refreshed script.
+#
+# A fetch that fails — an unreachable raw URL, an HTTP error, an empty or
+# non-script payload — fails the job. A stale copy must never pass by looking
+# synced.
+#
+# Push auth matches the `version-increment` job in ci.yml: the write-capable
+# ACTIONS_PUSH PAT is never handed to `actions/checkout` (`persist-credentials:
+# false`) and reaches git only through an explicit authenticated remote URL on
+# the one step that pushes (Issue #1868).
+name: Family Sync
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches:
+      # Every separate workflow in this repository gates `"*"` plus
+      # `milestone/*` — the `*` glob does not cross `/`, so milestone
+      # sub-issue PRs need the explicit second pattern or the gate skips them.
+      - "*"
+      - milestone/*
+
+# Read-only by default; the sync job below grants itself the write it needs.
+permissions:
+  contents: read
+
+concurrency:
+  group: family-sync-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  family-sync:
+    name: Sync scripts/runlib.sh from NEAT-AI-core
+    runs-on: ubuntu-latest
+    # A curl and a git push; 10 minutes surfaces a wedged step as a fast
+    # failure rather than tying up a runner (Issue #1287).
+    timeout-minutes: 10
+    # Same-repo guard, as on version-increment: a fork PR gets no push
+    # credential, so the sync could only fail there.
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    permissions:
+      contents: write
+    env:
+      CANONICAL_URL: https://raw.githubusercontent.com/stSoftwareAU/NEAT-AI-core/Develop/scripts/runlib.sh
+
+    steps:
+      - name: Checkout PR branch
+        # Pinned to actions/checkout v6.0.2 (Node.js 24), as elsewhere in this
+        # repository.
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ github.head_ref }}
+          fetch-depth: 0
+          # The ACTIONS_PUSH PAT is NOT persisted into .git/config; the push
+          # step below authenticates with an explicit remote URL instead
+          # (Issue #1868).
+          persist-credentials: false
+
+      - name: Fetch the canonical scripts/runlib.sh from NEAT-AI-core Develop
+        id: sync
+        shell: bash
+        run: |
+          set -euo pipefail
+          fetched="$(mktemp)"
+          trap 'rm -f "$fetched"' EXIT
+          # --fail turns any HTTP error into a non-zero exit: an unreachable
+          # canonical copy fails this job instead of passing on a stale one.
+          curl --fail --silent --show-error --location --retry 3 \
+            --output "$fetched" "$CANONICAL_URL"
+          if [[ ! -s "$fetched" ]]; then
+            echo "::error::fetched an empty scripts/runlib.sh from $CANONICAL_URL"
+            exit 1
+          fi
+          if ! head -n 1 "$fetched" | grep -q '^#!'; then
+            echo "::error::$CANONICAL_URL did not answer with a shell script"
+            exit 1
+          fi
+          changed=false
+          if cmp -s "$fetched" scripts/runlib.sh; then
+            echo "scripts/runlib.sh is byte-identical to NEAT-AI-core Develop"
+          else
+            cp "$fetched" scripts/runlib.sh
+            echo "scripts/runlib.sh refreshed from NEAT-AI-core Develop"
+            changed=true
+          fi
+          # Checked even when the content already matched: a copy whose
+          # executable bit was cleared is byte-identical and still unrunnable,
+          # which `cmp` alone would report as synced.
+          if [[ ! -x scripts/runlib.sh ]]; then
+            chmod +x scripts/runlib.sh
+            echo "scripts/runlib.sh executable bit restored"
+            changed=true
+          fi
+          echo "changed=$changed" >> "$GITHUB_OUTPUT"
+
+      - name: Commit and push the refreshed copy
+        if: steps.sync.outputs.changed == 'true'
+        env:
+          HEAD_REF: ${{ github.head_ref }}
+          ACTIONS_PUSH_TOKEN: ${{ secrets.ACTIONS_PUSH }}
+          REPOSITORY: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          REMOTE_URL="https://x-access-token:${ACTIONS_PUSH_TOKEN}@github.com/${REPOSITORY}.git"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add scripts/runlib.sh
+          git commit -m "chore: sync scripts/runlib.sh from NEAT-AI-core Develop"
+          # Rebase onto whatever the branch holds now: version-increment or
+          # auto-format may have pushed while this job ran, and a stale parent
+          # would be rejected as a non-fast-forward.
+          git fetch "$REMOTE_URL" "$HEAD_REF"
+          if ! git rebase FETCH_HEAD; then
+            git rebase --abort || true
+            echo "::error::could not rebase the refreshed scripts/runlib.sh onto $HEAD_REF — the branch edits it too; re-copy it from NEAT-AI-core Develop by hand"
+            exit 1
+          fi
+          git push "$REMOTE_URL" "HEAD:$HEAD_REF"

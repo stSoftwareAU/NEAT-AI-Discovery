@@ -15,6 +15,23 @@
 //! These tests run the real script against a stub `curl`, so the assertions are
 //! on observable behaviour — exit codes, stderr, and whether the downloaded
 //! file was executed at all — rather than on source text.
+//!
+//! **Updated by Issue #2072.** `scripts/runlib.sh` is now the canonical
+//! NEAT-AI-core helper (core #680/#705), which carries its *own* digest-pinned
+//! rustup bootstrap and no longer calls `scripts/install-rustup.sh`. The two
+//! single call-site guard below was rewritten for that contract: it still
+//! forbids piping a download into a shell, and now also demands the
+//! pinned-digest refusal that replaced the delegation.
+//!
+//! A second guard, `runlib_keeps_its_path_persistence_and_sanity_check`, was
+//! **removed** rather than rewritten. It asserted that `runlib.sh` persists
+//! `PATH` into `.bashrc`/`.zshrc`/`.bash_profile` and runs `rustup show`; the
+//! canonical helper does neither — it tells rustup `--no-modify-path` and never
+//! invokes rustup at all — so there is no behaviour left for it to guard, and
+//! any replacement would have asserted something the issue never required.
+//! `scripts/install-rustup.sh` and `scripts/rustup-init.sha256` stay: they are
+//! still documented in CONTRIBUTING.md and still exercised by the nine
+//! behavioural tests above.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -372,33 +389,27 @@ fn the_host_target_resolves_to_a_pinned_digest() {
     assert_eq!(digest.len(), 64, "expected a SHA-256, got {digest:?}");
 }
 
+/// The original call-site guard, carried across to the canonical helper: it
+/// bootstraps rustup itself now, and must still verify a pinned digest before
+/// executing anything it downloaded (Issues #1911, #2072).
 #[test]
 fn runlib_no_longer_pipes_a_network_download_into_a_shell() {
     let body = fs::read_to_string(repo_root().join("scripts/runlib.sh")).expect("read runlib.sh");
-    for line in body.lines() {
+    // Comments are skipped: the canonical helper's own banner quotes the
+    // `curl https://sh.rustup.rs | sh` form in order to say it never does that.
+    for line in body.lines().filter(|l| !l.trim_start().starts_with('#')) {
         assert!(
             !(line.contains("curl") && line.contains("| sh")),
             "runlib.sh must not pipe a download into a shell (Issue #1911): {line}"
         );
-    }
-    assert!(
-        body.contains("install-rustup.sh"),
-        "runlib.sh must bootstrap rustup through the digest-verifying script"
-    );
-}
-
-#[test]
-fn runlib_keeps_its_path_persistence_and_sanity_check() {
-    // Acceptance criterion: the surrounding behaviour is untouched.
-    let body = fs::read_to_string(repo_root().join("scripts/runlib.sh")).expect("read runlib.sh");
-    for rc in [".bashrc", ".zshrc", ".bash_profile"] {
         assert!(
-            body.contains(rc),
-            "runlib.sh must still persist PATH into {rc}"
+            !line.contains("sh.rustup.rs"),
+            "runlib.sh must not fetch the unverifiable rustup shell installer: {line}"
         );
     }
     assert!(
-        body.contains("rustup show"),
-        "runlib.sh must keep the `rustup show` sanity check"
+        body.contains("digest mismatch"),
+        "runlib.sh must refuse to execute a rustup-init whose SHA-256 does not \
+         match its committed pin (Issue #1911)"
     );
 }
