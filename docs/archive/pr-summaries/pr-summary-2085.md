@@ -43,6 +43,8 @@ screenshot. The evidence is the test run:
   fails on `the stub rustc -vV must print \`host: ...\``; restored, it passes.
 - `markdownlint-cli2 --no-globs AGENTS.md docs/FFI_API.md` — 0 issues.
 
+<!-- vibe-quality-gate-skipped reason="full ./quality.sh exceeds the 600s Bash-tool foreground cap; it was run bounded (`timeout 900`) and terminated at SIGTERM before the full test/doc/release stages finished. Targeted checks passed: cargo fmt, clippy -D warnings on the touched test targets, and the four affected test files (28 tests green). CI runs the same gate on the PR." -->
+
 ## Test Plan
 
 - Added `tests/issue_2078_runlib_stub_contract.rs` — two tests driving the
