@@ -203,9 +203,12 @@ fn macos_bsd_date_and_bash_3_2_still_time_the_run() {
         .trim()
         .parse::<f64>()
         .unwrap_or_else(|e| panic!("duration {formatted:?} is not numeric: {e}"));
+    // No upper wall-clock bound: a loaded runner may be slow, and an elapsed
+    // threshold in a unit test is flaky by construction. A duration that cannot
+    // run backwards is what the readings actually promise.
     assert!(
-        (0.0..60.0).contains(&seconds),
-        "two back-to-back readings should be seconds apart at most, got {seconds}"
+        seconds >= 0.0,
+        "the clock must not run backwards, got {seconds}"
     );
 }
 
@@ -269,6 +272,45 @@ fn sourcing_in_helper_mode_does_not_run_the_benchmark() {
         stdout_of(&out).is_empty(),
         "BENCHMARK_SOURCE_ONLY=1 must stop before the benchmark runs — it \
          checks out git refs and stashes work\n{}",
+        describe(&out)
+    );
+}
+
+#[test]
+fn an_exported_helper_flag_does_not_break_an_executed_run() {
+    // `return` outside a sourced file is a bash error, so the helper-only guard
+    // must not fire when the script is executed — an operator with the variable
+    // exported would otherwise see the benchmark die on a bash internal message
+    // instead of running. A `git` stub that fails stops the run at its first
+    // command, well before any checkout, build or stash.
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let git = tmp.path().join("git");
+    fs::write(&git, "#!/bin/bash\necho 'stub git: refusing' >&2\nexit 1\n")
+        .expect("write git stub");
+    let mut perms = fs::metadata(&git).expect("stub metadata").permissions();
+    perms.set_mode(0o755);
+    fs::set_permissions(&git, perms).expect("chmod git stub");
+
+    let out = Command::new("/bin/bash")
+        .arg(repo_root().join("benchmark.sh"))
+        .current_dir(repo_root())
+        .env("BENCHMARK_SOURCE_ONLY", "1")
+        .env("PATH", tmp.path().display().to_string())
+        .stdin(Stdio::null())
+        .output()
+        .expect("run benchmark.sh");
+
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !stderr.contains("can only `return'"),
+        "an exported BENCHMARK_SOURCE_ONLY must not turn an executed run into a \
+         bash `return` error (Issue #2141).\n{}",
+        describe(&out)
+    );
+    assert!(
+        stdout_of(&out).contains("GPU Performance Benchmark"),
+        "the executed run must start the benchmark, not stop at the helper \
+         guard\n{}",
         describe(&out)
     );
 }

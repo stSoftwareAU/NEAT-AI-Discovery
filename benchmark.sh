@@ -69,21 +69,21 @@ run_benchmark() {
     end=$(now_seconds)
     duration=$(echo "$end - $start" | bc)
     # An empty or malformed subtraction must not reach the summary's `printf`
-    # as a silent 0.00s — say which tool let us down (Issue #2141).
-    case "$duration" in
-        *[!0-9.-]* | '')
-            echo "❌ benchmark.sh: bc produced no numeric duration for '$label' (is bc installed?)" >&2
-            return 1
-            ;;
-    esac
+    # as a silent 0.00s — say what was read instead (Issue #2141).
+    if [[ ! "$duration" =~ ^-?[0-9]+(\.[0-9]+)?$ ]]; then
+        echo "❌ benchmark.sh: no numeric duration for '$label' — bc returned '${duration}' from '${end} - ${start}' (is bc installed?)" >&2
+        return 1
+    fi
     echo "   Duration: ${duration}s" >&2
     echo "$duration"
 }
 
 # Helper-only mode: the regression tests source this script to exercise
 # now_seconds() directly, and must not trigger the benchmark itself — it checks
-# out git refs and stashes uncommitted work (Issue #2141).
-if [ -n "${BENCHMARK_SOURCE_ONLY:-}" ]; then
+# out git refs and stashes uncommitted work (Issue #2141). Only honoured when
+# the script really is sourced; `return` outside a sourced file is a bash error,
+# so an exported variable must not be able to break a normal ./benchmark.sh run.
+if [ -n "${BENCHMARK_SOURCE_ONLY:-}" ] && [ "${BASH_SOURCE[0]}" != "$0" ]; then
     return 0
 fi
 
