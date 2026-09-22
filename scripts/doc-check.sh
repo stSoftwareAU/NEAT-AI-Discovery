@@ -12,4 +12,10 @@ set -euo pipefail
 echo "📖 Building documentation (warnings as errors)..."
 RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features
 
+# Security sweep ledger integrity (Issue #2088): the index must parse, and prose
+# records and index entries must match both ways — a record with no index entry
+# is invisible to the next automated sweep. ./quality.sh runs the same test.
+echo "🔐 Checking security sweep ledger..."
+cargo test --test issue_2088_sweep_ledger_contract
+
 echo "✅ Documentation build passed — no warnings"

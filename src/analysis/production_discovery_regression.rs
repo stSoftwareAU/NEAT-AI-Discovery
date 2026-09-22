@@ -19,8 +19,9 @@
 //!
 //! This module provides the repeatable harness the milestone's close-criterion
 //! needs: it runs the **real** acceptance logic
-//! ([`validate_coordinated_candidate_gain`] plus the post-discount noise floor,
-//! and the evaluate-before-accept rule for error-ranked removals) over a
+//! ([`crate::analysis::candidate_aggregation::validate_coordinated_candidate_gain`]
+//! plus the post-discount noise floor, and the evaluate-before-accept rule for
+//! error-ranked removals) over a
 //! committed production-representative run batch, and reports the
 //! accepted-improvement rate. A future regression in discovery yield on the
 //! production topology drops the computed rate below the recorded plateau

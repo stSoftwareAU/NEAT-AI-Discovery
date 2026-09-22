@@ -124,17 +124,23 @@ fn is_iso_date(value: &str) -> bool {
     value.len() == 10
         && bytes[4] == b'-'
         && bytes[7] == b'-'
-        && value
-            .chars()
-            .enumerate()
-            .all(|(i, c)| if i == 4 || i == 7 { c == '-' } else { c.is_ascii_digit() })
+        && value.chars().enumerate().all(|(i, c)| {
+            if i == 4 || i == 7 {
+                c == '-'
+            } else {
+                c.is_ascii_digit()
+            }
+        })
 }
 
 #[test]
 fn ledger_files_exist() {
     for rel in [README, INDEX, TEMPLATE] {
         let path = repo_root().join(rel);
-        assert!(path.is_file(), "{rel} must exist — the ledger is the only way to tell a swept chunk from an unswept one");
+        assert!(
+            path.is_file(),
+            "{rel} must exist — the ledger is the only way to tell a swept chunk from an unswept one"
+        );
     }
 }
 
@@ -229,10 +235,12 @@ fn every_entry_is_one_line_with_a_stable_key_order() {
         let mut cursor = 0usize;
         for key in KEY_ORDER {
             let needle = format!("\"{key}\"");
-            let at = line[cursor..].find(&needle).map(|i| i + cursor).unwrap_or_else(|| {
-                panic!("entry line must spell keys in the order {KEY_ORDER:?}, missing `{key}`: {line}")
-            });
-            cursor = at + needle.len();
+            let Some(offset) = line[cursor..].find(&needle) else {
+                panic!(
+                    "entry line must spell keys in the order {KEY_ORDER:?}, missing `{key}`: {line}"
+                );
+            };
+            cursor = cursor + offset + needle.len();
         }
     }
 }
