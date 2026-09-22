@@ -200,7 +200,8 @@ cargo test --test issue_2088_sweep_ledger_contract   # 9 passed
 
 ### Manual falsification checks
 
-Each was applied to a scratch copy of the ledger and reverted:
+Each mutation was applied to the working tree, the named test was run, and the
+change was then reverted (`rm -f` / `git checkout --`):
 
 - Delete an index entry while its record file remains → parity test fails.
 - Point an entry's `record` at a non-existent file → parity test fails.
