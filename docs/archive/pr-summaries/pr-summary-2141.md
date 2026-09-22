@@ -45,6 +45,9 @@ bash-syntax: OK — 24 script(s) passed 'bash -n'
 
 $ ./quality/shellcheck.sh .
 shellcheck: OK — 24 script(s) passed ShellCheck
+
+$ ./quality.sh
+✅ All quality checks passed!
 ```
 
 ## Reproduction
@@ -80,7 +83,8 @@ shellcheck: OK — 24 script(s) passed ShellCheck
   real script — reviewer: met
 - **met** — `bash -n` and `shellcheck` stay clean; `./quality.sh` passes —
   evidence: `./quality/bash_syntax.sh .` and `./quality/shellcheck.sh .` both
-  report 24 scripts OK; see the gate note below — reviewer: met
+  report 24 scripts OK, and the full `./quality.sh` gate ran clean after the
+  final edit ("✅ All quality checks passed!") — reviewer: met
 - **unrequested** — the `BENCHMARK_SOURCE_ONLY` seam and the move of the banner
   `echo`s below the function definitions — reviewer: unrequested — reason: the
   issue requires a test "exercising the real function", which needs the script
