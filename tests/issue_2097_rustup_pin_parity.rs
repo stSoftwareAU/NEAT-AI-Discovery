@@ -3,48 +3,51 @@
 //! The digest-verified rustup bootstrap of Issue #1911 exists twice in this
 //! repository, because two scripts bootstrap rustup independently:
 //!
-//! * `scripts/install-rustup.sh` reads its digests from the committed manifest
-//!   `scripts/rustup-init.sha256` and its version from `RUSTUP_VERSION`;
+//! * `scripts/install-rustup.sh` — `_pinned_digest` reads the committed
+//!   manifest `scripts/rustup-init.sha256`, and `RUSTUP_VERSION` names the
+//!   release those digests belong to;
 //! * `scripts/runlib.sh` — the canonical NEAT-AI-core helper, byte-synced into
 //!   this repository — inlines the same six digests in
-//!   `_runlib_pinned_rustup_digest` and the same version in
+//!   `_runlib_pinned_rustup_digest` and the same release in
 //!   `_RUNLIB_RUSTUP_VERSION`.
 //!
 //! Both files say in prose that the pin must move as one unit
 //! (`scripts/runlib.sh` "To bump, change `_RUNLIB_RUSTUP_VERSION` and every
 //! digest … together"; `scripts/rustup-init.sha256` "Both files must move
-//! together"). Nothing asserted it. A bump applied to one file alone leaves the
-//! other pinning a digest for a version it will never be served: the stale side
-//! then fails closed on a mismatch that looks like tampering, and — worse for a
-//! reviewer — a *wrong* digest copied into one side is invisible until the
-//! bootstrap actually runs on a host with no rustc.
+//! together"). Nothing asserted it. A bump applied to one side alone leaves the
+//! other pinning a digest for a release it will never be served: that side then
+//! fails closed on a mismatch indistinguishable from tampering, and a *wrong*
+//! digest copied into one side stays invisible until the bootstrap actually
+//! runs on a host with no rustc.
 //!
-//! These tests read the three committed files and compare them. No network, no
-//! subprocess, no digest is recomputed: provenance for the pins is documentary
-//! (the upstream-published `.sha256` values, recorded in
-//! `scripts/rustup-init.sha256`), so re-downloading to "confirm" a pin would
-//! verify the download against itself. What is checked here is the one property
-//! no single file can hold on its own — that the two copies agree.
+//! These tests source each script and call its own pin reader, so they assert
+//! on what the scripts answer rather than on how they are written — the house
+//! pattern `tests/issue_1911_rustup_digest_verification.rs` established for
+//! `_pinned_digest`. Both scripts guard their entry point on
+//! `BASH_SOURCE[0] == $0`, so sourcing defines the helpers and runs nothing.
+//!
+//! No network and no digest is recomputed. Provenance for the pins is
+//! documentary — the upstream-published `.sha256` values, recorded in
+//! `scripts/rustup-init.sha256` — so re-downloading to "confirm" one would
+//! verify the artefact against itself. What is checked here is the property no
+//! single file can hold on its own: that the two copies agree.
 //!
 //! `scripts/runlib.sh` is under the copy contract (Issue #2072): these tests
 //! read it and never write it.
 
 use std::collections::BTreeMap;
-use std::fs;
 use std::path::PathBuf;
+use std::process::{Command, Output, Stdio};
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }
 
-fn read(relative: &str) -> String {
-    let path = repo_root().join(relative);
-    fs::read_to_string(&path).unwrap_or_else(|error| panic!("read {}: {error}", path.display()))
-}
-
-/// Every target triple both pin sets are expected to carry. Pinned here so a
-/// parser that silently read nothing cannot make the comparisons vacuous.
-const EXPECTED_TARGETS: [&str; 6] = [
+/// Every target triple both pin sets are expected to answer for. Held here so a
+/// reader that silently returned nothing cannot make the comparisons vacuous;
+/// `the_committed_manifest_declares_exactly_the_supported_targets` keeps this
+/// list honest against the manifest.
+const SUPPORTED_TARGETS: [&str; 6] = [
     "x86_64-unknown-linux-gnu",
     "aarch64-unknown-linux-gnu",
     "x86_64-unknown-linux-musl",
@@ -53,169 +56,195 @@ const EXPECTED_TARGETS: [&str; 6] = [
     "aarch64-apple-darwin",
 ];
 
+/// Target triples neither pin set supports, used to prove a refusal is a real
+/// refusal rather than an empty answer the comparison would accept.
+const UNSUPPORTED_TARGETS: [&str; 3] = [
+    "sparc64-unknown-linux-gnu",
+    "i686-unknown-linux-gnu",
+    "x86_64-pc-windows-msvc",
+];
+
 fn is_sha256_hex(value: &str) -> bool {
-    value.len() == 64 && value.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())
+    value.len() == 64
+        && value
+            .chars()
+            .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())
 }
 
-/// `target -> digest` as committed in `scripts/rustup-init.sha256`.
+/// Run `script` in bash with the script sourced first, and return the result.
+fn sourced(script: &str, body: &str) -> Output {
+    let program = format!("source './{script}'\n{body}\n");
+    Command::new("bash")
+        .arg("-c")
+        .arg(program)
+        .current_dir(repo_root())
+        .stdin(Stdio::null())
+        .output()
+        .unwrap_or_else(|error| panic!("run bash with {script} sourced: {error}"))
+}
+
+/// `target -> digest` as the sourced `script` answers for every supported
+/// target, by calling `reader` — the script's own pin function.
 ///
-/// Format is `<sha256>  <target-triple>`; comments and blank lines are ignored,
-/// exactly as `install-rustup.sh::_pinned_digest` reads it.
-fn manifest_pins() -> BTreeMap<String, String> {
+/// A target the reader refuses is recorded as an empty digest, so a refusal is
+/// visible to the caller rather than silently dropped.
+fn pins_answered_by(script: &str, reader: &str) -> BTreeMap<String, String> {
+    let targets = SUPPORTED_TARGETS.join(" ");
+    let out = sourced(
+        script,
+        &format!(
+            "for target in {targets}; do \
+               printf '%s\\t%s\\n' \"$target\" \"$({reader} \"$target\" 2>/dev/null || true)\"; \
+             done"
+        ),
+    );
+    assert!(
+        out.status.success(),
+        "sourcing {script} and calling {reader} must succeed; stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
     let mut pins = BTreeMap::new();
-    for line in read("scripts/rustup-init.sha256").lines() {
-        let line = line.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        let mut fields = line.split_whitespace();
-        let (Some(sha), Some(target)) = (fields.next(), fields.next()) else {
-            panic!("malformed pin line in scripts/rustup-init.sha256: {line}");
+    for line in String::from_utf8_lossy(&out.stdout).lines() {
+        let Some((target, digest)) = line.split_once('\t') else {
+            panic!("{reader} produced an unreadable line: {line}");
         };
         assert!(
-            is_sha256_hex(sha),
-            "scripts/rustup-init.sha256 must pin a lower-case 64-hex SHA-256 for \
-             {target}, found: {sha}"
-        );
-        assert!(
-            pins.insert(target.to_owned(), sha.to_owned()).is_none(),
-            "scripts/rustup-init.sha256 pins {target} twice — one target, one digest"
+            pins.insert(target.to_owned(), digest.to_owned()).is_none(),
+            "{reader} answered for {target} twice"
         );
     }
     pins
 }
 
-/// `target -> digest` as inlined in `scripts/runlib.sh::_runlib_pinned_rustup_digest`.
-///
-/// The arms read
-/// ```text
-///     x86_64-unknown-linux-gnu)
-///       printf '%s' '<64 hex>' ;;
-/// ```
-/// so a bare `<word>)` line opens an arm and the following `printf` carries the
-/// digest. The catch-all `*)` arm returns non-zero and pins nothing.
-fn runlib_pins() -> BTreeMap<String, String> {
-    let body = read("scripts/runlib.sh");
-    let start = body
-        .find("_runlib_pinned_rustup_digest() {")
-        .expect("scripts/runlib.sh must define _runlib_pinned_rustup_digest (Issue #1911/#699)");
-
-    let mut pins = BTreeMap::new();
-    let mut target: Option<String> = None;
-    for line in body[start..].lines().skip(1) {
-        let line = line.trim();
-        if line == "}" {
-            break;
-        }
-        if let Some(digest) = single_quoted_sha256(line) {
-            let Some(target) = target.take() else {
-                panic!("scripts/runlib.sh inlines the digest {digest} under no target arm");
-            };
-            assert!(
-                pins.insert(target.clone(), digest).is_none(),
-                "scripts/runlib.sh pins {target} twice — one target, one digest"
-            );
-            continue;
-        }
-        // A bare `<target>)` opens an arm; `*)` is the refusal arm, and
-        // `case "$1" in` / `esac` carry no closing parenthesis of their own.
-        if let Some(name) = line.strip_suffix(')') {
-            if !name.is_empty() && !name.contains('*') && !name.contains('"') {
-                target = Some(name.to_owned());
-            }
-        }
-    }
-    pins
+/// The value the sourced `script` holds in shell variable `name`.
+fn pinned_version(script: &str, name: &str) -> String {
+    let out = sourced(script, &format!("printf '%s' \"${name}\""));
+    assert!(
+        out.status.success(),
+        "sourcing {script} to read {name} must succeed; stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let value = String::from_utf8_lossy(&out.stdout).trim().to_owned();
+    assert!(
+        !value.is_empty(),
+        "{script} must pin a rustup release in {name}"
+    );
+    value
 }
 
-/// The 64-hex digest inside the first pair of single quotes on `line`, if any.
-fn single_quoted_sha256(line: &str) -> Option<String> {
-    let mut parts = line.split('\'');
-    parts.next()?; // before the opening quote
-    parts.find(|part| is_sha256_hex(part)).map(str::to_owned)
-}
-
-/// The value of a `NAME="value"` assignment, read as the first such line.
-fn shell_assignment(relative: &str, name: &str) -> String {
-    let needle = format!("{name}=\"");
-    read(relative)
+/// The target column of the committed digest manifest — the data file
+/// `install-rustup.sh::_pinned_digest` itself reads.
+fn manifest_targets() -> Vec<String> {
+    let path = repo_root().join("scripts/rustup-init.sha256");
+    let body = std::fs::read_to_string(&path)
+        .unwrap_or_else(|error| panic!("read {}: {error}", path.display()));
+    let mut targets: Vec<String> = body
         .lines()
         .map(str::trim)
-        .find_map(|line| {
-            let rest = line.strip_prefix(needle.as_str())?;
-            rest.split('"').next().map(str::to_owned)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .map(|line| {
+            let mut fields = line.split_whitespace();
+            let (Some(_sha), Some(target)) = (fields.next(), fields.next()) else {
+                panic!("malformed pin line in scripts/rustup-init.sha256: {line}");
+            };
+            target.to_owned()
         })
-        .unwrap_or_else(|| panic!("{relative} must assign {name}"))
+        .collect();
+    targets.sort();
+    targets
 }
 
 #[test]
-fn both_pin_sets_cover_every_supported_target() {
-    let manifest = manifest_pins();
-    let runlib = runlib_pins();
-    for target in EXPECTED_TARGETS {
+fn the_committed_manifest_declares_exactly_the_supported_targets() {
+    let mut expected: Vec<String> = SUPPORTED_TARGETS.iter().map(|t| (*t).to_owned()).collect();
+    expected.sort();
+    assert_eq!(
+        manifest_targets(),
+        expected,
+        "scripts/rustup-init.sha256 no longer declares exactly the targets this \
+         parity check covers — add the new target to both pin sets and to \
+         SUPPORTED_TARGETS here, so the comparison keeps covering all of them \
+         (Issue #2097)"
+    );
+}
+
+#[test]
+fn both_pin_sets_answer_for_every_supported_target() {
+    let manifest = pins_answered_by("scripts/install-rustup.sh", "_pinned_digest");
+    let runlib = pins_answered_by("scripts/runlib.sh", "_runlib_pinned_rustup_digest");
+
+    for target in SUPPORTED_TARGETS {
+        let from_manifest = manifest.get(target).map(String::as_str).unwrap_or("");
+        let from_runlib = runlib.get(target).map(String::as_str).unwrap_or("");
         assert!(
-            manifest.contains_key(target),
-            "scripts/rustup-init.sha256 pins no digest for {target} — \
-             install-rustup.sh fails closed on that host (Issue #1911)"
+            is_sha256_hex(from_manifest),
+            "scripts/install-rustup.sh::_pinned_digest gave no lower-case 64-hex \
+             SHA-256 for {target} — the bootstrap fails closed on that host \
+             (Issue #1911). Got: {from_manifest:?}"
         );
         assert!(
-            runlib.contains_key(target),
-            "scripts/runlib.sh::_runlib_pinned_rustup_digest pins no digest for \
-             {target} — the canonical bootstrap fails closed on that host"
+            is_sha256_hex(from_runlib),
+            "scripts/runlib.sh::_runlib_pinned_rustup_digest gave no lower-case \
+             64-hex SHA-256 for {target} — the canonical bootstrap fails closed \
+             on that host. Got: {from_runlib:?}"
         );
     }
 }
 
 #[test]
-fn every_manifest_digest_is_inlined_in_runlib() {
-    let manifest = manifest_pins();
-    let runlib = runlib_pins();
-    let script = read("scripts/runlib.sh");
+fn every_digest_matches_between_the_two_pin_sets() {
+    let manifest = pins_answered_by("scripts/install-rustup.sh", "_pinned_digest");
+    let runlib = pins_answered_by("scripts/runlib.sh", "_runlib_pinned_rustup_digest");
 
-    for (target, digest) in &manifest {
-        let inlined = runlib.get(target).unwrap_or_else(|| {
-            panic!(
-                "scripts/rustup-init.sha256 pins {target} but \
-                 scripts/runlib.sh does not — the two rustup pins have drifted \
-                 (Issue #2097). Move both together."
-            )
-        });
+    for target in SUPPORTED_TARGETS {
+        let from_manifest = manifest
+            .get(target)
+            .unwrap_or_else(|| panic!("install-rustup.sh answered nothing for {target}"));
+        let from_runlib = runlib
+            .get(target)
+            .unwrap_or_else(|| panic!("runlib.sh answered nothing for {target}"));
         assert_eq!(
-            inlined, digest,
-            "rustup-init digest for {target} differs between \
-             scripts/rustup-init.sha256 ({digest}) and scripts/runlib.sh \
-             ({inlined}) — the two rustup pins have drifted (Issue #2097). \
-             One of them will refuse a genuine download as tampering."
-        );
-        assert!(
-            script.contains(digest.as_str()),
-            "the digest {digest} pinned for {target} does not appear verbatim in \
-             scripts/runlib.sh (Issue #2097)"
+            from_manifest, from_runlib,
+            "the rustup-init digest for {target} differs between \
+             scripts/install-rustup.sh ({from_manifest}) and scripts/runlib.sh \
+             ({from_runlib}) — the two rustup pins have drifted (Issue #2097). \
+             One of them will refuse a genuine download as tampering; move both \
+             together."
         );
     }
 }
 
 #[test]
-fn runlib_pins_no_target_the_manifest_omits() {
-    let manifest = manifest_pins();
-    for target in runlib_pins().keys() {
-        assert!(
-            manifest.contains_key(target),
-            "scripts/runlib.sh pins {target} but scripts/rustup-init.sha256 \
-             does not — install-rustup.sh would refuse to install on a host \
-             the canonical helper supports (Issue #2097)"
-        );
+fn both_pin_sets_refuse_a_target_neither_supports() {
+    for target in UNSUPPORTED_TARGETS {
+        for (script, reader) in [
+            ("scripts/install-rustup.sh", "_pinned_digest"),
+            ("scripts/runlib.sh", "_runlib_pinned_rustup_digest"),
+        ] {
+            let out = sourced(script, &format!("{reader} '{target}'"));
+            assert!(
+                !out.status.success(),
+                "{script}::{reader} must refuse the unpinned target {target} — \
+                 no pinned digest means no install (Issue #1911)"
+            );
+            assert!(
+                String::from_utf8_lossy(&out.stdout).trim().is_empty(),
+                "{script}::{reader} must print nothing for the unpinned target \
+                 {target}, so a refusal cannot be mistaken for a digest"
+            );
+        }
     }
 }
 
 #[test]
 fn the_two_rustup_version_pins_are_equal() {
-    let install = shell_assignment("scripts/install-rustup.sh", "RUSTUP_VERSION");
-    let runlib = shell_assignment("scripts/runlib.sh", "_RUNLIB_RUSTUP_VERSION");
+    let install = pinned_version("scripts/install-rustup.sh", "RUSTUP_VERSION");
+    let runlib = pinned_version("scripts/runlib.sh", "_RUNLIB_RUSTUP_VERSION");
     assert_eq!(
         install, runlib,
         "scripts/install-rustup.sh pins rustup {install} and scripts/runlib.sh \
-         pins {runlib} — a version moved without the other side's digests can \
-         only fail closed (Issue #2097). Move version and digests together."
+         pins {runlib} — a release moved without the other side's digests can \
+         only fail closed (Issue #2097). Move release and digests together."
     );
 }
