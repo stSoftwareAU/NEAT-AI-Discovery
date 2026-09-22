@@ -10,6 +10,6 @@
     {"id": "9", "name": "GPU dispatch + WGSL shaders — src/analysis/gpu, src/shaders", "exposure": "internal", "issue": 2094, "last_swept": null, "baseline_commit": null, "record": null},
     {"id": "11", "name": "Filesystem/tmp/lifecycle — discovery_cleanup, discovery_history, watchdog, tracking_alloc, debug", "exposure": "local", "issue": 2095, "last_swept": null, "baseline_commit": null, "record": null},
     {"id": "13", "name": "Config / env-var surface — src/config", "exposure": "local", "issue": 2096, "last_swept": null, "baseline_commit": null, "record": null},
-    {"id": "16", "name": "Build/install shell scripts — scripts/*.sh, quality.sh, benchmark.sh", "exposure": "local", "issue": 2097, "last_swept": null, "baseline_commit": null, "record": null}
+    {"id": "16", "name": "Build/install shell scripts — scripts/*.sh, quality.sh, benchmark.sh", "exposure": "local", "issue": 2097, "last_swept": "2026-09-22", "baseline_commit": "4f269d6b604eb480b9efe5267628d10484ea25b1", "record": "docs/audits/security-sweep-chunk-16-build-scripts.md"}
   ]
 }
