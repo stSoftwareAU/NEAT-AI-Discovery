@@ -2,7 +2,7 @@
   "schema": 1,
   "ledger": "docs/audits/README.md",
   "chunks": [
-    {"id": "2", "name": "FFI entry points — src/ffi + src/ffi_internal", "exposure": "internal", "issue": 2089, "last_swept": null, "baseline_commit": null, "record": null},
+    {"id": "2", "name": "FFI entry points — src/ffi + src/ffi_internal", "exposure": "internal", "issue": 2089, "last_swept": "2026-09-22", "baseline_commit": "a2440e746d64b163e432c7521bef00b7e58db1ea", "record": "docs/audits/security-sweep-chunk-02-ffi-entry.md"},
     {"id": "4", "name": "Remaining FFI request/response validation types — src/ffi_types", "exposure": "internal", "issue": 2090, "last_swept": null, "baseline_commit": null, "record": null},
     {"id": "7", "name": "Parquet reader/writer/schema — src/parquet_format", "exposure": "internal", "issue": 2091, "last_swept": null, "baseline_commit": null, "record": null},
     {"id": "8a", "name": "Analysis engine — detection + neuron", "exposure": "internal", "issue": 2092, "last_swept": null, "baseline_commit": null, "record": null},
