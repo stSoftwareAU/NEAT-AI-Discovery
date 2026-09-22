@@ -157,3 +157,88 @@ and the behaviour it protects.
 - **Unchanged** — no existing test was modified, commented out or removed; the
   full `forward_only_validation` unit suite (9 tests) and the full `ffi`
   integration suite still pass.
+
+## Acceptance Criteria
+
+<!-- vibe-spec-review inputs="diff+issue-body" -->
+
+- **missing** — Every file in the scope table read in full and recorded in the
+  ledger — reviewer: missing — reason: `docs/audits/security-sweep-chunk-04-ffi-types.md`
+  does not exist on this branch (the only commit that adds it, `951a354`, is not
+  an ancestor of HEAD), so no per-file outcome is recorded anywhere in the diff.
+- **missing** — The `Deserialize`-type/invariant table is complete for the scope
+  — reviewer: missing — reason: with no ledger there is no invariant table at
+  all; this summary covers 2 fields of the ~3,480-line scope and contains no table.
+- **missing** — Every unbounded-capacity site found is either bounded or
+  explicitly justified in the ledger — evidence:
+  `src/ffi_types/forward_only_validation.rs::validate_forward_only_synapses` —
+  reviewer: missing — reason: the one in-scope `with_capacity` site is bounded by
+  a `Vec` length rather than a JSON count, but the criterion requires that
+  justification to live in the ledger, which does not exist.
+- **partial** — Each surviving finding filed as its own issue and linked here —
+  evidence: issues #2132–#2137 (`SEC-2090-01`…`-06`, float-hygiene, filed from
+  the unmerged branch `951a354`) — reviewer: partial — reason: neither finding
+  fixed here has its own issue, and absent a ledger there is no evidence that no
+  further finding survives; note the `SEC-2090-*` ids used in this summary
+  collide with those six unrelated filed issues.
+- **partial** — Any fix ships `tests/issue_<n>_*.rs` that fails before the fix —
+  evidence: `tests/ffi/issue_950_numeric_neuron_ids.rs::ffi_read_discovery_rejects_numeric_neuron_uuid`,
+  `tests/ffi/issue_1184_recurrent_synapse_rejection.rs::ffi_record_discovery_rejects_duplicate_neuron_uuid`
+  — reviewer: partial — reason: the tests exist and do assert what is claimed
+  against the real guards, but no file matching `tests/issue_<n>_*.rs` was added
+  — they sit in the `tests/ffi/` submodule target under older issue numbers
+  (950, 1184), so the literal path convention is not met.
+- **met** — `./quality.sh` passes — evidence: orchestrating quality gate —
+  reviewer: met — reason: met by the gate only; nothing on the branch itself
+  records a `quality.sh` run.
+- **unrequested** — `.markdownlint-cli2.jsonc` adds `graft/**` to `ignores` plus
+  a comment block — reviewer: unrequested — reason: unrelated to #2090, and
+  `graft/` is not tracked in this repo (excluded only via this machine's
+  `.git/info/exclude`), so it names a path that exists in no checkout.
+- **unrequested** — commits `2bb6682` and `a8cb415` are titled `WIP checkpoint:
+  periodic agent progress snapshot (Issue #4170)` — reviewer: unrequested —
+  reason: they carry the entire source and test change for #2090 while citing an
+  unrelated issue number.
+
+## Standards Review
+
+<!-- vibe-standards-review inputs="diff+CODING-STANDARDS.md" -->
+
+There is no `CODING-STANDARDS.md` in this repo; the reviewer used `AGENTS.md`,
+`CONTRIBUTING.md`, `docs/audits/README.md` and `docs/audits/security-sweep-TEMPLATE.md`
+as the standard.
+
+- **violation** — `docs/audits/README.md`: a run that reads a chunk for security
+  defects writes **both** a `docs/audits/security-sweep-chunk-<NN>-<slug>.md`
+  record **and** the matching `lib-sweep-coverage.json` entry — evidence:
+  `docs/audits/lib-sweep-coverage.json` (chunk `"4"`, issue 2090, still
+  `last_swept: null`, `baseline_commit: null`, `record: null`) — reason: stands;
+  this branch *is* the chunk-4 sweep, and by the ledger's own rule a sweep that
+  writes neither "did not happen as far as the next run is concerned".
+- **violation** — `CONTRIBUTING.md`: commit subjects must reference the issue
+  number and use the imperative mood — evidence: commits `2bb6682`, `a8cb415` —
+  reason: stands; both cite #4170 and describe nothing about the change. Not
+  rewritten here because the branch history has already passed the quality gate.
+- **violation** — `CONTRIBUTING.md`: only make changes directly requested or
+  clearly necessary — evidence: `.markdownlint-cli2.jsonc` (`ignores` entry
+  `graft/**`) — reason: stands; left untouched deliberately, as this retry is
+  scoped to the summary and must not alter the tree the gate passed.
+- **violation** — `CONTRIBUTING.md`: the PR summary must describe what was
+  changed and why — evidence: this file's `## Summary` section — reason: fixed
+  here; the `.markdownlint-cli2.jsonc` change is now disclosed in the
+  acceptance-criteria block above.
+- **violation** — `AGENTS.md`: `docs/FFI_API.md` is the authoritative FFI
+  reference and holds the per-entry-point validation contract — evidence:
+  `src/ffi_types/forward_only_validation.rs::validate_forward_only_synapses` vs
+  the "Validated FFI Surface" section of `docs/FFI_API.md` — reason: stands; the
+  new duplicate-neuron-UUID rejection is a caller-visible input class
+  (`errorKind: "data_validation"`) that the FFI contract does not yet document,
+  unlike the comparable #952 numeric-ID contract.
+- **clean** — error handling in library code (no new `unwrap`/`expect`/`panic`;
+  the guard returns `DiscoveryError::InvalidInput`, matching the surrounding
+  idiom); Australian English; the #1942 cite-by-symbol rule; PR-summary location;
+  the #1806 test doctrine (both fixes pinned at the shipped FFI entry points, no
+  API widened for testing) and the reason-text assertion rule; no timing,
+  `#[serial]` or GPU-guard needs; file sizes; version management (`Cargo.toml`
+  is already bumped ahead of `origin/Develop`); Mermaid syntax;
+  `tests/issue_2088_sweep_ledger_contract.rs` still passes as written.
