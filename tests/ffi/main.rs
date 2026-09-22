@@ -24,7 +24,6 @@ mod issue_2045_input_guard_helper;
 mod issue_2046_creature_validation_helper;
 mod issue_2065_ffi_internal_module_docs;
 mod issue_2078_creature_output_bounds;
-mod issue_2089_panic_response_json;
 mod issue_574_ffi_json_fuzz_edge_cases;
 mod issue_711_ffi_safety_unsafe_markers;
 mod issue_950_numeric_neuron_ids;

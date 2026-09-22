@@ -65,28 +65,28 @@ state this sweep leaves behind.
 
 | # | Entry point | Location | Pointer params | Null-checked | `catch_unwind` as found | `catch_unwind` after |
 | --- | --- | --- | --- | --- | --- | --- |
-| 1 | `free_discovery_result` | `src/ffi/mod.rs:38` | `*mut c_char` | yes (`ptr.is_null()`) | yes | yes |
-| 2 | `cancel_analysis` | `src/ffi/analysis.rs:24` | none | n/a | **no** | yes |
-| 3 | `cancel_analysis_memory_pressure` | `src/ffi/analysis.rs:47` | none | n/a | **no** | yes |
-| 4 | `reset_cancellation` | `src/ffi/analysis.rs:64` | none | n/a | **no** | yes |
-| 5 | `is_analysis_active` | `src/ffi/analysis.rs:88` | none | n/a | **no** | yes |
-| 6 | `rank_focus_neurons` | `src/ffi/analysis.rs:106` | `*const c_char` | yes (`validate_c_str_input`) | yes | yes |
-| 7 | `analyze_parallel` | `src/ffi/analysis.rs:174` | `*const c_char` | yes (`validate_c_str_input`) | yes | yes |
-| 8 | `check_gpu_available` | `src/ffi/gpu.rs:8` | none | n/a | yes | yes |
-| 9 | `record_discovery` | `src/ffi/recording.rs:19` | `*const c_char` | yes (`validate_c_str_input`) | yes | yes |
-| 10 | `start_discovery_session` | `src/ffi/recording.rs:106` | `*const c_char` | yes (`validate_c_str_input`) | yes | yes |
-| 11 | `append_discovery_records` | `src/ffi/recording.rs:215` | `*const c_char` | yes (`validate_c_str_input`) | yes | yes |
-| 12 | `finish_discovery_session` | `src/ffi/recording.rs:305` | `*const c_char` | yes (`validate_c_str_input`) | yes | yes |
-| 13 | `cancel_discovery_session` | `src/ffi/recording.rs:393` | `*const c_char` | yes (`validate_c_str_input`) | yes | yes |
-| 14 | `merge_discovery_parquet` | `src/ffi/utilities.rs:20` | `*const c_char` | yes (`validate_c_str_input`) | yes | yes |
-| 15 | `read_discovery_records_ffi` | `src/ffi/utilities.rs:75` | `*const c_char` | yes (`validate_c_str_input`) | yes | yes |
-| 16 | `export_visualisation_snapshot` | `src/ffi/utilities.rs:152` | `*const c_char` | yes (`validate_c_str_input`) | yes | yes |
-| 17 | `get_calibration_summary` | `src/ffi/utilities.rs:230` | `*const c_char` | yes (`validate_c_str_input_with_fields`) | yes | yes |
-| 18 | `discovery_memory_usage_bytes` | `src/ffi/utilities.rs:288` | none | n/a | yes | yes |
-| 19 | `cleanup_discovery_lib` | `src/ffi/utilities.rs:311` | none | n/a | yes | yes |
-| 20 | `cleanup_discovery_dir` | `src/ffi/utilities.rs:346` | `*const c_char` | yes (`validate_c_str_input`) | yes | yes |
-| 21 | `clean_orphaned_discovery_dirs` | `src/ffi/utilities.rs:451` | `*const c_char` | yes (`validate_c_str_input`) | yes | yes |
-| 22 | `get_library_version` | `src/ffi/utilities.rs:538` | none | n/a | yes | yes |
+| 1 | `free_discovery_result` | `src/ffi/mod.rs::free_discovery_result` | `*mut c_char` | yes (`ptr.is_null()`) | yes | yes |
+| 2 | `cancel_analysis` | `src/ffi/analysis.rs::cancel_analysis` | none | n/a | **no** | yes |
+| 3 | `cancel_analysis_memory_pressure` | `src/ffi/analysis.rs::cancel_analysis_memory_pressure` | none | n/a | **no** | yes |
+| 4 | `reset_cancellation` | `src/ffi/analysis.rs::reset_cancellation` | none | n/a | **no** | yes |
+| 5 | `is_analysis_active` | `src/ffi/analysis.rs::is_analysis_active` | none | n/a | **no** | yes |
+| 6 | `rank_focus_neurons` | `src/ffi/analysis.rs::rank_focus_neurons` | `*const c_char` | yes (`validate_c_str_input`) | yes | yes |
+| 7 | `analyze_parallel` | `src/ffi/analysis.rs::analyze_parallel` | `*const c_char` | yes (`validate_c_str_input`) | yes | yes |
+| 8 | `check_gpu_available` | `src/ffi/gpu.rs::check_gpu_available` | none | n/a | yes | yes |
+| 9 | `record_discovery` | `src/ffi/recording.rs::record_discovery` | `*const c_char` | yes (`validate_c_str_input`) | yes | yes |
+| 10 | `start_discovery_session` | `src/ffi/recording.rs::start_discovery_session` | `*const c_char` | yes (`validate_c_str_input`) | yes | yes |
+| 11 | `append_discovery_records` | `src/ffi/recording.rs::append_discovery_records` | `*const c_char` | yes (`validate_c_str_input`) | yes | yes |
+| 12 | `finish_discovery_session` | `src/ffi/recording.rs::finish_discovery_session` | `*const c_char` | yes (`validate_c_str_input`) | yes | yes |
+| 13 | `cancel_discovery_session` | `src/ffi/recording.rs::cancel_discovery_session` | `*const c_char` | yes (`validate_c_str_input`) | yes | yes |
+| 14 | `merge_discovery_parquet` | `src/ffi/utilities.rs::merge_discovery_parquet` | `*const c_char` | yes (`validate_c_str_input`) | yes | yes |
+| 15 | `read_discovery_records_ffi` | `src/ffi/utilities.rs::read_discovery_records_ffi` | `*const c_char` | yes (`validate_c_str_input`) | yes | yes |
+| 16 | `export_visualisation_snapshot` | `src/ffi/utilities.rs::export_visualisation_snapshot` | `*const c_char` | yes (`validate_c_str_input`) | yes | yes |
+| 17 | `get_calibration_summary` | `src/ffi/utilities.rs::get_calibration_summary` | `*const c_char` | yes (`validate_c_str_input_with_fields`) | yes | yes |
+| 18 | `discovery_memory_usage_bytes` | `src/ffi/utilities.rs::discovery_memory_usage_bytes` | none | n/a | yes | yes |
+| 19 | `cleanup_discovery_lib` | `src/ffi/utilities.rs::cleanup_discovery_lib` | none | n/a | yes | yes |
+| 20 | `cleanup_discovery_dir` | `src/ffi/utilities.rs::cleanup_discovery_dir` | `*const c_char` | yes (`validate_c_str_input`) | yes | yes |
+| 21 | `clean_orphaned_discovery_dirs` | `src/ffi/utilities.rs::clean_orphaned_discovery_dirs` | `*const c_char` | yes (`validate_c_str_input`) | yes | yes |
+| 22 | `get_library_version` | `src/ffi/utilities.rs::get_library_version` | none | n/a | yes | yes |
 
 Every pointer-taking entry point routes its input through the single shared
 guard in `src/ffi/helpers.rs` (`validate_c_str_input`, Issue #2045), which
@@ -100,8 +100,8 @@ Two defects, both fixed under this issue; nothing else survived triage.
 
 ### SEC-2089-01 — the FFI panic response was not valid JSON
 
-`panic_to_ffi_json` (`src/ffi/helpers.rs:130`) is the last-resort error channel
-of every `extern "C"` entry point: `catch_unwind` hands it the caught payload
+`src/ffi/helpers.rs::panic_to_ffi_json` is the last-resort error channel of
+every `extern "C"` entry point: `catch_unwind` hands it the caught payload
 and its output is what the host receives. It built the response by
 string-formatting and escaped only `\` and `"`:
 
@@ -126,14 +126,18 @@ of the boundary's own fail-loud channel.
 keeping the non-panicking fallbacks intact.
 
 **Regression test:**
-`tests/ffi/issue_2089_panic_response_json.rs::assertion_style_panic_message_yields_parsable_json`
-(plus five siblings). Observed failing against the unfixed formatter with the
-serde control-character error above, and passing after the fix.
+`tests/issue_2089_panic_response_json.rs::a_panic_caught_at_the_ffi_boundary_reaches_the_host_as_parsable_json`.
+It drives the panic through the shipped entry point — a host-installed
+`tracing` subscriber that panics, unwinding out of the analysis path into
+`src/ffi/analysis.rs::rank_focus_neurons`'s own `catch_unwind` — per the #1806
+convention, rather than calling the crate-private formatter. Observed failing
+against the unfixed formatter with the serde control-character error above, and
+passing after the fix.
 
 ### SEC-2089-02 — four `extern "C"` exports had no unwind guard
 
 `cancel_analysis`, `cancel_analysis_memory_pressure`, `reset_cancellation` and
-`is_analysis_active` (`src/ffi/analysis.rs:24`, `:47`, `:64`, `:88`) called
+`is_analysis_active` (all four in `src/ffi/analysis.rs`) called
 straight into `crate::cancellation::*` with no `panic::catch_unwind`. An unwind
 out of an `extern "C"` function terminates the process; the host cannot catch
 it, so a panic on these paths takes the Deno process down rather than returning
@@ -143,13 +147,16 @@ No panic is reachable on these paths today — three are pure atomic stores and
 loads, and the two cancellation calls additionally emit a `tracing` event that
 dispatches into whatever subscriber is installed — so this is the same
 defence-in-depth the house already applies to `cleanup_discovery_lib`
-(`src/ffi/utilities.rs:311`), which is wrapped despite being equally unlikely
-to panic. It is recorded here as a defect because the issue's stated standard
+(`src/ffi/utilities.rs::cleanup_discovery_lib`), which is wrapped despite being
+equally unlikely to panic. It is recorded here as a defect because the issue's stated standard
 is that *every* `extern "C"` function carries the wrapper.
 
 `is_analysis_active` answers `1` ("active") rather than `0` if its guard ever
 fires: the host uses that verdict to decide whether deleting the Parquet temp
-directory is safe, so the fail-safe answer is the one that makes it wait.
+directory is safe, so the fail-safe answer is the one that makes it wait. This
+rests on the crate keeping the default unwind panic strategy — `Cargo.toml`
+sets no `panic = "abort"`, under which `catch_unwind` never returns and every
+wrapper here, old and new, would be inert.
 
 **Test:** `tests/infrastructure/issue_2089_ffi_unwind_guard.rs` pins that each
 guarded entry point still delegates — a wrapper that silently turned one into a
@@ -161,24 +168,27 @@ a failure.
 ### Examined and found clean
 
 - **Ownership contract.** Exactly one free entry point
-  (`free_discovery_result`, `src/ffi/mod.rs:38`); it is null-safe and
+  (`src/ffi/mod.rs::free_discovery_result`); it is null-safe and
   unwind-guarded. Every `*mut c_char` handed back originates from
   `CString::into_raw` in `to_ffi_json`, `ffi_error_literal` or
   `panic_to_ffi_json`. Double-free and use-after-free remain caller
   obligations, correctly stated in the `# Safety` block — they are not
   preventable from this side of a C boundary.
 - **`ffi_error_literal` returning null.** The documented last resort
-  (`src/ffi/helpers.rs:36`) is only ever called with compile-time literals,
+  (`src/ffi/helpers.rs::ffi_error_literal`) is only ever called with
+  compile-time literals,
   which cannot contain an interior NUL, so the null branch is unreachable;
   `free_discovery_result` is null-safe regardless.
 - **Panic-payload bounds.** `truncate_panic_msg` caps the embedded message at
   4 KiB on a UTF-8 char boundary (Issue #1365), so a large payload cannot drive
   an unbounded allocation in the error path.
 - **Integer handling.** The only casts are
-  `crate::ALLOCATOR.allocated() as u64` (`src/ffi/utilities.rs:293`, a widening
-  or identity cast, never a truncating one) and
+  `crate::ALLOCATOR.allocated() as u64`
+  (`src/ffi/utilities.rs::discovery_memory_usage_bytes`, a widening or identity
+  cast, never a truncating one) and
   `start.elapsed().as_millis().min(u64::MAX as u128) as u64`
-  (`src/ffi_internal/analysis.rs:778`, explicitly clamped first). Every
+  (`src/ffi_internal/analysis.rs::rank_focus_neurons_internal`, explicitly
+  clamped first). Every
   `usize → u32` conversion in `src/ffi_internal/analysis.rs` uses
   `u32::try_from(..).unwrap_or(u32::MAX)` and every count uses
   `saturating_add`.
@@ -203,13 +213,16 @@ none is bypassable here, so none is refiled:
 
 - Creature input/output bounds (#1867, #2020, #2078) — `validate_creature` runs
   before business logic on every creature-accepting path:
-  `src/ffi_internal/recording.rs:52`, `src/ffi_internal/analysis.rs:74` and
-  `:607`, `src/ffi_internal/utilities.rs:116`, and `src/ffi/recording.rs:146`
-  for the streaming session, which captures the creature for the lifetime of
-  its append/finish calls.
+  `src/ffi_internal/recording.rs::record_discovery_internal`,
+  `src/ffi_internal/analysis.rs::analyze_parallel_internal` and
+  `::rank_focus_neurons_internal`,
+  `src/ffi_internal/utilities.rs::export_visualisation_snapshot_internal`, and
+  `src/ffi/recording.rs::start_discovery_session` for the streaming session,
+  which captures the creature for the lifetime of its append/finish calls.
 - Tmp-directory handling (#1904, #1905) and the `cleanup_discovery_dir` path
   guard (#1866) — enforced inside `discovery_cleanup`, reached only through
-  `src/ffi/utilities.rs:346`/`:451`, which pass the caller path through
+  `src/ffi/utilities.rs::cleanup_discovery_dir` and
+  `::clean_orphaned_discovery_dirs`, which pass the caller path through
   unmodified and classify an `InvalidInput` rejection as non-retryable.
 - Streaming lifecycle (#1902) — session ids are opaque keys looked up in
   `streaming`; the FFI layer neither constructs nor interprets them.
@@ -218,8 +231,10 @@ none is bypassable here, so none is refiled:
 
 ## Issues filed
 
-Both findings were fixed under #2089 itself, so neither survived triage as an
-open issue:
+`negative-result` for *open* issues: both findings were remediated inside this
+sweep, so neither survived triage as an issue to file. The deliverable's
+"one issue per surviving finding" rule has no surviving finding to apply to;
+each is recorded above with the same evidence a filed issue would carry.
 
 - `SEC-2089-01` — invalid-JSON panic response — fixed in this sweep's PR.
 - `SEC-2089-02` — four unguarded `extern "C"` exports — fixed in this sweep's PR.
