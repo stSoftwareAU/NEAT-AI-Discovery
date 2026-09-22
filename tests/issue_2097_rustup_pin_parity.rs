@@ -175,8 +175,8 @@ fn both_pin_sets_answer_for_every_supported_target() {
     let runlib = pins_answered_by("scripts/runlib.sh", "_runlib_pinned_rustup_digest");
 
     for target in SUPPORTED_TARGETS {
-        let from_manifest = manifest.get(target).map(String::as_str).unwrap_or("");
-        let from_runlib = runlib.get(target).map(String::as_str).unwrap_or("");
+        let from_manifest = manifest.get(target).map_or("", String::as_str);
+        let from_runlib = runlib.get(target).map_or("", String::as_str);
         assert!(
             is_sha256_hex(from_manifest),
             "scripts/install-rustup.sh::_pinned_digest gave no lower-case 64-hex \

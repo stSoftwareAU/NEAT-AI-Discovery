@@ -22,6 +22,28 @@ Ledger rules: [`README.md`](README.md). Index entry:
 - **Swept by:** Issue #2128 (the chunk-16 audit sub-issue of #2097).
 - **Tracker issue:** `#2083` (overflow tracker) via `#2097` (chunk 16).
 
+## Citation convention — a deliberate departure
+
+`CONTRIBUTING.md` → "Cite Code by Symbol, Never by Line Number" (Issue #1942)
+says documentation cites `<file>::<symbol>`, because line numbers rot silently.
+**This record cites `file:line` anyway**, and does so deliberately:
+
+- The sub-issue driving this sweep makes it an acceptance criterion — "the
+  complete script table with `file:line` for every strict-mode and download
+  cell" — because a `set -euo pipefail` line and a bare `curl` invocation have
+  no enclosing symbol to name in several of these scripts.
+- Unlike a live code document, a sweep record is **pinned to a baseline commit**
+  and carries the `git diff` command that falsifies it (see *Verify this
+  record*). A citation here is a claim about one commit, not about HEAD, so it
+  cannot rot unnoticed — the diff goes non-empty and the record is stale by its
+  own rule.
+- Where a symbol exists, it is named **alongside** the line, so the citation
+  survives a shift even before the diff is run.
+
+The rot risk is real for `scripts/runlib.sh`, which is byte-synced from
+NEAT-AI-core on every pull request and can therefore move with no edit in this
+repository. Its citations are the ones to re-derive from the named symbol first.
+
 ## Files swept
 
 2,106 lines, read in full. Line counts as at the baseline commit.
@@ -29,7 +51,7 @@ Ledger rules: [`README.md`](README.md). Index entry:
 | Path | Lines | Outcome |
 | --- | --- | --- |
 | `scripts/runlib.sh` | 1164 | accepted: staging names under `$CARGO_HOME` are predictable, but planting the symlink already needs write access to the destination directory — no privilege is crossed (see [runlib.sh](#scriptsrunlibsh--1164-lines)) |
-| `scripts/benchmark-ci.sh` | 217 | clean — the only externally-set value, `BENCHMARK_THRESHOLD`/`--threshold`, is validated by `benchmark_threshold::require_valid` (`:101`) before it reaches `bc` |
+| `scripts/benchmark-ci.sh` | 217 | clean — the only externally-set value, `BENCHMARK_THRESHOLD`/`--threshold`, is validated by `benchmark_threshold::require_valid`, called at `benchmark-ci.sh:101` before it reaches `bc` |
 | `benchmark.sh` | 165 | finding #2140 — `eval "$cmd" … \|\| true` (`:32`) times a suite that never completed and prints it as a speed-up |
 | `scripts/install-rustup.sh` | 151 | finding #2127 — `$tmp_dir` interpolated into the `EXIT` trap string (`:117`); the #1911 digest path itself re-verified clean |
 | `scripts/install-rust-toolchain.sh` | 126 | finding #2126 — `RUST_TOOLCHAIN_MAX_ATTEMPTS` reaches the `[[ -ge ]]` arithmetic unvalidated (`:104`); the argument allowlist (`:57-65`) is clean |
@@ -77,8 +99,8 @@ Every cell verified by reading the file at `4f269d6`.
 
 | script | shebang | strict mode (line) | `bash -n` gated | shellcheck gated | downloads (URL, curl flags) | checksum verification |
 | --- | --- | --- | --- | --- | --- | --- |
-| `scripts/runlib.sh` | `#!/usr/bin/env bash` (`:1`) | `set -euo pipefail` (`:86`) | yes | yes | `:543` `curl --proto "=https" --tlsv1.2 -sSfL --retry 3 --retry-delay 2 --connect-timeout 30 -o` → `https://static.rust-lang.org/rustup/archive/1.29.0/<target>/rustup-init` (`:422`, `:421`, `:532`). Indirect: `rustup toolchain install` (`:662`, `:787`), `rustup default stable` (`:666`), `rustup update` (`:729`) | yes — SHA-256 computed `:547`, compared with the inlined pin `:428-445` at `:548-549`, and the file is `chmod +x`'d `:551` and executed `:553` only after the match. Indirect rustup fetches rely on rustup's own signed channel manifests |
-| `scripts/install-rustup.sh` | `#!/usr/bin/env bash` (`:1`) | `set -euo pipefail` (`:23`) | yes | yes | `:121-123` `curl --proto "=https" --tlsv1.2 -sSfL --retry 3 --retry-delay 2 --connect-timeout 30 -o` → `https://static.rust-lang.org/rustup/archive/1.29.0/<target>/rustup-init` (`:28`, `:26`, `:113`) | yes — SHA-256 computed `:128` (`_sha256_of`, `:35-46`), compared with the pin read from `scripts/rustup-init.sha256` (`:81-107`, digests at `rustup-init.sha256:19-24`) at `:129-137`; `chmod +x` `:140` and execute `:141` are after the comparison |
+| `scripts/runlib.sh` | `#!/usr/bin/env bash` (`:1`) | `set -euo pipefail` (`:86`) | yes | yes | `_runlib_bootstrap_rustup`, `:543` `curl --proto "=https" --tlsv1.2 -sSfL --retry 3 --retry-delay 2 --connect-timeout 30 -o` → `https://static.rust-lang.org/rustup/archive/1.29.0/<target>/rustup-init` (`:422`, `:421`, `:532`). Indirect: `rustup toolchain install` (`:662`, `:787`), `rustup default stable` (`:666`), `rustup update` (`:729`) | yes — SHA-256 computed by `_runlib_sha256_of` (`:547`), compared with the inlined pin from `_runlib_pinned_rustup_digest` (`:428-445`) at `:548-549`, and the file is `chmod +x`'d `:551` and executed `:553` only after the match. Indirect rustup fetches rely on rustup's own signed channel manifests |
+| `scripts/install-rustup.sh` | `#!/usr/bin/env bash` (`:1`) | `set -euo pipefail` (`:23`) | yes | yes | `install_rustup`, `:121-123` `curl --proto "=https" --tlsv1.2 -sSfL --retry 3 --retry-delay 2 --connect-timeout 30 -o` → `https://static.rust-lang.org/rustup/archive/1.29.0/<target>/rustup-init` (`:28`, `:26`, `:113`) | yes — SHA-256 computed by `_sha256_of` (`:128`, defined `:35-46`), compared with the pin read from `scripts/rustup-init.sha256` by `_pinned_digest` (`:81-107`, digests at `rustup-init.sha256:19-24`) at `:129-137`; `chmod +x` `:140` and execute `:141` are after the comparison |
 | `scripts/install-rust-toolchain.sh` | `#!/bin/bash` (`:1`) | `set -euo pipefail` (`:2`) | yes | yes | indirect only — `rustup toolchain install` (`:98-101`), `rustup default` (`:114`), `rustup run` (`:118-119`) | n/a for this script — rustup verifies its own signed channel manifests; nothing is downloaded and executed by this file |
 | `scripts/benchmark-ci.sh` | `#!/bin/bash` (`:1`) | `set -euo pipefail` (`:2`) | yes | yes | none | n/a |
 | `scripts/benchmark_threshold.sh` | `#!/bin/bash` (`:1`) | **none — by design.** A sourced library, never executed: `benchmark-ci.sh` sets `set -euo pipefail` at `:2` and sources it at `:45`, so the functions always run under the caller's strict mode. `benchmark_compare.sh` (out of scope) is the other caller. A `set` line here would instead impose strict mode on any future caller that had not opted in — recorded as a deliberate omission, not a gap | yes | yes | none | n/a |
@@ -138,16 +160,16 @@ than trusted from their issue text.
 
 | issue | guard | citing `file:line` | test | on live path? |
 | --- | --- | --- | --- | --- |
-| #1911 | rustup-init is executed only when its SHA-256 matches a committed pin | `install-rustup.sh:128-137` then `:140-141`; `runlib.sh:547-549` then `:551,553`; pins at `rustup-init.sha256:19-24` and `runlib.sh:428-445` | `tests/issue_1911_rustup_digest_verification.rs::rejects_a_tampered_download_without_executing_it`, `::fails_loud_when_the_download_fails`, `::fails_closed_when_no_digest_is_pinned_for_the_host_target`, `::fails_closed_when_the_digest_manifest_is_missing`; `tests/issue_2072_canonical_runlib.rs::a_tampered_rustup_init_is_refused_without_being_executed`; **new** `tests/issue_2097_rustup_pin_parity.rs` | yes — `runlib.sh:514-562` is the bootstrap every fleet host takes when it has no `rustc` |
+| #1911 | rustup-init is executed only when its SHA-256 matches a committed pin | `install-rustup.sh::install_rustup` (`:128-137` then `:140-141`); `runlib.sh::_runlib_bootstrap_rustup` (`:547-549` then `:551,553`); pins at `rustup-init.sha256:19-24` and `runlib.sh::_runlib_pinned_rustup_digest` (`:428-445`) | `tests/issue_1911_rustup_digest_verification.rs::rejects_a_tampered_download_without_executing_it`, `::fails_loud_when_the_download_fails`, `::fails_closed_when_no_digest_is_pinned_for_the_host_target`, `::fails_closed_when_the_digest_manifest_is_missing`; `tests/issue_2072_canonical_runlib.rs::a_tampered_rustup_init_is_refused_without_being_executed`; **new** `tests/issue_2097_rustup_pin_parity.rs` | yes — `runlib.sh:514-562` is the bootstrap every fleet host takes when it has no `rustc` |
 | #1912 | `cargo-fuzz` installed with `--locked` and an explicit `--version` | `fuzz-ci.sh:42`, gated by `quality/cargo_install_pinning.sh` (`quality.sh:24`) | `tests/issue_1912_fuzz_ci_pinned_install.rs::cargo_fuzz_is_installed_with_locked_and_a_version_pin` | yes — the only `cargo install` in the chunk |
 | #1913 | codespell installed from a hash-pinned requirements file | `.github/workflows/ci.yml:543` `pip install --user --require-hashes -r .github/requirements/codespell-requirements.txt`; the file pins `codespell==2.4.3` with both wheel and sdist SHA-256 | `tests/issue_1913_codespell_pin.rs::codespell_install_uses_the_hash_pinned_requirements_file` | yes — runs on every PR |
 
 ### #1911, in detail
 
-- **Enforced, not advisory.** `install-rustup.sh:129` compares the computed
+- **Enforced, not advisory.** `install-rustup.sh::install_rustup` (`:129`) compares the computed
   digest with the pin and `return 1`s at `:136` *before* `chmod +x` (`:140`) and
   the execution (`:141`). There is no `else` branch, no override flag and no
-  environment variable that skips the comparison. `runlib.sh:548-549` is the
+  environment variable that skips the comparison. `runlib.sh::_runlib_bootstrap_rustup` (`:548-549`) is the
   same shape via `_runlib_die`.
 - **Every failure path exits non-zero.** Download failure
   `install-rustup.sh:121-126`; missing manifest `:84-87`; unknown host target
@@ -213,7 +235,7 @@ none — see the accepted disposition below.
 
 **Examined and found clean:**
 
-- **Bootstrap** (`:514-562`). Every precondition — host target `:517-519`,
+- **Bootstrap** — `_runlib_bootstrap_rustup` (`:514-562`). Every precondition — host target `:517-519`,
   pinned digest `:520-522`, a SHA-256 tool `:526-527`, `curl` `:530-531` — is
   checked *before* anything is fetched, so an unverifiable install is refused
   rather than downloaded. The `mktemp -d` (`:536`) is tracked (`:538`) and reaped
@@ -225,7 +247,7 @@ none — see the accepted disposition below.
   `rust-toolchain.toml` channel (`:660`), the channel being updated (`:726`) and
   the required version from `cargo metadata` (`:786`). Both sources are
   repository input, and both are validated.
-- **The `rm -rf` at `:839`.** Four guards stand before it: the path must be
+- **The `rm -rf` in `_runlib_remove_target` (`:839`).** Four guards stand before it: the path must be
   absolute (`:810-811`), must not be `/` (`:812-813`), both sides are resolved
   with `cd … && pwd -P` (`:819-824`), and the resolved target must sit under the
   resolved repository root (`:825-832`). Two specific questions were asked and
@@ -266,8 +288,7 @@ none — see the accepted disposition below.
   would otherwise have silently taken the gnu installer. This is the fail-silent
   class caught and handled.
 
-**Accepted with reason — predictable staging names.** `:1058`, `:1083` and
-`:1098` stage under `$CARGO_HOME/bin/<name>.runlib.$$`,
+**Accepted with reason — predictable staging names.** `runlib_install` (`:1058`, `:1083`, `:1098`) stages under `$CARGO_HOME/bin/<name>.runlib.$$`,
 `$CARGO_HOME/lib/<name>.runlib.$$` and `$CARGO_HOME/bin/<name>.runlib-prev.$$`,
 and the `cp` calls at `:1060`, `:1085` and `:1100` follow a symlink already
 sitting at that path. The name is predictable — `$$` is a PID, which is
@@ -282,7 +303,7 @@ immediately; the mitigating fix is `mktemp` inside the destination directory.)
 
 ### `benchmark.sh` — 165 lines
 
-- **Finding #2140** — `:32` `eval "$cmd" > /dev/null 2>&1 || true`. It is the
+- **Finding #2140** — `benchmark.sh::run_benchmark` (`:32`) runs `eval "$cmd" > /dev/null 2>&1 || true`. It is the
   only `eval` in the chunk. Every caller today passes a hard-coded literal
   (`:98-99`, `:126-127`), so there is no injection reachable now — the live
   defect is that `|| true` plus the discarded streams turn a suite that failed
@@ -431,5 +452,5 @@ git diff 4f269d6b604eb480b9efe5267628d10484ea25b1..HEAD -- \
 ```
 
 An empty diff means this record still describes the current code. The fixes for
-#2126, #2127, #2139 and #2140 land on top of that baseline, so the first
+Issues #2126, #2127, #2139 and #2140 land on top of that baseline, so the first
 non-empty diff is expected to be exactly them.
