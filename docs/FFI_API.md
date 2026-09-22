@@ -263,6 +263,9 @@ Allows the host process to request graceful shutdown of in-flight analysis
 - **Output field**: `cancelled` (`bool`) — `true` when the host requested
   shutdown via `cancel_analysis()`; results are partial but valid.
   The `error_kind` is `"cancelled"` (not retryable).
+- **Panic safety** (Issue #2089): all three symbols are wrapped in
+  `panic::catch_unwind`, so no unwind can cross the C boundary and terminate the
+  host process.
 
 ### Analysis Lifecycle Guard (Issue #1048)
 
@@ -274,6 +277,10 @@ still reading from it.
   - **Input**: no arguments
   - **Output**: `i32` (`1` = active, `0` = idle)
   - **Thread safety**: safe to call from any thread at any time
+  - **Panic safety** (Issue #2089): wrapped in `panic::catch_unwind`, and the
+    guard answers `1` ("active") rather than `0` if it ever fires — the
+    fail-safe answer is the one that makes the host wait instead of deleting a
+    temp directory an in-flight analysis is still reading.
 - **Recommended shutdown sequence**:
   1. Call `cancel_analysis()` when SIGTERM arrives
   2. Wait for `analyze_parallel` / `rank_focus_neurons` FFI call to return
