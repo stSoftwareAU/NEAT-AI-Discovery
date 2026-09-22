@@ -207,6 +207,66 @@ fn ffi_rank_focus_neurons_rejects_recurrent_synapse() {
     );
 }
 
+/// A duplicated neuron uuid must be rejected outright at the FFI boundary
+/// (Issue #2090). Without this guard, `validate_forward_only_synapses`
+/// builds its uuid->index map with last-wins semantics: a repeated uuid
+/// silently discards the earlier neuron's index, which could let a
+/// genuinely recurrent synapse resolve against the surviving occurrence's
+/// index and validate as forward-only, defeating the Issue #1184 gate.
+#[test]
+fn ffi_record_discovery_rejects_duplicate_neuron_uuid() {
+    let temp_dir = tempfile::tempdir().expect("create temp dir");
+    let temp_path = temp_dir.path().to_str().unwrap();
+
+    let input_json = format!(
+        r#"{{
+            "creature": {{
+                "neurons": [
+                    {{"uuid": "shared", "type": "input", "squash": "IDENTITY"}},
+                    {{"uuid": "hidden-0", "type": "hidden", "squash": "RELU", "bias": 0.0}},
+                    {{"uuid": "shared", "type": "output", "squash": "LOGISTIC", "bias": 0.0}}
+                ],
+                "synapses": [
+                    {{"fromUUID": "hidden-0", "toUUID": "shared", "weight": 0.5}}
+                ],
+                "input": 1,
+                "output": 1
+            }},
+            "training_data": [
+                {{
+                    "input": [0.5],
+                    "output": [0.7],
+                    "neuron_data": [
+                        {{"neuron_uuid": "shared", "activation": 0.7, "errors": [-0.05]}}
+                    ]
+                }}
+            ],
+            "temp_dir": "{temp_path}"
+        }}"#
+    );
+
+    let result = neat_ai_discovery::record_discovery_internal(&input_json)
+        .expect("internal call must not panic");
+    let parsed: serde_json::Value =
+        serde_json::from_str(&result).expect("response must be valid JSON");
+
+    assert_eq!(
+        parsed["success"], false,
+        "recording with a duplicate neuron uuid must fail: {result}"
+    );
+    assert_eq!(
+        parsed["errorKind"], "data_validation",
+        "duplicate neuron uuid must classify as data_validation: {result}"
+    );
+    let err_msg = parsed["error"]
+        .as_str()
+        .expect("error message must be present");
+    assert!(
+        err_msg.contains("duplicate neuron uuid"),
+        "error must describe the duplicate: {err_msg}"
+    );
+}
+
 /// Synapses referencing neuron UUIDs that are not in the creature are
 /// tolerated — they are out of scope for Issue #1184 and the existing
 /// analysis pipeline already silently filters them. The forward-only
