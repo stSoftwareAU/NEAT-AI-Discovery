@@ -19,8 +19,11 @@
 //
 // Auto-generated PR summaries and archived history (all under
 // docs/archive/**) are excluded from linting via the `ignores` list,
-// as is `graft/**` — machine-generated symbol outlines whose literal
-// Rust identifiers (e.g. `const _:`) trip prose rules like MD037.
+// as is `graft/**` — a machine-generated, git-excluded scratch mirror
+// some local tooling drops in the working tree. Its auto-generated
+// index files use bare Rust `_` placeholders, which MD037 misreads as
+// spaced emphasis markers, and since it is never committed, linting it
+// only produces noise that masks real findings.
 {
   "config": {
     "default": true,
@@ -43,8 +46,8 @@
   "ignores": [
     "target/**",
     "node_modules/**",
+    "graft/**",
     "**/CHANGELOG.md",
-    "docs/archive/**",
-    "graft/**"
+    "docs/archive/**"
   ]
 }
