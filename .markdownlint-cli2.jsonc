@@ -18,7 +18,9 @@
 //   intentionally compact.
 //
 // Auto-generated PR summaries and archived history (all under
-// docs/archive/**) are excluded from linting via the `ignores` list.
+// docs/archive/**) are excluded from linting via the `ignores` list,
+// as is `graft/**` — machine-generated symbol outlines whose literal
+// Rust identifiers (e.g. `const _:`) trip prose rules like MD037.
 {
   "config": {
     "default": true,
@@ -42,6 +44,7 @@
     "target/**",
     "node_modules/**",
     "**/CHANGELOG.md",
-    "docs/archive/**"
+    "docs/archive/**",
+    "graft/**"
   ]
 }
