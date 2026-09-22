@@ -15,6 +15,7 @@
 //!      are gone.
 
 const AGENTS: &str = include_str!("../AGENTS.md");
+const FFI_API: &str = include_str!("../docs/FFI_API.md");
 const CONTRIBUTING: &str = include_str!("../CONTRIBUTING.md");
 const QUALITY_SH: &str = include_str!("../quality.sh");
 const CI_YML: &str = include_str!("../.github/workflows/ci.yml");
@@ -179,6 +180,26 @@ fn agents_drops_the_duplicated_blocks() {
     assert!(
         !AGENTS.contains("| `addNeuron` |"),
         "AGENTS.md must not duplicate the candidate-type table (Issue #1683)"
+    );
+}
+
+#[test]
+fn agents_defers_the_ffi_validation_table_to_ffi_api() {
+    // The per-entry-point validation table that pushed AGENTS.md to the 200-line
+    // cap (Issue #2078's docs edit, reverted in #2081) now lives in the FFI
+    // reference, which already carried the width bounds it duplicated. AGENTS.md
+    // keeps only the invariant tokens (Issue #2085).
+    assert!(
+        !AGENTS.contains("| FFI entry point |"),
+        "AGENTS.md must not carry the per-entry-point FFI validation table (Issue #2085)"
+    );
+    assert!(
+        FFI_API.contains("| FFI entry point |"),
+        "docs/FFI_API.md must carry the per-entry-point FFI validation table (Issue #2085)"
+    );
+    assert!(
+        FFI_API.contains("Accepts `CreatureJson`"),
+        "docs/FFI_API.md must carry the full validation table header (Issue #2085)"
     );
 }
 
