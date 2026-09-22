@@ -261,6 +261,32 @@ fn missing_clock_source_fails_loud_instead_of_returning_empty() {
     );
 }
 
+#[test]
+fn run_benchmark_fails_loud_when_bc_is_missing() {
+    // The clock is readable (the stubbed `date`) but the arithmetic tool is
+    // not. `set -e` would otherwise kill the run on bc's exit 127 with only
+    // bash's own "command not found" to go on.
+    let tmp = tempfile::tempdir().expect("temp dir");
+    write_bsd_date_stub(tmp.path());
+
+    let out = run_helper(
+        "unset EPOCHREALTIME; run_benchmark 'probe' 'true'",
+        Some(&tmp.path().display().to_string()),
+    );
+
+    assert!(
+        !out.status.success(),
+        "a missing bc must fail the benchmark, not report a duration \
+         (Issue #2141).\n{}",
+        describe(&out)
+    );
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("bc"),
+        "the failure must name bc\n{}",
+        describe(&out)
+    );
+}
+
 // ── Sourcing the script must not run the benchmark ────────────────────
 
 #[test]

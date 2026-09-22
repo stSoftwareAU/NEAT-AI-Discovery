@@ -36,9 +36,15 @@ now_seconds() {
     fi
 
     # bash 3.2 (macOS) has no EPOCHREALTIME; perl ships with both platforms.
-    if command -v perl > /dev/null 2>&1 &&
-        perl -MTime::HiRes=time -e 'printf "%.6f\n", time' 2> /dev/null; then
-        return 0
+    # The reading is captured first so a perl that dies half-way through cannot
+    # leave a partial line on stdout ahead of the fallback below.
+    if command -v perl > /dev/null 2>&1; then
+        local hires
+        if hires=$(perl -MTime::HiRes=time -e 'printf "%.6f\n", time' 2> /dev/null) &&
+            [ -n "$hires" ]; then
+            printf '%s\n' "$hires"
+            return 0
+        fi
     fi
 
     # POSIX `date +%s` — whole seconds, but a benchmark that runs for minutes
@@ -62,6 +68,13 @@ run_benchmark() {
     local label="$1"
     local cmd="$2"
     local start end duration
+
+    # `set -e` would otherwise kill the run on bc's 127 with only bash's own
+    # "command not found" to go on — name the tool instead (Issue #2141).
+    if ! command -v bc > /dev/null 2>&1; then
+        echo "❌ benchmark.sh: bc is not installed — the duration arithmetic needs it" >&2
+        return 1
+    fi
 
     echo "⏱️  Running: $label" >&2
     start=$(now_seconds)
@@ -193,7 +206,10 @@ fi
 calc_improvement() {
     local baseline="$1"
     local current="$2"
-    if [ "$baseline" = "N/A" ] || [ "$current" = "N/A" ]; then
+    # A whole-second clock (the POSIX fallback in now_seconds) can legitimately
+    # read a zero baseline, and bc divides by it — report N/A instead.
+    if [ "$baseline" = "N/A" ] || [ "$current" = "N/A" ] ||
+        [ "$(echo "$baseline == 0" | bc)" = "1" ]; then
         echo "N/A"
     else
         echo "scale=1; ($baseline - $current) / $baseline * 100" | bc
