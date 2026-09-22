@@ -122,6 +122,23 @@ exactly the moment a caller needs it, so a panicking analysis pass surfaced to
 the host as a JSON parse error with the real cause discarded — a silent failure
 of the boundary's own fail-loud channel.
 
+**Attacker model:** any party who can drive the crate into a panic. Exposure is
+internal, so that is the Deno host itself plus whatever reaches it — a
+malformed recording, a corrupt Parquet file, a wedged GPU, or a host-installed
+`tracing` layer that faults. No privilege is needed beyond making one FFI call.
+
+**Trigger:** a panic anywhere inside a pointer-returning entry point whose
+payload contains a control character. `assert!` / `assert_eq!` is the common
+case: its message embeds `\n` unconditionally.
+
+**Exploit sketch:** not a memory-safety or disclosure exploit — an availability
+and diagnosability one. The host's `JSON.parse` of the response throws, so the
+structured `errorKind` / `retryable` fields it branches on never arrive. A
+caller that treats an unparsable response as a transport fault retries a
+deterministic panic indefinitely, and the panic message naming the real cause
+is discarded rather than logged, so the fault is invisible in triage. This is
+the FFI boundary's own fail-loud channel failing silently.
+
 **Fix:** serialise the response through `serde_json` so the escaping is total,
 keeping the non-panicking fallbacks intact.
 
@@ -150,6 +167,19 @@ defence-in-depth the house already applies to `cleanup_discovery_lib`
 (`src/ffi/utilities.rs::cleanup_discovery_lib`), which is wrapped despite being
 equally unlikely to panic. It is recorded here as a defect because the issue's stated standard
 is that *every* `extern "C"` function carries the wrapper.
+
+**Attacker model:** the Deno host, or anything that can fault a component these
+four paths touch — a host-installed `tracing` subscriber is the only
+non-atomic thing on them. Internal exposure; one FFI call is the whole
+interaction.
+
+**Trigger:** any panic raised inside these four calls. None is reachable today
+(see below), which is why this is graded defence-in-depth.
+
+**Exploit sketch:** the host process terminates instead of receiving a verdict.
+There is no partial-result path and no error channel on a `void` export, so the
+failure mode is a hard stop of the discovery run — recoverable only by restart,
+with in-flight recording state left behind.
 
 `is_analysis_active` answers `1` ("active") rather than `0` if its guard ever
 fires: the host uses that verdict to decide whether deleting the Parquet temp
