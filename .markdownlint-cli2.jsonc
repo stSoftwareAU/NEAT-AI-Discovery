@@ -18,7 +18,10 @@
 //   intentionally compact.
 //
 // Auto-generated PR summaries and archived history (all under
-// docs/archive/**) are excluded from linting via the `ignores` list.
+// docs/archive/**) are excluded from linting via the `ignores` list,
+// as is `graft/**` — a machine-generated, git-excluded scratch mirror
+// some local tooling drops in the working tree. It is never committed,
+// so linting it only produces noise that masks real findings.
 {
   "config": {
     "default": true,
@@ -41,6 +44,7 @@
   "ignores": [
     "target/**",
     "node_modules/**",
+    "graft/**",
     "**/CHANGELOG.md",
     "docs/archive/**"
   ]

@@ -8,6 +8,9 @@
 #
 # Note: Large parquet files should be stored locally and NOT committed to git.
 #       Add them to .gitignore: echo "*.parquet" >> .gitignore
+#
+# Portable across macOS (bash 3.2, BSD userland), Ubuntu and AWS Linux — the
+# clock is read by now_seconds(), never by the GNU-only `date +%s.%N`.
 
 set -euo pipefail
 
@@ -16,25 +19,91 @@ PARQUET_FILE="${1:-}"
 # Recent GPU changes: v0.1.151-153 (12-Dec) introduced GPU timeouts, memory adaptation
 BASELINE_COMMIT="bed746a"  # v0.1.146 - last stable before GPU optimisation work
 
-echo "🏁 GPU Performance Benchmark"
-echo "=============================="
-echo "Date: $(date '+%d-%b-%Y %H:%M:%S')"
-echo ""
+# Print the current time as epoch seconds, sub-second where the host can offer
+# it (Issue #2141). `date +%s.%N` is a GNU extension: BSD `date` — what macOS
+# ships — emits the two characters verbatim, so every downstream `bc` sum saw
+# `1769040000.N` and returned nothing. Sources are tried best-resolution first
+# and the last resort is POSIX; with none of them the function fails loud rather
+# than handing an empty string to the arithmetic.
+now_seconds() {
+    local whole
+
+    # bash >= 5: microseconds, no subprocess. Some locales render the decimal
+    # separator as a comma, which `bc`/`printf` reject.
+    if [ -n "${EPOCHREALTIME:-}" ]; then
+        printf '%s\n' "${EPOCHREALTIME/,/.}"
+        return 0
+    fi
+
+    # bash 3.2 (macOS) has no EPOCHREALTIME; perl ships with both platforms.
+    # The reading is captured first so a perl that dies half-way through cannot
+    # leave a partial line on stdout ahead of the fallback below.
+    if command -v perl > /dev/null 2>&1; then
+        local hires
+        if hires=$(perl -MTime::HiRes=time -e 'printf "%.6f\n", time' 2> /dev/null) &&
+            [ -n "$hires" ]; then
+            printf '%s\n' "$hires"
+            return 0
+        fi
+    fi
+
+    # POSIX `date +%s` — whole seconds, but a benchmark that runs for minutes
+    # still reads meaningfully.
+    if whole=$(date +%s 2> /dev/null); then
+        case "$whole" in
+            '' | *[!0-9]*) ;;
+            *)
+                printf '%s\n' "$whole"
+                return 0
+                ;;
+        esac
+    fi
+
+    echo "❌ benchmark.sh: no usable clock source — need bash 5 (EPOCHREALTIME), perl (Time::HiRes), or a POSIX date (+%s)" >&2
+    return 1
+}
 
 # Function to run benchmark and capture timing
 run_benchmark() {
     local label="$1"
     local cmd="$2"
     local start end duration
-    
+
+    # `set -e` would otherwise kill the run on bc's 127 with only bash's own
+    # "command not found" to go on — name the tool instead (Issue #2141).
+    if ! command -v bc > /dev/null 2>&1; then
+        echo "❌ benchmark.sh: bc is not installed — the duration arithmetic needs it" >&2
+        return 1
+    fi
+
     echo "⏱️  Running: $label" >&2
-    start=$(date +%s.%N)
+    start=$(now_seconds)
     eval "$cmd" > /dev/null 2>&1 || true
-    end=$(date +%s.%N)
+    end=$(now_seconds)
     duration=$(echo "$end - $start" | bc)
+    # An empty or malformed subtraction must not reach the summary's `printf`
+    # as a silent 0.00s — say what was read instead (Issue #2141).
+    if [[ ! "$duration" =~ ^-?[0-9]+(\.[0-9]+)?$ ]]; then
+        echo "❌ benchmark.sh: no numeric duration for '$label' — bc returned '${duration}' from '${end} - ${start}' (is bc installed?)" >&2
+        return 1
+    fi
     echo "   Duration: ${duration}s" >&2
     echo "$duration"
 }
+
+# Helper-only mode: the regression tests source this script to exercise
+# now_seconds() directly, and must not trigger the benchmark itself — it checks
+# out git refs and stashes uncommitted work (Issue #2141). Only honoured when
+# the script really is sourced; `return` outside a sourced file is a bash error,
+# so an exported variable must not be able to break a normal ./benchmark.sh run.
+if [ -n "${BENCHMARK_SOURCE_ONLY:-}" ] && [ "${BASH_SOURCE[0]}" != "$0" ]; then
+    return 0
+fi
+
+echo "🏁 GPU Performance Benchmark"
+echo "=============================="
+echo "Date: $(date '+%d-%b-%Y %H:%M:%S')"
+echo ""
 
 # Store current branch/commit - handle detached HEAD state
 CURRENT_REF=$(git rev-parse --short HEAD)
@@ -137,7 +206,10 @@ fi
 calc_improvement() {
     local baseline="$1"
     local current="$2"
-    if [ "$baseline" = "N/A" ] || [ "$current" = "N/A" ]; then
+    # A whole-second clock (the POSIX fallback in now_seconds) can legitimately
+    # read a zero baseline, and bc divides by it — report N/A instead.
+    if [ "$baseline" = "N/A" ] || [ "$current" = "N/A" ] ||
+        [ "$(echo "$baseline == 0" | bc)" = "1" ]; then
         echo "N/A"
     else
         echo "scale=1; ($baseline - $current) / $baseline * 100" | bc
