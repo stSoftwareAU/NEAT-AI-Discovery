@@ -261,9 +261,12 @@ fn prose_records_and_index_entries_match_both_ways() {
             "{record} has no entry in {INDEX} — the next automated sweep cannot see it"
         );
         let file_id = id_from_record(&record);
+        // Null-safe: `string_field` panics on an unswept entry's `record: null`,
+        // and the scan passes those to reach a record filed further down the
+        // index. Match on the optional string instead.
         let entry = entries
             .iter()
-            .find(|entry| string_field(entry, "record") == record)
+            .find(|entry| entry["record"].as_str() == Some(record.as_str()))
             .expect("record was just found in the index");
         assert_eq!(
             normalise_id(&string_field(entry, "id")),
