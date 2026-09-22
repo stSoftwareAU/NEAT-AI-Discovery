@@ -500,3 +500,57 @@ fn ffi_read_discovery_with_uuid_neuron_id() {
         "reading with UUID neuron ID must succeed: {read_result}"
     );
 }
+
+/// The FFI `read_discovery_records` entry point must reject a purely numeric
+/// `neuron_uuid`, matching the UUID-only contract Issue #952 already enforces
+/// for `NeuronJson`/`NeuronData` (Issue #2090 security sweep chunk 4:
+/// `ReadDiscoveryInput.neuron_uuid` had a doc comment claiming this contract
+/// but no `deserialize_with` guard actually enforcing it).
+#[test]
+fn ffi_read_discovery_rejects_numeric_neuron_uuid() {
+    let temp_dir = tempfile::tempdir().expect("create temp dir");
+    let temp_path = temp_dir.path().to_str().unwrap();
+    let parquet_file = format!("{temp_path}/discovery_data.parquet");
+
+    let read_json = serde_json::json!({
+        "parquet_file": parquet_file,
+        "neuron_uuid": "12345"
+    });
+
+    let read_result =
+        neat_ai_discovery::read_discovery_records(&serde_json::to_string(&read_json).unwrap())
+            .expect("read must not panic");
+
+    let read_parsed: serde_json::Value = serde_json::from_str(&read_result).unwrap();
+    assert_eq!(
+        read_parsed["success"], false,
+        "numeric neuron_uuid must be rejected: {read_result}"
+    );
+    let error = read_parsed["error"]
+        .as_str()
+        .expect("rejection must surface an error message");
+    assert!(
+        error.contains("numeric integer neuron ID"),
+        "error must explain the UUID-only contract (Issue #952): {error}"
+    );
+}
+
+/// Assert on the guard itself, not just the FFI wrapper: deserialising
+/// `ReadDiscoveryInput` directly from JSON with a numeric `neuron_uuid` must
+/// fail (Issue #2090 — an abort inside deserialisation is not catchable by
+/// the FFI `catch_unwind` wrapper, so the guard must reject before any
+/// allocation or lookup happens).
+#[test]
+fn read_discovery_input_deserialise_rejects_numeric_neuron_uuid() {
+    let json = r#"{"parquet_file": "/tmp/does-not-matter.parquet", "neuron_uuid": "12345"}"#;
+    let result: Result<neat_ai_discovery::ReadDiscoveryInput, _> = serde_json::from_str(json);
+    assert!(
+        result.is_err(),
+        "numeric neuron_uuid must fail ReadDiscoveryInput deserialisation"
+    );
+    let error = result.unwrap_err().to_string();
+    assert!(
+        error.contains("numeric integer neuron ID"),
+        "error must explain the UUID-only contract (Issue #952): {error}"
+    );
+}

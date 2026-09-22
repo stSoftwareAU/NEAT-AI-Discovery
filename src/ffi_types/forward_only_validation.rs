@@ -51,6 +51,22 @@ const MAX_REPORTED_VIOLATIONS: usize = 5;
 pub fn validate_forward_only_synapses(creature: &CreatureJson) -> Result<(), DiscoveryError> {
     let mut index_by_uuid: HashMap<&str, usize> = HashMap::with_capacity(creature.neurons.len());
     for (idx, neuron) in creature.neurons.iter().enumerate() {
+        // Reject duplicate neuron UUIDs before they can shadow one another.
+        // `insert` last-wins silently, which would let a duplicated UUID
+        // discard an earlier neuron's index — masking a genuinely recurrent
+        // synapse as forward-only if it happened to resolve against the
+        // surviving (later) occurrence's index instead (Issue #2090).
+        if let Some(&first_idx) = index_by_uuid.get(neuron.uuid.as_str()) {
+            return Err(DiscoveryError::InvalidInput {
+                detail: format!(
+                    "creature has a duplicate neuron uuid \"{}\" at indices {first_idx} and \
+                     {idx}: downstream validation assumes every neuron uuid is unique, so a \
+                     repeated identifier can hide a recurrent synapse behind the discarded \
+                     occurrence's index (Issue #2090).",
+                    neuron.uuid
+                ),
+            });
+        }
         index_by_uuid.insert(neuron.uuid.as_str(), idx);
     }
 
@@ -245,6 +261,51 @@ mod tests {
             Vec::new(),
         );
         validate_forward_only_synapses(&c).expect("creature with no synapses must validate");
+    }
+
+    #[test]
+    fn duplicate_neuron_uuid_is_rejected() {
+        // A repeated UUID must never validate, even with no synapses at all —
+        // the guard fires while building the index, before any synapse is
+        // examined (Issue #2090).
+        let c = creature(
+            vec![neuron("dup", "input"), neuron("dup", "hidden")],
+            Vec::new(),
+        );
+        let err =
+            validate_forward_only_synapses(&c).expect_err("duplicate neuron uuid must be rejected");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("duplicate neuron uuid"),
+            "msg should describe the duplicate: {msg}"
+        );
+        assert!(msg.contains("\"dup\""), "msg should name the uuid: {msg}");
+        assert!(
+            msg.contains("Issue #2090"),
+            "msg should cite the tracking issue: {msg}"
+        );
+    }
+
+    #[test]
+    fn duplicate_neuron_uuid_masking_a_back_edge_is_rejected() {
+        // Without the guard, a duplicated uuid would let `insert` overwrite
+        // the earlier index (last-wins), letting a back-edge resolve against
+        // the wrong (later) occurrence and validate as forward-only. The
+        // guard must reject the creature outright, before that can happen.
+        let c = creature(
+            vec![
+                neuron("a", "input"),  // index 0
+                neuron("b", "hidden"), // index 1
+                neuron("a", "output"), // index 2 (duplicate of index 0)
+            ],
+            vec![synapse("b", "a")], // resolves to 1 -> 2 (forward) if last-wins
+        );
+        let err = validate_forward_only_synapses(&c)
+            .expect_err("duplicate neuron uuid must be rejected before synapses are checked");
+        assert!(
+            err.to_string().contains("duplicate neuron uuid"),
+            "msg should describe the duplicate: {err}"
+        );
     }
 
     #[test]
