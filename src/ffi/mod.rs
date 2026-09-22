@@ -18,7 +18,10 @@ pub use utilities::*;
 
 mod analysis;
 mod gpu;
-pub(crate) mod helpers;
+// Public so the boundary guards (input validation, panic-response
+// construction) are directly exercisable from the integration tests that
+// pin their contract — they are FFI-boundary machinery, not business logic.
+pub mod helpers;
 mod recording;
 mod utilities;
 
