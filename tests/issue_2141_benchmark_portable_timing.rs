@@ -119,7 +119,12 @@ fn now_seconds_readings_are_monotonic_epoch_seconds() {
         })
         .collect();
 
-    assert_eq!(readings.len(), 2, "expected two readings\n{}", describe(&out));
+    assert_eq!(
+        readings.len(),
+        2,
+        "expected two readings\n{}",
+        describe(&out)
+    );
     assert!(
         readings[1] >= readings[0],
         "the clock must not run backwards: {readings:?}"
@@ -137,7 +142,11 @@ fn now_seconds_readings_are_monotonic_epoch_seconds() {
 fn bsd_date_stub_reproduces_the_literal_n() {
     let tmp = tempfile::tempdir().expect("temp dir");
     write_bsd_date_stub(tmp.path());
-    let path = format!("{}:{}", tmp.path().display(), std::env::var("PATH").unwrap_or_default());
+    let path = format!(
+        "{}:{}",
+        tmp.path().display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
 
     // Guards the tests below from going vacuous: the stub must actually
     // reproduce the BSD behaviour this issue is about.
@@ -154,7 +163,26 @@ fn bsd_date_stub_reproduces_the_literal_n() {
 fn macos_bsd_date_and_bash_3_2_still_time_the_run() {
     let tmp = tempfile::tempdir().expect("temp dir");
     write_bsd_date_stub(tmp.path());
-    let path = format!("{}:{}", tmp.path().display(), std::env::var("PATH").unwrap_or_default());
+    let path = format!(
+        "{}:{}",
+        tmp.path().display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+
+    // The reading itself must be clean. `awk` (and BSD `bc` on some hosts)
+    // silently coerces `1769040000.N` to its numeric prefix, so asserting only
+    // on the subtraction below would let the bug through.
+    let raw = run_helper("unset EPOCHREALTIME; now_seconds", Some(&path));
+    assert!(raw.status.success(), "{}", describe(&raw));
+    let reading = stdout_of(&raw);
+    assert!(
+        !reading.contains('N'),
+        "a literal N leaked into the reading: {reading:?}\n{}",
+        describe(&raw)
+    );
+    reading
+        .parse::<f64>()
+        .unwrap_or_else(|e| panic!("reading {reading:?} is not numeric: {e}"));
 
     // bash 3.2 (the macOS system bash) has no EPOCHREALTIME.
     let out = run_helper(&format!("unset EPOCHREALTIME\n{TIMING_CHAIN}"), Some(&path));
@@ -187,7 +215,10 @@ fn whole_second_date_fallback_is_used_when_nothing_finer_exists() {
     write_bsd_date_stub(tmp.path());
 
     // Only the stubbed `date` is reachable: no perl, no EPOCHREALTIME.
-    let out = run_helper("unset EPOCHREALTIME; now_seconds", Some(&tmp.path().display().to_string()));
+    let out = run_helper(
+        "unset EPOCHREALTIME; now_seconds",
+        Some(&tmp.path().display().to_string()),
+    );
 
     assert!(
         out.status.success(),
