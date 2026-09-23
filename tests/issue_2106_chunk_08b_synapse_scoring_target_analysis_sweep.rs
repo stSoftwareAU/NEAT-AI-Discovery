@@ -129,19 +129,9 @@ fn is_capacity_site(line: &str) -> bool {
 }
 
 fn is_comparator_site(line: &str) -> bool {
-    [
-        "total_cmp",
-        "partial_cmp",
-        "sort_by",
-        "max_by",
-        "min_by",
-        "<=",
-        ">=",
-        "<",
-        ">",
-    ]
-    .iter()
-    .any(|needle| line.contains(needle))
+    ["total_cmp", "partial_cmp", "sort_by", "max_by", "min_by"]
+        .iter()
+        .any(|needle| line.contains(needle))
 }
 
 /// File stem plus `.rs::`, the citation prefix the record uses for a symbol in
