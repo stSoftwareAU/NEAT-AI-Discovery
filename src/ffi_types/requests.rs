@@ -7,7 +7,7 @@ use serde::{Deserialize, Deserializer};
 use crate::analysis;
 use crate::analysis::task_descriptor::TaskDescriptor;
 
-use super::{CreatureJson, TrainingRecord, deserialise_temperature};
+use super::{CreatureJson, TrainingRecord, deserialise_cost_of_growth, deserialise_temperature};
 
 /// Permissive deserialiser for the optional `task_descriptor` FFI field
 /// (Issue #1402).
@@ -389,11 +389,14 @@ pub struct RankFocusNeuronsInput {
     /// [`DEFAULT_COST_OF_GROWTH`](crate::focus::DEFAULT_COST_OF_GROWTH)).
     /// Neurons with `activation_weighted_impact` below this threshold are
     /// candidates for removal. The default matches NEAT-AI's Score.ts formula.
-    /// A non-finite or non-positive value is rejected with a WARN and replaced
-    /// by that default (Issue #1807) rather than producing nonsense savings.
+    /// A non-finite value — Infinity or NaN, reachable through a JSON number
+    /// that saturates `f32` such as `1e39` — is rejected at this boundary
+    /// (Issue #2137). A finite but non-positive value is still replaced by the
+    /// default with a WARN (Issue #1807) rather than producing nonsense
+    /// savings.
     /// Lower values (e.g., 1e-9) encourage creature expansion for evolution.
     /// Issue #132: Pass this from NEAT-AI's configured costOfGrowth for consistency.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialise_cost_of_growth")]
     pub cost_of_growth: Option<f32>,
     /// Optional task-shape descriptor forwarded by the producer (Issue #1314).
     ///
