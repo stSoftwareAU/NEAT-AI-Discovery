@@ -63,11 +63,15 @@ now_seconds() {
     return 1
 }
 
-# Function to run benchmark and capture timing
+# Function to run benchmark and capture timing.
+# Usage: run_benchmark "<label>" <command> [args...]
+# The command is invoked directly — never re-parsed through `eval` — and a
+# non-zero exit aborts the whole benchmark: timing a run that did not complete
+# would report the abort as a speed-up (Issue #2140).
 run_benchmark() {
     local label="$1"
-    local cmd="$2"
-    local start end duration
+    shift
+    local start end duration log
 
     # `set -e` would otherwise kill the run on bc's 127 with only bash's own
     # "command not found" to go on — name the tool instead (Issue #2141).
@@ -76,9 +80,20 @@ run_benchmark() {
         return 1
     fi
 
+    # mktemp, never a fixed path: two concurrent runs must not share a log
+    # (Issue #1910).
+    log=$(mktemp)
+
     echo "⏱️  Running: $label" >&2
     start=$(now_seconds)
-    eval "$cmd" > /dev/null 2>&1 || true
+    if ! "$@" > "$log" 2>&1; then
+        echo "❌ $label failed: $*" >&2
+        echo "   --- last 20 lines of output ---" >&2
+        tail -n 20 "$log" >&2
+        rm -f "$log"
+        exit 1
+    fi
+    rm -f "$log"
     end=$(now_seconds)
     duration=$(echo "$end - $start" | bc)
     # An empty or malformed subtraction must not reach the summary's `printf`
@@ -162,10 +177,12 @@ echo "════════════════════════�
 echo "📊 BASELINE ($BASELINE_COMMIT)"
 echo "═══════════════════════════════════════"
 git checkout -q "$BASELINE_COMMIT"
-cargo build --release -q 2>/dev/null
+# Build diagnostics stay on stderr: a build that fails must say why, not
+# vanish behind a benchmark number (Issue #2140).
+cargo build --release -q
 
-BASELINE_UNIT=$(run_benchmark "Unit tests" "cargo test --lib -- --test-threads=2")
-BASELINE_FULL=$(run_benchmark "Full test suite" "cargo test --all-targets --all-features -- --test-threads=2")
+BASELINE_UNIT=$(run_benchmark "Unit tests" cargo test --lib -- --test-threads=2) || exit 1
+BASELINE_FULL=$(run_benchmark "Full test suite" cargo test --all-targets --all-features -- --test-threads=2) || exit 1
 
 if [ -n "$PARQUET_FILE" ] && [ -f "$PARQUET_FILE" ]; then
     echo "⏱️  Running: Parquet analysis ($PARQUET_FILE)"
@@ -190,10 +207,12 @@ echo ""
 echo "═══════════════════════════════════════"
 echo "📊 CURRENT (${CURRENT_BRANCH:-$CURRENT_REF})"
 echo "═══════════════════════════════════════"
-cargo build --release -q 2>/dev/null
+# Build diagnostics stay on stderr: a build that fails must say why, not
+# vanish behind a benchmark number (Issue #2140).
+cargo build --release -q
 
-CURRENT_UNIT=$(run_benchmark "Unit tests" "cargo test --lib -- --test-threads=2")
-CURRENT_FULL=$(run_benchmark "Full test suite" "cargo test --all-targets --all-features -- --test-threads=2")
+CURRENT_UNIT=$(run_benchmark "Unit tests" cargo test --lib -- --test-threads=2) || exit 1
+CURRENT_FULL=$(run_benchmark "Full test suite" cargo test --all-targets --all-features -- --test-threads=2) || exit 1
 
 if [ -n "$PARQUET_FILE" ] && [ -f "$PARQUET_FILE" ]; then
     echo "⏱️  Running: Parquet analysis ($PARQUET_FILE)"
