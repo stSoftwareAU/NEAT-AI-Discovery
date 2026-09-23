@@ -246,10 +246,7 @@ const TRACED_SYMBOLS: [(&str, &str); 11] = [
         "src/analysis/synapse/add_synapse_gating.rs",
         "pub fn should_skip_add_synapse_by_density",
     ),
-    (
-        "src/analysis/module_weights.rs",
-        "pub fn success_rate",
-    ),
+    ("src/analysis/module_weights.rs", "pub fn success_rate"),
     (
         "src/analysis/scoring/weights/calculation.rs",
         "fn compute_outgoing_weight",
