@@ -86,6 +86,13 @@ Per-detector citations live in the `Prior art` column of
   single pass through the target data. For typical creatures where input neurons share
   the same observation indices, this reduces sample building overhead by up to 100x
   (e.g., 100 sources with identical obs_indices → 1 group instead of 100 separate builds).
+  The pairwise scan that finds those groups is O(n²) in the source count, so it is
+  bounded twice (Issue #2161): targets with more than `MAX_SOURCES_FOR_LOCALITY_SCAN`
+  (1024) sources skip the scan entirely, and an expired analysis deadline — which also
+  reports a host cancellation request — abandons it between outer iterations. Both
+  degrade to single-source groups, the documented no-overlap outcome, so grouping
+  remains a pure optimisation: every source still appears in exactly one group and the
+  surviving candidates are unchanged.
 - The GPU kernels (helpful/harmful statistics) produce sufficient aggregates to
   derive the suggested weight and the expected error reduction. Results are sorted
   by expected improvement before being returned, so callers can simply read the

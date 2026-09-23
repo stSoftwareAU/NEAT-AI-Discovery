@@ -121,6 +121,21 @@ pub(crate) fn group_sources_by_locality<'a>(
     let mut assigned: Vec<bool> = vec![false; sources.len()];
 
     for i in 0..sources.len() {
+        // Issue #2161: the pairwise scan is the longest stretch of
+        // uninterruptible work in the synapse pipeline. `deadline_passed` also
+        // reports the global cancellation flag (Issue #1047), so this single
+        // check honours both the deadline and an explicit host cancellation.
+        if deadline_passed(deadline) {
+            groups.extend(single_source_groups(
+                sources
+                    .iter()
+                    .enumerate()
+                    .filter(|(k, _)| !assigned[*k])
+                    .map(|(_, source)| source),
+            ));
+            return groups;
+        }
+
         if assigned[i] {
             continue;
         }
