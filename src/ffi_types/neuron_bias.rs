@@ -35,9 +35,8 @@ use super::{CreatureJson, DiscoveryError};
 pub fn non_finite_bias_detail(subject: &str, bias: f32) -> String {
     format!(
         "{subject} bias is not finite: {bias} (Issue #2133). A neuron bias must \
-         be finite — Infinity and NaN corrupt the bias arithmetic in \
-         `dominated_branch_collapse`, the `f64::from` fold in \
-         `remove_neuron_bias_fold`, and the `to_bits()` neuron fingerprint hash. \
+         be finite — Infinity and NaN corrupt downstream arithmetic, conversion, \
+         and hashing (see the module documentation for the affected sites). \
          Note that a magnitude above ~3.4e38 is finite as JSON but overflows the \
          `f32` the field is stored in."
     )

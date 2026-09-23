@@ -175,6 +175,42 @@ fn validate_creature_accepts_finite_biases() {
 // arithmetic / conversion / hashing consumption sites.
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Outbound serialisation — a non-finite bias must never be written as JSON
+// `null` and silently pass as valid output.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn serialise_rejects_an_infinite_bias() {
+    let err = serde_json::to_string(&creature_with_bias(f32::INFINITY))
+        .expect_err("an infinite bias must not serialise");
+    assert!(
+        err.to_string().contains("Issue #2133"),
+        "error must cite the issue: {err}"
+    );
+}
+
+#[test]
+fn serialise_rejects_a_nan_bias() {
+    let err = serde_json::to_string(&creature_with_bias(f32::NAN))
+        .expect_err("a NaN bias must not serialise");
+    assert!(
+        err.to_string().contains("Issue #2133"),
+        "error must cite the issue: {err}"
+    );
+}
+
+#[test]
+fn serialise_round_trips_finite_biases() {
+    for bias in [0.0, 0.5, -2.25, f32::MAX, f32::MIN] {
+        let json = serde_json::to_string(&creature_with_bias(bias))
+            .unwrap_or_else(|e| panic!("finite bias {bias} must serialise: {e}"));
+        let round_tripped: CreatureJson =
+            serde_json::from_str(&json).expect("serialised output must deserialise");
+        assert_eq!(round_tripped.neurons[0].bias, bias);
+    }
+}
+
 #[test]
 fn entry_point_rejects_a_bias_that_overflows_f32() {
     let input = format!(
