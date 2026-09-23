@@ -30,8 +30,8 @@ Ledger rules: [`README.md`](README.md). Index entry:
 
 This record is filled **incrementally**: one audit sub-issue per `###` section
 below, each editing only its own section so concurrent PRs do not conflict. A
-row reading `pending` has **not** been swept, and only `src/analysis/shared/`
-is swept so far.
+row reading `pending` has **not** been swept; `src/analysis/shared/` and the
+`synapse pipeline` section are swept so far.
 
 `lib-sweep-coverage.json` cannot express that: the ledger contract
 (`tests/issue_2088_sweep_ledger_contract.rs`) rejects a `record` that names no
@@ -83,35 +83,40 @@ one-line reason.
 
 ### synapse pipeline
 
-3,391 lines.
+3,641 lines. Swept by Issue #2104. The 14 rows are the files that sub-issue
+owns; the scaffold split the synapse root differently from the sub-issues that
+edit it, so `filtering`, `holdout_validation`, `metadata`, `results` and
+`tests` moved here from `synapse post-processing`, and `adaptive_proposal` and
+`add_synapse_gating` moved the other way, leaving each section equal to exactly
+one sub-issue's file list.
 
 | Path | Lines | Outcome |
 | --- | --- | --- |
-| `src/analysis/synapse/mod.rs` | 204 | pending |
-| `src/analysis/synapse/orchestration.rs` | 374 | pending |
-| `src/analysis/synapse/preparation.rs` | 326 | pending |
-| `src/analysis/synapse/candidate_generation.rs` | 216 | pending |
-| `src/analysis/synapse/cpu_pre_reject.rs` | 125 | pending |
-| `src/analysis/synapse/gpu_evaluation.rs` | 250 | pending |
-| `src/analysis/synapse/activation_evaluation.rs` | 543 | pending |
-| `src/analysis/synapse/activation_subset_evaluation.rs` | 210 | pending |
-| `src/analysis/synapse/relu_evaluation.rs` | 174 | pending |
-| `src/analysis/synapse/adaptive_proposal.rs` | 511 | pending |
-| `src/analysis/synapse/add_synapse_gating.rs` | 458 | pending |
+| `src/analysis/synapse/mod.rs` | 204 | clean — module declarations, re-exports and two entry wrappers; the only logic is the wedged-GPU and short-deadline early returns, which allocate nothing and compare nothing |
+| `src/analysis/synapse/orchestration.rs` | 374 | clean — the per-target `par_iter` is gated by `deadline_passed` (so also by `cancellation::is_cancelled`); every shared field is an `Arc` of atomics or a mutex, and all of them are read after the rayon join |
+| `src/analysis/synapse/preparation.rs` | 326 | clean — `NeuronIndex::with_capacity` sums three bounded terms (`creature.input` is capped by `MAX_CREATURE_INPUT_NEURONS`, the other two count live vectors), and the one division is guarded by `std_dev_count > 0` |
+| `src/analysis/synapse/candidate_generation.rs` | 216 | **finding #2161** — `group_sources_by_locality` runs an O(n²) pairwise scan with no deadline or cancellation check; its allocations and the overlap division are bounded |
+| `src/analysis/synapse/cpu_pre_reject.rs` | 125 | clean — the empty slice short-circuits, the two least-squares sums accumulate in `f64` skipping non-finite samples, and the verdict is delegated to `calculate_optimal_outgoing_weight`, which rejects non-finite input |
+| `src/analysis/synapse/gpu_evaluation.rs` | 250 | clean — `vec![None; plan.specs.len()]` is sized from a compile-time `ACTIVATION_SPECS` subset, and `gpu_results[idx]` is length-matched by the evaluator contract that both production implementations uphold |
+| `src/analysis/synapse/activation_evaluation.rs` | 543 | clean — the `f32::MIN` and `NEG_INFINITY` sentinels are only ever displaced by a `>` comparison, which a NaN loses, and `finalise_improvement` makes every improvement finite before it is compared |
+| `src/analysis/synapse/activation_subset_evaluation.rs` | 210 | clean — same finite-improvement invariant; every accept gate is a `>` comparison, so no non-finite gain can be stored as the best candidate |
+| `src/analysis/synapse/relu_evaluation.rs` | 174 | clean — the `total_baseline_error_sq <= EPSILON` guard fails open on a NaN baseline, but every downstream accept is `> best_improvement`, which a NaN loses, so no candidate is emitted |
+| `src/analysis/synapse/filtering.rs` | 266 | clean — the descending `total_cmp` would rank a positive NaN first, but both call sites feed it gains that are finite by construction or already non-finite-filtered (Issue #1367) |
+| `src/analysis/synapse/holdout_validation.rs` | 244 | clean — `samples.len() - validate_count` cannot wrap: the function returns `None` below 20 samples and `round(0.3n) < n` for every `n >= 20`, so the empty-sample case #1906 posited is unreachable |
+| `src/analysis/synapse/results.rs` | 115 | clean — assembly only; it moves merged vectors into the result and reads the metadata atomics after the rayon join has completed |
+| `src/analysis/synapse/metadata.rs` | 99 | clean — `Relaxed` atomics written inside the parallel section and read only after the join; `fetch_min` / `fetch_max` are read-modify-write, so no worker's update can be lost |
+| `src/analysis/synapse/tests.rs` | 495 | clean — `#[cfg(test)]` only, so no untrusted-input reachability; every fixture is built from compile-time literals and small loop indices |
 
 ### synapse post-processing
 
-2,864 lines.
+2,614 lines.
 
 | Path | Lines | Outcome |
 | --- | --- | --- |
 | `src/analysis/synapse/post_processing.rs` | 945 | pending |
-| `src/analysis/synapse/filtering.rs` | 266 | pending |
-| `src/analysis/synapse/holdout_validation.rs` | 244 | pending |
-| `src/analysis/synapse/metadata.rs` | 99 | pending |
-| `src/analysis/synapse/results.rs` | 115 | pending |
 | `src/analysis/synapse/structural_patterns.rs` | 700 | pending |
-| `src/analysis/synapse/tests.rs` | 495 | pending |
+| `src/analysis/synapse/adaptive_proposal.rs` | 511 | pending |
+| `src/analysis/synapse/add_synapse_gating.rs` | 458 | pending |
 
 ### synapse scoring + target_analysis
 
@@ -198,6 +203,13 @@ it; `unbounded` means a finding was filed.
 | Site (`file.rs::symbol`) | Expression | Bound source | Verdict |
 | --- | --- | --- | --- |
 <!-- section: synapse pipeline -->
+| `preparation.rs::build_creature_lookups` | `NeuronIndex::with_capacity(neurons.len() + input + synapses.len() / 10)` | `MAX_CREATURE_INPUT_NEURONS` (1,000,000) caps `input` at every FFI entry point; the other two terms count live `Vec`s, so the sum cannot overflow `usize` | bounded |
+| `candidate_generation.rs::build_ordered_neurons` | `Vec::with_capacity(creature.input + creature.neurons.len())` | same cap on `input`; `neurons.len()` counts a live `Vec`, so the sum is at most 1,000,000 + a deserialised vector's length | bounded |
+| `candidate_generation.rs::group_sources_by_locality` | `vec![false; sources.len()]` | `sources` is a live slice of per-target sources already materialised by `filter_and_load_sources` | bounded |
+| `gpu_evaluation.rs::evaluate_all_activation_specs_batched` | `vec![None; plan.specs.len()]` | `plan.specs` is a subset of the compile-time `ACTIVATION_SPECS` array; no caller-supplied count reaches it | bounded |
+| `filtering.rs::truncate_combined_synapse_candidate_sets` | `Vec::with_capacity(total)` | `total` is the sum of three live vector lengths, and the branch is only reached when `total > limit` | bounded |
+| `holdout_validation.rs::split_samples_holdout` | `Vec::with_capacity(samples.len() - validate_count)` | the early return rejects fewer than `HOLDOUT_MIN_SAMPLE_COUNT` (20) samples and `validate_count = round(0.3n) < n` for every `n >= 20`, so the subtraction cannot wrap | bounded |
+| `holdout_validation.rs::split_samples_holdout` | `Vec::with_capacity(validate_count)` | `validate_count = round(0.3 × samples.len())`, at most 30% of a live slice's length | bounded |
 <!-- section: synapse post-processing -->
 <!-- section: synapse scoring + target_analysis -->
 <!-- section: scoring -->
@@ -214,6 +226,15 @@ value comes from and what happens when it is `NaN`.
 | Site (`file.rs::symbol`) | Comparator | Value origin | NaN handling | Verdict |
 | --- | --- | --- | --- | --- |
 <!-- section: synapse pipeline -->
+| `filtering.rs::truncate_combined_synapse_candidate_sets` | `sort_by` on descending `total_cmp` | `expected_creature_score_gain` of the helpful, harmful and coordinated buckets | a positive NaN sorts **above** `+inf`, so it would be kept first and survive truncation | bounded — helpful and harmful gains come from `improvement.rs::finalise_improvement`, which applies `select_finite`, and both call sites run `candidate_aggregation.rs::reject_non_finite_gains` over the coordinated bucket first (Issue #1367) |
+| `filtering.rs::expected_gain_replace_synapse_with_hidden_neuron` | `total_baseline_error_sq <= EPSILON` | sum of squared per-sample errors after the removed synapse's contribution is folded back in | a NaN total fails the `<=`, so the guard passes it through | bounded — the improvement helper it then calls returns a `select_finite` value, and `merge_coordinated_structural_replacements` drops a non-finite gain before any sort |
+| `activation_evaluation.rs::evaluate_activation_candidate` | `gain > fallback_score` against the `f32::MIN` sentinel | subset candidate's `expected_creature_score_gain` | a NaN loses `>`, so it never displaces the sentinel and never becomes the fallback candidate | bounded |
+| `activation_evaluation.rs::evaluate_activation_candidate` | `improvement > best_train_improvement` against the `f32::NEG_INFINITY` sentinel | hold-out training improvement per weight variant | a NaN loses `>`; when every variant is NaN the base weight and a zero bias are reported unchanged | bounded — the improvement helpers cannot return NaN |
+| `activation_evaluation.rs::evaluate_activation_candidate` | `absolute_improvement < 0.001` | `neuron_error_improvement × baseline_sq` | a NaN fails the `<`, so this filter passes it through | bounded — the two accept gates after it are `>` comparisons a NaN loses |
+| `activation_subset_evaluation.rs::evaluate_activation_for_subset` | `net_improvement <= 0.0`, then `> best_net_improvement` from a `0.0` sentinel | net improvement over all samples | a NaN fails the `<=` and loses the `>`, so it is never stored as best | bounded |
+| `relu_evaluation.rs::evaluate_relu_candidates_split` | `total_baseline_error_sq <= EPSILON`, then `net_improvement > best_improvement` from the `threshold` sentinel | per-sample squared errors and the ReLU net improvement | a NaN baseline fails the early `<=` guard, but the accept gate is a `>` a NaN loses | bounded |
+| `gpu_evaluation.rs::evaluate_all_activation_specs_batched` | `net_improvement <= threshold`, then `current_best.is_none() \|\| net_improvement > …` | batched GPU sufficient statistics fed through `compute_activation_improvement_and_count` | the `is_none()` short-circuit would store a first-seen NaN without comparing it | bounded — `finalise_improvement` applies `select_finite`, so `net_improvement` is finite before either comparison |
+| `candidate_generation.rs::compute_obs_index_overlap` | `overlap >= MIN_LOCALITY_OVERLAP` | intersection size over the smaller observation-index set | the division cannot produce a NaN — both sets are checked non-empty first, so the divisor is at least 1 | bounded |
 <!-- section: synapse post-processing -->
 <!-- section: synapse scoring + target_analysis -->
 <!-- section: scoring -->
@@ -223,6 +244,95 @@ value comes from and what happens when it is `NaN`.
 | — | none | `src/analysis/shared/` compares no floats | n/a | n/a |
 
 ## Outcome
+
+### synapse pipeline (Issue #2104)
+
+**One finding filed: #2161.** All 14 files were read in full for every defect
+class above. What was actually traced:
+
+**Cancellation — the finding.** The pipeline's cancellation contract is
+`utils/deadline.rs::deadline_passed`, which also reports the global flag set by
+`cancellation::is_cancelled` (Issue #1047). It is consulted per focus target in
+`orchestration.rs::analyze_synapses_with_cache_impl` and per source in
+`target_analysis/statistics.rs::filter_and_load_sources`, which `break`s out of
+record loading. Between those two points sits
+`candidate_generation.rs::group_sources_by_locality`, whose grouping loop is
+`n(n-1)/2` calls to `candidate_generation.rs::compute_obs_index_overlap` when no
+two sources share 80% of their observation indices — and it consults neither the
+deadline nor the cancellation flag. `filter_and_load_sources` does not return
+early on its `break`, so a pass whose deadline expires mid-load still enters the
+quadratic scan with everything it had collected. The only cap on `n`,
+`utils/deadline.rs::apply_source_budget`
+(`NEAT_AI_DISCOVERY_MAX_SOURCES_PER_TARGET`, Issue #1542), is unset by default.
+Filed as #2161 (`severity:medium`, `confidence:high`). Every other loop in these
+files is either bounded by a compile-time array (the activation spec scans in
+`gpu_evaluation.rs`, `activation_evaluation.rs` and
+`activation_subset_evaluation.rs` iterate `spec.orientations × spec.scales`), by
+the 50-sample cap in `preparation.rs::compute_constant_source_threshold_from_cache`,
+or sits behind the per-target `deadline_passed` check.
+
+**Integer class — the #1906 hypothesis is refuted.**
+`holdout_validation.rs::split_samples_holdout` cannot reach
+`samples.len() - validate_count` with an empty `samples`: the function returns
+`None` while `samples.len() < HOLDOUT_MIN_SAMPLE_COUNT` (20,
+`constants/sample_thresholds.rs`). For every surviving `n >= 20`,
+`validate_count = round(0.3n)` is at most `0.3n + 0.5`, which is strictly less
+than `n`, so the subtraction is positive in both debug and release. The
+`max(1.0)` floor only ever raises a value that was already below one, which
+cannot happen above the threshold. The sibling division
+`seed % (total as u64)` in `holdout_validation.rs::is_validation_sample` has the
+same guard, so it can never divide by zero.
+
+**Capacity class.** All seven sites are in the table above and all seven are
+bounded. The two that derive from caller data —
+`preparation.rs::build_creature_lookups` and
+`candidate_generation.rs::build_ordered_neurons` — are bounded by
+`MAX_CREATURE_INPUT_NEURONS` (1,000,000), enforced by
+`ffi_types/creature_bounds.rs::validate_creature_input_bounds` at every entry
+point that accepts a `CreatureJson` (Issues #1867, #2078). Neither sum can
+overflow `usize`: the other addends count live `Vec`s, whose lengths are bounded
+by the bytes already allocated for them. `gpu_evaluation.rs`'s
+`vec![None; plan.specs.len()]` is sized from a compile-time `ACTIVATION_SPECS`
+subset, not from input.
+
+**Float class.** The nine comparison sites are in the table above. The load
+bearing invariant is `scoring/improvement.rs::finalise_improvement`, which wraps
+every result in `scoring/improvement.rs::select_finite` — so `compute_relu_-`,
+`compute_activation_-` and `compute_synapse_improvement_and_count` cannot return
+a NaN or an infinity, and no gain computed in these files is ever non-finite.
+Three guards nonetheless fail open on a NaN (`total_baseline_error_sq <= EPSILON`
+in `relu_evaluation.rs` and `filtering.rs`, `absolute_improvement < 0.001` in
+`activation_evaluation.rs`) and one accept path would skip the comparison
+entirely (`current_best.is_none() ||` in
+`gpu_evaluation.rs::evaluate_all_activation_specs_batched`). None of them is
+reachable with a NaN today; they are recorded so a later change to the
+improvement helpers is understood to re-open four sites at once, not one.
+
+**Division.** Every denominator in these files is guarded:
+`candidate_generation.rs::compute_obs_index_overlap` returns early when either
+set is empty, `preparation.rs::compute_constant_source_threshold_from_cache`
+divides only when `std_dev_count > 0`, and the two modulo operations in
+`holdout_validation.rs::is_validation_sample` sit behind the 20-sample floor.
+
+**Shared-state races.** `orchestration.rs` is the only file here that shares
+mutable state. `metadata.rs::AtomicMetadata` is written from the rayon workers
+with `Relaxed` stores and `fetch_min` / `fetch_max` — both read-modify-write, so
+no update can be lost — and read only in `results.rs::finalise_synapse_results`,
+after `par_iter().collect()` has joined. The same join orders the
+`TimingCollector`, the `AtomicBool` timeout and saturation flags and the
+`completed_count` counter. `orchestration.rs::apply_target_cooldown` takes the
+global tracker lock, recovers a poisoned lock with `into_inner` rather than
+panicking, and holds it only for the filter.
+
+**Hostile environment values.** None of these files parses an environment
+variable. They read `utils::verbose_enabled`, `utils::gpu_timing_enabled`,
+`config::max_sources_per_target` and the calibration thresholds, all of which
+are total parsers owned by `src/config` (swept separately).
+
+**Deliberately out of scope for this sub-issue:** the 44 rows outside the
+`synapse pipeline` section, which belong to the five remaining chunk 8b audit
+sub-issues. The two descending `total_cmp` sorts in `post_processing.rs` that
+feed `filtering.rs::truncate_combined_synapse_candidate_sets` are #2105's rows.
 
 ### shared (Issue #2103)
 
@@ -313,8 +423,13 @@ belong to the six remaining chunk 8b audit sub-issues.
 
 ## Issues filed
 
-- `negative-result` — the `shared/` sweep found nothing worth filing. The
-  remaining sections list their own findings as they are swept.
+- `negative-result` — the `shared/` sweep found nothing worth filing.
+- `#2161` (`security`, `lang:rust`, `severity:medium`, `confidence:high`) —
+  `candidate_generation.rs::group_sources_by_locality` runs an O(n²) pairwise
+  source scan with no deadline or cancellation check, so the analysis deadline
+  and a host cancel request are both ignored until it finishes. Filed by the
+  `synapse pipeline` sweep (Issue #2104).
+- The remaining sections list their own findings as they are swept.
 
 ## Related remediations (not sweep coverage)
 
