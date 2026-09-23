@@ -7,7 +7,7 @@ use serde::{Deserialize, Deserializer};
 use crate::analysis;
 use crate::analysis::task_descriptor::TaskDescriptor;
 
-use super::{CreatureJson, TrainingRecord};
+use super::{CreatureJson, TrainingRecord, deserialise_temperature};
 
 /// Permissive deserialiser for the optional `task_descriptor` FFI field
 /// (Issue #1402).
