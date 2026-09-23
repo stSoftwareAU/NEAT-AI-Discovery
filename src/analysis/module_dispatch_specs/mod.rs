@@ -703,7 +703,7 @@ mod tests {
     }
 
     /// Issue #2185: the output-competition recommender added by Issue #1321 was
-    /// never dispatched — no `discovery_spec!` entry existed, so a OneHot
+    /// never dispatched — no `discovery_spec!` entry existed, so a `OneHot`
     /// creature with competing outputs could never receive the inhibitory
     /// synapse the module was built to propose.
     #[test]
