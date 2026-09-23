@@ -10,6 +10,7 @@ use crate::analysis::utils::OrderedNeuron;
 use crate::types::DiscoverRecord;
 use std::collections::HashSet;
 use std::sync::Arc;
+use std::time::SystemTime;
 
 // =============================================================================
 // Sample Locality Grouping (Issue #221)
@@ -22,6 +23,15 @@ pub(crate) const MIN_GROUP_SIZE_FOR_LOCALITY: usize = 3;
 /// Minimum overlap fraction required to group sources together.
 /// Sources are grouped if they share at least this fraction of their `obs_indices`.
 const MIN_LOCALITY_OVERLAP: f32 = 0.8;
+
+/// Maximum source count for which the pairwise locality scan is attempted (Issue #2161).
+///
+/// The scan is O(n²) in the source count and callers may supply no deadline at
+/// all, in which case the per-iteration deadline check never fires and only this
+/// ceiling bounds the work. Above it every source is emitted as its own group —
+/// the documented no-overlap behaviour — so a hostile creature with an
+/// unbounded upstream neuron count cannot pin a rayon worker for minutes.
+pub(crate) const MAX_SOURCES_FOR_LOCALITY_SCAN: usize = 1024;
 
 /// Represents a group of sources with similar `obs_index` coverage.
 /// Sources in the same group can share sample building overhead.
@@ -65,6 +75,7 @@ pub(crate) fn compute_obs_index_overlap(a: &HashSet<u32>, b: &HashSet<u32>) -> f
 /// - 100 sources, no overlap: 100 groups (no change)
 pub(crate) fn group_sources_by_locality<'a>(
     sources: &[(&'a OrderedNeuron, Arc<Vec<DiscoverRecord>>)],
+    _deadline: &Option<SystemTime>,
 ) -> Vec<SampleLocalityGroup<'a>> {
     if sources.len() < MIN_GROUP_SIZE_FOR_LOCALITY {
         // Not enough sources to benefit from grouping
@@ -214,3 +225,7 @@ pub(crate) fn build_samples(
 
     target_map.build_samples_from(from_records)
 }
+
+#[cfg(test)]
+#[path = "issue_2161_locality_cancellation_tests.rs"]
+mod issue_2161_tests;
