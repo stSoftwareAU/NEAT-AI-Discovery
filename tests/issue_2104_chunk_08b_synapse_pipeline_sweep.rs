@@ -11,15 +11,15 @@
 //!   comparator site (`total_cmp` / `partial_cmp` / `sort_by` / `max_by` /
 //!   `min_by`) in the production half of those files is cited in the matching
 //!   finding table, so a new one cannot land unrecorded;
-//! * the symbols the outcome traces still exist; and
-//! * the two constants the outcome's integer-class verdict rests on still hold
-//!   the hold-out split's subtraction positive.
+//! * the symbols the outcome traces still exist.
+//!
+//! The one arithmetic verdict this section rests on —
+//! `holdout_validation.rs::split_samples_holdout` never reaching a wrapping
+//! subtraction — is asserted against the function itself, which is
+//! `pub(crate)`, so those two regression tests live beside it in
+//! `src/analysis/synapse/holdout_validation.rs`.
 
 use std::path::PathBuf;
-
-use neat_ai_discovery::analysis::constants::{
-    HOLDOUT_MIN_SAMPLE_COUNT, HOLDOUT_VALIDATION_FRACTION,
-};
 
 /// The chunk 8b prose record.
 const RECORD: &str = "docs/audits/security-sweep-chunk-08b-synapse-scoring-recommendation.md";
@@ -124,12 +124,22 @@ fn production_source(rel: &str) -> String {
 }
 
 /// `true` when the line allocates a collection whose size is an expression —
-/// `with_capacity(…)`, `reserve(…)`, or the `vec![value; count]` form. The
-/// `vec![a, b]` literal form carries no count, so it is not a capacity site.
+/// `with_capacity(…)`, `reserve(…)`, or the `vec![value; count]` form.
+///
+/// The `vec![a, b]` literal form carries no count, so it is not a capacity
+/// site: the `;` must sit **inside** the brackets, not be the statement's own
+/// terminator after them.
 fn is_capacity_site(line: &str) -> bool {
-    line.contains("with_capacity(")
-        || line.contains(".reserve(")
-        || (line.contains("vec![") && line.contains(';'))
+    if line.contains("with_capacity(") || line.contains(".reserve(") {
+        return true;
+    }
+    let Some(at) = line.find("vec![") else {
+        return false;
+    };
+    let after = &line[at + "vec![".len()..];
+    after
+        .rfind(']')
+        .is_some_and(|close| after[..close].contains(';'))
 }
 
 fn is_comparator_site(line: &str) -> bool {
@@ -140,6 +150,11 @@ fn is_comparator_site(line: &str) -> bool {
 
 /// File stem plus `.rs::`, the citation prefix the record uses for a symbol in
 /// that file (CONTRIBUTING.md § Cite Code by Symbol, Never by Line Number).
+///
+/// Granularity is deliberate: the record cites symbols, not lines, so the
+/// strongest check a line number-free record supports is per-file. A second
+/// site inside an already-cited file is caught by the next sweep of that file,
+/// not here.
 fn citation_prefix(rel: &str) -> String {
     let file = rel.rsplit('/').next().expect("path names a file");
     format!("{file}::")
@@ -295,30 +310,5 @@ fn the_synapse_pipeline_outcome_links_its_filed_finding() {
     assert!(
         section(&doc, "## Issues filed").contains("#2161"),
         "`## Issues filed` must list #2161 alongside the shared sweep's negative result"
-    );
-}
-
-/// The two constants the record's integer-class verdict rests on.
-///
-/// `holdout_validation.rs::split_samples_holdout` is `pub(crate)`, so the
-/// function itself is exercised by the in-crate regression tests
-/// `empty_sample_set_returns_none_before_the_subtraction` and
-/// `every_admitted_sample_count_partitions_without_wrapping`. What those tests
-/// cannot pin is the pair of constants that makes the subtraction safe for
-/// *every* admitted sample count rather than the ones they enumerate: a minimum
-/// of at least two samples, and a validation fraction strictly below one. Widen
-/// either and `samples.len() - validate_count` wraps again (Issue #1906).
-#[test]
-fn the_holdout_constants_keep_the_split_subtraction_positive() {
-    assert!(
-        HOLDOUT_MIN_SAMPLE_COUNT >= 2,
-        "a minimum below two admits a sample set that cannot fill both partitions, so \
-         `validate_count` reaches the sample count and the subtraction wraps"
-    );
-    assert!(
-        HOLDOUT_VALIDATION_FRACTION > 0.0 && HOLDOUT_VALIDATION_FRACTION < 1.0,
-        "the validation fraction must stay strictly inside (0, 1): at 1.0 every sample is a \
-         validation sample and `samples.len() - validate_count` is zero, and above it the \
-         subtraction wraps to a near-usize::MAX capacity in release"
     );
 }

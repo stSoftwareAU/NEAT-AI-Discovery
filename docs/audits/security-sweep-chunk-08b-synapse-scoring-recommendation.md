@@ -229,14 +229,14 @@ value comes from and what happens when it is `NaN`.
 | Site (`file.rs::symbol`) | Comparator | Value origin | NaN handling | Verdict |
 | --- | --- | --- | --- | --- |
 <!-- section: synapse pipeline -->
-| `filtering.rs::truncate_combined_synapse_candidate_sets` | `sort_by` on descending `total_cmp` | `expected_creature_score_gain` of the helpful, harmful and coordinated buckets | a positive NaN sorts **above** `+inf`, so it would be kept first and survive truncation | bounded — helpful and harmful gains come from `improvement.rs::finalise_improvement`, which applies `select_finite`, and both call sites run `candidate_aggregation.rs::reject_non_finite_gains` over the coordinated bucket first (Issue #1367) |
+| `filtering.rs::truncate_combined_synapse_candidate_sets` | `sort_by` on descending `total_cmp` | `expected_creature_score_gain` of the helpful, harmful and coordinated buckets | a positive NaN sorts **above** `+inf`, so it would be kept first and survive truncation | bounded — every gain it sorts is finite by construction: each producer routes through `improvement.rs::finalise_improvement`, which applies `select_finite`. The two call sites differ in what else protects them: `candidate_aggregation.rs::merge_coordinated_structural_replacements` runs `reject_non_finite_gains` over the coordinated bucket first (Issue #1367), while `post_processing.rs::apply_post_processing` has no such filter and rests on the construction invariant alone — the discount multipliers it applies before the sort are #2105's and #2106's rows |
 | `filtering.rs::expected_gain_replace_synapse_with_hidden_neuron` | `total_baseline_error_sq <= EPSILON` | sum of squared per-sample errors after the removed synapse's contribution is folded back in | a NaN total fails the `<=`, so the guard passes it through | bounded — the improvement helper it then calls returns a `select_finite` value, and `merge_coordinated_structural_replacements` drops a non-finite gain before any sort |
 | `activation_evaluation.rs::evaluate_activation_candidate` | `gain > fallback_score` against the `f32::MIN` sentinel | subset candidate's `expected_creature_score_gain` | a NaN loses `>`, so it never displaces the sentinel and never becomes the fallback candidate | bounded |
 | `activation_evaluation.rs::evaluate_activation_candidate` | `improvement > best_train_improvement` against the `f32::NEG_INFINITY` sentinel | hold-out training improvement per weight variant | a NaN loses `>`; when every variant is NaN the base weight and a zero bias are reported unchanged | bounded — the improvement helpers cannot return NaN |
 | `activation_evaluation.rs::evaluate_activation_candidate` | `absolute_improvement < 0.001` | `neuron_error_improvement × baseline_sq` | a NaN fails the `<`, so this filter passes it through | bounded — the two accept gates after it are `>` comparisons a NaN loses |
 | `activation_subset_evaluation.rs::evaluate_activation_for_subset` | `net_improvement <= 0.0`, then `> best_net_improvement` from a `0.0` sentinel | net improvement over all samples | a NaN fails the `<=` and loses the `>`, so it is never stored as best | bounded |
 | `relu_evaluation.rs::evaluate_relu_candidates_split` | `total_baseline_error_sq <= EPSILON`, then `net_improvement > best_improvement` from the `threshold` sentinel | per-sample squared errors and the ReLU net improvement | a NaN baseline fails the early `<=` guard, but the accept gate is a `>` a NaN loses | bounded |
-| `gpu_evaluation.rs::evaluate_all_activation_specs_batched` | `net_improvement <= threshold`, then `current_best.is_none() \|\| net_improvement > …` | batched GPU sufficient statistics fed through `compute_activation_improvement_and_count` | the `is_none()` short-circuit would store a first-seen NaN without comparing it | bounded — `finalise_improvement` applies `select_finite`, so `net_improvement` is finite before either comparison |
+| `gpu_evaluation.rs::evaluate_all_activation_specs_batched` | `net_improvement <= threshold`, then `absolute_improvement < 0.001`, then `current_best.is_none() \|\| net_improvement > …` | batched GPU sufficient statistics fed through `compute_activation_improvement_and_count` | a NaN fails both the `<=` and the `<`, and the `is_none()` short-circuit would then store it without ever comparing it — the only accept path in these files that does not end in a `>` a NaN loses | bounded — `finalise_improvement` applies `select_finite`, so `net_improvement` is finite before any of the three |
 | `candidate_generation.rs::compute_obs_index_overlap` | `overlap >= MIN_LOCALITY_OVERLAP` | intersection size over the smaller observation-index set | the division cannot produce a NaN — both sets are checked non-empty first, so the divisor is at least 1 | bounded |
 <!-- section: synapse post-processing -->
 <!-- section: synapse scoring + target_analysis -->
@@ -303,13 +303,14 @@ bearing invariant is `scoring/improvement.rs::finalise_improvement`, which wraps
 every result in `scoring/improvement.rs::select_finite` — so `compute_relu_-`,
 `compute_activation_-` and `compute_synapse_improvement_and_count` cannot return
 a NaN or an infinity, and no gain computed in these files is ever non-finite.
-Three guards nonetheless fail open on a NaN (`total_baseline_error_sq <= EPSILON`
-in `relu_evaluation.rs` and `filtering.rs`, `absolute_improvement < 0.001` in
-`activation_evaluation.rs`) and one accept path would skip the comparison
-entirely (`current_best.is_none() ||` in
-`gpu_evaluation.rs::evaluate_all_activation_specs_batched`). None of them is
-reachable with a NaN today; they are recorded so a later change to the
-improvement helpers is understood to re-open four sites at once, not one.
+Four guards nonetheless fail open on a NaN — `total_baseline_error_sq <= EPSILON`
+in `relu_evaluation.rs` and `filtering.rs`, and `absolute_improvement < 0.001` in
+both `activation_evaluation.rs` and `gpu_evaluation.rs` — and one accept path
+would skip the comparison entirely (`current_best.is_none() ||` in
+`gpu_evaluation.rs::evaluate_all_activation_specs_batched`, the only accept in
+these files that does not end in a `>` a NaN loses). None of them is reachable
+with a NaN today; they are recorded so a later change to the improvement helpers
+is understood to re-open five sites at once, not one.
 
 **Division.** Every denominator in these files is guarded:
 `candidate_generation.rs::compute_obs_index_overlap` returns early when either
