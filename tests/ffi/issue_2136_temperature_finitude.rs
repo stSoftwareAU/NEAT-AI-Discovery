@@ -210,10 +210,22 @@ fn finite_temperatures_still_scale_analysis_thresholds() {
 
     let hot = scale_threshold_by_temperature(base_threshold, 2.0);
     let cold = scale_threshold_by_temperature(base_threshold, 0.5);
-    assert!(hot < base_threshold, "high temperature must lower threshold");
-    assert!(cold > base_threshold, "low temperature must raise threshold");
+    assert!(
+        hot < base_threshold,
+        "high temperature must lower threshold"
+    );
+    assert!(
+        cold > base_threshold,
+        "low temperature must raise threshold"
+    );
 
-    for temperature in [MIN_TEMPERATURE, 0.5, DEFAULT_TEMPERATURE, 2.0, MAX_TEMPERATURE] {
+    for temperature in [
+        MIN_TEMPERATURE,
+        0.5,
+        DEFAULT_TEMPERATURE,
+        2.0,
+        MAX_TEMPERATURE,
+    ] {
         assert!(
             scale_threshold_by_temperature(base_threshold, temperature).is_finite(),
             "threshold scaling must stay finite at {temperature}"

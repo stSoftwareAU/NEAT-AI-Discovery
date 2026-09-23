@@ -141,7 +141,14 @@ pub struct AnalyzeParallelInput {
     ///
     /// The caller tracks the evolutionary generation count and may use a cooling
     /// schedule to compute this value (e.g., start at 2.0 and decay to 0.5).
-    #[serde(default = "default_temperature")]
+    ///
+    /// Must be finite — Infinity and NaN are rejected at the FFI boundary
+    /// (Issue #2136). A JSON magnitude above `f32::MAX` saturates to infinity
+    /// when narrowed, so the check runs on the narrowed value.
+    #[serde(
+        default = "default_temperature",
+        deserialize_with = "deserialise_temperature"
+    )]
     pub temperature: f32,
     /// Memory budget in megabytes for the analysis phase (Issue #1028).
     ///
@@ -224,7 +231,13 @@ pub struct AnalyzeSynapsesInput {
     ///
     /// Default 1.0 preserves existing behaviour. See `AnalyzeParallelInput`
     /// for full documentation.
-    #[serde(default = "default_temperature")]
+    ///
+    /// Must be finite — Infinity and NaN are rejected at the FFI boundary
+    /// (Issue #2136).
+    #[serde(
+        default = "default_temperature",
+        deserialize_with = "deserialise_temperature"
+    )]
     pub temperature: f32,
     /// Per-creature failure cache (Issue #1131). See `AnalyzeParallelInput`.
     #[serde(default)]
@@ -261,7 +274,13 @@ pub struct AnalyzeNeuronsInput {
     ///
     /// Default 1.0 preserves existing behaviour. See `AnalyzeParallelInput`
     /// for full documentation.
-    #[serde(default = "default_temperature")]
+    ///
+    /// Must be finite — Infinity and NaN are rejected at the FFI boundary
+    /// (Issue #2136).
+    #[serde(
+        default = "default_temperature",
+        deserialize_with = "deserialise_temperature"
+    )]
     pub temperature: f32,
     /// Per-creature failure cache (Issue #1131). See `AnalyzeParallelInput`.
     #[serde(default)]
@@ -322,7 +341,13 @@ pub struct AnalyzeAllInput {
     ///
     /// Default 1.0 preserves existing behaviour. See `AnalyzeParallelInput`
     /// for full documentation.
-    #[serde(default = "default_temperature")]
+    ///
+    /// Must be finite — Infinity and NaN are rejected at the FFI boundary
+    /// (Issue #2136).
+    #[serde(
+        default = "default_temperature",
+        deserialize_with = "deserialise_temperature"
+    )]
     pub temperature: f32,
     /// Memory budget in megabytes for the analysis phase (Issue #1028).
     ///

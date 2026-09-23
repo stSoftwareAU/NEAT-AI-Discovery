@@ -186,6 +186,15 @@ temperatures focus on the highest-scoring candidates.
 - **Range**: `0.01` to `5.0`
 - **Cooling**: callers can implement cooling schedules (linear or exponential)
   by decreasing this value across generations
+- **Finitude (Issue #2136)**: the field carries
+  `#[serde(deserialize_with = "deserialise_temperature")]` on every analysis
+  request (`analyzeParallel`, `analyzeSynapses`, `analyzeNeurons`,
+  `analyzeAll`), so a JSON number that is finite as an `f64` but overflows the
+  `f32` it is stored in (`1e39`, magnitude above ~3.4e38) is rejected with a
+  parse error rather than narrowed silently to `Infinity`. `1e400` was already
+  refused by `serde_json`'s own number parser. Values outside the valid range
+  are **not** rejected — they are clamped to `[0.01, 5.0]` by the scaling
+  functions as before.
 
 When `NEAT_AI_DISCOVERY_MH_TEMPERATURE` is also set, Metropolis-Hastings
 probabilistic acceptance is applied to synapse candidates, allowing
