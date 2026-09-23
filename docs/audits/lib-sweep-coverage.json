@@ -6,7 +6,7 @@
     {"id": "4", "name": "Remaining FFI request/response validation types — src/ffi_types", "exposure": "internal", "issue": 2090, "last_swept": null, "baseline_commit": null, "record": null},
     {"id": "7", "name": "Parquet reader/writer/schema — src/parquet_format", "exposure": "internal", "issue": 2091, "last_swept": null, "baseline_commit": null, "record": null},
     {"id": "8a", "name": "Analysis engine — detection + neuron", "exposure": "internal", "issue": 2092, "last_swept": null, "baseline_commit": null, "record": null},
-    {"id": "8b", "name": "Analysis engine — synapse, scoring, recommendation, shared", "exposure": "internal", "issue": 2093, "last_swept": null, "baseline_commit": null, "record": null},
+    {"id": "8b", "name": "Analysis engine — synapse, scoring, recommendation, shared", "exposure": "internal", "issue": 2093, "last_swept": "2026-09-23", "baseline_commit": "b85a551ed2521ed327469b20eb88aeda828357d2", "record": "docs/audits/security-sweep-chunk-08b-synapse-scoring-recommendation.md"},
     {"id": "9", "name": "GPU dispatch + WGSL shaders — src/analysis/gpu, src/shaders", "exposure": "internal", "issue": 2094, "last_swept": null, "baseline_commit": null, "record": null},
     {"id": "11", "name": "Filesystem/tmp/lifecycle — discovery_cleanup, discovery_history, watchdog, tracking_alloc, debug", "exposure": "local", "issue": 2095, "last_swept": null, "baseline_commit": null, "record": null},
     {"id": "13", "name": "Config / env-var surface — src/config", "exposure": "local", "issue": 2096, "last_swept": null, "baseline_commit": null, "record": null},
