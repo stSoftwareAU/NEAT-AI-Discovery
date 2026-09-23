@@ -33,7 +33,7 @@ The audit ledger at `docs/audits/security-sweep-chunk-08b-synapse-scoring-recomm
   - **Shared-state races** — no mutable shared state beyond rayon's own synchronisation
   - **Hostile environment** — no environment-variable parsing in these files
 
-- **Issues filed section** (lines 428–436): marked #2106 as negative-result sweep, recorded in coordination with #2104 (which filed #2161)
+- **Issues filed section** (lines 489–498): marked #2106 as negative-result sweep, recorded in coordination with #2104 (which filed #2161)
 
 ## Acceptance Criteria
 
