@@ -34,6 +34,7 @@ use neat_ai_discovery::analysis::scoring::weights::{
     calculate_optimal_outgoing_weight, clamp_weight_update_delta,
     coordinated_structural_activation_delta,
 };
+use neat_ai_discovery::ffi_types::CreatureJson;
 
 /// The chunk 8b prose record.
 const RECORD: &str = "docs/audits/security-sweep-chunk-08b-synapse-scoring-recommendation.md";
@@ -221,6 +222,57 @@ fn every_float_comparator_in_the_swept_files_has_a_table_row() {
                  a row recording where the value comes from and what happens when it is NaN"
             );
         }
+    }
+}
+
+/// The two swept files that compare no floats at all, because they contain no
+/// executable code: `scoring/mod.rs` is six `pub mod` lines, and the production
+/// half of `weights/mod.rs` is constants and re-exports. Every other swept file
+/// must appear in the float table.
+const DECLARATION_ONLY_FILES: [&str; 2] = [
+    "src/analysis/scoring/mod.rs",
+    "src/analysis/scoring/weights/mod.rs",
+];
+
+/// `is_comparator_site` above only catches *ranking* comparators, which is a
+/// narrower thing than "compares a float" — the table is mostly `<` / `>` /
+/// `==` guards, which no lexical rule separates from integer comparisons
+/// reliably. So the coverage of the acceptance criterion is asserted the other
+/// way round: every swept file is cited unless it demonstrably has no
+/// executable code to compare anything in.
+#[test]
+fn every_scoring_file_that_executes_anything_is_cited_in_the_float_table() {
+    let doc = read(RECORD);
+    let region = marker_region(section(&doc, "## Float comparison sites"), "scoring");
+
+    for file in SCORING_FILES {
+        let declaration_only = DECLARATION_ONLY_FILES.contains(&file);
+        if declaration_only {
+            let source = production_source(file);
+            // Strip each line's comment before looking for a control-flow
+            // keyword — prose says "responsible for computing…" and would
+            // otherwise read as a loop.
+            let executable = source
+                .lines()
+                .map(|line| line.split_once("//").map_or(line, |(code, _)| code))
+                .any(|code| {
+                    ["if ", "for ", "while ", "match "]
+                        .iter()
+                        .any(|keyword| code.contains(keyword))
+                });
+            assert!(
+                !executable,
+                "{file} is listed as declaration-only, but its production half now carries a \
+                 branch or a loop — it can compare floats, so it needs a float-table row"
+            );
+            continue;
+        }
+        assert!(
+            region.contains(&citation_prefix(file)),
+            "{file} carries executable code, so the float-comparison table must record what its \
+             guards do when the value they test is NaN — a swept file with no row leaves that \
+             unanswered"
+        );
     }
 }
 
@@ -467,8 +519,8 @@ fn the_error_distribution_never_reports_a_non_finite_percentile() {
 #[test]
 fn a_zero_variance_error_set_takes_the_documented_degenerate_defaults() {
     let samples: Vec<HelpfulSample> = (0..20).map(|_| sample(1.0, 0.25)).collect();
-    let distribution =
-        ErrorDistribution::from_samples(&samples).expect("20 identical errors build a distribution");
+    let distribution = ErrorDistribution::from_samples(&samples)
+        .expect("20 identical errors build a distribution");
 
     assert_eq!(
         distribution.skewness, 0.0,
@@ -504,6 +556,46 @@ fn a_non_finite_least_squares_sum_is_rejected_before_the_clamp() {
     assert!(
         weight.is_finite() && weight.abs() > 0.0,
         "the finite path must still return a usable weight, got {weight}"
+    );
+}
+
+/// The composition the `weights/adjustment.rs` verdict actually rests on: the
+/// helpers would happily return `Some(non-finite)`, and the only reason they
+/// never see one is the gate *upstream* of them. A unit test of either half
+/// would stay green with that gate gone, so this drives the wire type a
+/// creature is deserialised from and asserts the payload is refused —
+/// CONTRIBUTING.md § Guard Wiring at the Shipped Entry Point.
+///
+/// `1e39` is the payload that matters: it is an ordinary `f64` in JSON, so
+/// serde raises nothing, and it saturates to `f32::INFINITY` on the cast down.
+#[test]
+fn a_creature_carrying_an_overflowing_synapse_weight_is_refused_at_the_boundary() {
+    let creature = r#"{
+        "neurons": [
+            {"uuid": "n-0", "type": "hidden", "squash": "IDENTITY", "bias": 0.0},
+            {"uuid": "n-1", "type": "output", "squash": "IDENTITY", "bias": 0.0}
+        ],
+        "synapses": [{"fromUUID": "n-0", "toUUID": "n-1", "weight": 1e39}],
+        "input": 1,
+        "output": 1
+    }"#;
+
+    let error = serde_json::from_str::<CreatureJson>(creature)
+        .expect_err("a synapse weight that saturates to infinity must not deserialise");
+    let message = error.to_string();
+    assert!(
+        message.contains("synapse weight must be finite"),
+        "the refusal must name the weight as the fault so the caller can correct it, got: \
+         {message}"
+    );
+
+    let finite = creature.replace("1e39", "0.5");
+    let parsed = serde_json::from_str::<CreatureJson>(&finite)
+        .expect("the same creature with a finite weight must still deserialise");
+    assert!(
+        parsed.synapses[0].weight.is_finite(),
+        "every weight that survives the boundary is finite, which is what lets \
+         clamp_weight_update_delta skip a finitude test of its own"
     );
 }
 
@@ -554,8 +646,9 @@ fn cross_validation_reserves_only_what_its_preconditions_allow() {
         "the only production constructor must keep supplying the compile-time fold count"
     );
 
-    let samples: Vec<HelpfulSample> = (0..100)
-        .map(|i| sample(i as f32 * 0.01, i as f32 * 0.02))
+    // `u8 -> f32` is the lossless `From` impl, so no cast lint is needed here.
+    let samples: Vec<HelpfulSample> = (0..100u8)
+        .map(|i| sample(f32::from(i) * 0.01, f32::from(i) * 0.02))
         .collect();
     let result = compute_cross_validation_score(&samples, &config)
         .expect("100 samples over 5 folds clears the 15-sample minimum");
