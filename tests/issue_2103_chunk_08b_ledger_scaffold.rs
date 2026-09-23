@@ -128,7 +128,8 @@ struct FileRow {
     outcome: String,
 }
 
-/// Parse the `| \`path\` | N | outcome |` rows out of a chunk of Markdown.
+/// Parse the three-cell path / line-count / outcome rows out of a chunk of
+/// Markdown, skipping header, separator and non-`src/` rows.
 fn file_rows(body: &str) -> Vec<FileRow> {
     body.lines()
         .filter(|line| line.trim_start().starts_with('|'))
@@ -141,9 +142,10 @@ fn file_rows(body: &str) -> Vec<FileRow> {
             if !path.starts_with("src/") {
                 return None;
             }
-            let lines = cells[1].trim().parse::<usize>().unwrap_or_else(|e| {
-                panic!("row for {path} must carry a numeric line count: {e}")
-            });
+            let lines = cells[1]
+                .trim()
+                .parse::<usize>()
+                .unwrap_or_else(|e| panic!("row for {path} must carry a numeric line count: {e}"));
             Some(FileRow {
                 path,
                 lines,
@@ -322,10 +324,7 @@ fn the_shared_sweep_traces_the_timing_collector_race_class() {
 fn both_finding_tables_carry_one_marker_per_sub_issue_in_section_order() {
     let doc = read(RECORD);
 
-    for heading in [
-        "## Capacity-from-input sites",
-        "## Float comparison sites",
-    ] {
+    for heading in ["## Capacity-from-input sites", "## Float comparison sites"] {
         let body = section(&doc, heading);
         let mut cursor = 0usize;
         for name in SECTIONS {
