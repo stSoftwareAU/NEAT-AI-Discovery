@@ -17,10 +17,12 @@
 //!
 //! The second half of the file is the other kind of check the record needs. The
 //! sweep's verdicts rest on *behaviours*, not on prose, and a verdict backed
-//! only by a paragraph rots silently. Two of these tests pin the reachability
-//! the findings rest on and two pin the `clean` verdicts; when #2181 or #2182 is
-//! fixed the reachability tests must fail, which is the signal that this
-//! section's rows need re-sweeping rather than merely re-reading.
+//! only by a paragraph rots silently. Three of these tests pin the reachability
+//! the findings rest on — including one that drives the FFI boundary itself, so
+//! "reachable from finite records" is asserted where the gate actually lives —
+//! and three pin the `clean` verdicts. When #2181 is fixed the two `fan_in.rs`
+//! reachability tests must fail, which is the signal that this section's rows
+//! need re-sweeping rather than merely re-reading.
 
 use std::path::PathBuf;
 
