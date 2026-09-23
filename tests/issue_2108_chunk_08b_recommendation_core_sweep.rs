@@ -32,7 +32,7 @@ use neat_ai_discovery::analysis::recommendation::sample_weighted::{
     compute_sample_weights, stratify_samples,
 };
 use neat_ai_discovery::types::DiscoverRecord;
-use neat_ai_discovery::{CreatureJson, NeuronJson};
+use neat_ai_discovery::{CreatureJson, NeuronData, NeuronJson};
 
 /// The chunk 8b prose record.
 const RECORD: &str = "docs/audits/security-sweep-chunk-08b-synapse-scoring-recommendation.md";
@@ -475,6 +475,39 @@ fn a_finite_record_set_still_drives_the_fan_in_correlation_to_nan() {
             .is_none(),
         "the threshold filter must still fail open on a NaN correlation — a fail-closed filter \
          would close #2181 at the source"
+    );
+}
+
+/// The half of the #2181 / #2182 reachability claim that lives at the shipped
+/// entry point (CONTRIBUTING.md § Guard Wiring at the Shipped Entry Point): the
+/// magnitudes both findings are triggered with are **accepted** by the FFI
+/// boundary, because Issues #2134 / #2135 reject `Infinity` and `NaN` on the
+/// wire and nothing else. A test that only built `DiscoverRecord`s in-process
+/// could not tell a reachable trigger from an unreachable one.
+#[test]
+fn the_ffi_boundary_still_accepts_the_magnitudes_both_findings_are_triggered_with() {
+    for magnitude in ["2e30", "-2e30", "1e10", "1e38"] {
+        let payload = format!(
+            r#"{{"neuron_uuid": "input-0", "activation": {magnitude}, "errors": [{magnitude}]}}"#
+        );
+        let parsed = serde_json::from_str::<NeuronData>(&payload)
+            .unwrap_or_else(|e| panic!("{magnitude} is finite and must deserialise: {e}"));
+        assert!(
+            parsed.activation.is_finite() && parsed.errors[0].is_finite(),
+            "{magnitude} must survive the boundary as a finite value"
+        );
+    }
+
+    // The boundary that *is* closed, for contrast: a magnitude that saturates
+    // to infinity on the narrowing cast is refused (Issue #2134), which is why
+    // the triggers above have to manufacture their infinity downstream instead.
+    let error = serde_json::from_str::<NeuronData>(
+        r#"{"neuron_uuid": "input-0", "activation": 1e39, "errors": [0.1]}"#,
+    )
+    .expect_err("a saturating activation must not deserialise");
+    assert!(
+        error.to_string().contains("finite"),
+        "the refusal must name finitude as the fault, got: {error}"
     );
 }
 
