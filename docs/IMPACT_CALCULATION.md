@@ -413,11 +413,25 @@ matches NEAT-AI's `Score.ts` complexity penalty per neuron.
 | `1e-9` or lower | Encourages creature expansion for evolution on new neurons |
 | Higher values | More aggressive pruning (use with caution) |
 
-A non-finite or non-positive `costOfGrowth` is a caller bug: every entry point,
-including the `rank_focus_neurons` FFI request, rejects it with a WARN naming
-both the offending value and the substituted default, then proceeds on the
-default (Issue #1807). Note that a JSON number outside `f32` range reaches the
-criterion as `±∞` (`1e39`) or `0.0` (`1e-60`), so it is rejected the same way.
+A non-finite or non-positive `costOfGrowth` is a caller bug, and the two halves
+are now handled differently:
+
+- **Non-finite, over the FFI.** Since Issue #2137 the `rank_focus_neurons`
+  request refuses it outright: `costOfGrowth` carries
+  `#[serde(deserialize_with = "deserialise_cost_of_growth")]`, so a JSON number
+  that is finite as an `f64` but overflows the `f32` it is stored in (`1e39`,
+  magnitude above ~3.4e38) fails deserialisation with `errorKind:
+  "data_validation"` instead of narrowing silently to `±∞`. `1e400` and the bare
+  `Infinity`/`NaN` tokens were already refused by `serde_json`'s own number
+  parser. A caller who sends nonsense hears about it rather than receiving
+  rankings computed against a threshold they never asked for.
+- **Non-positive, or non-finite from in-crate Rust.** Every entry point still
+  falls back to the default with a WARN naming both the offending value and the
+  substitution (Issue #1807). This covers `0.0`, negatives, and `1e-60` — which
+  is finite, so the boundary check passes it, and then underflows to `0.0` in
+  `f32`. It also covers a Rust caller passing `Some(f32::NAN)` directly, which
+  never crosses the JSON boundary.
+
 Issue #1872 closed the last gap in "every entry point": the record-derived
 `rank_focus_neurons` path took the host value raw, and because a NaN `savings`
 makes every removal gate NaN-false it emitted **every** ranked neuron as a

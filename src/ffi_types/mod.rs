@@ -438,6 +438,36 @@ where
     Ok(raw)
 }
 
+// ==== Cost-of-growth finitude validation (Issue #2137) ====
+
+/// An absent or explicitly null `costOfGrowth` stays `None`; a present one must
+/// be finite (Issue #2137).
+///
+/// A JSON magnitude above `f32::MAX` — such as `1e39` — is an ordinary `f64`,
+/// so `serde_json` accepts it and the narrowing to `f32` saturates to infinity
+/// in silence. An infinite cost of growth was previously only mitigated
+/// downstream by `focus::ranking::effective_cost_of_growth`, which replaces it
+/// with the default and logs a WARN (Issue #1807). A caller that sends
+/// nonsense deserves to hear about it rather than to receive rankings computed
+/// against a threshold they never asked for, so the non-finite half of that
+/// guard now fails loudly here. The downstream guard remains for non-positive
+/// values and for in-crate Rust callers, who never cross this boundary.
+fn deserialise_cost_of_growth<'de, D>(deserialiser: D) -> Result<Option<f32>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let Some(raw) = Option::<f32>::deserialize(deserialiser)? else {
+        return Ok(None);
+    };
+    if !raw.is_finite() {
+        return Err(serde::de::Error::custom(format!(
+            "costOfGrowth must be finite, got {raw} (Issue #2137). \
+             Infinity and NaN are not permitted in FFI payloads."
+        )));
+    }
+    Ok(Some(raw))
+}
+
 /// Pre-computed neuron data for a single neuron
 #[derive(Debug, Deserialize, Clone)]
 pub struct NeuronData {

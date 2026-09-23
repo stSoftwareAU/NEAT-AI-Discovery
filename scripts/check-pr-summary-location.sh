@@ -16,10 +16,31 @@ CANONICAL_DIR="docs/archive/pr-summaries"
 
 # Find every pr-summary-*.md tracked in the tree, excluding the canonical dir.
 # Use find over a git-tracked list so the guard also catches unstaged strays.
+#
+# The scan lands in a temporary file rather than a process substitution: `set -e`
+# never checks a process substitution's exit status, and `sort` succeeds on empty
+# input, so a find that could not scan (missing docs/, unreadable subtree) used
+# to be indistinguishable from one that found nothing — and the guard reported ✅
+# for a check that never ran (Issue #2139). find's own diagnostics stay on stderr
+# so the operator sees why the scan failed.
+scan_results="$(mktemp)"
+trap 'rm -f "$scan_results"' EXIT
+
+if ! find docs -type f -name 'pr-summary-*.md' -not -path "./${CANONICAL_DIR}/*" -not -path "${CANONICAL_DIR}/*" -print0 >"$scan_results"; then
+    echo "❌ find could not scan docs/ — the PR summary layout was NOT checked." >&2
+    echo "   Fix the error reported by find above, then re-run this guard." >&2
+    exit 1
+fi
+if ! sort -z "$scan_results" -o "$scan_results"; then
+    echo "❌ sort could not order the find results — the PR summary layout was NOT checked." >&2
+    exit 1
+fi
+
+# NUL-delimited, so paths containing spaces (or newlines) survive intact.
 stray_files=()
-while IFS= read -r file; do
+while IFS= read -r -d '' file; do
     stray_files+=("$file")
-done < <(find docs -type f -name 'pr-summary-*.md' -not -path "./${CANONICAL_DIR}/*" -not -path "${CANONICAL_DIR}/*" 2>/dev/null | sort)
+done <"$scan_results"
 
 if [[ ${#stray_files[@]} -gt 0 ]]; then
     echo "❌ Found ${#stray_files[@]} pr-summary-*.md file(s) outside ${CANONICAL_DIR}/:"
