@@ -165,7 +165,7 @@ pub(crate) fn build_helpful_work_items(
     let source_results: Vec<SourceWorkResult<'_>> = {
         let _timing = TimingScope::sample_building(&ctx.timing_collector);
 
-        let locality_groups = group_sources_by_locality(sources_to_process);
+        let locality_groups = group_sources_by_locality(sources_to_process, &ctx.deadline);
 
         if verbose_enabled() && sources_to_process.len() >= MIN_GROUP_SIZE_FOR_LOCALITY {
             let group_sizes: Vec<usize> = locality_groups.iter().map(|g| g.sources.len()).collect();

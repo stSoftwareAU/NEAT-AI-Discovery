@@ -6,10 +6,11 @@
 #![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use crate::analysis::diagnostics::TargetMap;
 use crate::analysis::samples::HelpfulSample;
-use crate::analysis::utils::OrderedNeuron;
+use crate::analysis::utils::{OrderedNeuron, deadline_passed};
 use crate::types::DiscoverRecord;
 use std::collections::HashSet;
 use std::sync::Arc;
+use std::time::SystemTime;
 
 // =============================================================================
 // Sample Locality Grouping (Issue #221)
@@ -22,6 +23,15 @@ pub(crate) const MIN_GROUP_SIZE_FOR_LOCALITY: usize = 3;
 /// Minimum overlap fraction required to group sources together.
 /// Sources are grouped if they share at least this fraction of their `obs_indices`.
 const MIN_LOCALITY_OVERLAP: f32 = 0.8;
+
+/// Maximum source count for which the pairwise locality scan is attempted (Issue #2161).
+///
+/// The scan is O(n²) in the source count and callers may supply no deadline at
+/// all, in which case the per-iteration deadline check never fires and only this
+/// ceiling bounds the work. Above it every source is emitted as its own group —
+/// the documented no-overlap behaviour — so a hostile creature with an
+/// unbounded upstream neuron count cannot pin a rayon worker for minutes.
+pub(crate) const MAX_SOURCES_FOR_LOCALITY_SCAN: usize = 1024;
 
 /// Represents a group of sources with similar `obs_index` coverage.
 /// Sources in the same group can share sample building overhead.
@@ -51,6 +61,25 @@ pub(crate) fn compute_obs_index_overlap(a: &HashSet<u32>, b: &HashSet<u32>) -> f
     intersection_size as f32 / min_size as f32
 }
 
+/// Emit each source as its own single-source group (Issue #2161).
+///
+/// This is the documented no-overlap outcome of the pairwise scan, so it is a
+/// safe degradation whenever the scan is abandoned or never entered: grouping
+/// is a sample-building optimisation only (Issue #221) and never changes which
+/// candidates survive.
+fn single_source_groups<'a, 'b, I>(sources: I) -> Vec<SampleLocalityGroup<'a>>
+where
+    'a: 'b,
+    I: IntoIterator<Item = &'b (&'a OrderedNeuron, Arc<Vec<DiscoverRecord>>)>,
+{
+    sources
+        .into_iter()
+        .map(|(neuron, records)| SampleLocalityGroup {
+            sources: vec![(*neuron, Arc::clone(records))],
+        })
+        .collect()
+}
+
 /// Group sources by sample locality for efficient batch processing.
 ///
 /// Sources with high `obs_index` overlap (≥80%) are grouped together so that
@@ -63,17 +92,23 @@ pub(crate) fn compute_obs_index_overlap(a: &HashSet<u32>, b: &HashSet<u32>) -> f
 /// - 100 sources, same `obs_indices`: 1 group (100x reduction in target lookups)
 /// - 100 sources, 80% overlap: ~5 groups (20x reduction)
 /// - 100 sources, no overlap: 100 groups (no change)
+///
+/// # Issue #2161: bounded, cancellable scan
+///
+/// The pairwise scan is O(n²) in the source count and the source count is
+/// caller-controlled, so it carries two exits: sources beyond
+/// [`MAX_SOURCES_FOR_LOCALITY_SCAN`] skip the scan entirely, and an expired
+/// `deadline` (which also reports a host cancellation request, Issue #1047)
+/// abandons it between outer iterations. Both degrade to single-source groups,
+/// so every source still appears in exactly one group.
 pub(crate) fn group_sources_by_locality<'a>(
     sources: &[(&'a OrderedNeuron, Arc<Vec<DiscoverRecord>>)],
+    deadline: &Option<SystemTime>,
 ) -> Vec<SampleLocalityGroup<'a>> {
-    if sources.len() < MIN_GROUP_SIZE_FOR_LOCALITY {
-        // Not enough sources to benefit from grouping
-        return sources
-            .iter()
-            .map(|(neuron, records)| SampleLocalityGroup {
-                sources: vec![(neuron, Arc::clone(records))],
-            })
-            .collect();
+    // Too few sources to benefit from grouping, or too many to scan safely.
+    if sources.len() < MIN_GROUP_SIZE_FOR_LOCALITY || sources.len() > MAX_SOURCES_FOR_LOCALITY_SCAN
+    {
+        return single_source_groups(sources.iter());
     }
 
     // Extract obs_indices for each source (done once, reused for grouping)
@@ -86,6 +121,21 @@ pub(crate) fn group_sources_by_locality<'a>(
     let mut assigned: Vec<bool> = vec![false; sources.len()];
 
     for i in 0..sources.len() {
+        // Issue #2161: the pairwise scan is the longest stretch of
+        // uninterruptible work in the synapse pipeline. `deadline_passed` also
+        // reports the global cancellation flag (Issue #1047), so this single
+        // check honours both the deadline and an explicit host cancellation.
+        if deadline_passed(deadline) {
+            groups.extend(single_source_groups(
+                sources
+                    .iter()
+                    .enumerate()
+                    .filter(|(k, _)| !assigned[*k])
+                    .map(|(_, source)| source),
+            ));
+            return groups;
+        }
+
         if assigned[i] {
             continue;
         }
@@ -214,3 +264,7 @@ pub(crate) fn build_samples(
 
     target_map.build_samples_from(from_records)
 }
+
+#[cfg(test)]
+#[path = "issue_2161_locality_cancellation_test.rs"]
+mod issue_2161_test;
