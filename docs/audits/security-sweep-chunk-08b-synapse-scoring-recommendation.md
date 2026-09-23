@@ -26,25 +26,29 @@ Ledger rules: [`README.md`](README.md). Index entry:
 - **Scaffold issue:** `#2103` — created this record and swept
   `src/analysis/shared/`.
 
-### Sweep status
+### Sweep status — IN PROGRESS
 
 This record is filled **incrementally**: one audit sub-issue per `###` section
 below, each editing only its own section so concurrent PRs do not conflict. A
-row reading `pending` has **not** been swept. The index entry's `last_swept`
-date pins the baseline this scaffold was cut against — it is not a claim that
-every row is finished. The chunk is complete only when no row reads `pending`;
-the finalisation sub-issue rejects the record until then.
+row reading `pending` has **not** been swept, and only `src/analysis/shared/`
+is swept so far.
 
-| Section | Rows | Swept |
-| --- | --- | --- |
-| synapse pipeline | 11 | 0 |
-| synapse post-processing | 7 | 0 |
-| synapse scoring + target_analysis | 10 | 0 |
-| scoring | 10 | 0 |
-| recommendation core | 8 | 0 |
-| recommendation batch_successful + epistatic | 8 | 0 |
-| shared | 4 | 4 |
-| **total** | **58** | **4** |
+`lib-sweep-coverage.json` cannot express that: the ledger contract
+(`tests/issue_2088_sweep_ledger_contract.rs`) rejects a `record` that names no
+`last_swept` date, so the index entry carries the date this scaffold was cut
+against. **Read that date as "the baseline this record is pinned to", not as
+"every row is finished."** The per-file table below is the authority on which
+files have actually been read; the chunk is complete only when no row reads
+`pending`, and the finalisation sub-issue rejects the record until then.
+
+### Why this record cites symbols, not line numbers
+
+Issue #2103 specified a `file:line` column for the two finding tables. This
+record uses `file.rs::symbol` instead, per **CONTRIBUTING.md § Cite Code by
+Symbol, Never by Line Number** (Issue #1942), which binds every doc in the
+repository: a line number rots at the next refactor of a file this chunk has
+not even swept yet, while a symbol survives it and a test can check the symbol
+still exists. The column's purpose — naming the exact site — is unchanged.
 
 ## Defect classes probed
 
@@ -191,7 +195,7 @@ Every `with_capacity` / `reserve` / `vec![_; n]` whose `n` derives from caller
 input, with the bound that stops it. A `verdict` of `bounded` names what bounds
 it; `unbounded` means a finding was filed.
 
-| `file:line` | Expression | Bound source | Verdict |
+| Site (`file.rs::symbol`) | Expression | Bound source | Verdict |
 | --- | --- | --- | --- |
 <!-- section: synapse pipeline -->
 <!-- section: synapse post-processing -->
@@ -207,7 +211,7 @@ it; `unbounded` means a finding was filed.
 Every comparison against a float that can be `NaN` or `-0.0`, with where the
 value comes from and what happens when it is `NaN`.
 
-| `file:line` | Comparator | Value origin | NaN handling | Verdict |
+| Site (`file.rs::symbol`) | Comparator | Value origin | NaN handling | Verdict |
 | --- | --- | --- | --- | --- |
 <!-- section: synapse pipeline -->
 <!-- section: synapse post-processing -->
@@ -225,65 +229,81 @@ value comes from and what happens when it is `NaN`.
 **Negative result — no finding filed.** All four `src/analysis/shared/` files
 are clean for every defect class probed. What was actually traced:
 
-**`timing.rs` — the shared-state race class.** `TimingCollector`
-(`timing.rs:82-93`) is the only mutable shared state in the whole of
-`shared/`. Every reader and writer was traced:
+**`timing.rs` — the shared-state race class.** `timing.rs::TimingCollector` is
+the only mutable shared state in the whole of `shared/`. Every reader and
+writer was traced:
 
-- **Writers.** `record_shader` (`timing.rs:117-128`) mutates the
+- **Writers.** `timing.rs::TimingCollector::record_shader` mutates the
   `parking_lot::Mutex<HashMap<String, (u32, u64)>>` under
-  `traced_lock_default`; `record_buffer_transfer`, `record_sample_building` and
-  `record_result_processing` (`timing.rs:131-155`) are `AtomicU64::fetch_add`
-  with `Ordering::Relaxed`. `fetch_add` is an atomic read-modify-write, so
-  `Relaxed` cannot lose an update — these counters carry no ordering
-  dependency on any other datum, which is the only thing a stronger ordering
-  would buy.
-- **The only reader.** `finalize` (`timing.rs:160-208`) is the sole reader, and
-  it takes the same lock before iterating the map.
-- **Dispatch.** The collector is constructed as an `Arc` at
-  `src/analysis/synapse/orchestration.rs:47` and
-  `src/analysis/neuron/mod.rs:187`, cloned into the per-target context
-  (`orchestration.rs:127`), and shared across the `par_iter()` section at
-  `orchestration.rs:145`. `finalize` is reached only through
-  `finalise_synapse_results` (`orchestration.rs:209-215`), which runs **after**
-  the parallel iterator has joined. Rayon's join establishes the
-  happens-before edge, so the `Relaxed` loads at `timing.rs:192-194` observe
-  every worker's `fetch_add`. There is no window in which a writer and the
-  reader overlap.
-- **`src/analysis/discovery_dispatch.rs` carries no `TimingCollector`
-  reference at all** (zero occurrences at the baseline commit), so the
-  assumption in #2103 that it is a second dispatch site does not hold —
-  recorded here so a later sweep does not re-trace it.
+  `lock_contention.rs::traced_lock_default`;
+  `timing.rs::TimingCollector::record_buffer_transfer`,
+  `::record_sample_building` and `::record_result_processing` are
+  `AtomicU64::fetch_add` with `Ordering::Relaxed`. `fetch_add` is an atomic
+  read-modify-write, so `Relaxed` cannot lose an update — these counters carry
+  no ordering dependency on any other datum, which is the only thing a stronger
+  ordering would buy. The sole entry point to all four is the `Drop` impl of
+  `timing.rs::TimingScope`.
+- **Readers.** `timing.rs::TimingCollector::finalize` is the only reader, and
+  it takes the same lock before iterating the map. It has exactly **two** call
+  sites: `synapse/results.rs::finalise_synapse_results` and
+  `neuron/post_processing.rs::build_neuron_results`.
+- **Dispatch — synapse.** The collector is constructed as an `Arc` in
+  `synapse/orchestration.rs::analyze_synapses_with_cache_impl`, cloned into
+  the per-target `TargetAnalysisContext`, and shared across that function's
+  `par_iter()` over the focus order. The same function calls
+  `finalise_synapse_results` **after** the parallel iterator has joined.
+- **Dispatch — neuron.** `neuron/mod.rs::analyze_neurons_with_cache_and_gpu_queue`
+  constructs its own `Arc<TimingCollector>` and shares it across two
+  `par_iter()` sections, then calls
+  `neuron/post_processing.rs::build_neuron_results` after both have joined.
+- Rayon's join establishes the happens-before edge on **both** paths, so the
+  `Relaxed` loads in `finalize` observe every worker's `fetch_add`. There is no
+  window in which a writer and the reader overlap.
+- **The two dispatch files #2103 named carry no `TimingCollector` reference at
+  all.** `src/analysis/orchestration.rs` and
+  `src/analysis/discovery_dispatch.rs` each have zero occurrences at the
+  baseline commit; the real dispatch sites are the two named above. Recorded
+  here so a later sweep does not re-trace the wrong files.
 - **Unbounded map growth was the one plausible attack.** `shader_timings` is
   keyed by `shader_name.to_string()`, so an input-derived name would grow the
-  map without bound under the lock. Every call site passes a compile-time
-  literal — `"relu"` and `"activation"`
-  (`src/analysis/neuron/evaluation.rs:161,302`), `"helpful"` and `"harmful"`
-  (`src/analysis/synapse/target_analysis/evaluation.rs:58,677`) — so the key
-  set is four entries and no caller can extend it.
-- **Overflow.** `entry.0 += 1` / `entry.1 += duration_ns` (`timing.rs:126-127`)
-  and `total_shader_ns += total_ns` (`timing.rs:189`) are unchecked. The `u32`
-  call counter is the tightest: it needs 2^32 shader dispatches in a single
-  analysis run, and dispatch count is bounded by focus neurons × candidates,
-  itself bounded by the creature the FFI layer already validated. The whole
-  collector is inert unless the operator sets
-  `NEAT_AI_DISCOVERY_GPU_TIMING=1`. Noted, not filed: no input reaches the
-  bound, and a telemetry counter wrapping in release costs a wrong diagnostic
-  number, not memory safety.
+  map without bound under the lock. Every call site of
+  `timing.rs::TimingScope::shader` passes a compile-time literal — `"relu"` and
+  `"activation"` in `neuron/evaluation.rs::evaluate_relu_split` and
+  `::evaluate_activation_specs`, `"helpful"` and `"harmful"` in
+  `synapse/target_analysis/evaluation.rs::submit_helpful_gpu_work` and
+  `::process_harmful_batch_from_prepared` — so the key set is four entries and
+  no caller can extend it.
+- **Overflow.** The `+=` on the per-shader `(calls, total_ns)` tuple in
+  `timing.rs::TimingCollector::record_shader`, and the `total_shader_ns`
+  accumulator in `::finalize`, are unchecked. The `u32` call counter is the
+  tightest: it needs 2^32 shader dispatches in a single analysis run, and
+  dispatch count is bounded by focus neurons × candidates, itself bounded by
+  the creature the FFI layer already validated. The whole collector is inert
+  unless the operator sets `NEAT_AI_DISCOVERY_GPU_TIMING=1`. Noted, not filed:
+  no input reaches the bound, and a telemetry counter wrapping in release costs
+  a wrong diagnostic number, not memory safety.
 
-**`gpu_info.rs` — hostile environment values.** `ZeroCopyBufferConfig::from_env`
-(`gpu_info.rs:94-99`) delegates to `crate::config::zero_copy_override()`
-(`src/config/user_facing.rs:419-421`), which is `parse_optional_bool_env`
-(`src/config/helpers.rs:16-25`). That function is total: `std::env::var(...)`
-returns `Err` for a non-UTF-8 value and `.ok()` maps it to `None`, and any
-unrecognised string falls through the `match` to `None`. No `unwrap`, no
-slicing, no numeric parse. `buffer_count` is the literal `3` and is never read
-from the environment, so no hostile value reaches an allocation size.
+**`gpu_info.rs` — hostile environment values.**
+`gpu_info.rs::ZeroCopyBufferConfig::from_env` delegates to
+`config/user_facing.rs::zero_copy_override`, which is
+`config/helpers.rs::parse_optional_bool_env`. That function is total:
+`std::env::var(...)` returns `Err` for a non-UTF-8 value and `.ok()` maps it to
+`None`, and any unrecognised string falls through the `match` to `None`. No
+`unwrap`, no slicing, no numeric parse. `ZeroCopyBufferConfig::buffer_count` is
+the literal `3` and is never read from the environment, so no hostile value
+reaches an allocation size.
 
-**`metadata.rs` — interior mutability.** Confirmed absent. All ten types are
-`#[derive]`d plain-data structs and enums; the file contains no `Mutex`,
-`RwLock`, `RefCell`, `Cell`, `UnsafeCell`, `Atomic*`, `static mut`, `OnceLock`
-or `Lazy`, and no arithmetic or comparison of any kind. The `f32` fields
-(`metadata.rs:111,244,394-396,440-442`) are carried, never compared here.
+**`metadata.rs` — interior mutability.** Confirmed absent. All **11** public
+types are `#[derive]`d plain-data structs and enums; the file contains no
+`Mutex`, `RwLock`, `RefCell`, `Cell`, `UnsafeCell`, `Atomic*`, `static mut`,
+`OnceLock` or `Lazy`, and no arithmetic or comparison of any kind. Its `f32`
+fields — `calibration_corrections` and `rolling_success_rate` on both
+`SynapseAnalysisMetadata` and `NeuronAnalysisMetadata`, and the
+`expected_improvement` / `threshold` / `suggested_weight` / `outgoing_weight`
+options on `SynapseNoCandidateDetail` and `NeuronNoCandidateDetail` — are
+carried, never compared here. The only two types deriving `PartialEq` are the
+fieldless `SynapseNoCandidateReason` and `NeuronNoCandidateReason` enums, so no
+float comparison is generated either.
 
 **`mod.rs`.** Three `pub mod` declarations and three glob re-exports. No
 executable code.

@@ -159,22 +159,38 @@ fn files_swept_body() -> String {
     section(&read(RECORD), "## Files swept").to_string()
 }
 
+fn is_iso_date(value: &str) -> bool {
+    value.len() == 10
+        && value.chars().enumerate().all(|(i, c)| {
+            if i == 4 || i == 7 {
+                c == '-'
+            } else {
+                c.is_ascii_digit()
+            }
+        })
+}
+
 #[test]
 fn the_record_exists_and_pins_its_chunk_id_baseline_and_parent() {
     let doc = read(RECORD);
-    for needle in [
-        "`8b`",
-        "**Exposure:** `internal`",
-        BASELINE,
-        "#2093",
-        "**Sweep date:** `2026-09-23`",
-    ] {
+    for needle in ["`8b`", "**Exposure:** `internal`", BASELINE, "#2093"] {
         assert!(
             doc.contains(needle),
             "{RECORD} must carry `{needle}` — a record that does not pin its chunk id, \
              exposure, baseline commit and parent issue cannot be checked by a later reader"
         );
     }
+
+    let Some((date, _)) = doc
+        .split_once("**Sweep date:** `")
+        .and_then(|(_, rest)| rest.split_once('`'))
+    else {
+        panic!("{RECORD} must carry a `**Sweep date:** \\`…\\`` field");
+    };
+    assert!(
+        is_iso_date(date),
+        "{RECORD} sweep date `{date}` must be an ISO YYYY-MM-DD date"
+    );
 }
 
 #[test]
@@ -298,26 +314,107 @@ fn the_shared_rows_are_swept_with_a_reason() {
     }
 }
 
+/// Every symbol the `shared` outcome claims to have traced, paired with the
+/// file that must still define it. A sweep that cites a symbol which no longer
+/// exists is describing code that is gone.
+const TRACED_SYMBOLS: [(&str, &str); 12] = [
+    ("src/analysis/shared/timing.rs", "struct TimingCollector"),
+    ("src/analysis/shared/timing.rs", "fn record_shader"),
+    ("src/analysis/shared/timing.rs", "fn record_buffer_transfer"),
+    ("src/analysis/shared/timing.rs", "fn record_sample_building"),
+    (
+        "src/analysis/shared/timing.rs",
+        "fn record_result_processing",
+    ),
+    ("src/analysis/shared/timing.rs", "fn finalize"),
+    ("src/analysis/shared/timing.rs", "struct TimingScope"),
+    (
+        "src/analysis/shared/gpu_info.rs",
+        "impl ZeroCopyBufferConfig",
+    ),
+    ("src/analysis/shared/gpu_info.rs", "fn from_env"),
+    (
+        "src/analysis/synapse/orchestration.rs",
+        "fn analyze_synapses_with_cache_impl",
+    ),
+    (
+        "src/analysis/neuron/mod.rs",
+        "fn analyze_neurons_with_cache_and_gpu_queue",
+    ),
+    (
+        "src/analysis/neuron/post_processing.rs",
+        "fn build_neuron_results",
+    ),
+]; // Issue #1942: symbols, not line numbers — a symbol survives the refactor.
+
 #[test]
-fn the_shared_sweep_traces_the_timing_collector_race_class() {
+fn the_shared_sweep_cites_symbols_that_still_exist() {
     let doc = read(RECORD);
     let outcome = section(&doc, "### shared (Issue #2103)");
-    for needle in [
-        "TimingCollector",
-        "record_shader",
-        "finalize",
-        "parking_lot::Mutex",
-        "fetch_add",
-        "par_iter",
-        "from_env",
-        "interior mutability",
-    ] {
+
+    for (file, declaration) in TRACED_SYMBOLS {
+        let symbol = declaration
+            .rsplit(' ')
+            .next()
+            .expect("declaration names a symbol");
         assert!(
-            outcome.contains(needle),
-            "the `shared` outcome must show that `{needle}` was actually traced — \
-             an outcome that names no reader, writer or dispatch site is a claim, not a sweep"
+            outcome.contains(symbol),
+            "the `shared` outcome must name `{symbol}` — an outcome that cites no reader, \
+             writer or dispatch site is a claim, not a sweep"
+        );
+        assert!(
+            read(file).contains(declaration),
+            "the `shared` outcome cites `{symbol}`, but `{declaration}` is no longer declared \
+             in {file} — the sweep describes code that has moved or gone, so chunk 8b needs \
+             re-sweeping whatever the ledger says"
         );
     }
+}
+
+#[test]
+fn the_record_cites_no_line_numbers() {
+    // CONTRIBUTING.md § Cite Code by Symbol, Never by Line Number (Issue
+    // #1942). Enforced here so the six remaining sub-issues cannot reintroduce
+    // the rot into the shared finding tables.
+    let doc = read(RECORD);
+    let offenders: Vec<&str> = doc
+        .lines()
+        .filter(|line| {
+            line.match_indices(".rs:").any(|(at, _)| {
+                line[at + 4..]
+                    .chars()
+                    .next()
+                    .is_some_and(|c| c.is_ascii_digit())
+            })
+        })
+        .collect();
+    assert!(
+        offenders.is_empty(),
+        "{RECORD} must cite code as `file.rs::symbol`, never `file.rs:<line>` — line numbers \
+         rot at the next refactor of files this chunk has not swept yet: {offenders:?}"
+    );
+}
+
+#[test]
+fn an_unfinished_chunk_says_so_above_its_table() {
+    let doc = read(RECORD);
+    let pending = file_rows(&files_swept_body())
+        .iter()
+        .filter(|row| row.outcome.contains("pending"))
+        .count();
+    if pending == 0 {
+        return;
+    }
+    // The index cannot express "partly swept": the ledger contract rejects a
+    // record with a null `last_swept`. So while rows are outstanding, the
+    // record itself must say so — otherwise the index's date reads as a
+    // completed sweep and nothing contradicts it.
+    assert!(
+        doc.contains("### Sweep status — IN PROGRESS"),
+        "{pending} rows still read `pending`, so {RECORD} must carry a \
+         `### Sweep status — IN PROGRESS` heading — the index's `last_swept` date would \
+         otherwise be the only signal, and it reads as a finished sweep"
+    );
 }
 
 #[test]
@@ -345,7 +442,12 @@ fn both_finding_tables_fix_their_columns() {
     let doc = read(RECORD);
 
     let capacity = section(&doc, "## Capacity-from-input sites");
-    for column in ["`file:line`", "Expression", "Bound source", "Verdict"] {
+    for column in [
+        "Site (`file.rs::symbol`)",
+        "Expression",
+        "Bound source",
+        "Verdict",
+    ] {
         assert!(
             capacity.contains(column),
             "the capacity-from-input table must carry a `{column}` column so every \
@@ -355,7 +457,7 @@ fn both_finding_tables_fix_their_columns() {
 
     let floats = section(&doc, "## Float comparison sites");
     for column in [
-        "`file:line`",
+        "Site (`file.rs::symbol`)",
         "Comparator",
         "Value origin",
         "NaN handling",
