@@ -656,20 +656,27 @@ fn fan_in_candidates_still_depend_on_the_order_the_caller_lists_neurons_in() {
 #[test]
 fn a_finite_record_set_still_ranks_a_fan_in_candidate_at_infinity() {
     const SAMPLES: u32 = 60;
-    /// Large enough that `error²` summed over `SAMPLES` overflows `f32`, small
-    /// enough that every value itself is finite and crosses the FFI boundary.
+    /// Large enough that `error²` summed over `SAMPLES` overflows the `f32`
+    /// `original_sse`, small enough that every value itself is finite and
+    /// crosses the FFI boundary.
     const ACTIVATION_BASE: f32 = 3.3e8;
     /// Makes the target error exactly proportional to input `a`, so the
     /// single-input residual is ~0 while the uncentred `Σ error²` is `+inf`.
     const ERROR_PER_ACTIVATION: f32 = 3.03e10;
+    /// The spread has to stay small. `pearson_correlation` is mean-centred, so
+    /// it survives this overflow — but only while `var_x * var_y` itself stays
+    /// finite. A wider spread overflows that product, the guard returns `0.0`,
+    /// and the `corr.abs() < 0.3` filter then drops the input before the
+    /// improvement is ever computed.
+    const ACTIVATION_SPREAD: f32 = 1.0e3;
 
     // Two spreads: `a` carries the first, `b` carries the first plus a second
     // independent one, so `corr(a, b)` lands between the 0.3 filter floor and
     // the 0.8 mutual-correlation ceiling instead of outside both.
     let spread_a = |j: u32| f32::from(i16::try_from(j % 5).expect("j % 5 fits")) - 2.0;
     let spread_b = |j: u32| f32::from(i16::try_from(j % 7).expect("j % 7 fits")) - 3.0;
-    let act_a = |j: u32| ACTIVATION_BASE + 1.0e6 * spread_a(j);
-    let act_b = |j: u32| ACTIVATION_BASE + 1.0e6 * (spread_a(j) + spread_b(j));
+    let act_a = |j: u32| ACTIVATION_BASE + ACTIVATION_SPREAD * spread_a(j);
+    let act_b = |j: u32| ACTIVATION_BASE + ACTIVATION_SPREAD * (spread_a(j) + spread_b(j));
     let target_error = |j: u32| act_a(j) * ERROR_PER_ACTIVATION;
 
     let creature = CreatureJson {
@@ -714,15 +721,33 @@ fn a_finite_record_set_still_ranks_a_fan_in_candidate_at_infinity() {
          defeating it"
     );
 
+    // Issue #1799 again: this path must stand on its own, not on #2181's
+    // fail-open NaN filter. Both correlations are honest — finite, and well
+    // above the 0.3 threshold — so the candidate is admitted on merit and the
+    // defect is purely the unguarded `+inf` improvement.
+    let acts_a: Vec<f32> = (0..SAMPLES).map(act_a).collect();
+    let acts_b: Vec<f32> = (0..SAMPLES).map(act_b).collect();
+    let errs: Vec<f32> = (0..SAMPLES).map(target_error).collect();
+    for (label, corr) in [
+        ("a", pearson_correlation(&acts_a, &errs)),
+        ("b", pearson_correlation(&acts_b, &errs)),
+    ] {
+        assert!(
+            corr.is_finite() && corr.abs() >= 0.3,
+            "input-{label} must be admitted by an honest correlation, not by #2181's fail-open \
+             NaN filter — got {corr}"
+        );
+    }
+
     let candidates = detect_fan_in_candidates(&creature, &records);
     let first = candidates
         .first()
         .expect("the crafted pair must still produce a fan-in candidate");
-    assert!(
-        !first.estimated_improvement.is_finite(),
-        "#2182 says rank 0 still carries a non-finite estimated_improvement — got {}; if it is \
-         finite now, the improvement is gated and the `fan_in.rs` row must be re-swept",
-        first.estimated_improvement
+    assert_eq!(
+        first.estimated_improvement,
+        f32::INFINITY,
+        "#2182 says rank 0 still carries `+inf` as its estimated_improvement; if it is finite \
+         now, the improvement is gated and the `fan_in.rs` row must be re-swept"
     );
 }
 
