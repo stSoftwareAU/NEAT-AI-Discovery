@@ -57,7 +57,11 @@ fn as_pairs<'a>(
     neurons: &'a [OrderedNeuron],
     records: &[Arc<Vec<DiscoverRecord>>],
 ) -> Vec<(&'a OrderedNeuron, Arc<Vec<DiscoverRecord>>)> {
-    neurons.iter().zip(records.iter()).map(|(n, r)| (n, Arc::clone(r))).collect()
+    neurons
+        .iter()
+        .zip(records.iter())
+        .map(|(n, r)| (n, Arc::clone(r)))
+        .collect()
 }
 
 /// The grouping contract: every source appears in exactly one group, always.
@@ -86,7 +90,10 @@ fn min_grouping_time(sources: &[(&OrderedNeuron, Arc<Vec<DiscoverRecord>>)]) -> 
             let start = Instant::now();
             let groups = group_sources_by_locality(sources, &None);
             let elapsed = start.elapsed();
-            assert!(!groups.is_empty(), "grouping must always emit at least one group");
+            assert!(
+                !groups.is_empty(),
+                "grouping must always emit at least one group"
+            );
             elapsed
         })
         .min()
