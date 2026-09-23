@@ -1,26 +1,11 @@
 //! Issue #2133 — a neuron bias that is not finite never crosses the FFI
 //! boundary.
 //!
-//! `NeuronJson::bias` carried only `#[serde(default)]`, so nothing checked
-//! finitude. Two doors were open:
-//!
-//! * **The narrowing cast.** serde hands `serde_json`'s `f64` to `visit_f64`,
-//!   which casts to `f32`. `1e39` is a perfectly ordinary finite JSON number
-//!   and a perfectly ordinary finite `f64`, but it overflows `f32` — the cast
-//!   silently yields `f32::INFINITY`. (`1e400` overflows `f64` too and was
-//!   already refused by `serde_json` itself; it is pinned here so the
-//!   acceptance criterion stays covered if that ever changes.)
-//! * **Rust-constructed creatures.** A `CreatureJson` built in Rust and handed
-//!   straight to an entry point never passes through serde at all, so it can
-//!   carry `f32::NAN` — which JSON has no literal for.
-//!
-//! An infinite bias then reaches arithmetic (`neuron.bias += …` in
-//! `dominated_branch_collapse`), a `f64::from` conversion
-//! (`remove_neuron_bias_fold`) and — worst — `bias.to_bits()` hashing in
-//! `neuron_fingerprint`, where a payload-bearing NaN makes the fingerprint
-//! itself unstable. The defence mirrors the Issue #2020 observation-width
-//! pattern: reject at deserialisation, and gate `validate_creature` as the
-//! belt-and-braces check for creatures constructed in Rust.
+//! The two doors, why each is open, and what a non-finite bias corrupts
+//! downstream are documented once in
+//! [`neat_ai_discovery::ffi_types::neuron_bias`](../../src/ffi_types/neuron_bias.rs);
+//! this suite covers each layer from the outside: deserialisation, the
+//! `validate_creature` gate, serialisation, and the shipped entry points.
 
 use neat_ai_discovery::{
     CreatureJson, DiscoveryErrorKind, NeuronJson, rank_focus_neurons_internal, validate_creature,
@@ -72,20 +57,30 @@ fn creature_with_bias(bias: f32) -> CreatureJson {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn deserialise_rejects_bias_overflowing_the_json_exponent() {
-    // Acceptance criterion 3: `"bias": 1e400` must not deserialise.
+fn serde_json_itself_rejects_a_bias_overflowing_the_json_exponent() {
+    // Acceptance criterion 3: `"bias": 1e400` must not deserialise. It never
+    // reaches our validator — `1e400` overflows `f64`, so `serde_json`'s own
+    // number parser refuses it first. This test pins that upstream behaviour,
+    // which is why it asserts the parser's range error rather than the
+    // Issue #2133 message the sibling `1e39` cases carry.
     let err = serde_json::from_str::<CreatureJson>(&creature_json("1e400"))
         .expect_err("bias: 1e400 must be rejected at deserialisation");
+    let msg = err.to_string();
     assert!(
-        !err.to_string().is_empty(),
-        "rejection must carry a diagnostic message"
+        msg.contains("number out of range"),
+        "rejection must come from serde_json's number parser: {msg}"
     );
 }
 
 #[test]
-fn deserialise_rejects_negative_bias_overflowing_the_json_exponent() {
-    serde_json::from_str::<CreatureJson>(&creature_json("-1e400"))
+fn serde_json_itself_rejects_a_negative_bias_overflowing_the_json_exponent() {
+    let err = serde_json::from_str::<CreatureJson>(&creature_json("-1e400"))
         .expect_err("bias: -1e400 must be rejected at deserialisation");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("number out of range"),
+        "rejection must come from serde_json's number parser: {msg}"
+    );
 }
 
 #[test]
