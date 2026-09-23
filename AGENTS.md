@@ -122,9 +122,10 @@ Discovery assumes **forward-only** networks (no recurrent feedback):
 #### Validated FFI Surface
 
 Every FFI entry point accepting a `CreatureJson` must call `validate_creature`
-before any business logic; it composes `validate_forward_only_synapses` then
-`validate_creature_input_bounds`. The per-entry-point validation table and the
-width bounds live in [docs/FFI_API.md](docs/FFI_API.md#validated-ffi-surface).
+before any business logic; it composes `validate_forward_only_synapses`,
+`validate_creature_input_bounds`, then `validate_neuron_biases`. The
+per-entry-point validation table, the width bounds and the neuron-bias finitude
+rule live in [docs/FFI_API.md](docs/FFI_API.md#validated-ffi-surface).
 
 ### Atomic Record Writes
 

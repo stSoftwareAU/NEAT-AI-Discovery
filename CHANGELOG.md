@@ -8,6 +8,23 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+#### A non-finite neuron bias is now rejected at the FFI boundary (Issue #2133)
+
+`NeuronJson::bias` carried only `#[serde(default)]`, so nothing checked
+finitude. `"bias": 1e39` is a perfectly ordinary finite JSON number and a
+perfectly ordinary finite `f64`, but serde's `f64` → `f32` narrowing collapsed
+it silently to `Infinity`, which then reached the bias arithmetic in
+`dominated_branch_collapse`, the `f64::from` fold in `remove_neuron_bias_fold`
+and the `bias.to_bits()` neuron fingerprint hash — where a payload-bearing NaN
+makes the fingerprint itself unstable. The field now validates on
+deserialisation, refuses to serialise a non-finite value (`serde_json` would
+otherwise emit `null`), and `validate_creature` composes a third gate,
+`validate_neuron_biases` (`src/ffi_types/neuron_bias.rs`), which covers
+creatures constructed in Rust — the only door `NaN` can use, since JSON has no
+`NaN` literal. **Breaking input change:** a bias whose magnitude exceeds the
+`f32` range (~3.4e38) is now a `data_validation` error rather than a silent
+infinity.
+
 #### One overflow-checked `records_per_sample` derivation for `src/record/` (Issue #2047)
 
 The rule *"records per sample is `non_input_neuron_count + creature.input`, and
