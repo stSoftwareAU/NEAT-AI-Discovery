@@ -14,10 +14,14 @@ Ledger rules: [`README.md`](README.md). Index entry:
   src/analysis/recommendation src/analysis/shared` was empty when this scaffold
   was written. Since then the only change under those paths is the pair of
   `#[cfg(test)]` regression tests Issue #2104 added to
-  `src/analysis/synapse/holdout_validation.rs`, which add no production code, so
-  every outcome below still describes the current tree. **Line counts stay as at
-  the baseline commit** — that is what a later reader diffs against.
-- **Exposure:** `internal` — none of these 58 files is an FFI entry point. They
+  `src/analysis/synapse/holdout_validation.rs`, which add no production code, and
+  the Issue #2161 deadline/ceiling fix in
+  `src/analysis/synapse/candidate_generation.rs` with its `#[cfg(test)]`
+  regression file `src/analysis/synapse/issue_2161_locality_cancellation_test.rs`
+  — both swept in the row below — so every outcome below still describes the
+  current tree. **Line counts stay as at the baseline commit** — that is what a
+  later reader diffs against.
+- **Exposure:** `internal` — none of these 59 files is an FFI entry point. They
   are reached only through the `src/ffi` boundary (chunk 2), so every input they
   see has already crossed one validation layer. Untrusted values still arrive
   here: the caller-supplied `creature` topology, the Parquet record stream, and
@@ -80,13 +84,15 @@ correctness.
 
 ## Files swept
 
-58 files, 20,997 lines. Line counts as at the baseline commit. Every row starts
+59 files, 21,157 lines. Line counts as at the baseline commit, except the one
+file added after it (`issue_2161_locality_cancellation_test.rs`, counted as it
+stands today). Every row starts
 `pending`; the sub-issue owning the section replaces it with an outcome and a
 one-line reason.
 
 ### synapse pipeline
 
-3,641 lines. Swept by Issue #2104. The 14 rows are the files that sub-issue
+3,801 lines. Swept by Issue #2104. The 15 rows are the files that sub-issue
 owns; the scaffold split the synapse root differently from the sub-issues that
 edit it, so `filtering`, `holdout_validation`, `metadata`, `results` and
 `tests` moved here from `synapse post-processing`, and `adaptive_proposal` and
@@ -109,6 +115,7 @@ one sub-issue's file list.
 | `src/analysis/synapse/results.rs` | 115 | clean — assembly only; it moves merged vectors into the result and reads the metadata atomics after the rayon join has completed |
 | `src/analysis/synapse/metadata.rs` | 99 | clean — `Relaxed` atomics written inside the parallel section and read only after the join; `fetch_min` / `fetch_max` are read-modify-write, so no worker's update can be lost |
 | `src/analysis/synapse/tests.rs` | 495 | clean — `#[cfg(test)]` only, so no untrusted-input reachability; every fixture is built from compile-time literals and small loop indices |
+| `src/analysis/synapse/issue_2161_locality_cancellation_test.rs` | 160 | clean — `#[cfg(test)]` only (declared behind `#[cfg(test)] #[path = …]` in `candidate_generation.rs`), so no untrusted-input reachability; sources are built from loop indices with the one cast guarded by `u32::try_from`, and the timing assertion compares two readings of the same work rather than a wall-clock constant |
 
 ### synapse post-processing
 
@@ -213,6 +220,7 @@ it; `unbounded` means a finding was filed.
 | `filtering.rs::truncate_combined_synapse_candidate_sets` | `Vec::with_capacity(total)` | `total` is the sum of three live vector lengths, and the branch is only reached when `total > limit` | bounded |
 | `holdout_validation.rs::split_samples_holdout` | `Vec::with_capacity(samples.len() - validate_count)` | the early return rejects fewer than `HOLDOUT_MIN_SAMPLE_COUNT` (20) samples and `validate_count = round(0.3n) < n` for every `n >= 20`, so the subtraction cannot wrap | bounded |
 | `holdout_validation.rs::split_samples_holdout` | `Vec::with_capacity(validate_count)` | `validate_count = round(0.3 × samples.len())`, at most 30% of a live slice's length | bounded |
+| `issue_2161_locality_cancellation_test.rs::build_sources` | `Vec::with_capacity(count)` ×2 | fixture builder in a file declared behind `#[cfg(test)] #[path = …]` in `candidate_generation.rs`, so it is not compiled into the shipped `cdylib` — `count` is a compile-time literal passed by the tests, and no untrusted path reaches it | n/a — test-only |
 <!-- section: synapse post-processing -->
 | `structural_patterns.rs::detect_noisy_vs_trusted` | `HashMap::with_capacity(records.len())` | `records` is a live slice of already-materialised observation records, so the hint is the length of a collection the loader has itself allocated | bounded |
 | `structural_patterns.rs::detect_noisy_vs_trusted` | `Vec::with_capacity(target_map.map.len())` | `target_map.map` is a live `HashMap` built earlier in the same pass; its length is at most the record count | bounded |
