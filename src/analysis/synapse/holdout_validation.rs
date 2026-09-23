@@ -134,6 +134,42 @@ mod tests {
             .collect()
     }
 
+    /// Issue #2104 (chunk 8b sweep): an empty sample set must be turned away by
+    /// the `HOLDOUT_MIN_SAMPLE_COUNT` guard before
+    /// `Vec::with_capacity(samples.len() - validate_count)` is reached —
+    /// `validate_count` is floored at 1, so the subtraction would wrap to a
+    /// near-`usize::MAX` capacity in release and abort the process on
+    /// allocation failure.
+    #[test]
+    fn empty_sample_set_returns_none_before_the_subtraction() {
+        assert!(
+            split_samples_holdout(&[], "source-1", "target-1").is_none(),
+            "an empty sample set must never reach `samples.len() - validate_count`"
+        );
+    }
+
+    /// Issue #2104: across every sample count the guard admits, the two
+    /// partitions cover all samples and neither is empty — so the subtraction
+    /// that sizes `train` stays positive.
+    #[test]
+    fn every_admitted_sample_count_partitions_without_wrapping() {
+        for count in HOLDOUT_MIN_SAMPLE_COUNT..=HOLDOUT_MIN_SAMPLE_COUNT + 100 {
+            let samples = make_samples(count);
+            let split = split_samples_holdout(&samples, "source-1", "target-1")
+                .unwrap_or_else(|| panic!("{count} samples is at or above the minimum"));
+            assert!(!split.train.is_empty(), "{count}: train must be non-empty");
+            assert!(
+                !split.validate.is_empty(),
+                "{count}: validate must be non-empty"
+            );
+            assert_eq!(
+                split.train.len() + split.validate.len(),
+                count,
+                "{count}: every sample must land in exactly one partition"
+            );
+        }
+    }
+
     #[test]
     fn test_split_returns_none_below_threshold() {
         let samples = make_samples(10);
