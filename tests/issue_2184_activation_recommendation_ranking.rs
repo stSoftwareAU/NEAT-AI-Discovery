@@ -127,7 +127,7 @@ fn relu6_is_penalised_when_inputs_are_negative_heavy() {
         "precondition: RELU must be penalised for this distribution, got {relu}"
     );
     assert!(
-        scores.get("ReLU6").is_none(),
+        !scores.contains_key("ReLU6"),
         "precondition: suitability keys are uppercase (Issue #753)"
     );
 
