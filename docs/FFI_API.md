@@ -1353,6 +1353,26 @@ There are intentionally **no validation-bypassing paths** for creature input.
 Any new FFI entry point that accepts a `CreatureJson` must call
 `validate_creature` before any business logic and update this table.
 
+#### Cost of Growth Finitude (Issue #2137)
+
+`RankFocusNeuronsInput.cost_of_growth` (`costOfGrowth`, optional `f32`) carries
+`#[serde(deserialize_with = "deserialise_cost_of_growth")]`, so a
+`rank_focus_neurons` payload whose cost is finite as an `f64` but overflows the
+`f32` it is stored in (`1e39`, magnitude above ~3.4e38) is rejected with
+`success: false` and `errorKind: "data_validation"` rather than narrowed
+silently to `±∞`. The error names the field, states the finitude requirement and
+cites the issue. `1e400` and the bare `Infinity`/`NaN` tokens were already
+refused by `serde_json`'s own number parser.
+
+An absent or explicitly `null` `costOfGrowth` still means "use the default"
+(`DEFAULT_COST_OF_GROWTH = 1e-7`) — only a *present, non-finite* value is
+refused. Finite but unusable values (`0.0`, negatives, and `1e-60`, which
+underflows to `0.0` in `f32`) are not a boundary concern: they remain with the
+downstream fallback in `focus::ranking::effective_cost_of_growth`, which
+substitutes the default and logs a WARN (Issue #1807). That fallback also still
+guards in-crate Rust callers, who can pass `Some(f32::NAN)` without crossing
+this boundary.
+
 ---
 
 ## 📁 File Format

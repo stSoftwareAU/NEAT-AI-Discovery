@@ -27,7 +27,7 @@
 use neat_ai_discovery::{
     CreatureJson, NeuronJson, RankFocusNeuronsInput, SynapseJson, rank_focus_neurons_internal,
 };
-use serde_json::{Value, json};
+use serde_json::Value;
 
 // ============================================================================
 // Helpers
