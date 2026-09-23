@@ -187,14 +187,18 @@ temperatures focus on the highest-scoring candidates.
 - **Cooling**: callers can implement cooling schedules (linear or exponential)
   by decreasing this value across generations
 - **Finitude (Issue #2136)**: the field carries
-  `#[serde(deserialize_with = "deserialise_temperature")]` on every analysis
-  request (`analyzeParallel`, `analyzeSynapses`, `analyzeNeurons`,
-  `analyzeAll`), so a JSON number that is finite as an `f64` but overflows the
-  `f32` it is stored in (`1e39`, magnitude above ~3.4e38) is rejected with a
-  parse error rather than narrowed silently to `Infinity`. `1e400` was already
-  refused by `serde_json`'s own number parser. Values outside the valid range
-  are **not** rejected — they are clamped to `[0.01, 5.0]` by the scaling
-  functions as before.
+  `#[serde(deserialize_with = "deserialise_temperature")]` on all four analysis
+  request structs (`AnalyzeParallelInput`, `AnalyzeSynapsesInput`,
+  `AnalyzeNeuronsInput`, `AnalyzeAllInput`), so a JSON number that is finite as
+  an `f64` but overflows the `f32` it is stored in (`1e39`, magnitude above
+  ~3.4e38) is rejected with a parse error rather than narrowed silently to
+  `Infinity`. `1e400` was already refused by `serde_json`'s own number parser.
+  Of those four structs only `AnalyzeParallelInput` is deserialised from a
+  shipped FFI payload (`analyze_parallel`); the other three are constructed in
+  Rust, so their guard is consistency cover rather than a live boundary — see
+  the Validated FFI Surface table below. Values outside the valid range are
+  **not** rejected — they are clamped to `[0.01, 5.0]` by the scaling functions
+  as before.
 
 When `NEAT_AI_DISCOVERY_MH_TEMPERATURE` is also set, Metropolis-Hastings
 probabilistic acceptance is applied to synapse candidates, allowing
