@@ -380,6 +380,32 @@ where
     deserialise_finite_f32(deserialiser, "activation")
 }
 
+// ==== Temperature finitude validation (Issue #2136) ====
+
+/// Deserialise an analysis `temperature`, rejecting any non-finite value
+/// (Issue #2136).
+///
+/// A JSON magnitude above `f32::MAX` — such as `1e39` — is an ordinary `f64`,
+/// so `serde_json` accepts it and the narrowing cast to `f32` saturates to
+/// infinity in silence. Until this check, an infinite temperature was only ever
+/// mitigated downstream by the range clamps in `analysis::constants::temperature`,
+/// which is inconsistent with every other float on this boundary (Issues #2132,
+/// #2133, #2134) and leaves NaN unhandled — `f32::clamp` propagates NaN. Reject
+/// at the boundary, once.
+fn deserialise_temperature<'de, D>(deserialiser: D) -> Result<f32, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let raw = f32::deserialize(deserialiser)?;
+    if !raw.is_finite() {
+        return Err(serde::de::Error::custom(format!(
+            "temperature must be finite, got {raw} (Issue #2136). \
+             Infinity and NaN are not permitted in FFI payloads."
+        )));
+    }
+    Ok(raw)
+}
+
 /// An absent or explicitly null `value` stays `None`; a present one must be
 /// finite (Issue #2134).
 fn deserialise_optional_value<'de, D>(deserialiser: D) -> Result<Option<f32>, D::Error>
