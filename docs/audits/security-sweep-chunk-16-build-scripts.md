@@ -212,7 +212,7 @@ crates.io, so it carries no third-party `build.rs` — which is the risk the
 | [#2126](https://github.com/stSoftwareAU/NEAT-AI-Discovery/issues/2126) | `scripts/install-rust-toolchain.sh:52,104` | arithmetic-context injection via unvalidated environment | low | open — filed before this sweep, re-confirmed here |
 | [#2127](https://github.com/stSoftwareAU/NEAT-AI-Discovery/issues/2127) | `scripts/install-rustup.sh:115-117` | temporary path interpolated into an `EXIT` trap string | low | open — filed before this sweep, re-confirmed here |
 | [#2139](https://github.com/stSoftwareAU/NEAT-AI-Discovery/issues/2139) | `scripts/check-pr-summary-location.sh:22,35` | fail-silent | low | open — filed by this sweep |
-| [#2140](https://github.com/stSoftwareAU/NEAT-AI-Discovery/issues/2140) | `benchmark.sh:32` | fail-silent + `eval` on a variable | low | open — filed by this sweep |
+| [#2140](https://github.com/stSoftwareAU/NEAT-AI-Discovery/issues/2140) | `benchmark.sh:32` | fail-silent + `eval` on a variable | low | **fixed** — `benchmark.sh::run_benchmark` now takes the command as arguments and invokes `"$@"` (no `eval` remains in the file); a non-zero status prints the label, the argv and the last 20 lines of the captured output on stderr and `exit 1`s, so no duration or improvement figure is produced for a run that did not complete. Guarded by `tests/issue_2140_benchmark_failure_is_loud.rs::a_failing_benchmark_command_fails_the_script_loudly`, which drives the real script with a failing stub `cargo` |
 
 Not a security finding, filed separately so it does not dilute the four above:
 [#2141](https://github.com/stSoftwareAU/NEAT-AI-Discovery/issues/2141) —
@@ -309,7 +309,12 @@ immediately; the mitigating fix is `mktemp` inside the destination directory.)
   defect is that `|| true` plus the discarded streams turn a suite that failed
   to build into a *timing*, which `calc_improvement` (`:137-145`) then prints as
   a speed-up (`:157-158`). Filed with the `eval` removal alongside, because
-  `"$@"` closes the injection class for one line.
+  `"$@"` closes the injection class for one line. **Fixed** — `run_benchmark`
+  takes `label` then the command as arguments and runs `if ! "$@"`, capturing
+  output to an `mktemp` log and printing its last 20 lines with the label and
+  argv on stderr before `exit 1`. All four call sites pass argv rather than a
+  string and carry an explicit `|| exit 1`, so the abort does not rely on the
+  command-substitution form. No `eval` remains in the file.
 - **Accepted with reason — blast radius.** `:62` `git stash push`, `:95`/`:111`
   `git checkout`, `:115` `git stash pop`: the script moves the working tree to a
   hard-coded baseline commit (`:17`) and back. The `cleanup` trap (`:66-88`)
@@ -320,7 +325,8 @@ immediately; the mitigating fix is `mktemp` inside the destination directory.)
 - **Accepted with reason — `2>/dev/null` on `cargo build`** (`:96`, `:124`).
   Unlike `:32` there is no `|| true`, so a failing build still aborts the script
   under `set -euo pipefail`. Only the diagnostics are lost, which is a usability
-  cost rather than a masked failure.
+  cost rather than a masked failure. **Superseded** — the #2140 fix dropped both
+  redirects, so a failing baseline build now says why.
 - **Clean** — `:14` `PARQUET_FILE="${1:-}"` is only ever `-f`-tested (`:101`,
   `:129`) and printed; it reaches no command position.
 
