@@ -330,6 +330,77 @@ pub struct SynapseJson {
     pub synapse_type: Option<String>,
 }
 
+// ==== NeuronData float finitude validation (Issue #2134) ====
+
+/// The Issue #2134 rejection message for a non-finite `NeuronData` float.
+fn non_finite_neuron_data_detail(field: &str, raw: f32) -> String {
+    format!(
+        "neuron data {field} must be finite, got {raw} (Issue #2134). \
+         Infinity and NaN are not permitted in FFI payloads."
+    )
+}
+
+/// Deserialise a recorded float, rejecting any non-finite value (Issue #2134).
+///
+/// A JSON magnitude above `f32::MAX` — such as `1e39` — is a perfectly ordinary
+/// `f64`, so `serde_json` accepts it and the narrowing cast to `f32` saturates
+/// to infinity without complaint. That infinity then flows into every analysis
+/// site: means, variances and covariances become Infinity or NaN, and target
+/// values (`activation + error`) become Infinity, so the caller is handed
+/// confidently wrong metrics. Reject at the boundary, once, rather than
+/// re-guarding each consumption site.
+fn deserialise_finite_f32<'de, D>(deserialiser: D, field: &str) -> Result<f32, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let raw = f32::deserialize(deserialiser)?;
+    if !raw.is_finite() {
+        return Err(serde::de::Error::custom(non_finite_neuron_data_detail(
+            field, raw,
+        )));
+    }
+    Ok(raw)
+}
+
+fn deserialise_activation<'de, D>(deserialiser: D) -> Result<f32, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    deserialise_finite_f32(deserialiser, "activation")
+}
+
+/// An absent or explicitly null `value` stays `None`; a present one must be
+/// finite (Issue #2134).
+fn deserialise_optional_value<'de, D>(deserialiser: D) -> Result<Option<f32>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let Some(raw) = Option::<f32>::deserialize(deserialiser)? else {
+        return Ok(None);
+    };
+    if !raw.is_finite() {
+        return Err(serde::de::Error::custom(non_finite_neuron_data_detail(
+            "value", raw,
+        )));
+    }
+    Ok(Some(raw))
+}
+
+/// Every element is checked, not merely the first — one poisoned entry anywhere
+/// in the vector is enough to corrupt the error statistics (Issue #2134).
+fn deserialise_finite_errors<'de, D>(deserialiser: D) -> Result<Vec<f32>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let raw = Vec::<f32>::deserialize(deserialiser)?;
+    if let Some(bad) = raw.iter().copied().find(|e| !e.is_finite()) {
+        return Err(serde::de::Error::custom(non_finite_neuron_data_detail(
+            "errors", bad,
+        )));
+    }
+    Ok(raw)
+}
+
 /// Pre-computed neuron data for a single neuron
 #[derive(Debug, Deserialize, Clone)]
 pub struct NeuronData {
@@ -337,9 +408,16 @@ pub struct NeuronData {
     /// exactly. Purely numeric integer IDs are rejected (Issue #952).
     #[serde(deserialize_with = "deserialise_neuron_uuid")]
     pub neuron_uuid: String,
+    /// Recorded activation. Must be finite — Infinity and NaN are rejected at
+    /// the FFI boundary (Issue #2134).
+    #[serde(deserialize_with = "deserialise_activation")]
     pub activation: f32,
-    #[serde(default)]
+    /// Recorded pre-squash value, when the host supplies one. Must be finite
+    /// when present (Issue #2134).
+    #[serde(default, deserialize_with = "deserialise_optional_value")]
     pub value: Option<f32>,
+    /// Per-sample errors. Every element must be finite (Issue #2134).
+    #[serde(deserialize_with = "deserialise_finite_errors")]
     pub errors: Vec<f32>,
 }
 
@@ -373,7 +451,7 @@ pub struct NeuronStatsJson {
 mod tests {
     use super::*;
     use serde::de::IntoDeserializer;
-    use serde::de::value::{Error as ValueError, F32Deserializer};
+    use serde::de::value::{Error as ValueError, F32Deserializer, SeqDeserializer};
 
     /// NaN cannot be written in JSON, so the JSON-reachable cases live in
     /// `tests/ffi/issue_2132_synapse_weight_finitude.rs`. Reaching the NaN
@@ -390,6 +468,35 @@ mod tests {
         assert!(
             msg.contains("Issue #2132"),
             "error must cite the issue: {msg}"
+        );
+    }
+
+    /// NaN is unreachable from JSON, so the JSON-reachable cases live in
+    /// `tests/ffi/issue_2134_neuron_data_finitude.rs`; only an in-crate test can
+    /// feed NaN to the module-private helpers directly.
+    #[test]
+    fn deserialise_neuron_data_floats_reject_nan() {
+        // `value` is omitted here: serde's primitive deserialisers cannot answer
+        // `deserialize_option`, so there is no way to hand NaN to the optional
+        // helper. Its finitude check shares `non_finite_neuron_data_detail` with
+        // the two below and is exercised over JSON by the integration test.
+        let nan: F32Deserializer<ValueError> = f32::NAN.into_deserializer();
+        let msg = deserialise_activation(nan)
+            .expect_err("a NaN activation must be rejected")
+            .to_string();
+        assert!(
+            msg.contains("finite") && msg.contains("Issue #2134"),
+            "activation must name finitude and cite the issue: {msg}"
+        );
+
+        let errors: SeqDeserializer<std::vec::IntoIter<f32>, ValueError> =
+            vec![-0.05_f32, f32::NAN].into_deserializer();
+        let err = deserialise_finite_errors(errors)
+            .expect_err("a NaN error element must be rejected")
+            .to_string();
+        assert!(
+            err.contains("Issue #2134") && err.contains("errors"),
+            "errors must name the field and cite the issue: {err}"
         );
     }
 
