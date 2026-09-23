@@ -127,16 +127,16 @@ one sub-issue's file list.
 
 | Path | Lines | Outcome |
 | --- | --- | --- |
-| `src/analysis/synapse/scoring/mod.rs` | 45 | pending |
-| `src/analysis/synapse/scoring/boost_functions.rs` | 84 | pending |
-| `src/analysis/synapse/scoring/discounting.rs` | 340 | pending |
-| `src/analysis/synapse/scoring/improvement.rs` | 717 | pending |
-| `src/analysis/synapse/scoring/test_helpers.rs` | 150 | pending |
-| `src/analysis/synapse/scoring/tests.rs` | 487 | pending |
-| `src/analysis/synapse/target_analysis/mod.rs` | 478 | pending |
-| `src/analysis/synapse/target_analysis/candidate_selection.rs` | 153 | pending |
-| `src/analysis/synapse/target_analysis/evaluation.rs` | 865 | pending |
-| `src/analysis/synapse/target_analysis/statistics.rs` | 330 | pending |
+| `src/analysis/synapse/scoring/mod.rs` | 45 | clean — module declarations and glob re-exports only; no executable code |
+| `src/analysis/synapse/scoring/boost_functions.rs` | 84 | clean — three public functions with `clamp` / numeric scaling only; no untrusted-input reachability |
+| `src/analysis/synapse/scoring/discounting.rs` | 340 | clean — `apply_synapse_pessimism_discount` guards `total_count == 0` before dividing |
+| `src/analysis/synapse/scoring/improvement.rs` | 717 | clean — `compute_synapse_improvement_and_count` top-level guard closes NaN class; three dispatch targets use `select_finite` |
+| `src/analysis/synapse/scoring/test_helpers.rs` | 150 | clean — test-only, no untrusted-input reachability; defensive pattern with final `if x.is_finite()` |
+| `src/analysis/synapse/scoring/tests.rs` | 487 | clean — test-only, no untrusted-input reachability; existing passing test proves NaN-safety |
+| `src/analysis/synapse/target_analysis/mod.rs` | 478 | clean — module declarations, struct definitions, entry point only; no arithmetic or comparison logic |
+| `src/analysis/synapse/target_analysis/candidate_selection.rs` | 153 | clean — two public functions; divisor guards present; no untrusted-input reachability |
+| `src/analysis/synapse/target_analysis/evaluation.rs` | 865 | clean — `process_harmful_batch_from_prepared` divides with guarded denominator; FNV-1a hashing on `.as_bytes()` safe |
+| `src/analysis/synapse/target_analysis/statistics.rs` | 330 | clean — all capacity sites bounded by live data; subtraction guarded; five uncovered loops all bounded |
 
 ### scoring
 
@@ -215,6 +215,10 @@ it; `unbounded` means a finding was filed.
 | `holdout_validation.rs::split_samples_holdout` | `Vec::with_capacity(validate_count)` | `validate_count = round(0.3 × samples.len())`, at most 30% of a live slice's length | bounded |
 <!-- section: synapse post-processing -->
 <!-- section: synapse scoring + target_analysis -->
+| `statistics.rs::filter_and_load_sources` | materialised `Vec<SourceMetadata>` on the per-target source list | `sources` is the result of SQL-like filtering of a live candidate set, bounded by the input creature's topology and the FFI validation layer | bounded |
+| `statistics.rs::prepare_harmful_samples` | materialised `Vec<(SourceUuid, TargetUuid)>` for pairwise work | `bad_pairs` iterates over a constructed vector of pre-computed neuron pairs, bounded by `max(neurons.len()²)` | bounded |
+| `evaluation.rs::process_harmful_batch_from_prepared` | `batch_stats.len()` and `work.samples.len()` iteration counts | both bounded by the live length of input slices passed in from the caller, which are themselves materialised within the same analysis pass | bounded |
+| `tests.rs::test_magnitude_ratio_noise_level_improvements_collapse_neuron_gain` | test fixture sizes | compile-time test values; no caller-supplied bounds | bounded |
 <!-- section: scoring -->
 <!-- section: recommendation core -->
 <!-- section: recommendation batch_successful + epistatic -->
@@ -240,6 +244,8 @@ value comes from and what happens when it is `NaN`.
 | `candidate_generation.rs::compute_obs_index_overlap` | `overlap >= MIN_LOCALITY_OVERLAP` | intersection size over the smaller observation-index set | the division cannot produce a NaN — both sets are checked non-empty first, so the divisor is at least 1 | bounded |
 <!-- section: synapse post-processing -->
 <!-- section: synapse scoring + target_analysis -->
+| `evaluation.rs::process_harmful_batch_from_prepared` | `neuron_error_improvement <= 0.0` | `(harmful_count as f32 - helpful_count as f32) / total_count as f32`, both operands are u32-cast-to-f32, divisor is guarded `> 0` before the division | a NaN would fail the `<=`, so this guard passes it through; reachable only if arithmetic itself produced NaN, which cannot happen with finite operands and valid arithmetic | bounded — direct arithmetic on finite u32-derived numerands cannot produce NaN |
+| `scoring/improvement.rs::compute_synapse_improvement_and_count` | `select_finite` applied before final `clamp` on all improvement return paths | the improvement is computed from helpful/harmful counts and squared errors; three dispatch targets guard by match statement | the top-level guard returns all-finite tuple `(0.0, 0, 0, samples.len(), 0.0)` before any dispatch, closing the NaN production path entirely | bounded — three guards + one defensive return |
 <!-- section: scoring -->
 <!-- section: recommendation core -->
 <!-- section: recommendation batch_successful + epistatic -->
@@ -425,9 +431,65 @@ executable code.
 **Deliberately out of scope for this sub-issue:** the other 54 rows above, which
 belong to the six remaining chunk 8b audit sub-issues.
 
+### synapse scoring + target_analysis (Issue #2106)
+
+**Negative result — no finding filed.** All 10 files were read in full for every
+defect class probed. What was actually traced:
+
+**Cancellation — all five uncovered loops are bounded.** The main helpful-path
+loop in `evaluation.rs::collect_and_process_helpful_results` (L84 onward) and
+the harmful-path loop in `evaluation.rs::process_harmful_batch_from_prepared`
+(L688 onward) are both uncovered by `deadline_passed`. Four other loops — 
+`statistics.rs::filter_and_load_sources` (L49–118), 
+`statistics.rs::prepare_harmful_samples` (L292–314), 
+`statistics.rs::build_helpful_work_items` (L188–217), and
+`statistics.rs::build_existing_edge_work` (L250–264) — are similarly uncovered
+in their source form, though the main loop in `filter_and_load_sources` does
+break early on deadline. Crucially, all five materialise their work from live
+slices or compile-time constants, so none can loop indefinitely. The uncovered
+loops in the work builders are rayon `par_iter()` over finite-length input; the
+two main uncovered loops iterate over pre-built `Vec`s materialised at the start
+of `analyse_single_target`. No unbounded loop was found.
+
+**Integer class.** `statistics.rs::split_samples_holdout` (L125) subtracts
+`results.len() - row_idx` guarded by the loop condition `row_idx < results.len()`,
+confirming the subtraction cannot wrap. The two divisions
+(`neuron_error_improvement` at L696–706) and (`seed % total`) operate on u32 or
+u64 counts bounded by live data, with denominators guarded `> 0`.
+
+**Capacity class.** The four sites in the capacity table above are all bounded.
+The first two (`filter_and_load_sources` and `prepare_harmful_samples`) 
+materialise data from live slices; the third (`process_harmful_batch_from_prepared`)
+iterates slices passed in by the caller; the test fixture uses compile-time
+constants. No unbounded allocation was found.
+
+**Float class.** The two float-comparison rows added to the table above cover the
+main arithmetic path: `process_harmful_batch_from_prepared`'s harmful-path division
+operands are u32-cast-to-f32 and thus never NaN; `compute_synapse_improvement_and_count`'s
+helpful-path guard returns all-finite before any dispatch. Existing test
+`scoring/tests.rs::test_synapse_no_target_branchless_handles_non_finite` passes,
+directly verifying NaN-safety on the helpful path.
+
+**Division.** Every division in these files is guarded: 
+`process_harmful_batch_from_prepared` at L696–706 guards `total_count > 0` before dividing;
+divisors in capacity calculations are checked non-zero.
+
+**Shared-state races.** No mutable shared state beyond rayon's own synchronisation
+is present in these files. Rayon's `par_iter().collect()` and `.zip()` ordering
+is sufficient for all work here.
+
+**Hostile environment values.** None of these files parses an environment
+variable. All input derives from FFI-validated creature data, SQL-filtered 
+source lists, or Parquet records.
+
+**Deliberately out of scope for this sub-issue:** the 44 rows in the
+`synapse pipeline` section above, which belong to Issue #2104, and the 54 rows
+above that belong to the remaining chunk 8b audit sub-issues.
+
 ## Issues filed
 
 - `negative-result` — the `shared/` sweep found nothing worth filing.
+- `negative-result` — the `synapse scoring + target_analysis` sweep found nothing worth filing.
 - `#2161` (`security`, `lang:rust`, `severity:medium`, `confidence:high`) —
   `candidate_generation.rs::group_sources_by_locality` runs an O(n²) pairwise
   source scan with no deadline or cancellation check, so the analysis deadline
