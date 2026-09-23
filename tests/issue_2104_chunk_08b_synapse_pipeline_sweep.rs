@@ -187,8 +187,7 @@ fn every_capacity_site_in_the_swept_files_has_a_table_row() {
         let has_site = production_source(file).lines().any(is_capacity_site);
         let cited = region.contains(&citation_prefix(file));
         assert_eq!(
-            has_site,
-            cited,
+            has_site, cited,
             "{file} allocates from an expression: {has_site}, but the capacity table cites it: \
              {cited} — every sized allocation in a swept file needs a row naming what bounds it, \
              and a row for a file with no such site describes code that is gone"
@@ -315,11 +314,8 @@ fn the_synapse_pipeline_outcome_links_its_filed_finding() {
     clippy::cast_sign_loss
 )]
 fn the_holdout_split_can_never_subtract_more_samples_than_it_has() {
-    assert!(
-        HOLDOUT_MIN_SAMPLE_COUNT >= 1,
-        "a zero minimum would let an empty sample set reach the subtraction"
-    );
-
+    // The smallest admitted count leads the list, so a minimum of zero fails the
+    // `validate_count < total` assertion below rather than passing silently.
     for total in [
         HOLDOUT_MIN_SAMPLE_COUNT,
         HOLDOUT_MIN_SAMPLE_COUNT + 1,
