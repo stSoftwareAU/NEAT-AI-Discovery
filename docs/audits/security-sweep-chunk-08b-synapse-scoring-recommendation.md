@@ -439,9 +439,9 @@ defect class probed. What was actually traced:
 **Cancellation — all five uncovered loops are bounded.** The main helpful-path
 loop in `evaluation.rs::collect_and_process_helpful_results` (L84 onward) and
 the harmful-path loop in `evaluation.rs::process_harmful_batch_from_prepared`
-(L688 onward) are both uncovered by `deadline_passed`. Four other loops — 
-`statistics.rs::filter_and_load_sources` (L49–118), 
-`statistics.rs::prepare_harmful_samples` (L292–314), 
+(L688 onward) are both uncovered by `deadline_passed`. Four other loops —
+`statistics.rs::filter_and_load_sources` (L49–118),
+`statistics.rs::prepare_harmful_samples` (L292–314),
 `statistics.rs::build_helpful_work_items` (L188–217), and
 `statistics.rs::build_existing_edge_work` (L250–264) — are similarly uncovered
 in their source form, though the main loop in `filter_and_load_sources` does
@@ -458,7 +458,7 @@ confirming the subtraction cannot wrap. The two divisions
 u64 counts bounded by live data, with denominators guarded `> 0`.
 
 **Capacity class.** The four sites in the capacity table above are all bounded.
-The first two (`filter_and_load_sources` and `prepare_harmful_samples`) 
+The first two (`filter_and_load_sources` and `prepare_harmful_samples`)
 materialise data from live slices; the third (`process_harmful_batch_from_prepared`)
 iterates slices passed in by the caller; the test fixture uses compile-time
 constants. No unbounded allocation was found.
@@ -470,7 +470,7 @@ helpful-path guard returns all-finite before any dispatch. Existing test
 `scoring/tests.rs::test_synapse_no_target_branchless_handles_non_finite` passes,
 directly verifying NaN-safety on the helpful path.
 
-**Division.** Every division in these files is guarded: 
+**Division.** Every division in these files is guarded:
 `process_harmful_batch_from_prepared` at L696–706 guards `total_count > 0` before dividing;
 divisors in capacity calculations are checked non-zero.
 
@@ -479,7 +479,7 @@ is present in these files. Rayon's `par_iter().collect()` and `.zip()` ordering
 is sufficient for all work here.
 
 **Hostile environment values.** None of these files parses an environment
-variable. All input derives from FFI-validated creature data, SQL-filtered 
+variable. All input derives from FFI-validated creature data, SQL-filtered
 source lists, or Parquet records.
 
 **Deliberately out of scope for this sub-issue:** the 44 rows in the
