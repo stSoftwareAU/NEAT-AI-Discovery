@@ -53,8 +53,10 @@ const SHARED_FILES: [&str; 4] = [
     "src/analysis/shared/timing.rs",
 ];
 
-/// Total in-scope file count named by Issue #2103.
-const EXPECTED_FILE_COUNT: usize = 58;
+/// Total in-scope file count: the 58 files named by Issue #2103 at the
+/// baseline, plus `issue_2161_locality_cancellation_test.rs`, added under
+/// `src/analysis/synapse/` after it and swept in the same change.
+const EXPECTED_FILE_COUNT: usize = 59;
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
