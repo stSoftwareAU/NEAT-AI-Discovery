@@ -201,8 +201,13 @@ pub struct NeuronJson {
     #[serde(default = "default_squash", deserialize_with = "deserialise_squash")]
     pub squash: String,
     /// Neuron bias. Defaults to zero when omitted, and must be finite: a
-    /// non-finite bias is rejected at deserialisation (Issue #2133).
-    #[serde(default, deserialize_with = "deserialise_neuron_bias")]
+    /// non-finite bias is rejected at deserialisation and refused at
+    /// serialisation (Issue #2133).
+    #[serde(
+        default,
+        deserialize_with = "deserialise_neuron_bias",
+        serialize_with = "serialise_neuron_bias"
+    )]
     pub bias: f32,
 }
 
@@ -225,6 +230,26 @@ where
         )));
     }
     Ok(bias)
+}
+
+/// Serialise a neuron's `bias`, refusing to emit Infinity or `NaN`
+/// (Issue #2133).
+///
+/// `serde_json` renders a non-finite `f32` as JSON `null`, which a host reading
+/// the snapshot back cannot distinguish from an omitted bias — the corruption
+/// would arrive silently as a zero. A neuron built in Rust therefore fails at
+/// the point of emission rather than downstream.
+fn serialise_neuron_bias<S>(value: &f32, serialiser: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    if !value.is_finite() {
+        return Err(SerialiseError::custom(non_finite_bias_detail(
+            "The neuron",
+            *value,
+        )));
+    }
+    value.serialize(serialiser)
 }
 
 fn default_squash() -> String {
