@@ -18,8 +18,11 @@ Ledger rules: [`README.md`](README.md). Index entry:
   the Issue #2161 deadline/ceiling fix in
   `src/analysis/synapse/candidate_generation.rs` with its `#[cfg(test)]`
   regression file `src/analysis/synapse/issue_2161_locality_cancellation_test.rs`
-  — both swept in the row below — so every outcome below still describes the
-  current tree. **Line counts stay as at the baseline commit** — that is what a
+  — both swept in the row below — and the Issue #2184 ranking fix in
+  `src/analysis/recommendation/activation_recommendation.rs` (PR #2187, commit
+  `3d1b24f`), which the `recommendation core` row records as swept-and-fixed.
+  So every outcome below still describes the current tree.
+  **Line counts stay as at the baseline commit** — that is what a
   later reader diffs against.
 - **Exposure:** `internal` — none of these 59 files is an FFI entry point. They
   are reached only through the `src/ffi` boundary (chunk 2), so every input they
@@ -169,7 +172,7 @@ one sub-issue's file list.
 | Path | Lines | Outcome |
 | --- | --- | --- |
 | `src/analysis/recommendation/mod.rs` | 14 | clean — nine `pub mod` declarations and a doc comment; no executable code, so nothing to allocate, compare or divide |
-| `src/analysis/recommendation/activation_recommendation.rs` | 927 | clean — every suitability score is a compile-time literal scaled by compile-time penalties, so neither ranking site can see an input-derived float; the two ranking defects found here were out of class, filed as #2184 and **since fixed** (PR #2185, commit `3d1b24f`, merged into this branch) |
+| `src/analysis/recommendation/activation_recommendation.rs` | 927 | clean — every suitability score is a compile-time literal scaled by compile-time penalties, so neither ranking site can see an input-derived float; the two ranking defects found here were out of class, filed as #2184 and **since fixed** (PR #2187, commit `3d1b24f`, merged into this branch) |
 | `src/analysis/recommendation/fan_in.rs` | 608 | findings filed — #2181 (the two `partial_cmp(…).unwrap_or(Equal)` sorts are not total orders and the `corr.abs() < THRESHOLD` filter fails open, so a NaN correlation reachable from finite records empties the `MAX_INPUTS_PER_TARGET` window) and #2183 (the target × input scan consults no deadline) |
 | `src/analysis/recommendation/gradient_discovery.rs` | 330 | findings filed — #2182 (`mean_gradient.abs() * effective_delta.abs()` overflows to `+inf` from finite operands and the descending `total_cmp` ranks it first; the `!mean_gradient.is_finite()` guard closes only the NaN half) and #2183 |
 | `src/analysis/recommendation/multi_hop.rs` | 497 | findings filed — #2182 (two paths to rank 1: `compute_mean_abs_error` sums the target's **whole** error map in `f32`, so `+inf` is reachable on observation indices the gating correlation never sees; and `find_three_hop_extensions` spells its correlation filter `<`, the fail-open direction, so a NaN `combined_corr` reaches the same descending `total_cmp` and sorts **above** `+inf`) and #2183. Only the two-hop filter at `detect_multi_hop_candidates` is fail-closed — the two filters in this file point in opposite directions |
@@ -986,7 +989,7 @@ findings:
   `activation_recommendation.rs::classify_activation_suitability` spells the
   key `"RELU6"`, so that penalty branch is dead and RELU6 keeps its full score
   in exactly the negative-heavy case the penalty exists to discourage.
-  **Both are fixed** — PR #2185 (commit `3d1b24f`) breaks the tie on the
+  **Both are fixed** — PR #2187 (commit `3d1b24f`) breaks the tie on the
   activation name and respells the penalty key, and it is merged into this
   branch, so the paragraph above describes the tree as swept, not as it stands
   today. The `clean` row for this file is unchanged: neither defect was in
@@ -1058,7 +1061,7 @@ other chunk 8b audit sub-issues.
   `recommendation core` sweep (a non-deterministic activation tie-break with a
   dead penalty key, and the never-dispatched `output_competition` module).
   Ordinary issues, **not** security findings. `#2184` is **closed** — its fix
-  landed as PR #2185 (commit `3d1b24f`) and is merged into this branch, so
+  landed as PR #2187 (commit `3d1b24f`) and is merged into this branch, so
   `recommend_activation_function` now breaks a score tie on the activation
   name and `apply_gradient_flow_penalty` spells the penalty key `"RELU6"`;
   `#2185` remains open.

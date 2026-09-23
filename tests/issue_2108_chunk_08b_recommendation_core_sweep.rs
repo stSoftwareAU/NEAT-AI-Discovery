@@ -715,6 +715,12 @@ fn the_synapse_gradient_rejects_every_unusable_mean_before_returning_it() {
 /// finite — can move the ranked value off that space.
 #[test]
 fn the_activation_recommender_ranks_over_a_constant_score_space() {
+    // Issue #1799: the recommender legitimately returns `None` when the best
+    // activation beats the current one by less than `MIN_IMPROVEMENT_THRESHOLD`,
+    // so the loop below skips such a magnitude — which means it would pass with
+    // zero assertions executed if every magnitude were skipped. Count the ones
+    // that actually ranked and pin that count after the loop.
+    let mut ranked = 0_usize;
     for magnitude in [1.0e-30_f32, 1.0, 1.0e30, 3.0e38] {
         let records: Vec<DiscoverRecord> = (0..60_u32)
             .map(|i| {
@@ -730,6 +736,7 @@ fn the_activation_recommender_ranks_over_a_constant_score_space() {
         let Some(recommendation) = recommend_activation_function(&records, "IDENTITY") else {
             continue;
         };
+        ranked += 1;
         assert!(
             recommendation.expected_improvement.is_finite()
                 && recommendation.expected_improvement > 0.0,
@@ -743,4 +750,9 @@ fn the_activation_recommender_ranks_over_a_constant_score_space() {
             recommendation.confidence
         );
     }
+    assert!(
+        ranked > 0,
+        "no magnitude produced a recommendation, so every assertion above was skipped — the \
+         `clean` verdict for activation_recommendation.rs rests on a ranked value being seen"
+    );
 }
