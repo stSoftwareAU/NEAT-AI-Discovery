@@ -211,7 +211,7 @@ crates.io, so it carries no third-party `build.rs` — which is the risk the
 | --- | --- | --- | --- | --- |
 | [#2126](https://github.com/stSoftwareAU/NEAT-AI-Discovery/issues/2126) | `scripts/install-rust-toolchain.sh:52,104` | arithmetic-context injection via unvalidated environment | low | open — filed before this sweep, re-confirmed here |
 | [#2127](https://github.com/stSoftwareAU/NEAT-AI-Discovery/issues/2127) | `scripts/install-rustup.sh:115-117` | temporary path interpolated into an `EXIT` trap string | low | open — filed before this sweep, re-confirmed here |
-| [#2139](https://github.com/stSoftwareAU/NEAT-AI-Discovery/issues/2139) | `scripts/check-pr-summary-location.sh:22,35` | fail-silent | low | open — filed by this sweep |
+| [#2139](https://github.com/stSoftwareAU/NEAT-AI-Discovery/issues/2139) | `scripts/check-pr-summary-location.sh:22,35` | fail-silent | low | **fixed** — the scan now lands in an `mktemp` file (cleaned by an `EXIT` trap) instead of a process substitution, `2>/dev/null` is gone so `find`'s own diagnostic reaches the operator, and both `find` and `sort` have their exit status checked explicitly: either failing prints `❌ … the PR summary layout was NOT checked.` on stderr and `exit 1`s, so no ✅ line can follow a scan that never ran. The NUL-delimited read is unchanged (a plain file redirect, so no process substitution remains anywhere), as are the stray-file message and its `exit 1`. Guarded by `tests/issue_2139_pr_summary_gate_fails_loud.rs::a_scan_that_cannot_run_fails_loud_instead_of_reporting_a_clean_tree`, which drives the real script in a sandbox with no `docs/` |
 | [#2140](https://github.com/stSoftwareAU/NEAT-AI-Discovery/issues/2140) | `benchmark.sh:32` | fail-silent + `eval` on a variable | low | **fixed** — `benchmark.sh::run_benchmark` now takes the command as arguments and invokes `"$@"` (no `eval` remains in the file); a non-zero status prints the label, the argv and the last 20 lines of the captured output on stderr and `exit 1`s, so no duration or improvement figure is produced for a run that did not complete. Guarded by `tests/issue_2140_benchmark_failure_is_loud.rs::a_failing_benchmark_command_fails_the_script_loudly`, which drives the real script with a failing stub `cargo` |
 
 Not a security finding, filed separately so it does not dilute the four above:
@@ -356,6 +356,12 @@ with no `docs/`: the ✅ line appeared and the exit status was `0`, both with an
 without the `2>/dev/null` redirect. This is a **gate** (`quality.sh:28`), so the
 silent pass is reported to the contributor as a clean check — the exact
 "absence of a failure marker read as success" pattern the house standard names.
+**Fixed** — the `find` writes NUL-delimited results to an `mktemp` file (removed
+by an `EXIT` trap) with `2>/dev/null` dropped, and both it and the following
+`sort -z` are wrapped in `if ! …` so a failed scan says what could not be
+scanned on stderr and exits `1`. The stray-file loop reads that file through a
+plain redirect, so no process substitution is left for `set -e` to skip. The
+clean-tree ✅ line and the stray-file `exit 1` are byte-for-byte unchanged.
 
 ### `scripts/install-rust-toolchain.sh` — 126 lines
 
