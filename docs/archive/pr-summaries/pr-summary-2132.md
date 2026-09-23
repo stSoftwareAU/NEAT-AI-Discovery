@@ -75,107 +75,6 @@ $ ./scripts/check-pr-summary-location.sh
   pinning the same rejection through the shipped `record_discovery_internal`
   entry point.
 
-## Acceptance Criteria
-
-<!-- vibe-spec-review inputs="diff+issue-body" -->
-
-- **met** — add a custom `Deserialize` impl for `SynapseJson` that validates the
-  weight field for finitude (not Infinity, not NaN) — evidence:
-  `src/ffi_types/mod.rs::deserialise_synapse_weight`, wired via
-  `#[serde(default, deserialize_with = "deserialise_synapse_weight")]` —
-  reviewer: met — note: a field attribute rather than a hand-written
-  `impl Deserialize`; the reviewer judged it substantively equivalent and
-  consistent with the file's existing `deserialise_synapse_uuid` (#952) and
-  `deserialise_input_width` (#2020) validators, since a hand-written impl would
-  have to re-implement `default`/`alias` handling for the other three fields for
-  no gain.
-- **met** — reject JSON with Infinity or NaN in the weight field at the FFI
-  boundary — evidence:
-  `tests/ffi/issue_2132_synapse_weight_finitude.rs::deserialise_rejects_f32_saturating_magnitude`,
-  `::deserialise_rejects_infinite_weight_nested_in_creature` and
-  `::record_discovery_rejects_infinite_synapse_weight` (asserts
-  `success: false` and `errorKind: "data_validation"` through the real entry
-  point) — reviewer: met — note: NaN is covered by the same guard
-  (`src/ffi_types/mod.rs::tests::deserialise_synapse_weight_rejects_nan`, driven
-  by a non-JSON deserialiser); strict JSON has no NaN token, so serde_json
-  refuses it first and the guard is defence-in-depth — the most that is
-  reachable.
-- **met** — add a regression test: JSON `"weight": 1e400` → deserialisation
-  fails with a validation error — evidence:
-  `tests/ffi/issue_2132_synapse_weight_finitude.rs::deserialise_rejects_f64_overflowing_literals`
-  (covers `1e400` and `-1e400`) — reviewer: met — note: the reviewer confirmed
-  against the vendored parser that `1e400` overflows f64 and serde_json rejects
-  it as `NumberOutOfRange` before the crate's validator is reached, so the test's
-  helper deliberately asserts only that the payload is refused, not the message
-  text. Rejection of the named literal holds and is now locked in; the genuinely
-  reachable hole (`1e39`) is covered by its own test.
-- **partial** — verify all 23 consumption sites now receive valid finite weights
-  — evidence: the boundary guard plus the prose argument in the header of
-  `tests/ffi/issue_2132_synapse_weight_finitude.rs` — reviewer: partial —
-  reason: no consumption site is touched or exercised by the diff, and the
-  reviewer found three residual paths to a non-finite weight — `pub weight: f32`
-  on a `#[derive(Default)]` struct means any struct literal (40+ in `src/` and
-  `benches/`) bypasses the validator; post-deserialisation arithmetic can still
-  overflow to infinity (`dominated_branch_collapse`'s
-  `folded_weight = weight_in * weight_out`, `merge_redundant_neuron`'s weight
-  folding) because the validator admits up to `f32::MAX`; and the issue's "23
-  hits" is stale — the reviewer counts ~40 non-test `*.weight` sites under
-  `src/analysis`.
-- **unrequested** — none. The reviewer traced every hunk to the issue. The
-  in-`src` `mod tests` is the only arguable addition and is justified: NaN is
-  unreachable through the public API, and CONTRIBUTING.md permits `src/` tests
-  exactly in that case, which the module comment cites accurately.
-
-## Standards Review
-
-<!-- vibe-standards-review inputs="diff+CONTRIBUTING.md+AGENTS.md" -->
-
-This repo has no `CODING-STANDARDS.md`; the governing documents are
-`CONTRIBUTING.md` and `AGENTS.md`, and the reviewer was pointed at those.
-
-- **violation** — "Every PR must include a summary file at
-  `docs/archive/pr-summaries/pr-summary-<ISSUE>.md`" (CONTRIBUTING.md) —
-  evidence: `docs/archive/pr-summaries/pr-summary-2132.md` — reason: fixed here.
-  `scripts/check-pr-summary-location.sh` passed vacuously because it only
-  rejects summaries outside the canonical directory; it never asserts the file
-  exists.
-- **violation** — "Prefer the `tests/` directory over inline unit tests; only
-  place tests under `src/` when the behaviour cannot be exercised cleanly via
-  the public API" (CONTRIBUTING.md) — evidence:
-  `src/ffi_types/mod.rs::tests::deserialise_synapse_weight_rejects_infinities`
-  and `::deserialise_synapse_weight_accepts_finite_values` — reason: stands.
-  Both behaviours *are* reachable through the public API and are already covered
-  by `deserialise_rejects_f32_saturating_magnitude` (`1e39`, `-3.5e38`) and
-  `deserialise_accepts_finite_weights` (`3.4e38`, `-3.4e38`) in the integration
-  suite, so the stated carve-out does not cover them and they duplicate that
-  suite. Left in place: the code on this branch has already cleared the quality
-  gate and this retry is scoped to the summary. The third in-file test,
-  `deserialise_synapse_weight_rejects_nan`, the reviewer found justified — JSON
-  has no NaN literal, so no public-API payload can reach that branch.
-- **clean** — Australian English consistent with the file's existing
-  `deserialise_*` validators (the only `-ize` tokens are serde's own API names);
-  no wall-clock or timing assertions; no vacuous assertions — every rejection
-  test pins `expect_err` plus a positive assertion on the message, and the
-  accept tests pin exact values; the Issue #1806 convention is honoured, with
-  `record_discovery_rejects_infinite_synapse_weight` driving the shipped
-  `record_discovery_internal` and asserting on the serialised response rather
-  than an intermediate (the `data_validation` classification was traced through
-  `DiscoveryError::InvalidInput` to confirm it is real); `tempfile` is a present
-  dev-dependency; all three public re-exports the test uses exist and are
-  public; `Cargo.toml` is correctly untouched, since CONTRIBUTING.md and
-  AGENTS.md both put patch bumps on CI's `version-increment` job for the normal
-  PR flow; doc comments present on the new validator and the annotated `pub
-  weight` field, satisfying the `doc_markdown` lint; no `file.rs:line` citations
-  anywhere in the diff, per "Cite Code by Symbol, Never by Line Number"; the new
-  module is inserted in `tests/ffi/main.rs` at its existing lexicographic
-  position; `src/ffi_types/mod.rs` stays well under the file-length target.
-
-Both reviewers noted, without counting it a breach, that `docs/FFI_API.md` gives
-the comparable #952 identity contract and #2020 width contract their own
-sections but gains none here. The file's explicit doc-update mandate is scoped
-to new FFI entry points accepting a `CreatureJson`, which this is not — flagged
-as a precedent gap a reviewer may want closed.
-
 ## Test Plan
 
 `tests/ffi/issue_2132_synapse_weight_finitude.rs` (6 tests):
@@ -204,3 +103,19 @@ with a non-JSON deserialiser:
 - `deserialise_synapse_weight_rejects_infinities` — both signed infinities.
 - `deserialise_synapse_weight_accepts_finite_values` — `0.0`, `-0.75`,
   `f32::MAX`, `f32::MIN` pass through unchanged.
+
+## Acceptance Criteria
+
+<!-- vibe-spec-review inputs="diff+issue-body" -->
+
+- **met** — Add custom Deserialize impl for SynapseJson that validates weight field for finitude (not Infinity, not NaN) — evidence: `src/ffi types/mod.rs::deserialise synapse weight, wired onto the field as [serde(default, deserialize with = "deserialise synapse weight")] on SynapseJson::weight ; behaviour pinned by src/ffi types/mod.rs::tests::deserialise synapse weight rejects infinities and ::deserialise synapse weight rejects` — reviewer: met
+- **met** — Reject JSON with Infinity or NaN in weight field at FFI boundary — evidence: `tests/ffi/issue 2132 synapse weight finitude.rs::deserialise rejects f32 saturating magnitude ( 1e39 , -3.5e38 saturate to f32 infinity and are refused), ::deserialise rejects infinite weight nested in creature, and ::record discovery rejects infinite synapse weight (shipped entry point returns succ` — reviewer: met
+- **met** — Add regression test: JSON "weight": 1e400 → deserialization fails with validation error — evidence: `tests/ffi/issue 2132 synapse weight finitude.rs::deserialise rejects f64 overflowing literals covers 1e400 and -1e400 and asserts deserialisation fails. Verified empirically that serde json refuses 1e400 with its own "number out of range" before the field validator is reached ( 1e39 is what reaches` — reviewer: met
+- **partial** — Verify all 23 consumption sites now receive valid finite weights — evidence: `src/ffi types/mod.rs::deserialise synapse weight plus the argument in the module header of tests/ffi/issue 2132 synapse weight finitude.rs` — reviewer: partial — reason: The invariant is only established for the deserialisation path — no consumption site is touched or exercised, 71 SynapseJson { .. } struct literals in src/ bypass the validator entirely, and the diff neither enumerates nor tests the 23 sites (the count is also stale: ~84 non-test .weight reads under
+
+## Standards Review
+
+<!-- vibe-standards-review inputs="diff+CODING-STANDARDS.md" -->
+
+- **violation** — Inline src/ unit tests for behaviour that is reachable through the public API, against "Prefer the tests/ directory over inline unit tests; only place tests under src/ when the behaviour cannot be exercised cleanly via the public API" (CONTRIBUTING.md, Test Organisation) — evidence: `src/ffi types/mod.rs:345` — reason: Not fixed — left in place. deserialise synapse weight rejects infinities (line 345) and deserialise synapse weight accepts finite values (line 359) duplicate coverage already in tests/ffi/issue 2132 synapse weight finitude.rs::deserialise rejects f32 saturating magnitude and ::deserialise accepts fi
+- **clean** — Australian English ( deserialise , "deserialisation"; the only -ize tokens are serde's own API names); fail-loud error handling — the validator returns Err with a named requirement rather than clamping or defaulting; "Cite Code by Symbol, Never by Line Number" — no file.rs:line citations in the new
