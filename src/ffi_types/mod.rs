@@ -447,7 +447,12 @@ where
     D: Deserializer<'de>,
 {
     let raw = Vec::<f32>::deserialize(deserialiser)?;
-    if let Some((index, bad)) = raw.iter().copied().enumerate().find(|(_, v)| !v.is_finite()) {
+    if let Some((index, bad)) = raw
+        .iter()
+        .copied()
+        .enumerate()
+        .find(|(_, v)| !v.is_finite())
+    {
         return Err(serde::de::Error::custom(non_finite_training_vector_detail(
             field, index, bad,
         )));
