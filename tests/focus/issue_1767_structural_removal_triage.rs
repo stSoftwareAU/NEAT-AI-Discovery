@@ -21,12 +21,16 @@
 //!
 //! Non-positive `costOfGrowth` values are asserted here. `NaN` and `Infinity`
 //! are not JSON literals, so a caller cannot write them directly — but a JSON
-//! number that overflows `f32` (`1e39`) still arrives as `±∞`, and one that
-//! underflows (`1e-60`) arrives as `0.0`. Those FFI-reachable non-finite cases
-//! plus the WARN the substitution must emit are covered by
-//! `tests/analysis/issue_1807_ffi_cost_of_growth_validation.rs`; the `NaN` half
-//! is pinned against the shipped function by
-//! `unification_parity_tests::entry_points_agree_on_an_invalid_cost_of_growth`
+//! number that underflows `f32` (`1e-60`) arrives as `0.0`, which is finite and
+//! so remains the fallback's business. A number that *overflows* `f32` (`1e39`)
+//! used to arrive as `±∞` and fall back the same way; since Issue #2137 the FFI
+//! boundary refuses it outright, so no non-finite cost reaches the criterion
+//! over JSON any more. The fallback plus the WARN it must emit are covered by
+//! `tests/analysis/issue_1807_ffi_cost_of_growth_validation.rs`, and the
+//! boundary rejection by `tests/ffi/issue_2137_cost_of_growth_finitude.rs`. The
+//! `NaN` half of the downstream guard still matters for in-crate Rust callers,
+//! who never cross the JSON boundary; it is pinned against the shipped function
+//! by `unification_parity_tests::entry_points_agree_on_an_invalid_cost_of_growth`
 //! in `src/focus/ranking/removal_triage.rs`.
 
 use neat_ai_discovery::analysis::diagnostics::rejection_reasons::{
