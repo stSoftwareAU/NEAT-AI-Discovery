@@ -1289,15 +1289,37 @@ both must be at least one:
 
 `validate_creature` (`src/ffi_types/creature_validation.rs`) is the
 defence-in-depth gate every entry point that accepts a `CreatureJson` runs
-(Issues #1184, #1188, #2046, #2078): it
-composes `validate_forward_only_synapses` then `validate_creature_input_bounds`
-(`src/ffi_types/forward_only_validation.rs`, `src/ffi_types/creature_bounds.rs`)
-so the pair and its order cannot drift (Issue #2046) — never call the two by
-hand. It runs after JSON deserialisation and before any business logic, and a
-failure returns `success: false` with `errorKind: "data_validation"`. The width
-caps are enforced here rather than at the allocation: an unbounded count aborts
-the process via `handle_alloc_error`, which `panic::catch_unwind` cannot
-intercept (see Creature Width Bounds and Observation Width above).
+(Issues #1184, #1188, #2046, #2078, #2133): it composes
+`validate_forward_only_synapses`, then `validate_creature_input_bounds`, then
+`validate_neuron_biases` (`src/ffi_types/forward_only_validation.rs`,
+`src/ffi_types/creature_bounds.rs`, `src/ffi_types/neuron_bias.rs`) so the set
+of gates and their order cannot drift (Issue #2046) — never call them by hand.
+It runs after JSON deserialisation and before any business logic, and a failure
+returns `success: false` with `errorKind: "data_validation"`. The width caps are
+enforced here rather than at the allocation: an unbounded count aborts the
+process via `handle_alloc_error`, which `panic::catch_unwind` cannot intercept
+(see Creature Width Bounds and Observation Width above).
+
+#### Neuron Bias Finitude (Issue #2133)
+
+Every `NeuronJson.bias` must be finite. Two layers enforce it, because the two
+doors are different:
+
+- **Deserialisation.** `bias` carries
+  `#[serde(deserialize_with = "deserialise_neuron_bias")]`, so a JSON number
+  that is finite as an `f64` but overflows the `f32` the field is stored in
+  (`1e39`, magnitude above ~3.4e38) is rejected with a parse error rather than
+  narrowed silently to `Infinity`. `1e400` was already refused by `serde_json`'s
+  own number parser. A matching `serialize_with` guard refuses to *emit* a
+  non-finite bias — `serde_json` would otherwise render it as `null`.
+- **`validate_neuron_biases`.** JSON has no `NaN` literal, so NaN can only
+  arrive on a `CreatureJson` constructed in Rust. The gate covers that path and
+  names the offending neuron's `uuid`.
+
+A non-finite bias corrupts the bias arithmetic in `dominated_branch_collapse`,
+the `f64::from` fold in `remove_neuron_bias_fold`, and — worst — the
+`bias.to_bits()` neuron fingerprint hash, where a payload-bearing NaN makes the
+fingerprint itself unstable.
 
 | FFI entry point | Accepts `CreatureJson` | Validates | Notes |
 |-----------------|------------------------|-----------|-------|

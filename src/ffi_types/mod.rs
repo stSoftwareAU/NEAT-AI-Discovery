@@ -9,6 +9,7 @@ mod creature_bounds;
 mod creature_validation;
 mod error_classification;
 mod forward_only_validation;
+mod neuron_bias;
 mod requests;
 mod responses;
 mod session;
@@ -23,6 +24,9 @@ pub use creature_bounds::{
 pub use creature_validation::validate_creature;
 pub use error_classification::*;
 pub use forward_only_validation::validate_forward_only_synapses;
+// Crate-internal (Issue #2133): the bias gate is reached through
+// `validate_creature`, so it adds no name to the public FFI surface.
+pub(crate) use neuron_bias::{non_finite_bias_detail, validate_neuron_biases};
 pub use requests::*;
 pub use responses::*;
 pub use session::*;
@@ -196,8 +200,56 @@ pub struct NeuronJson {
     /// downstream detection modules can match without per-neuron allocations.
     #[serde(default = "default_squash", deserialize_with = "deserialise_squash")]
     pub squash: String,
-    #[serde(default)]
+    /// Neuron bias. Defaults to zero when omitted, and must be finite: a
+    /// non-finite bias is rejected at deserialisation and refused at
+    /// serialisation (Issue #2133).
+    #[serde(
+        default,
+        deserialize_with = "deserialise_neuron_bias",
+        serialize_with = "serialise_neuron_bias"
+    )]
     pub bias: f32,
+}
+
+/// Deserialise a neuron's `bias`, rejecting Infinity and `NaN` (Issue #2133).
+///
+/// `f32::deserialize` performs the `f64` → `f32` narrowing itself, so a JSON
+/// number that is finite as an `f64` but too large for an `f32` (`1e39`)
+/// arrives here already collapsed to an infinity — which is exactly the value
+/// this check refuses. Doing the narrowing through serde rather than a cast of
+/// our own keeps the helper free of an unchecked `as`.
+fn deserialise_neuron_bias<'de, D>(deserialiser: D) -> Result<f32, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let bias = f32::deserialize(deserialiser)?;
+    if !bias.is_finite() {
+        return Err(serde::de::Error::custom(non_finite_bias_detail(
+            "The neuron",
+            bias,
+        )));
+    }
+    Ok(bias)
+}
+
+/// Serialise a neuron's `bias`, refusing to emit Infinity or `NaN`
+/// (Issue #2133).
+///
+/// `serde_json` renders a non-finite `f32` as JSON `null`, which a host reading
+/// the snapshot back cannot distinguish from an omitted bias — the corruption
+/// would arrive silently as a zero. A neuron built in Rust therefore fails at
+/// the point of emission rather than downstream.
+fn serialise_neuron_bias<S>(value: &f32, serialiser: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    if !value.is_finite() {
+        return Err(SerialiseError::custom(non_finite_bias_detail(
+            "The neuron",
+            *value,
+        )));
+    }
+    value.serialize(serialiser)
 }
 
 fn default_squash() -> String {
