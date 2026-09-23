@@ -51,7 +51,7 @@ flowchart TD
   from `build_helpful_work_items`.
 - `src/analysis/neuron/mod.rs` — passes the `build_deadline(...)` value already in
   scope at that call site.
-- `src/analysis/synapse/issue_2161_locality_cancellation_tests.rs` — new
+- `src/analysis/synapse/issue_2161_locality_cancellation_test.rs` — new
   regression tests (wired as a child module of `candidate_generation`, because
   `group_sources_by_locality` is `pub(crate)` and an integration test under
   `tests/` cannot reach it — this is why the tests do not live at the
@@ -64,22 +64,22 @@ flowchart TD
 
 **Regression tests added (both in the branch diff):**
 
-- `src/analysis/synapse/issue_2161_locality_cancellation_tests.rs::expired_deadline_stops_locality_scan_without_dropping_sources`
-- `src/analysis/synapse/issue_2161_locality_cancellation_tests.rs::locality_grouping_cost_does_not_grow_quadratically`
+- `src/analysis/synapse/issue_2161_locality_cancellation_test.rs::expired_deadline_stops_locality_scan_without_dropping_sources`
+- `src/analysis/synapse/issue_2161_locality_cancellation_test.rs::locality_grouping_cost_does_not_grow_quadratically`
 
-Added `src/analysis/synapse/issue_2161_locality_cancellation_tests.rs::expired_deadline_stops_locality_scan_without_dropping_sources`,
+Added `src/analysis/synapse/issue_2161_locality_cancellation_test.rs::expired_deadline_stops_locality_scan_without_dropping_sources`,
 which reproduces the flaw, **fails against the unfixed code and passes after the
 fix**. The same holds for `locality_grouping_cost_does_not_grow_quadratically`.
 
 **RED — against the unfixed scan** (`cargo test --lib issue_2161`):
 
 ```text
-panicked at src/analysis/synapse/issue_2161_locality_cancellation_tests.rs:117:5:
+panicked at src/analysis/synapse/issue_2161_locality_cancellation_test.rs:117:5:
 assertion `left == right` failed: an expired deadline must abandon the pairwise scan and emit single-source groups
   left: 1
  right: 64
 
-panicked at src/analysis/synapse/issue_2161_locality_cancellation_tests.rs:149:5:
+panicked at src/analysis/synapse/issue_2161_locality_cancellation_test.rs:149:5:
 locality grouping cost grew faster than linearly: 263.111708ms at 1025 sources against 1.053766751s at 2050 sources
 
 test result: FAILED. 0 passed; 2 failed; 0 ignored; 0 measured; 1590 filtered out; finished in 6.76s

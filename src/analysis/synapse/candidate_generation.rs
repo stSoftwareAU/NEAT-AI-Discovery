@@ -266,5 +266,5 @@ pub(crate) fn build_samples(
 }
 
 #[cfg(test)]
-#[path = "issue_2161_locality_cancellation_tests.rs"]
-mod issue_2161_tests;
+#[path = "issue_2161_locality_cancellation_test.rs"]
+mod issue_2161_test;
