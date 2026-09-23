@@ -14,12 +14,18 @@
 //! `NaN` and `Infinity` are not JSON literals, so:
 //!
 //! * **infinity** is reached the way a real caller reaches it — a JSON number
-//!   that overflows `f32` (`1e39`), which deserialises to `f32::INFINITY`;
+//!   that overflows `f32` (`1e39`). Since Issue #2137 the FFI boundary refuses
+//!   that payload outright rather than falling back, so it is pinned below
+//!   alongside the bare `Infinity` token as a loud rejection, not a fallback;
 //! * **underflow** (`1e-60` → `0.0`) is the same trap in the other direction and
-//!   is FFI-specific: the request looks positive but the criterion sees zero;
+//!   is FFI-specific: the request looks positive but the criterion sees zero.
+//!   It is finite, so no boundary check catches it and the fallback still owns
+//!   it — as it does every non-positive cost;
 //! * a literal `NaN` token is rejected loudly at the JSON boundary, and the
 //!   `NaN` half of the guard is pinned on the shipped criterion through the
-//!   public `triage_removal_candidates` adapter, which delegates to it.
+//!   public `triage_removal_candidates` adapter, which delegates to it — a Rust
+//!   caller never crosses the JSON boundary, so the downstream guard remains
+//!   this crate's only defence for them.
 
 use std::collections::HashMap;
 use std::fmt;
@@ -228,19 +234,21 @@ fn removal_outcome(response: &Value) -> (Vec<Value>, Value) {
     (candidates, response["rejectionBreakdown"].clone())
 }
 
-/// Every `costOfGrowth` the FFI can carry that the criterion must reject, with
-/// the `f32` value it deserialises to.
+/// Every `costOfGrowth` the FFI can carry that survives the boundary check yet
+/// the criterion must still reject, with the `f32` value it deserialises to.
 ///
-/// `1e39` overflows `f32` to `+∞` and `1e-60` underflows to `0.0`: both look
-/// like ordinary JSON numbers to a caller, which is why the guard has to sit
-/// behind the deserialiser rather than in front of it.
-fn invalid_ffi_costs() -> Vec<(Value, f32)> {
+/// All four are finite, so the finitude check added for Issue #2137 lets them
+/// through and the downstream fallback owns them. `1e-60` is the subtle one: it
+/// underflows to `0.0` in `f32`, so the request looks positive to the caller
+/// while the criterion sees zero — which is why the guard has to sit behind the
+/// deserialiser rather than in front of it. Non-finite costs are no longer in
+/// this list; they are refused outright and pinned by
+/// `non_json_cost_of_growth_tokens_are_rejected_loudly`.
+fn non_positive_ffi_costs() -> Vec<(Value, f32)> {
     vec![
         (json!(0.0), 0.0),
         (json!(-1.0), -1.0),
         (json!(-1e-4), -1e-4),
-        (json!(1e39), f32::INFINITY),
-        (json!(-1e39), f32::NEG_INFINITY),
         (json!(1e-60), 0.0),
     ]
 }
@@ -249,7 +257,7 @@ fn invalid_ffi_costs() -> Vec<(Value, f32)> {
 // Tests
 // ---------------------------------------------------------------------------
 
-/// Acceptance: a non-finite or non-positive `costOfGrowth` arriving over FFI is
+/// Acceptance: a finite but non-positive `costOfGrowth` arriving over FFI is
 /// replaced with [`DEFAULT_COST_OF_GROWTH`], producing exactly the outcome an
 /// omitted `costOfGrowth` produces — never nonsense savings.
 #[test]
@@ -270,7 +278,7 @@ fn invalid_ffi_cost_of_growth_falls_back_to_the_default() {
     );
     assert_eq!(explicit_rejections, default_rejections);
 
-    for (payload, deserialised) in invalid_ffi_costs() {
+    for (payload, deserialised) in non_positive_ffi_costs() {
         let (candidates, rejections) =
             removal_outcome(&ffi_focus_response(&creature, payload.clone()));
         assert_eq!(
@@ -293,7 +301,7 @@ fn invalid_ffi_cost_of_growth_is_logged_at_warn() {
     let _floor = EnvVarGuard::unset(NOISE_FLOOR_ENV);
     let creature = make_creature();
 
-    for (payload, deserialised) in invalid_ffi_costs() {
+    for (payload, deserialised) in non_positive_ffi_costs() {
         let (_, events) = capture_warnings(|| ffi_focus_response(&creature, payload.clone()));
         let warning = cost_of_growth_warning(&events).unwrap_or_else(|| {
             panic!("costOfGrowth {payload} must be reported at WARN, not substituted silently")
@@ -356,6 +364,23 @@ fn a_valid_ffi_cost_of_growth_is_neither_replaced_nor_warned_about() {
     );
 }
 
+/// Drives the FFI entry point with `costOfGrowth` written as a raw literal, so
+/// tokens JSON cannot express (`NaN`) are still expressible in the payload.
+fn ffi_response_for_cost_literal(creature: &CreatureJson, literal: &str) -> Value {
+    let input = json!({
+        "parquetFile": MISSING_PARQUET,
+        "creature": creature,
+        "costOfGrowth": null,
+    })
+    .to_string()
+    .replace(
+        "\"costOfGrowth\":null",
+        &format!("\"costOfGrowth\":{literal}"),
+    );
+    serde_json::from_str(&rank_focus_neurons_internal(&input).expect("FFI focus path"))
+        .expect("FFI response JSON")
+}
+
 /// `NaN` and `Infinity` are not JSON literals: a caller writing one gets a loud
 /// parse failure, not a silently ignored field that leaves the criterion running
 /// on a default it never asked for.
@@ -365,19 +390,7 @@ fn non_json_cost_of_growth_tokens_are_rejected_loudly() {
     let creature = make_creature();
 
     for token in ["NaN", "Infinity", "-Infinity"] {
-        let input = json!({
-            "parquetFile": MISSING_PARQUET,
-            "creature": creature,
-            "costOfGrowth": null,
-        })
-        .to_string()
-        .replace(
-            "\"costOfGrowth\":null",
-            &format!("\"costOfGrowth\":{token}"),
-        );
-        let response: Value =
-            serde_json::from_str(&rank_focus_neurons_internal(&input).expect("FFI focus path"))
-                .expect("FFI response JSON");
+        let response = ffi_response_for_cost_literal(&creature, token);
 
         assert_eq!(
             response["success"], false,
@@ -386,6 +399,45 @@ fn non_json_cost_of_growth_tokens_are_rejected_loudly() {
         assert_eq!(
             response["errorKind"], "data_validation",
             "a malformed request must be classified as invalid input: {response:?}"
+        );
+    }
+}
+
+/// The reachable half of the same hole: `1e39` is an ordinary JSON number that
+/// `serde_json` accepts as `f64` and then saturates to `±∞` on the narrowing to
+/// `f32`. Until Issue #2137 it reached the criterion and was quietly swapped for
+/// the default; it is now refused at the boundary, with an error that names the
+/// field and cites the issue so the caller can fix the payload.
+#[test]
+#[serial]
+fn f32_saturating_cost_of_growth_is_rejected_at_the_boundary() {
+    let creature = make_creature();
+
+    for literal in ["1e39", "-1e39"] {
+        let response = ffi_response_for_cost_literal(&creature, literal);
+
+        assert_eq!(
+            response["success"], false,
+            "costOfGrowth {literal} narrows to infinity and must fail loudly: {response:?}"
+        );
+        assert_eq!(
+            response["errorKind"], "data_validation",
+            "a non-finite cost of growth must be classified as invalid input: {response:?}"
+        );
+        let error = response["error"]
+            .as_str()
+            .expect("a failed response must carry an error message");
+        assert!(
+            error.contains("costOfGrowth"),
+            "the error must name the offending field for {literal}: {error}"
+        );
+        assert!(
+            error.contains("finite"),
+            "the error must name the finitude requirement for {literal}: {error}"
+        );
+        assert!(
+            error.contains("Issue #2137"),
+            "the error must cite the issue that added the check for {literal}: {error}"
         );
     }
 }
