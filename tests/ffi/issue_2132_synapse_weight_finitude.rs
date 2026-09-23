@@ -41,10 +41,17 @@ fn creature_json(weight: &str) -> String {
     )
 }
 
-fn assert_weight_rejected(weight: &str) {
-    let err = serde_json::from_str::<SynapseJson>(&synapse_json(weight))
-        .expect_err("a non-finite weight must be rejected at deserialisation");
-    let msg = err.to_string();
+/// Asserts the weight literal is refused, whoever refuses it.
+fn assert_weight_rejected(weight: &str) -> String {
+    serde_json::from_str::<SynapseJson>(&synapse_json(weight))
+        .expect_err("a non-finite weight must be rejected at deserialisation")
+        .to_string()
+}
+
+/// Asserts the weight literal is refused *by this crate's finitude check*,
+/// which names the requirement and cites the issue.
+fn assert_weight_rejected_as_non_finite(weight: &str) {
+    let msg = assert_weight_rejected(weight);
     assert!(
         msg.contains("finite"),
         "error for weight {weight} must name the finitude requirement: {msg}"
@@ -60,27 +67,27 @@ fn assert_weight_rejected(weight: &str) {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn deserialise_rejects_positive_infinity() {
-    assert_weight_rejected("1e400");
-}
-
-#[test]
-fn deserialise_rejects_negative_infinity() {
-    assert_weight_rejected("-1e400");
+fn deserialise_rejects_f64_overflowing_literals() {
+    // `1e400` exceeds f64 range, so serde_json refuses it during number parsing
+    // — before any field validator is reached. The payload is still rejected,
+    // which is what the boundary owes the caller; the message is serde's own.
+    for weight in ["1e400", "-1e400"] {
+        assert_weight_rejected(weight);
+    }
 }
 
 #[test]
 fn deserialise_rejects_f32_saturating_magnitude() {
     // `1e39` is a perfectly finite f64, but saturates to `f32::INFINITY` once
-    // serde casts it down — validation must inspect the stored f32, never the
-    // literal text.
-    assert_weight_rejected("1e39");
-    assert_weight_rejected("-3.5e38");
+    // serde casts it down — serde raises nothing, so this is the reachable
+    // hole. Validation must inspect the stored f32, never the literal text.
+    assert_weight_rejected_as_non_finite("1e39");
+    assert_weight_rejected_as_non_finite("-3.5e38");
 }
 
 #[test]
 fn deserialise_rejects_infinite_weight_nested_in_creature() {
-    let err = serde_json::from_str::<CreatureJson>(&creature_json("1e400"))
+    let err = serde_json::from_str::<CreatureJson>(&creature_json("1e39"))
         .expect_err("an infinite synapse weight must sink the whole creature payload");
     assert!(
         err.to_string().contains("Issue #2132"),
@@ -144,7 +151,7 @@ fn record_discovery_rejects_infinite_synapse_weight() {
             ],
             "temp_dir": "{}"
         }}"#,
-        creature_json("1e400"),
+        creature_json("1e39"),
         temp.path().display()
     );
 
