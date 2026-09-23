@@ -273,6 +273,31 @@ where
     Ok(trimmed.to_ascii_uppercase())
 }
 
+// ==== Synapse weight finitude validation (Issue #2132) ====
+
+/// Deserialise a synapse weight, rejecting any non-finite value (Issue #2132).
+///
+/// JSON has no `Infinity` literal, but any magnitude above `f32::MAX` — such as
+/// `1e39` — saturates to `f32::INFINITY` when serde casts the parsed f64 down,
+/// and serde raises nothing. An infinite weight then poisons every downstream
+/// analysis: `weight * activation` stays infinite, so dormancy, polarity-flip
+/// and noise thresholds are all silently bypassed and the caller receives
+/// incorrect results. Reject at the boundary, once, rather than re-guarding
+/// each of the consumption sites.
+fn deserialise_synapse_weight<'de, D>(deserialiser: D) -> Result<f32, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let raw = f32::deserialize(deserialiser)?;
+    if !raw.is_finite() {
+        return Err(serde::de::Error::custom(format!(
+            "synapse weight must be finite, got {raw} (Issue #2132). \
+             Infinity and NaN are not permitted in FFI payloads."
+        )));
+    }
+    Ok(raw)
+}
+
 /// JSON representation of a single synapse on the FFI boundary — source
 /// and target neuron identities, weight, and optional IF-neuron branch
 /// classification.
@@ -294,7 +319,9 @@ pub struct SynapseJson {
         deserialize_with = "deserialise_synapse_uuid"
     )]
     pub to_uuid: String,
-    #[serde(default)]
+    /// Connection weight. Must be finite — Infinity and NaN are rejected at the
+    /// FFI boundary (Issue #2132).
+    #[serde(default, deserialize_with = "deserialise_synapse_weight")]
     pub weight: f32,
     /// Synapse type for IF neurons: "condition", "positive", or "negative".
     /// Used to determine which synapses contribute to condition evaluation
@@ -340,4 +367,56 @@ pub struct NeuronStatsJson {
     pub activation_spike_count: u32,
     pub activation_min: f32,
     pub activation_max: f32,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde::de::IntoDeserializer;
+    use serde::de::value::{Error as ValueError, F32Deserializer};
+
+    /// NaN cannot be written in JSON, so the JSON-reachable cases live in
+    /// `tests/ffi/issue_2132_synapse_weight_finitude.rs`. Reaching the NaN
+    /// branch needs a non-JSON deserialiser feeding the module-private helper
+    /// directly, which only an in-crate test can do (CONTRIBUTING: place a test
+    /// under `src/` only when the public API cannot exercise the behaviour).
+    #[test]
+    fn deserialise_synapse_weight_rejects_nan() {
+        let deserialiser: F32Deserializer<ValueError> = f32::NAN.into_deserializer();
+        let err = deserialise_synapse_weight(deserialiser)
+            .expect_err("a NaN weight must be rejected (Issue #2132)");
+        let msg = err.to_string();
+        assert!(msg.contains("finite"), "error must name finitude: {msg}");
+        assert!(
+            msg.contains("Issue #2132"),
+            "error must cite the issue: {msg}"
+        );
+    }
+
+    #[test]
+    fn deserialise_synapse_weight_rejects_infinities() {
+        for weight in [f32::INFINITY, f32::NEG_INFINITY] {
+            let deserialiser: F32Deserializer<ValueError> = weight.into_deserializer();
+            let err = deserialise_synapse_weight(deserialiser)
+                .expect_err("an infinite weight must be rejected")
+                .to_string();
+            assert!(
+                err.contains("Issue #2132"),
+                "error for {weight} must cite the issue: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn deserialise_synapse_weight_accepts_finite_values() {
+        for weight in [0.0_f32, -0.75, f32::MAX, f32::MIN] {
+            let deserialiser: F32Deserializer<ValueError> = weight.into_deserializer();
+            let parsed = deserialise_synapse_weight(deserialiser)
+                .unwrap_or_else(|e| panic!("finite weight {weight} must be accepted: {e}"));
+            assert_eq!(
+                parsed, weight,
+                "a finite weight must pass through unchanged"
+            );
+        }
+    }
 }
