@@ -110,8 +110,8 @@ fn deserialise_accepts_finite_weights() {
         );
     }
 
-    let synapse: SynapseJson = serde_json::from_str(&synapse_json("0.5"))
-        .expect("a finite weight must deserialise");
+    let synapse: SynapseJson =
+        serde_json::from_str(&synapse_json("0.5")).expect("a finite weight must deserialise");
     assert_eq!(synapse.weight, 0.5, "the weight value must be preserved");
 
     let creature: CreatureJson = serde_json::from_str(&creature_json("0.5"))
@@ -155,8 +155,8 @@ fn record_discovery_rejects_infinite_synapse_weight() {
         temp.path().display()
     );
 
-    let response = neat_ai_discovery::record_discovery_internal(&input)
-        .expect("internal call must not panic");
+    let response =
+        neat_ai_discovery::record_discovery_internal(&input).expect("internal call must not panic");
     let parsed: serde_json::Value =
         serde_json::from_str(&response).expect("response must be valid JSON");
 
