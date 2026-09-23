@@ -127,6 +127,11 @@ pub fn compute_scheduled_temperature(
 /// Temperature 1.0 returns the threshold unchanged.
 ///
 /// Formula: `effective_threshold = base_threshold / temperature`
+///
+/// The clamp is *range* enforcement, retained deliberately (Issue #2136): FFI
+/// payloads are now rejected for non-finitude at the boundary, but internal
+/// callers still pass scheduled temperatures that may sit outside the valid
+/// range, and dividing by zero here would reintroduce an infinity.
 #[inline]
 pub fn scale_threshold_by_temperature(base_threshold: f32, temperature: f32) -> f32 {
     let clamped_temp = temperature.clamp(MIN_TEMPERATURE, MAX_TEMPERATURE);
@@ -140,6 +145,9 @@ pub fn scale_threshold_by_temperature(base_threshold: f32, temperature: f32) -> 
 /// Temperature 1.0 returns the ratio unchanged.
 ///
 /// Formula: `effective_ratio = base_ratio / temperature`, clamped to [0.0, 1.0].
+///
+/// The clamp is range enforcement for internal callers, retained deliberately
+/// (Issue #2136) — see `scale_threshold_by_temperature`.
 #[inline]
 pub fn scale_ratio_by_temperature(base_ratio: f32, temperature: f32) -> f32 {
     let clamped_temp = temperature.clamp(MIN_TEMPERATURE, MAX_TEMPERATURE);
@@ -155,6 +163,9 @@ pub fn scale_ratio_by_temperature(base_ratio: f32, temperature: f32) -> f32 {
 ///
 /// - High schedule temperature → higher effective MH temp → more acceptance
 /// - Low schedule temperature → lower effective MH temp → less acceptance
+///
+/// The clamp is range enforcement for internal callers, retained deliberately
+/// (Issue #2136) — see `scale_threshold_by_temperature`.
 #[inline]
 pub fn scale_mh_temperature(base_mh_temp: f32, temperature: f32) -> f32 {
     let clamped_temp = temperature.clamp(MIN_TEMPERATURE, MAX_TEMPERATURE);
