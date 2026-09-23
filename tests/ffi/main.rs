@@ -25,6 +25,7 @@ mod issue_2046_creature_validation_helper;
 mod issue_2065_ffi_internal_module_docs;
 mod issue_2078_creature_output_bounds;
 mod issue_2132_synapse_weight_finitude;
+mod issue_2133_neuron_bias_finitude;
 mod issue_2134_neuron_data_finitude;
 mod issue_574_ffi_json_fuzz_edge_cases;
 mod issue_711_ffi_safety_unsafe_markers;
