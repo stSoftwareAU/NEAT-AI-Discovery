@@ -516,13 +516,13 @@ mod tests {
             TaskDescriptor::neutral(),
         );
 
-        // We expect 48 modules across all four spec groups (batch-successful
+        // We expect 49 modules across all four spec groups (batch-successful
         // is disabled by default, Issue #1059; merge-redundant-neuron added in
-        // Issue #1633).
+        // Issue #1633; output-competition wired up in Issue #2185).
         assert_eq!(
             specs.len(),
-            48,
-            "Expected 48 discovery module specs, got {}",
+            49,
+            "Expected 49 discovery module specs, got {}",
             specs.len()
         );
 
@@ -613,6 +613,151 @@ mod tests {
             phase_names.len(),
             total,
             "Duplicate phase names found in discovery module specs"
+        );
+    }
+
+    /// Issue #2185: a two-output creature whose outputs co-fire, used to prove
+    /// the output-competition recommender is actually dispatched.
+    fn two_output_creature() -> CreatureJson {
+        CreatureJson {
+            neurons: vec![
+                NeuronJson {
+                    uuid: "in-1".to_string(),
+                    neuron_type: "input".to_string(),
+                    squash: "IDENTITY".to_string(),
+                    bias: 0.0,
+                },
+                NeuronJson {
+                    uuid: "o1".to_string(),
+                    neuron_type: "output".to_string(),
+                    squash: "LOGISTIC".to_string(),
+                    bias: 0.0,
+                },
+                NeuronJson {
+                    uuid: "o2".to_string(),
+                    neuron_type: "output".to_string(),
+                    squash: "LOGISTIC".to_string(),
+                    bias: 0.0,
+                },
+            ],
+            synapses: vec![
+                SynapseJson {
+                    from_uuid: "in-1".to_string(),
+                    to_uuid: "o1".to_string(),
+                    weight: 0.5,
+                    synapse_type: None,
+                },
+                SynapseJson {
+                    from_uuid: "in-1".to_string(),
+                    to_uuid: "o2".to_string(),
+                    weight: 0.5,
+                    synapse_type: None,
+                },
+            ],
+            input: 1,
+            output: 2,
+        }
+    }
+
+    /// Both outputs fire strongly on the same 40 observations — the
+    /// competition pattern lateral inhibition is meant to resolve.
+    fn co_firing_cache() -> cache::RecordCache {
+        cache::RecordCache::with_loader(
+            "test.parquet",
+            Arc::new(
+                |_file: &str, uuid: &str| -> anyhow::Result<Vec<DiscoverRecord>> {
+                    let activation = if uuid == "o1" { 0.85 } else { 0.80 };
+                    Ok((0..40)
+                        .map(|i| {
+                            DiscoverRecord::new(
+                                i,
+                                uuid.to_string(),
+                                Some(0.0),
+                                activation,
+                                vec![0.0],
+                            )
+                        })
+                        .collect())
+                },
+            ),
+        )
+    }
+
+    fn specs_for(
+        creature: &Arc<CreatureJson>,
+        record_cache: cache::RecordCache,
+        descriptor: TaskDescriptor,
+    ) -> Vec<discovery_dispatch::DiscoveryModuleSpec> {
+        let hidden: Arc<Vec<(String, String, f32)>> = Arc::new(vec![]);
+        let cache = Arc::new(record_cache);
+        let topo =
+            Arc::new(super::super::detection::topology_cache::CreatureTopologyCache::new(creature));
+        build_discovery_module_specs(
+            creature,
+            &hidden,
+            &cache,
+            &topo,
+            CostFunctionHint::Unknown,
+            descriptor,
+        )
+    }
+
+    /// Issue #2185: the output-competition recommender added by Issue #1321 was
+    /// never dispatched — no `discovery_spec!` entry existed, so a OneHot
+    /// creature with competing outputs could never receive the inhibitory
+    /// synapse the module was built to propose.
+    #[test]
+    fn output_competition_is_dispatched_under_a_one_hot_descriptor() {
+        let creature = Arc::new(two_output_creature());
+        let specs = specs_for(
+            &creature,
+            co_firing_cache(),
+            TaskDescriptor::from_name("CATEGORICAL_ERROR", 2),
+        );
+
+        let spec = specs
+            .into_iter()
+            .find(|s| s.phase_name == "output_competition_detection")
+            .expect("output competition must be registered as a discovery module");
+
+        let result = (spec.detect_fn)().expect("co-firing outputs must produce a candidate");
+        assert_eq!(result.detected_count, 1, "one competing output pair");
+
+        let ops: Vec<&crate::CoordinatedStructuralOpJson> = result
+            .candidates
+            .iter()
+            .flat_map(|c| c.operations.iter())
+            .collect();
+        assert_eq!(ops.len(), 1, "one inhibitory synapse proposed");
+        match ops[0] {
+            crate::CoordinatedStructuralOpJson::AddSynapse {
+                from_neuron_uuid,
+                to_neuron_uuid,
+                weight,
+            } => {
+                assert_eq!(from_neuron_uuid, "o1");
+                assert_eq!(to_neuron_uuid, "o2");
+                assert!(*weight < 0.0, "lateral inhibition must be negative");
+            }
+            other => panic!("expected AddSynapse, got {other:?}"),
+        }
+    }
+
+    /// The dispatcher must honour the module's own topology gate: a neutral
+    /// descriptor means the task is not one-of-N, so nothing is proposed.
+    #[test]
+    fn output_competition_stays_silent_under_a_neutral_descriptor() {
+        let creature = Arc::new(two_output_creature());
+        let specs = specs_for(&creature, co_firing_cache(), TaskDescriptor::neutral());
+
+        let spec = specs
+            .into_iter()
+            .find(|s| s.phase_name == "output_competition_detection")
+            .expect("output competition must be registered as a discovery module");
+
+        assert!(
+            (spec.detect_fn)().is_none(),
+            "a non-role-aware topology must emit nothing"
         );
     }
 
