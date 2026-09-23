@@ -739,8 +739,9 @@ gate are lost by a NaN, so each would return `Some(non-finite)` from a contract
 whose `None` means "unusable". Neither is reachable. Synapse weights are the
 only untrusted input either helper takes, and
 `ffi_types/mod.rs::deserialise_synapse_weight` rejects a non-finite weight at
-deserialisation (Issue #2132) — the `1e39`-saturates-to-`inf` path that Issue
-#2133 closed for neuron biases is closed for weights too. The other operand of
+deserialisation (Issue #2132) — the `1e39`-saturates-to-`inf` path that
+Issue #2133 closed for neuron biases is closed for weights too. The other
+operand of
 `clamp_weight_update_delta` is a `calculate_optimal_outgoing_weight` return,
 and `weights/calculation.rs::compute_outgoing_weight` tests `is_finite`
 **between** its divisor guard and its clamp, which is the ordering that makes
