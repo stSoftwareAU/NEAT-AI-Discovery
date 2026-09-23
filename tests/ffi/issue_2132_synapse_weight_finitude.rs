@@ -1,12 +1,18 @@
 //! Synapse weight finitude at the FFI boundary (Issue #2132).
 //!
-//! JSON has no `Infinity` literal, but `serde_json` parses any number whose
-//! magnitude exceeds `f32::MAX` into `f32::INFINITY` — the obvious `1e400` and
-//! the finite-but-saturating `1e39` alike. An infinite weight then flows
-//! unchecked into every analysis site (`synapse.weight * activation`), where it
-//! beats every contribution threshold and silently bypasses dormancy,
-//! polarity-flip and noise detection, so the caller is handed confidently wrong
-//! results.
+//! JSON has no `Infinity` literal, and there are two distinct routes to an
+//! infinite weight:
+//!
+//! - `1e400` overflows **f64** itself, so `serde_json` rejects it with its own
+//!   "number out of range" error before any field validator runs.
+//! - `1e39` is a perfectly ordinary finite f64, but exceeds `f32::MAX` and so
+//!   saturates to `f32::INFINITY` the moment serde casts it down. Nothing in
+//!   serde objects — this is the reachable hole.
+//!
+//! An infinite weight then flows unchecked into every analysis site
+//! (`synapse.weight * activation`), where it beats every contribution threshold
+//! and silently bypasses dormancy, polarity-flip and noise detection, so the
+//! caller is handed confidently wrong results.
 //!
 //! The weight is therefore validated once, at deserialisation, so all 23
 //! consumption sites receive a finite value by construction rather than each
@@ -37,7 +43,7 @@ fn creature_json(weight: &str) -> String {
 
 fn assert_weight_rejected(weight: &str) {
     let err = serde_json::from_str::<SynapseJson>(&synapse_json(weight))
-        .unwrap_or_else(|_| panic!("weight {weight} must be rejected at deserialisation"));
+        .expect_err("a non-finite weight must be rejected at deserialisation");
     let msg = err.to_string();
     assert!(
         msg.contains("finite"),
