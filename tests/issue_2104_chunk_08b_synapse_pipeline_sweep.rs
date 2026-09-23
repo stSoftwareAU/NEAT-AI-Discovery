@@ -5,7 +5,7 @@
 //! tables and their per-section markers. This file gates the one section Issue
 //! #2104 owns, and it does so against the source it claims to have swept:
 //!
-//! * the 14 rows this sub-issue owns are present and none still reads
+//! * the 15 rows this sub-issue owns are present and none still reads
 //!   `pending`, each with a reason a later reader can check;
 //! * every capacity site (`with_capacity` / `vec![_; n]` / `reserve`) and every
 //!   comparator site (`total_cmp` / `partial_cmp` / `sort_by` / `max_by` /
@@ -24,8 +24,10 @@ use std::path::PathBuf;
 /// The chunk 8b prose record.
 const RECORD: &str = "docs/audits/security-sweep-chunk-08b-synapse-scoring-recommendation.md";
 
-/// The 14 files Issue #2104 swept, in record order.
-const PIPELINE_FILES: [&str; 14] = [
+/// The files Issue #2104 swept, in record order: the 14 named at the chunk 8b
+/// baseline, plus `issue_2161_locality_cancellation_test.rs`, added under
+/// `src/analysis/synapse/` afterwards and swept in the same change.
+const PIPELINE_FILES: [&str; 15] = [
     "src/analysis/synapse/mod.rs",
     "src/analysis/synapse/orchestration.rs",
     "src/analysis/synapse/preparation.rs",
@@ -40,6 +42,7 @@ const PIPELINE_FILES: [&str; 14] = [
     "src/analysis/synapse/results.rs",
     "src/analysis/synapse/metadata.rs",
     "src/analysis/synapse/tests.rs",
+    "src/analysis/synapse/issue_2161_locality_cancellation_test.rs",
 ];
 
 fn repo_root() -> PathBuf {
