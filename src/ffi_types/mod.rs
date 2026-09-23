@@ -421,10 +421,63 @@ pub struct NeuronData {
     pub errors: Vec<f32>,
 }
 
+// ==== TrainingRecord vector finitude validation (Issue #2135) ====
+
+/// The Issue #2135 rejection message for a non-finite training vector element.
+fn non_finite_training_vector_detail(field: &str, index: usize, raw: f32) -> String {
+    format!(
+        "training record {field}[{index}] must be finite, got {raw} (Issue #2135). \
+         Infinity and NaN are not permitted in FFI payloads."
+    )
+}
+
+/// Deserialise a training feature or target vector, rejecting any non-finite
+/// element (Issue #2135).
+///
+/// Every element is checked, not merely the first — one poisoned entry anywhere
+/// in the vector is enough to make the covariance and correlation matrices built
+/// over the records Infinity or NaN, so the caller is handed confidently wrong
+/// training metrics. Rejecting here, once, protects every consumption site by
+/// construction rather than re-guarding each of them.
+fn deserialise_finite_training_vector<'de, D>(
+    deserialiser: D,
+    field: &str,
+) -> Result<Vec<f32>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let raw = Vec::<f32>::deserialize(deserialiser)?;
+    if let Some((index, bad)) = raw.iter().copied().enumerate().find(|(_, v)| !v.is_finite()) {
+        return Err(serde::de::Error::custom(non_finite_training_vector_detail(
+            field, index, bad,
+        )));
+    }
+    Ok(raw)
+}
+
+fn deserialise_training_input<'de, D>(deserialiser: D) -> Result<Vec<f32>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    deserialise_finite_training_vector(deserialiser, "input")
+}
+
+fn deserialise_training_output<'de, D>(deserialiser: D) -> Result<Vec<f32>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    deserialise_finite_training_vector(deserialiser, "output")
+}
+
 /// Training data record
 #[derive(Debug, Deserialize, Clone)]
 pub struct TrainingRecord {
+    /// Feature vector. Every element must be finite — Infinity and NaN are
+    /// rejected at the FFI boundary (Issue #2135).
+    #[serde(deserialize_with = "deserialise_training_input")]
     pub input: Vec<f32>,
+    /// Target vector. Every element must be finite (Issue #2135).
+    #[serde(deserialize_with = "deserialise_training_output")]
     pub output: Vec<f32>,
     #[serde(default)]
     pub neuron_data: Option<Vec<NeuronData>>,
@@ -498,6 +551,33 @@ mod tests {
             err.contains("Issue #2134") && err.contains("errors"),
             "errors must name the field and cite the issue: {err}"
         );
+    }
+
+    /// NaN is unreachable from JSON, so the JSON-reachable cases live in
+    /// `tests/ffi/issue_2135_training_record_finitude.rs`; only an in-crate test
+    /// can feed NaN to the module-private helpers directly.
+    #[test]
+    fn deserialise_training_vectors_reject_nan() {
+        for (field, deserialise) in [
+            (
+                "input",
+                deserialise_training_input
+                    as fn(
+                        SeqDeserializer<std::vec::IntoIter<f32>, ValueError>,
+                    ) -> Result<Vec<f32>, ValueError>,
+            ),
+            ("output", deserialise_training_output),
+        ] {
+            let vector: SeqDeserializer<std::vec::IntoIter<f32>, ValueError> =
+                vec![0.5_f32, f32::NAN].into_deserializer();
+            let err = deserialise(vector)
+                .expect_err("a NaN vector element must be rejected")
+                .to_string();
+            assert!(
+                err.contains("Issue #2135") && err.contains(&format!("{field}[1]")),
+                "{field} must name the offending index and cite the issue: {err}"
+            );
+        }
     }
 
     #[test]

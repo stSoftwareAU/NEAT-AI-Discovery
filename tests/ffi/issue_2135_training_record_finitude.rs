@@ -191,7 +191,7 @@ fn record_discovery_with(record: &str) -> serde_json::Value {
 
 #[test]
 fn record_discovery_rejects_infinite_input_vector() {
-    let parsed = record_discovery_with(&input_json("[0.5, 1e39]"));
+    let parsed = record_discovery_with(&recorded_json("[0.5, 1e39]", "[0.7]"));
     assert_eq!(
         parsed["success"], false,
         "an infinite input element must fail the entry point: {parsed}"
@@ -211,7 +211,7 @@ fn record_discovery_rejects_infinite_input_vector() {
 
 #[test]
 fn record_discovery_rejects_infinite_output_vector() {
-    let parsed = record_discovery_with(&output_json("[1e39]"));
+    let parsed = record_discovery_with(&recorded_json("[0.5, 0.25]", "[1e39]"));
     assert_eq!(
         parsed["success"], false,
         "an infinite output element must fail the entry point: {parsed}"
