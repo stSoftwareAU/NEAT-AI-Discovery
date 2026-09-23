@@ -103,6 +103,23 @@ fn composed_gate_reports_the_forward_only_fault_first() {
     );
 }
 
+/// Order matters across all three gates: bounds (Issue #1867/#2020) runs
+/// before bias finitude (Issue #2133), so a creature violating both reports
+/// the bound, not the bias. Built directly, bypassing serde, because a
+/// non-finite bias can never arrive as JSON.
+#[test]
+fn composed_gate_reports_the_bounds_fault_before_the_bias_fault() {
+    let mut creature = valid_creature();
+    creature.input = usize::MAX;
+    creature.neurons[0].bias = f32::NAN;
+
+    let err = validate_creature(&creature).expect_err("both invariants are violated");
+    assert!(
+        err.to_string().contains("Issue #1867"),
+        "the bounds check must run before the bias check: {err}"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // The five entry points that run the gate.
 // ---------------------------------------------------------------------------
