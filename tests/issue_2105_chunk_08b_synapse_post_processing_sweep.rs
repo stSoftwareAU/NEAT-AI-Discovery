@@ -234,10 +234,18 @@ fn every_float_comparator_in_the_swept_files_has_a_table_row() {
 /// Every symbol the `synapse post-processing` outcome claims to have traced,
 /// paired with the file that must still declare it. An outcome citing a
 /// symbol that no longer exists is describing code that has moved or gone.
-const TRACED_SYMBOLS: [(&str, &str); 11] = [
+const TRACED_SYMBOLS: [(&str, &str); 13] = [
     (
         "src/analysis/synapse/post_processing.rs",
         "fn apply_post_processing",
+    ),
+    (
+        "src/analysis/synapse/post_processing.rs",
+        "pub fn apply_min_expected_gain_floor_for_synapses",
+    ),
+    (
+        "src/analysis/synapse/structural_patterns.rs",
+        "fn activation_mean_and_variance",
     ),
     (
         "src/analysis/synapse/post_processing.rs",
