@@ -988,9 +988,9 @@ occurrences of `deadline_passed` or `crate::cancellation::is_cancelled`, and
 `discovery_dispatch.rs::detect_discovery_modules_parallel` checks the deadline
 only **before** it calls a module's closure (Issue #1029), so the deadline
 bounds when a detector may start and not how long it may run. That matters for
-all three live detectors and is filed as #2183, the same shape as #2161 and
-#2169. It does **not** matter for `output_competition.rs`, whose O(outputs²)
-pair loop — the sharpest of the four — is unreachable.
+all three live detectors and is filed as #2183, the same shape as #2161
+and #2169. It does **not** matter for `output_competition.rs`, whose
+O(outputs²) pair loop — the sharpest of the four — is unreachable.
 
 The remaining two loops are linear, and the verdict differs for each:
 `output_bias_drift.rs::detect_output_bias_drift` walks outputs × that output's
