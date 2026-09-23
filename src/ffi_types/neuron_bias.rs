@@ -55,10 +55,7 @@ pub fn validate_neuron_biases(creature: &CreatureJson) -> Result<(), DiscoveryEr
     for neuron in &creature.neurons {
         if !neuron.bias.is_finite() {
             return Err(DiscoveryError::InvalidInput {
-                detail: non_finite_bias_detail(
-                    &format!("Neuron \"{}\"", neuron.uuid),
-                    neuron.bias,
-                ),
+                detail: non_finite_bias_detail(&format!("Neuron \"{}\"", neuron.uuid), neuron.bias),
             });
         }
     }
