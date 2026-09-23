@@ -169,7 +169,7 @@ one sub-issue's file list.
 | Path | Lines | Outcome |
 | --- | --- | --- |
 | `src/analysis/recommendation/mod.rs` | 14 | clean — nine `pub mod` declarations and a doc comment; no executable code, so nothing to allocate, compare or divide |
-| `src/analysis/recommendation/activation_recommendation.rs` | 927 | clean — every suitability score is a compile-time literal scaled by compile-time penalties, so neither ranking site can see an input-derived float; the two ranking defects that remain are out of class and filed as #2184 |
+| `src/analysis/recommendation/activation_recommendation.rs` | 927 | clean — every suitability score is a compile-time literal scaled by compile-time penalties, so neither ranking site can see an input-derived float; the two ranking defects found here were out of class, filed as #2184 and **since fixed** (PR #2185, commit `3d1b24f`, merged into this branch) |
 | `src/analysis/recommendation/fan_in.rs` | 608 | findings filed — #2181 (the two `partial_cmp(…).unwrap_or(Equal)` sorts are not total orders and the `corr.abs() < THRESHOLD` filter fails open, so a NaN correlation reachable from finite records empties the `MAX_INPUTS_PER_TARGET` window) and #2183 (the target × input scan consults no deadline) |
 | `src/analysis/recommendation/gradient_discovery.rs` | 330 | findings filed — #2182 (`mean_gradient.abs() * effective_delta.abs()` overflows to `+inf` from finite operands and the descending `total_cmp` ranks it first; the `!mean_gradient.is_finite()` guard closes only the NaN half) and #2183 |
 | `src/analysis/recommendation/multi_hop.rs` | 497 | findings filed — #2182 (two paths to rank 1: `compute_mean_abs_error` sums the target's **whole** error map in `f32`, so `+inf` is reachable on observation indices the gating correlation never sees; and `find_three_hop_extensions` spells its correlation filter `<`, the fail-open direction, so a NaN `combined_corr` reaches the same descending `total_cmp` and sorts **above** `+inf`) and #2183. Only the two-hop filter at `detect_multi_hop_candidates` is fail-closed — the two filters in this file point in opposite directions |
@@ -1051,7 +1051,11 @@ other chunk 8b audit sub-issues.
 - `#2184` and `#2185` — out-of-class observations from the
   `recommendation core` sweep (a non-deterministic activation tie-break with a
   dead penalty key, and the never-dispatched `output_competition` module).
-  Ordinary issues, **not** security findings.
+  Ordinary issues, **not** security findings. `#2184` is **closed** — its fix
+  landed as PR #2185 (commit `3d1b24f`) and is merged into this branch, so
+  `recommend_activation_function` now breaks a score tie on the activation
+  name and `apply_gradient_flow_penalty` spells the penalty key `"RELU6"`;
+  `#2185` remains open.
 - The remaining sections list their own findings as they are swept.
 
 ## Related remediations (not sweep coverage)
