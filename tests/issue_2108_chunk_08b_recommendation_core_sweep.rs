@@ -629,6 +629,103 @@ fn fan_in_candidates_still_depend_on_the_order_the_caller_lists_neurons_in() {
     );
 }
 
+/// #2182, the `fan_in.rs` path the first pass of this sweep missed: the
+/// *improvement* comparator can see a non-finite key after all, and a crafted
+/// creature lands at **rank 0** with `estimated_improvement = +inf`.
+///
+/// The first pass ruled out a NaN improvement — correctly, because both
+/// estimators end in `.max(0.0)` and `f32::max` returns the non-NaN operand —
+/// and stopped there. It never applied the `+inf`-from-an-`f32`-accumulator
+/// reasoning it applied to the four other detectors. Two sites manufacture one
+/// from finite records:
+///
+/// * `fan_in.rs::compute_least_squares_improvement` accumulates
+///   `original_sse` in `f32`; sixty errors near `1e19` overflow it while the
+///   residual stays small, so `(inf - finite).max(0.0)` is `+inf`, not `0.0`.
+/// * `fan_in.rs::compute_two_input_regression` accumulates in `f64` and then
+///   narrows with `improvement as f32`, which saturates to `+inf` above
+///   `f32::MAX`.
+///
+/// Both feed `evaluate_fan_in_pair`, whose four gates are all fail-open for
+/// `+inf` — `inf <= 0.0` is false, and `inf < inf * 1.05` is false — so the
+/// candidate is emitted and the descending sort puts it first.
+///
+/// Every recorded value is finite, so the FFI gates of Issues #2134 / #2135 do
+/// not apply. When #2182 grows a finitude gate on `estimated_improvement` this
+/// test must fail, which is the signal the `fan_in.rs` row needs re-sweeping.
+#[test]
+fn a_finite_record_set_still_ranks_a_fan_in_candidate_at_infinity() {
+    const SAMPLES: u32 = 60;
+    /// Large enough that `error²` summed over `SAMPLES` overflows `f32`, small
+    /// enough that every value itself is finite and crosses the FFI boundary.
+    const ACTIVATION_BASE: f32 = 3.3e8;
+    /// Makes the target error exactly proportional to input `a`, so the
+    /// single-input residual is ~0 while the uncentred `Σ error²` is `+inf`.
+    const ERROR_PER_ACTIVATION: f32 = 3.03e10;
+
+    // Two spreads: `a` carries the first, `b` carries the first plus a second
+    // independent one, so `corr(a, b)` lands between the 0.3 filter floor and
+    // the 0.8 mutual-correlation ceiling instead of outside both.
+    let spread_a = |j: u32| f32::from(i16::try_from(j % 5).expect("j % 5 fits")) - 2.0;
+    let spread_b = |j: u32| f32::from(i16::try_from(j % 7).expect("j % 7 fits")) - 3.0;
+    let act_a = |j: u32| ACTIVATION_BASE + 1.0e6 * spread_a(j);
+    let act_b = |j: u32| ACTIVATION_BASE + 1.0e6 * (spread_a(j) + spread_b(j));
+    let target_error = |j: u32| act_a(j) * ERROR_PER_ACTIVATION;
+
+    let creature = CreatureJson {
+        neurons: vec![
+            neuron("input-a", "input"),
+            neuron("input-b", "input"),
+            neuron("output-1", "output"),
+        ],
+        synapses: Vec::new(),
+        input: 2,
+        output: 1,
+    };
+    let records: Vec<(String, Vec<DiscoverRecord>)> = vec![
+        (
+            "input-a".to_string(),
+            (0..SAMPLES)
+                .map(|j| rec("input-a", j, act_a(j), 0.0))
+                .collect(),
+        ),
+        (
+            "input-b".to_string(),
+            (0..SAMPLES)
+                .map(|j| rec("input-b", j, act_b(j), 0.0))
+                .collect(),
+        ),
+        (
+            "output-1".to_string(),
+            (0..SAMPLES)
+                .map(|j| rec("output-1", j, 0.5, target_error(j)))
+                .collect(),
+        ),
+    ];
+
+    // Issue #1799: the claim is "reachable from finite records". If the trigger
+    // itself smuggles a non-finite value in, the assertion below proves nothing.
+    assert!(
+        records
+            .iter()
+            .flat_map(|(_, rs)| rs.iter())
+            .all(|r| r.activation.is_finite() && r.errors.iter().all(|e| e.is_finite())),
+        "every recorded value must be finite, or the trigger bypasses the FFI gate instead of \
+         defeating it"
+    );
+
+    let candidates = detect_fan_in_candidates(&creature, &records);
+    let first = candidates
+        .first()
+        .expect("the crafted pair must still produce a fan-in candidate");
+    assert!(
+        !first.estimated_improvement.is_finite(),
+        "#2182 says rank 0 still carries a non-finite estimated_improvement — got {}; if it is \
+         finite now, the improvement is gated and the `fan_in.rs` row must be re-swept",
+        first.estimated_improvement
+    );
+}
+
 /// The `sample_weighted.rs` row: every per-record error is laundered through
 /// `is_finite` to `0.0` **before** anything is compared, so neither the median
 /// select nor the ratio can see a NaN, and an overflowed weight total
