@@ -14,6 +14,7 @@ mod issue_1713_aggregate_gate;
 mod issue_189_synergistic_discovery;
 mod issue_202_epistatic_neuron_pairs;
 mod issue_2043_canonical_weight_reuse;
+mod issue_2185_output_competition_non_finite;
 mod issue_230_multi_hop_candidate_analysis;
 mod issue_402_range_aware_weight_optimisation;
 mod issue_421_gradient_based_discovery;
