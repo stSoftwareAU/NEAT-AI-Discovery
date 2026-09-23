@@ -403,7 +403,7 @@ pub fn analyze_neurons_with_cache_and_gpu_queue(
             let work_results: Vec<evaluation::NeuronWorkResult<'_>> = {
                 let _timing = TimingScope::sample_building(&timing_collector);
 
-                let locality_groups = group_sources_by_locality(&sources_to_process);
+                let locality_groups = group_sources_by_locality(&sources_to_process, &deadline);
 
                 if verbose_enabled() && sources_to_process.len() >= MIN_GROUP_SIZE_FOR_LOCALITY {
                     let group_sizes: Vec<usize> = locality_groups.iter().map(|g| g.sources.len()).collect();

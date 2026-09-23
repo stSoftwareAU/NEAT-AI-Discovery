@@ -6,7 +6,7 @@
 #![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use crate::analysis::diagnostics::TargetMap;
 use crate::analysis::samples::HelpfulSample;
-use crate::analysis::utils::OrderedNeuron;
+use crate::analysis::utils::{OrderedNeuron, deadline_passed};
 use crate::types::DiscoverRecord;
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -61,6 +61,25 @@ pub(crate) fn compute_obs_index_overlap(a: &HashSet<u32>, b: &HashSet<u32>) -> f
     intersection_size as f32 / min_size as f32
 }
 
+/// Emit each source as its own single-source group (Issue #2161).
+///
+/// This is the documented no-overlap outcome of the pairwise scan, so it is a
+/// safe degradation whenever the scan is abandoned or never entered: grouping
+/// is a sample-building optimisation only (Issue #221) and never changes which
+/// candidates survive.
+fn single_source_groups<'a, 'b, I>(sources: I) -> Vec<SampleLocalityGroup<'a>>
+where
+    'a: 'b,
+    I: IntoIterator<Item = &'b (&'a OrderedNeuron, Arc<Vec<DiscoverRecord>>)>,
+{
+    sources
+        .into_iter()
+        .map(|(neuron, records)| SampleLocalityGroup {
+            sources: vec![(*neuron, Arc::clone(records))],
+        })
+        .collect()
+}
+
 /// Group sources by sample locality for efficient batch processing.
 ///
 /// Sources with high `obs_index` overlap (≥80%) are grouped together so that
@@ -73,18 +92,23 @@ pub(crate) fn compute_obs_index_overlap(a: &HashSet<u32>, b: &HashSet<u32>) -> f
 /// - 100 sources, same `obs_indices`: 1 group (100x reduction in target lookups)
 /// - 100 sources, 80% overlap: ~5 groups (20x reduction)
 /// - 100 sources, no overlap: 100 groups (no change)
+///
+/// # Issue #2161: bounded, cancellable scan
+///
+/// The pairwise scan is O(n²) in the source count and the source count is
+/// caller-controlled, so it carries two exits: sources beyond
+/// [`MAX_SOURCES_FOR_LOCALITY_SCAN`] skip the scan entirely, and an expired
+/// `deadline` (which also reports a host cancellation request, Issue #1047)
+/// abandons it between outer iterations. Both degrade to single-source groups,
+/// so every source still appears in exactly one group.
 pub(crate) fn group_sources_by_locality<'a>(
     sources: &[(&'a OrderedNeuron, Arc<Vec<DiscoverRecord>>)],
-    _deadline: &Option<SystemTime>,
+    deadline: &Option<SystemTime>,
 ) -> Vec<SampleLocalityGroup<'a>> {
-    if sources.len() < MIN_GROUP_SIZE_FOR_LOCALITY {
-        // Not enough sources to benefit from grouping
-        return sources
-            .iter()
-            .map(|(neuron, records)| SampleLocalityGroup {
-                sources: vec![(neuron, Arc::clone(records))],
-            })
-            .collect();
+    // Too few sources to benefit from grouping, or too many to scan safely.
+    if sources.len() < MIN_GROUP_SIZE_FOR_LOCALITY || sources.len() > MAX_SOURCES_FOR_LOCALITY_SCAN
+    {
+        return single_source_groups(sources.iter());
     }
 
     // Extract obs_indices for each source (done once, reused for grouping)
