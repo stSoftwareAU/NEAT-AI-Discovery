@@ -986,6 +986,12 @@ findings:
   `activation_recommendation.rs::classify_activation_suitability` spells the
   key `"RELU6"`, so that penalty branch is dead and RELU6 keeps its full score
   in exactly the negative-heavy case the penalty exists to discourage.
+  **Both are fixed** — PR #2185 (commit `3d1b24f`) breaks the tie on the
+  activation name and respells the penalty key, and it is merged into this
+  branch, so the paragraph above describes the tree as swept, not as it stands
+  today. The `clean` row for this file is unchanged: neither defect was in
+  class, and neither ranking site could see an input-derived float before or
+  after.
 - **#2185** — `output_competition.rs` (325 lines, Issue #1321) has no
   production caller: `output_competition.rs::detect_output_competition` and
   `output_competition.rs::co_activation` are reached only from tests, and
