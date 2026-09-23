@@ -116,10 +116,10 @@ one sub-issue's file list.
 
 | Path | Lines | Outcome |
 | --- | --- | --- |
-| `src/analysis/synapse/post_processing.rs` | 945 | pending |
-| `src/analysis/synapse/structural_patterns.rs` | 700 | pending |
-| `src/analysis/synapse/adaptive_proposal.rs` | 511 | pending |
-| `src/analysis/synapse/add_synapse_gating.rs` | 458 | pending |
+| `src/analysis/synapse/post_processing.rs` | 945 | findings filed — #2167 (the three descending `total_cmp` sorts rank a non-finite gain first, and no `retain` filter ahead of them drops `+inf`) and #2168 (`apply_impact_to_helpful` byte-slices a UUID at index 12 inside a verbose log, panicking on a multi-byte char boundary) |
+| `src/analysis/synapse/structural_patterns.rs` | 700 | finding filed — #2169: `detect_noisy_vs_trusted` runs a quadratic pairwise scan and `detect_collapsible_hidden_neurons` a linear neuron pass whose per-neuron body walks the records, and neither consults `deadline_passed` or the cancellation flag; the four capacity sites are all bounded by live collection lengths |
+| `src/analysis/synapse/adaptive_proposal.rs` | 511 | clean — the only `with_capacity` is sized by the compile-time `ADAPTIVE_PROPOSAL_CANDIDATE_COUNT`; the Box-Muller `ln` is floored away from zero, and `record_batch`'s counters are incremented once per real candidate batch |
+| `src/analysis/synapse/add_synapse_gating.rs` | 458 | finding filed — #2170: the FFI-supplied `ModuleOutcomeTracker` reaches `should_skip_add_synapse_by_outcome` unvalidated, so a deserialised `successes > attempts` underflows `ModuleStats::success_rate` and flips the gate; the density gate's divisor is guarded against zero |
 
 ### synapse scoring + target_analysis
 
@@ -214,6 +214,13 @@ it; `unbounded` means a finding was filed.
 | `holdout_validation.rs::split_samples_holdout` | `Vec::with_capacity(samples.len() - validate_count)` | the early return rejects fewer than `HOLDOUT_MIN_SAMPLE_COUNT` (20) samples and `validate_count = round(0.3n) < n` for every `n >= 20`, so the subtraction cannot wrap | bounded |
 | `holdout_validation.rs::split_samples_holdout` | `Vec::with_capacity(validate_count)` | `validate_count = round(0.3 × samples.len())`, at most 30% of a live slice's length | bounded |
 <!-- section: synapse post-processing -->
+| `structural_patterns.rs::detect_noisy_vs_trusted` | `HashMap::with_capacity(records.len())` | `records` is a live slice of already-materialised observation records, so the hint is the length of a collection the loader has itself allocated | bounded |
+| `structural_patterns.rs::detect_noisy_vs_trusted` | `Vec::with_capacity(target_map.map.len())` | `target_map.map` is a live `HashMap` built earlier in the same pass; its length is at most the record count | bounded |
+| `structural_patterns.rs::detect_collapsible_hidden_neurons` | `HashMap::with_capacity(records.len())` | same live record slice; the reservation cannot exceed what the records already occupy | bounded |
+| `structural_patterns.rs::detect_collapsible_hidden_neurons` | `Vec::with_capacity(target_map_b.map.len())` | same live `HashMap` length, not a caller-supplied count | bounded |
+| `adaptive_proposal.rs::generate_gaussian_candidates` | `Vec::with_capacity(count)` | `count` is bound from the compile-time constant `ADAPTIVE_PROPOSAL_CANDIDATE_COUNT` (12) and no caller can override it — the issue body's question about the origin of `count` resolves to a constant, not to input | bounded |
+| `structural_patterns.rs::build_collapse_input` | `Vec::with_capacity(n_samples as usize)` ×3 | `#[cfg(test)]` fixture builder — `n_samples` is a loop bound from compile-time literals, and the symbol is not compiled into the shipped `cdylib`, so no untrusted path reaches it | n/a — test-only |
+| `post_processing.rs`, `add_synapse_gating.rs` | none | neither file allocates a collection with a size hint | n/a |
 <!-- section: synapse scoring + target_analysis -->
 | `statistics.rs::filter_and_load_sources` | materialised `Vec<SourceMetadata>` on the per-target source list | `sources` is the result of SQL-like filtering of a live candidate set, bounded by the input creature's topology and the FFI validation layer | bounded |
 | `statistics.rs::prepare_harmful_samples` | materialised `Vec<(SourceUuid, TargetUuid)>` for pairwise work | `bad_pairs` iterates over a constructed vector of pre-computed neuron pairs, bounded by `max(neurons.len()²)` | bounded |
@@ -243,6 +250,19 @@ value comes from and what happens when it is `NaN`.
 | `gpu_evaluation.rs::evaluate_all_activation_specs_batched` | `net_improvement <= threshold`, then `absolute_improvement < 0.001`, then `current_best.is_none() \|\| net_improvement > …` | batched GPU sufficient statistics fed through `compute_activation_improvement_and_count` | a NaN fails both the `<=` and the `<`, and the `is_none()` short-circuit would then store it without ever comparing it — the only accept path in these files that does not end in a `>` a NaN loses | bounded — `finalise_improvement` applies `select_finite`, so `net_improvement` is finite before any of the three |
 | `candidate_generation.rs::compute_obs_index_overlap` | `overlap >= MIN_LOCALITY_OVERLAP` | intersection size over the smaller observation-index set | the division cannot produce a NaN — both sets are checked non-empty first, so the divisor is at least 1 | bounded |
 <!-- section: synapse post-processing -->
+| `post_processing.rs::apply_post_processing` | `sort_by` on descending `total_cmp`, helpful bucket | `expected_creature_score_gain` after the helpful discount multipliers are applied | IEEE-754 totalOrder puts a positive NaN **above** `+inf` and every finite value below both, so descending order heads the list with a non-finite gain | **unbounded — #2167.** The `retain(gain >= floor)` filter ahead of it drops a NaN but keeps `+inf`, and this call site never runs `reject_non_finite_gains` |
+| `post_processing.rs::apply_post_processing` | `sort_by` on descending `total_cmp`, harmful bucket | same field on the harmful bucket | same totalOrder placement | **unbounded — #2167.** The harmful bucket runs the same `apply_min_expected_gain_floor_for_synapses` pass as the helpful one, so `+inf` survives here too |
+| `post_processing.rs::apply_post_processing` | `sort_by` on descending `total_cmp`, coordinated bucket | same field on the coordinated structural bucket | same totalOrder placement | **unbounded — #2167.** The `retain(gain > 0.0)` filter (Issues #1110, #1128) drops a NaN and keeps `+inf` |
+| `post_processing.rs::scale_by_error_fraction` | `total_error_sq <= EPSILON` | summed squared per-neuron errors from `compute_neuron_error_sq_map` | a NaN or `+inf` total fails the `<=`, so the guard passes it to the division; `inf / inf` is NaN and `clamp` propagates NaN unchanged | the `+inf` reachability of this sum is the escalation path recorded in #2167 |
+| `post_processing.rs::compute_neuron_error_sq_map` | `e.is_finite()`, then `error_sq > EPSILON` on the summed square | per-sample neuron error | a NaN error is filtered out before the map is built, and a NaN sum would lose the `>` and simply not be inserted | bounded for NaN — but the retained `e * e` overflows to `+inf` above `f32::MAX.sqrt()` ≈ 1.84e19, which neither the filter nor the `>` catches: `+inf > EPSILON` is true, so the infinity is inserted |
+| `post_processing.rs::apply_min_expected_gain_floor_for_synapses` | `retain(gain >= floor)` | `expected_creature_score_gain` on the helpful and harmful buckets, before both sorts | a NaN loses the `>=` and is dropped; `+inf` wins it and is kept, which is the asymmetry #2167 rests on | **unbounded — #2167.** This is the only filter either bucket gets |
+| `structural_patterns.rs::detect_noisy_vs_trusted` | `(a.weight - b.weight).abs() > WEIGHT_EPS`, `(a.mean - b.mean).abs() > MEAN_EPS`, `ratio < MIN_VAR_RATIO` — the first two skip on `>`, the third on `<` | pairwise synapse-weight and activation-mean differences, and the variance ratio, over untrusted records | every one is a skip-on-comparison filter, so a NaN fails the comparison whichever way it points and **falls through** rather than being skipped | bounded — `var.max(0.0)` launders a NaN variance to `0.0`, `trusted.var.max(EPSILON)` keeps the ratio's divisor positive, and `improvement.rs::finalise_improvement` routes every improvement through `select_finite`, so no non-finite gain is emitted |
+| `structural_patterns.rs::detect_noisy_vs_trusted::activation_mean_and_variance` | `n <= 0.0` before `sum / n` | count of finite activations in the record set | the counter is incremented only inside `r.activation.is_finite()`, so it is a whole number and never NaN; the guard returns `None` when nothing finite was seen | bounded — the divisor is at least `1.0` whenever the division runs |
+| `structural_patterns.rs::detect_noisy_vs_trusted` | `improvement <= 0.0`, then `best_gain >= improvement` against the running best | `compute_synapse_improvement_and_count` | a NaN would fail the `<=` and pass, then lose the `>=` and displace the running best, but the helper's `select_finite` makes both unreachable | bounded by construction |
+| `structural_patterns.rs::detect_collapsible_hidden_neurons` | `baseline_sq <= EPSILON`, then `weight.abs() < bypass_floor`, then its own `improvement <= 0.0` | summed squared baseline error, the optimal outgoing weight, and the collapse improvement | a NaN fails all three comparisons and passes through each | bounded — `calculation.rs::compute_outgoing_weight` returns `None` on a non-finite raw weight, and the improvement arrives through the same `select_finite` path, so the values compared are finite whenever they exist |
+| `add_synapse_gating.rs::should_skip_add_synapse_by_outcome` | `rate < success_threshold` | `ModuleStats::success_rate` over the FFI-supplied `ModuleOutcomeTracker` | a NaN rate fails the `<`, so the gate **fails open** and every add-synapse candidate is kept | **unbounded — #2170.** The rate is not NaN-free: a deserialised `soft_failures` of `NaN` or `±inf` reaches the divisor unvalidated |
+| `add_synapse_gating.rs::should_skip_add_synapse_by_density` | `density > density_threshold` | `synapses.len() / total_neurons` on the untrusted creature | the divisor is guarded by an `== 0` early return, so the quotient is finite and the comparison is well-defined | bounded |
+| `adaptive_proposal.rs` | none | no float comparator or sort in the file | n/a | n/a |
 <!-- section: synapse scoring + target_analysis -->
 | `evaluation.rs::process_harmful_batch_from_prepared` | `neuron_error_improvement <= 0.0` | `(harmful_count as f32 - helpful_count as f32) / total_count as f32`, both operands are u32-cast-to-f32, divisor is guarded `> 0` before the division | a NaN would fail the `<=`, so this guard passes it through; reachable only if arithmetic itself produced NaN, which cannot happen with finite operands and valid arithmetic | bounded — direct arithmetic on finite u32-derived numerands cannot produce NaN |
 | `scoring/improvement.rs::compute_synapse_improvement_and_count` | `select_finite` applied before final `clamp` on all improvement return paths | the improvement is computed from helpful/harmful counts and squared errors; three dispatch targets guard by match statement | the top-level guard returns all-finite tuple `(0.0, 0, 0, samples.len(), 0.0)` before any dispatch, closing the NaN production path entirely | bounded — three guards + one defensive return |
@@ -343,6 +363,139 @@ are total parsers owned by `src/config` (swept separately).
 `synapse pipeline` section, which belong to the five remaining chunk 8b audit
 sub-issues. The two descending `total_cmp` sorts in `post_processing.rs` that
 feed `filtering.rs::truncate_combined_synapse_candidate_sets` are #2105's rows.
+
+### synapse post-processing (Issue #2105)
+
+**Four findings filed: #2167, #2168, #2169, #2170.** All four files
+(2,614 lines) were read in full for every defect class above. What was actually
+traced:
+
+**Float class — the ranking finding (#2167).** `post_processing.rs::apply_post_processing`
+holds **three** descending `total_cmp` sorts, not the two the `synapse pipeline`
+section above recorded — one each for the helpful, harmful and coordinated
+structural buckets. IEEE-754 totalOrder places a positive NaN above `+inf` and
+every finite value below both, so a descending sort puts a non-finite gain at
+the head of the list the host then adopts. Each bucket is filtered once ahead of
+its sort, and all three filters are asymmetric in exactly the wrong direction:
+`post_processing.rs::apply_min_expected_gain_floor_for_synapses` runs over the
+helpful **and** the harmful bucket keeping `gain >= floor`, and the coordinated
+pass keeps `gain > 0.0` (Issues #1110, #1128) — a NaN fails both comparisons and
+is dropped, while `+inf` passes both and survives. No bucket is left unfiltered,
+which is why the finding is about what the filters keep rather than about a
+missing filter. This call
+site never runs `candidate_aggregation.rs::reject_non_finite_gains`, the
+Issue #1367 gate; only `candidate_aggregation.rs::merge_coordinated_structural_replacements`
+does. `+inf` is reachable rather than theoretical:
+`post_processing.rs::compute_neuron_error_sq_map` filters its per-sample errors
+on `e.is_finite()` but then inserts `e * e`, which overflows to `+inf` for any
+error above `f32::MAX.sqrt()` (≈ 1.84e19); `post_processing.rs::scale_by_error_fraction`
+then fails its `total_error_sq <= EPSILON` guard on that infinity, divides
+`inf / inf` to NaN, and `clamp` propagates NaN unchanged. Filed as #2167
+(`severity:medium`, `confidence:high`).
+
+**Cancellation — the quadratic-scan finding (#2169).** Neither detector in
+`structural_patterns.rs` consults `utils/deadline.rs::deadline_passed` or the
+global flag behind `cancellation::is_cancelled` (Issue #1047), and both run
+before `apply_post_processing`. `structural_patterns.rs::detect_noisy_vs_trusted`
+walks every unordered pair of incoming inputs, and its per-pair body is not
+O(1) — it calls `scoring/improvement.rs::compute_synapse_improvement_and_count`,
+which walks the record set, so the work between cancellation points grows as
+n²·records. `structural_patterns.rs::detect_collapsible_hidden_neurons` is
+O(neurons × records) on the same terms. The only cap on either is the size of
+the untrusted creature: `ffi_types/creature_bounds.rs::validate_creature_input_bounds`
+bounds input and output width (1,000,000 each, Issues #1867, #2020, #2078) and
+says nothing about hidden-neuron or synapse count. Filed as #2169
+(`severity:medium`, `confidence:high`) — the same shape as #2161.
+
+**Panic class — the UTF-8 slice (#2168).**
+`post_processing.rs::apply_impact_to_helpful` byte-slices a neuron UUID at
+index 12 for a verbose log. The `.min(len)` guard covers only a short string;
+it does not make index 12 a char boundary, so any UUID whose twelfth byte falls
+inside a multi-byte sequence panics with "byte index 12 is not a char
+boundary". The panic unwinds out of a rayon worker, and an unwind past an
+`extern "C"` frame is an abort rather than a catchable error. The trigger needs
+both `utils::verbose_enabled()` and a hidden target neuron. Filed as #2168
+(`severity:low`, `confidence:high`).
+
+**Integer class — the untrusted tracker (#2170).**
+`add_synapse_gating.rs::should_skip_add_synapse_by_outcome` reads
+`module_weights.rs::ModuleStats::success_rate`, whose `(self.attempts -
+self.successes)` is a `u32 - u32` **before** the `as f64` cast.
+`ModuleStats::record` maintains `successes <= attempts` and
+`::record_soft_failures` rejects a non-positive weight, but the derived
+`Deserialize` bypasses both: `ffi_types/requests.rs` carries
+`module_outcome_tracker: Option<ModuleOutcomeTracker>` on both
+`AnalyzeParallelInput` and `AnalyzeAllInput`,
+`ffi_internal/analysis.rs::build_analyze_all_input_from_parallel` passes it
+through unvalidated, and `analysis/orchestration.rs::analyze_all` hands it to
+`add_synapse_gating.rs::gate_add_synapse_candidates`. `Cargo.toml` sets no
+`overflow-checks` key in any profile, so the language defaults apply — a
+debug or test build panics on the underflow and a release build wraps, giving
+a rate near zero that fires the gate and silently drops every add-synapse
+candidate. The same field corrupts the divisor: a deserialised
+`soft_failures` of `-12.0` makes `beta` negative, `f64::MAX` forces the gate
+closed, and a `NaN` makes `rate < success_threshold` false so the gate fails
+open. Filed as #2170 (`severity:high`, `confidence:high`) — the highest
+severity in this chunk.
+
+**Capacity class.** Five production sites, all in the table above and all
+bounded. The four in `structural_patterns.rs` are sized from live collections
+the loader has already allocated — `records.len()` on a materialised slice and
+`map.len()` on a `HashMap` built earlier in the same pass — so none is a
+caller-supplied count. `adaptive_proposal.rs::generate_gaussian_candidates`
+answers the issue's question about the origin of its `count`: it is bound from
+`constants/candidate_scoring.rs::ADAPTIVE_PROPOSAL_CANDIDATE_COUNT` (12), a
+compile-time constant no caller can override. The three vectors sized
+`n_samples as usize` live in `structural_patterns.rs`'s `#[cfg(test)]`
+`build_collapse_input` fixture builder, are driven by compile-time literals,
+and are not compiled into the shipped `cdylib` — recorded as `n/a — test-only`
+rather than dropped silently.
+
+**Division.** Every production denominator in these four files is guarded:
+`structural_patterns.rs::detect_noisy_vs_trusted::activation_mean_and_variance`
+divides `sum / n` and `sum_sq / n` only after an `n <= 0.0` early return, and
+the same detector's variance ratio divides by `trusted.var.max(EPSILON)`, which
+is positive for every input including a NaN variance; the collapse pass returns
+early on
+`baseline_sq <= EPSILON`, `add_synapse_gating.rs::should_skip_add_synapse_by_density`
+returns early when `total_neurons == 0`, and `adaptive_proposal.rs`'s
+acceptance rate divides only when `total > 0`. The one unguarded divisor in
+the chunk is `ModuleStats::success_rate`'s, and it is #2170's.
+
+**NaN threads that close by construction — recorded so a later change re-opens
+them knowingly.** `structural_patterns.rs`'s filters are all
+skip-on-comparison, and they point both ways: the pairing pass skips when
+`(a.weight - b.weight).abs() > WEIGHT_EPS` or `(a.mean - b.mean).abs() >
+MEAN_EPS` — a `>` on the pairwise **difference**, not a `<` on either magnitude
+— while `ratio < MIN_VAR_RATIO`, `improvement <= 0.0` and
+`weight.abs() < bypass_floor` skip on the other direction. A NaN fails the
+comparison whichever way it points, so in every one of these the candidate
+**falls through** rather than being skipped.
+Two invariants stop a NaN ever arriving: `scoring/improvement.rs::finalise_improvement`
+divides only when `effective_baseline > EPSILON` and passes the quotient
+through `scoring/improvement.rs::select_finite`, and
+`scoring/weights/calculation.rs::compute_outgoing_weight` returns `None` on a
+non-finite raw weight. Two laundering steps are worth naming for the same
+reason: `var.max(0.0)` turns a NaN variance into `0.0` silently (`f32::max`
+returns the non-NaN operand), and the `n += 1.0` `f32` sample counter stops
+incrementing past 2²⁴. Both `add_synapse_gating.rs` gates fail **open** on a
+NaN, which is why #2170's divisor corruption matters beyond the underflow.
+
+**Adaptive proposal — clean.** `adaptive_proposal.rs`'s Box-Muller transform
+floors its uniform at `1e-15` before `ln`, so `ln(0)` is unreachable;
+`deterministic_hash` and `mix_hash` use `wrapping_mul` deliberately as a mixing
+function, not as unchecked arithmetic; `record_batch`'s `u32` counters
+accumulate once per real candidate batch, so reaching `u32::MAX` would require
+more batches than a run can produce; and `sigma_for` divides only behind the
+`ADAPTIVE_PROPOSAL_MIN_HISTORY` floor of 15. `generate_fixed_grid` applies no
+finiteness guard of its own but is fed by `compute_outgoing_weight`, which has
+one.
+
+**Deliberately out of scope for this sub-issue:** the 44 rows outside the
+`synapse post-processing` and `synapse pipeline` sections, which belong to the
+four remaining chunk 8b audit sub-issues. Fixing any of #2167–#2170 is out of
+scope here by the same rule that made #2161 a filing rather than a patch — each
+fix ships its own `tests/issue_<n>_*.rs` regression test with its own PR.
 
 ### shared (Issue #2103)
 
@@ -495,6 +648,25 @@ above that belong to the remaining chunk 8b audit sub-issues.
   source scan with no deadline or cancellation check, so the analysis deadline
   and a host cancel request are both ignored until it finishes. Filed by the
   `synapse pipeline` sweep (Issue #2104).
+- `#2167` (`security`, `lang:rust`, `severity:medium`, `confidence:high`) —
+  `post_processing.rs::apply_post_processing`'s three descending `total_cmp`
+  sorts on `expected_creature_score_gain` rank a non-finite gain above `+inf`,
+  so a NaN/`inf` candidate that reaches this call site is adopted first by the
+  host. Filed by the `synapse post-processing` sweep (Issue #2105).
+- `#2168` (`security`, `lang:rust`, `severity:low`, `confidence:high`) —
+  `post_processing.rs::apply_impact_to_helpful` slices a UUID string by byte
+  index and panics on a multi-byte character boundary. Filed by the
+  `synapse post-processing` sweep (Issue #2105).
+- `#2169` (`security`, `lang:rust`, `severity:medium`, `confidence:high`) —
+  `structural_patterns.rs`'s detectors run uncancellable scans over untrusted
+  creature topology with no deadline check — `detect_noisy_vs_trusted` is
+  O(n²·records) pairwise, `detect_collapsible_hidden_neurons` O(neurons ×
+  records) — the same shape as #2161.
+  Filed by the `synapse post-processing` sweep (Issue #2105).
+- `#2170` (`security`, `lang:rust`, `severity:high`, `confidence:high`) — an
+  untrusted `ModuleOutcomeTracker` can underflow `ModuleStats::success_rate`,
+  flipping `add_synapse_gating.rs`'s success-rate gate. Filed by the
+  `synapse post-processing` sweep (Issue #2105).
 - The remaining sections list their own findings as they are swept.
 
 ## Related remediations (not sweep coverage)
