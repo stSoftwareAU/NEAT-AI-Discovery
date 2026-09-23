@@ -372,7 +372,9 @@ fn apply_gradient_flow_penalty(
             if let Some(score) = scores.get_mut("RELU") {
                 *score *= (1.0 - negative_fraction * 0.5).max(0.3);
             }
-            if let Some(score) = scores.get_mut("ReLU6") {
+            // Issue #753 normalises squash names to uppercase, so "RELU6" is
+            // the only spelling that can be present (Issue #2184).
+            if let Some(score) = scores.get_mut("RELU6") {
                 *score *= (1.0 - negative_fraction * 0.5).max(0.3);
             }
         }
@@ -524,8 +526,15 @@ pub fn recommend_activation_function(
     // Get the current activation's score
     let current_score = get_activation_score(&suitability, current_squash);
 
-    // Find the best activation
-    let (best_squash, best_score) = suitability.iter().max_by(|a, b| a.1.total_cmp(b.1))?;
+    // Find the best activation. `HashMap` iteration order is randomised per
+    // map and `max_by` keeps the last maximal element, so a tie on the top
+    // score has to be broken on the activation name — otherwise the same input
+    // yields a different recommendation from call to call (Issue #2184).
+    // Keys are unique, so `(score, name)` is a total order: highest score
+    // wins, and equal scores go to the lexicographically greatest name.
+    let (best_squash, best_score) = suitability
+        .iter()
+        .max_by(|a, b| a.1.total_cmp(b.1).then_with(|| a.0.cmp(b.0)))?;
 
     // Calculate improvement
     let improvement = best_score - current_score;
@@ -666,6 +675,9 @@ pub fn recommend_activation_function_for_role(
         .iter()
         .map(|name| (*name, suitability.get(*name).copied().unwrap_or(0.6)))
         .collect();
+    // `sort_by` is stable and `candidates` is a fixed declared list, so equal
+    // scores keep the family's own preference order — deterministic by
+    // construction, unlike the `HashMap` path above (Issue #2184).
     family_scores.sort_by(|a, b| b.1.total_cmp(&a.1));
     let (best_squash, best_score) = *family_scores.first()?;
 
