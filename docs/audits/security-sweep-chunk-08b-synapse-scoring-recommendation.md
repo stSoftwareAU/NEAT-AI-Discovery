@@ -140,20 +140,20 @@ one sub-issue's file list.
 
 ### scoring
 
-4,426 lines.
+4,426 lines. Swept by Issue #2107.
 
 | Path | Lines | Outcome |
 | --- | --- | --- |
-| `src/analysis/scoring/mod.rs` | 12 | pending |
-| `src/analysis/scoring/calibration_correction.rs` | 1490 | pending |
-| `src/analysis/scoring/confidence.rs` | 592 | pending |
-| `src/analysis/scoring/cross_validation.rs` | 441 | pending |
-| `src/analysis/scoring/error_distribution.rs` | 607 | pending |
-| `src/analysis/scoring/sample_creature_disconnect.rs` | 201 | pending |
-| `src/analysis/scoring/weights/mod.rs` | 531 | pending |
-| `src/analysis/scoring/weights/adjustment.rs` | 71 | pending |
-| `src/analysis/scoring/weights/calculation.rs` | 398 | pending |
-| `src/analysis/scoring/weights/normalisation.rs` | 83 | pending |
+| `src/analysis/scoring/mod.rs` | 12 | clean — six `pub mod` declarations and a doc comment; no executable code, so nothing to allocate, compare or divide |
+| `src/analysis/scoring/calibration_correction.rs` | 1490 | clean — the untrusted `failureCache` ratio is skipped unless `expected_error_reduction != 0.0` **and** the quotient is finite, and every EWMA is a convex combination clamped to `[MIN_CALIBRATION_CORRECTION, NEUTRAL_CORRECTION]` |
+| `src/analysis/scoring/confidence.rs` | 592 | clean — the `df` narrowing needs 2³² samples to misbehave, the interval margin passes a `clamp` with a finite ceiling, and `model_r_squared` is `None` at all seven production call sites |
+| `src/analysis/scoring/cross_validation.rs` | 441 | clean — `fold_count` is the compile-time `5` of `CrossValidationConfig::default()`, the only production constructor; no FFI field reaches it |
+| `src/analysis/scoring/error_distribution.rs` | 607 | clean — both `from_errors` call sites pre-filter `is_finite`, so neither the `total_cmp` sort nor the histogram bin cast can see a NaN, and the bin index is saturating-cast then `.min(NUM_BINS - 1)` |
+| `src/analysis/scoring/sample_creature_disconnect.rs` | 201 | clean — `detect_disconnect` rejects `total_count == 0`, `improved_count > total_count` and a non-finite actual **before** it divides; the model guard for the whole chunk |
+| `src/analysis/scoring/weights/mod.rs` | 531 | clean — constants and re-exports only; the two ceilings and two ratio floors are compile-time `f32` literals no caller can move |
+| `src/analysis/scoring/weights/adjustment.rs` | 71 | clean — both helpers would return `Some(non-finite)` if fed one, but every operand is finite by an upstream gate: synapse weights are rejected at deserialisation (Issue #2132) and the proposed delta comes from `compute_outgoing_weight` |
+| `src/analysis/scoring/weights/calculation.rs` | 398 | clean — `compute_outgoing_weight` rejects a non-finite raw weight before its clamp, and the bias grid search only ever accepts on a `>` comparison a NaN loses |
+| `src/analysis/scoring/weights/normalisation.rs` | 83 | clean — the accumulator skips samples whose activation or error is non-finite and delegates the verdict to `calculate_optimal_outgoing_weight` |
 
 ### recommendation core
 
@@ -227,6 +227,9 @@ it; `unbounded` means a finding was filed.
 | `evaluation.rs::process_harmful_batch_from_prepared` | `batch_stats.len()` and `work.samples.len()` iteration counts | both bounded by the live length of input slices passed in from the caller, which are themselves materialised within the same analysis pass | bounded |
 | `tests.rs::test_magnitude_ratio_noise_level_improvements_collapse_neuron_gain` | test fixture sizes | compile-time test values; no caller-supplied bounds | bounded |
 <!-- section: scoring -->
+| `cross_validation.rs::compute_cross_validation_score` | `Vec::with_capacity(config.fold_count)` | `fold_count` is **not** caller-controllable: the only production constructor is `CrossValidationConfig::default()` in `neuron/evaluation.rs::apply_cross_validation_penalty`, which sets the compile-time `5`, and no FFI request field deserialises into the struct. The secondary bound is weaker than it looks and must not be relied on: `fold_count < 2` does return early, but `samples.len() / fold_count < min_samples_per_fold` is never true against a `min_samples_per_fold` of `0`, so a hypothetical in-crate caller that set both `fold_count: usize::MAX` and `min_samples_per_fold: 0` would reach the reservation. The bound is the absent constructor, not the precondition | bounded |
+| `error_distribution.rs::detect_modes_histogram` | `vec![Vec::new(); NUM_BINS]` | `NUM_BINS` is a `const usize = 20` local to the function; no input reaches the size. Note this allocation is currently unreachable in production for a second reason — its only caller, `detect_error_modes`, is itself dead (see the outcome below) | bounded |
+| the other eight `scoring` files | none | none of them allocates a collection with a size hint; the input-keyed `HashMap` growth in `calibration_correction.rs` has no size hint and is analysed in the outcome below | n/a |
 <!-- section: recommendation core -->
 <!-- section: recommendation batch_successful + epistatic -->
 <!-- section: shared -->
@@ -267,6 +270,31 @@ value comes from and what happens when it is `NaN`.
 | `evaluation.rs::process_harmful_batch_from_prepared` | `neuron_error_improvement <= 0.0` | `(harmful_count as f32 - helpful_count as f32) / total_count as f32`, both operands are u32-cast-to-f32, divisor is guarded `> 0` before the division | a NaN would fail the `<=`, so this guard passes it through; reachable only if arithmetic itself produced NaN, which cannot happen with finite operands and valid arithmetic | bounded — direct arithmetic on finite u32-derived numerands cannot produce NaN |
 | `scoring/improvement.rs::compute_synapse_improvement_and_count` | `select_finite` applied before final `clamp` on all improvement return paths | the improvement is computed from helpful/harmful counts and squared errors; three dispatch targets guard by match statement | the top-level guard returns all-finite tuple `(0.0, 0, 0, samples.len(), 0.0)` before any dispatch, closing the NaN production path entirely | bounded — three guards + one defensive return |
 <!-- section: scoring -->
+| `error_distribution.rs::compute_percentiles` | `sort_by(f32::total_cmp)`, then interpolation between the two bracketing indices | the per-sample `avg_error` column of the caller's Parquet records, via `ErrorDistribution::from_errors` | IEEE-754 totalOrder would place a negative NaN **first** and a positive NaN **last**, so `p10` and `p90` would report a NaN and `iqr` would follow it; the input cannot contain one | bounded — both production callers (`synapse/post_processing.rs::build_metadata` and `neuron/post_processing.rs::build_neuron_results`) collect the error column through `.filter(\|e\| e.is_finite())`, and `from_samples` applies the same filter. `from_errors` is `pub`, so the guarantee lives at the callers, not in this function |
+| `error_distribution.rs::detect_modes_histogram` | `range < 1e-6` early return, then `((error - min) / bin_width).floor() as usize` | same finite-filtered error column | a NaN `range` would fail the `<` and fall through, and a NaN bin index saturates to `0` under Rust's float→int cast, not to UB; `+inf / +inf` would likewise yield NaN → `0` | bounded — the errors are finite-filtered before the fold, the `< 1e-6` return makes `bin_width` strictly positive, and `.min(NUM_BINS - 1)` caps the index whatever the cast produced, so `bins[bin_idx]` cannot panic |
+| `error_distribution.rs::detect_modes_histogram` | `modes.sort_by_key(Reverse(sample_count))` | bin populations | integer key, no float compared | n/a — not a float comparison |
+| `error_distribution.rs::from_errors` | `std_dev > 1e-10` before the skewness and kurtosis divisions | `f64` moments of the finite-filtered error column | a NaN `std_dev` fails the `>` and takes the `else` arm, emitting the documented `0.0` / `3.0` degenerate defaults rather than dividing | bounded — the guard is fail-closed for NaN, which is the safe direction here |
+| `error_distribution.rs::ErrorDistribution::count_outliers` and `::filter_outliers` | `s.avg_error.abs() > threshold.abs()` | unfiltered sample errors (both helpers take the raw slice) | a NaN error loses the `>` and is simply not counted or collected as an outlier | bounded — and no production caller exists: the outlier helpers and their two env levers are dead, see the outcome below |
+| `error_distribution.rs::ErrorDistribution::is_likely_bimodal` | `sample_count < 20`, then `(skewness² + 1) / kurtosis > 5/9`, and `mean_median_gap > std_dev * 0.5` | the distribution's own moments | a zero `kurtosis` divides to `±inf`, which answers the `>` definitely rather than trapping; a NaN coefficient would lose both comparisons and report "not bimodal" — the conservative answer | bounded — the moments are finite by the `from_errors` filter, and the helper has no production caller |
+| `error_distribution.rs::ErrorDistribution::has_significant_outliers` | `min < p25 - 1.5·iqr` and `max > p75 + 1.5·iqr` | the percentile array and the `iqr` derived from it | a NaN fence would lose both comparisons and report "no outliers" | bounded — same finite-percentile guarantee, and no production caller |
+| `calibration_correction.rs::from_failure_cache` | `expected_error_reduction == 0.0`, then `ratio.is_finite()` | the caller-supplied `failureCache` JSON, both fields `f32` | `-0.0 == 0.0` is true, so a negative zero divisor is skipped by the same test; a NaN or `±inf` quotient — including one produced by `0.0 / 0.0` if the first test were ever removed — is dropped by the explicit `is_finite` test rather than entering the EWMA | bounded — the two tests together are a whitelist, not a blacklist: only a finite ratio is pushed |
+| `calibration_correction.rs::ewma` | `(1.0 - alpha) * acc + alpha * x` accumulated in supplied order | the finite ratios above | unreachable — a convex combination of finite values cannot leave `[min, max]` of those values, so `acc` can neither overflow to `±inf` nor become NaN | bounded by construction, then `clamp(MIN_CALIBRATION_CORRECTION, NEUTRAL_CORRECTION)` |
+| `sample_creature_disconnect.rs::detect_disconnect` | `improved_count as f32 / total_count as f32 >= SAMPLE_DISCONNECT_RATIO_THRESHOLD`, and `actual_error_reduction <= 0.0` | `improvedCount` / `totalCount` / `actualErrorReduction` of the untrusted failure cache | the divisor is rejected at `total_count == 0` and the numerator at `improved_count > total_count`, both **before** the division, and a non-finite `actual_error_reduction` returns `false` up front | bounded — the reference guard for this chunk: divisor, numerator and finitude all checked ahead of the arithmetic |
+| `weights/adjustment.rs::clamp_weight_update_delta` | `(old_weight + proposed_delta_weight).clamp(±MAX_OUTGOING_WEIGHT)`, then `delta_weight.abs() <= EPSILON` | an existing synapse's weight from the caller's creature JSON, and the least-squares weight | `f32::clamp` **propagates** NaN, and both a NaN and an `±inf` delta lose the `<=`, so the degenerate-delta gate would return `Some(non-finite)` — the "NaN passes a clamp silently" shape | bounded — neither operand can be non-finite: `ffi_types/mod.rs::deserialise_synapse_weight` rejects a non-finite synapse weight at the FFI boundary (Issue #2132), and the proposed delta is a `calculate_optimal_outgoing_weight` return, which `compute_outgoing_weight` has already tested with `is_finite` |
+| `weights/adjustment.rs::coordinated_structural_activation_delta` | `noisy_weight.abs() <= EPSILON` before `delta_trusted_weight / noisy_weight` | two synapse weights and two activations | an `±inf` `noisy_weight` loses the `<=`, and `inf / inf` is NaN, so the function would return `Some(NaN)` from a guard whose `None` contract says the value is unusable | bounded — same Issue #2132 gate on both weights; the sole call site (`structural_patterns.rs::detect_noisy_vs_trusted`) additionally drops the sample on `!activation.is_finite()`, so the hazard is closed twice |
+| `weights/calculation.rs::compute_outgoing_weight` | `sum_activation_sq <= EPSILON`, then `!raw_weight.is_finite() \|\| raw_weight.abs() <= EPSILON`, then `clamp(-max_outgoing, max_outgoing)` | least-squares sums over finite-filtered samples | a NaN `sum_activation_sq` fails the first `<=` and falls through, but the quotient is then NaN and the explicit `is_finite` test rejects it before the clamp — the ordering that `clamp_weight_update_delta` does not have | bounded — the finitude test sits **between** the divisor guard and the clamp |
+| `weights/calculation.rs::calculate_optimal_identity_outgoing_and_bias` | `n <= 0.0`, `std_dev_a < MIN_SOURCE_STD_DEV`, `det.abs() > EPSILON`, `!outgoing_weight_raw.is_finite()`, `!bias.is_finite()` | `f32` sums over samples whose activation and error are both finite | an `f32` sum that overflows to `+inf` makes `var_a` NaN, which `max(0.0)` launders to `0.0` — `f32::max` returns the non-NaN operand — so the low-variance branch is taken and the result still passes `calculate_optimal_outgoing_weight`'s finitude test | bounded — two explicit `is_finite` rejections plus the `sensible_bias_abs_max_for_squash` ceiling |
+| `weights/calculation.rs::calculate_optimal_bias` | `total_baseline_error_sq <= EPSILON`, then `error_reduction > best_error_reduction` from an `f32::NEG_INFINITY` sentinel | per-sample squared errors and the searched bias grid | a NaN baseline fails the `<=` and falls through, but every accept is a `>` a NaN loses, so the returned bias stays the `0.0` initialiser; an `+inf` new-error sum makes `error_reduction` `-inf`, which also loses the `>` | bounded — accept-on-`>` from a sentinel, the pattern Issue #2105 recorded for the activation evaluators |
+| `confidence.rs::compute_confidence_interval` | `margin = (t_crit * standard_error).clamp(0.0, expected_score_gain.abs().max(0.5))`, and `n > 1.0` before `error_std_dev / n.sqrt()` | the sample error variance and the point estimate | `f32::max` returns `0.5` for a NaN `expected_score_gain`, so the *ceiling* stays finite, and an `+inf` `standard_error` (an `f32`-saturating variance) clamps to it rather than producing an infinite interval. The **margin** is therefore always finite; the emitted bounds are `gain ± margin`, so a non-finite `expected_score_gain` would still reach both of them — this function has no finitude gate on its own point estimate | bounded, but by the callers: every production caller passes an improvement that `scoring/improvement.rs::compute_synapse_improvement_and_count` has already put through `select_finite` (the same invariant Issue #2106 recorded), and `compute_error_variance` skips every non-finite sample and returns `variance.max(0.0)` |
+| `confidence.rs::compute_confidence_metrics` | `model_r_squared.map_or(1.0, compute_model_fit_confidence)`, then `.clamp(0.0, 1.0)` on the geometric mean | the optional R² argument | `f32::clamp` propagates NaN, so a NaN R² would make `prediction_confidence` NaN, which serde emits as `null` | bounded — all seven production call sites pass `None`; no path supplies an R² at all |
+| `confidence.rs::compute_source_variance_confidence` | `count < 2` guard, then `(std_dev / MIN_CONFIDENT_STD_DEV).clamp(0.0, 1.0)` | source activations, non-finite ones skipped by the accumulator | the divisor is the compile-time `MIN_CONFIDENT_STD_DEV`, never zero, and `variance.max(0.0)` launders a NaN variance from an overflowed sum to `0.0` before the `sqrt` | bounded |
+| `confidence.rs::compute_sample_confidence` | `(sample_count as f32 / MIN_CONFIDENT_SAMPLES).min(1.0)` | a slice length | integer-derived, so no NaN is possible on either side of the division | bounded |
+| `cross_validation.rs::evaluate_fold` | `activation_sq_sum > 1e-10` before `error_activation_sum / activation_sq_sum`, then `new_error_mag + 1e-8 < old_error_mag` | per-sample activations and errors, both `is_finite`-filtered by the loop's own `continue` | the divisor guard is fail-closed (a NaN loses the `>` and takes the `0.0` branch), and the improvement test is a `<` a NaN loses, so an unclassifiable sample falls to `negative_count` — the conservative side | bounded — the `f64` accumulators are fed only from finite `f32` samples |
+| `cross_validation.rs::PerformanceVariance::from_folds` | `fold(f64::NEG_INFINITY, f64::max)` / `fold(f64::INFINITY, f64::min)`, and `variance.max(0.0)` | fold improvement ratios, each a `u32 / u32` quotient | the ratios are integer-derived and the `total == 0` case returns the neutral `0.5` before dividing, so no NaN enters the fold; `variance.max(0.0)` is the documented floating-point-noise clamp | bounded |
+| `cross_validation.rs::compute_brittleness_penalty` | `config.variance_threshold <= 0.0` before dividing, then `.clamp(0.0, 1.0)` | the variance above and the configured threshold | a NaN threshold would lose the `<=` and fall through, and the quotient would then be NaN, which `clamp` propagates | bounded — the only production `variance_threshold` is the compile-time `0.04` of `CrossValidationConfig::default()`, the same absent-constructor bound as the capacity row |
+| `cross_validation.rs::CrossValidationResult::is_consistent` / `::is_brittle` | `variance < threshold` and `variance >= threshold` | the variance above | the pair is deliberately not a partition under NaN — a NaN variance would answer `false` to both — but neither has a production caller and the variance cannot be NaN | bounded |
+| `weights/normalisation.rs::compute_range_aware_sums` | `(sample.activation - sv).abs() <= sentinel_tolerance` | sample activations and the detected sentinel values from `detect_observation_ranges` | the sample is already `is_finite`-filtered when this test runs; a NaN sentinel value would lose the `<=`, so the sample is **kept** rather than excluded, which only widens the fit set and never fabricates a weight | bounded — the verdict is delegated to `calculate_optimal_outgoing_weight`, which rejects a non-finite result whatever the sums contain |
+| `weights/calculation.rs::compute_outgoing_weight` and `::calculate_optimal_identity_outgoing_and_bias` | `incoming_weight.abs() > 1.0`, then `ratio = incoming_weight.abs() / (clamped.abs() + EPSILON) < min_ratio` | the candidate's incoming weight against the clamped outgoing weight | the `+ EPSILON` makes the divisor strictly positive, so the ratio is finite whenever the numerator is; a NaN `incoming_weight` would lose the `> 1.0` and skip the reliability gate entirely, passing the candidate | bounded — `incoming_weight` is either the literal `1.0` (every synapse call site) or a creature synapse weight, which Issue #2132 has already proved finite |
 <!-- section: recommendation core -->
 <!-- section: recommendation batch_successful + epistatic -->
 <!-- section: shared -->
@@ -639,9 +667,146 @@ source lists, or Parquet records.
 `synapse pipeline` section above, which belong to Issue #2104, and the 54 rows
 above that belong to the remaining chunk 8b audit sub-issues.
 
+### scoring (Issue #2107)
+
+**Negative result — no finding filed.** All 10 files were read in full for
+every defect class probed. What was actually traced:
+
+**Capacity class — `fold_count` is a constant, not an input.** The issue body
+asked whether `cross_validation.rs::compute_cross_validation_score`'s
+`Vec::with_capacity(config.fold_count)` is caller-controllable over FFI. It is
+not. `CrossValidationConfig` is constructed exactly once in production —
+`CrossValidationConfig::default()` in
+`neuron/evaluation.rs::apply_cross_validation_penalty` — which sets the
+compile-time `fold_count: 5`, and no field of any FFI request type
+deserialises into the struct. That absent constructor is the whole bound, and
+the function's own preconditions must not be mistaken for a second one: the
+`fold_count < 2` early return does hold, but the
+`samples.len() / fold_count < min_samples_per_fold` return is never taken
+against a `min_samples_per_fold` of `0`, so an in-crate caller that set both
+`fold_count: usize::MAX` and `min_samples_per_fold: 0` would reach the
+reservation. Any future caller that builds the config itself — rather than
+taking `::default()` — therefore needs its own bound on `fold_count`. The only
+other sized allocation in these files is
+`error_distribution.rs::detect_modes_histogram`'s `vec![Vec::new(); NUM_BINS]`,
+sized by a function-local `const usize = 20` and unreachable in production in
+any case, since its only caller `detect_error_modes` is itself dead (below).
+
+**Capacity class — the untrusted `failureCache` maps.**
+`calibration_correction.rs::from_failure_cache` builds four `HashMap`s keyed by
+the `change_type`, `target_squash` and `variant_key` **strings** of the
+caller-supplied failure cache, so their cardinality is input-derived. It is not
+the #2078 shape: there is no size hint, no multiplier and no per-entry fan-out
+— each map holds at most one entry per distinct key of a cache serde has
+already materialised from the caller's JSON, so the memory is 1:1 with a
+payload the caller was already holding. The same reasoning covers
+`disconnect_penalties`, whose key is a triple of those strings.
+
+**Division and cast class.** Every division in these files is guarded ahead of
+the arithmetic, and the guards are fail-closed rather than fail-open:
+
+- `sample_creature_disconnect.rs::detect_disconnect` rejects
+  `total_count == 0` and the corrupt-counter case `improved_count >
+  total_count`, and rejects a non-finite `actual_error_reduction`, before it
+  computes `improved_count as f32 / total_count as f32`. This is the
+  `improved / total` arithmetic the issue body asked about, and it is the
+  reference guard for the chunk.
+- `calibration_correction.rs::from_failure_cache` skips
+  `expected_error_reduction == 0.0` — which also catches `-0.0`, since the two
+  compare equal — and then discards any ratio that is not finite.
+- `error_distribution.rs::detect_modes_histogram`'s
+  `((error - min) / bin_width).floor() as usize` is safe on all three counts
+  the issue body raised: `range < 1e-6` returns before `bin_width` can be zero,
+  Rust's float→int `as` cast saturates (a NaN index becomes `0`, never UB), and
+  `.min(NUM_BINS - 1)` caps whatever the cast produced, so the `bins[bin_idx]`
+  index cannot panic.
+- `error_distribution.rs::compute_percentiles`' `idx.floor()` / `idx.ceil()`
+  pair is bounded by `if lower == upper || upper >= n { sorted[lower.min(n - 1)] }`,
+  so neither index can leave the slice; `n >= 1` is guaranteed by the
+  `values.is_empty()` early return.
+- `confidence.rs::t_critical_95`'s `df as u32` narrowing is the one cast in
+  these files that is lossy in principle: `df` is `samples.len() - 1`, so on a
+  64-bit host a sample count of exactly `2³² + 1` would truncate to `0` and
+  return the *widest* critical value (12.706) instead of the normal
+  approximation. It is unreachable — 2³² `HelpfulSample`s is hundreds of
+  gigabytes — and the direction of the error is conservative (a wider interval,
+  never a narrower one). Recorded rather than filed.
+
+**Float class — the `total_cmp` sort.**
+`error_distribution.rs::compute_percentiles` sorts the error vector with
+`f32::total_cmp`, under which a negative NaN sorts **first** and a positive NaN
+**last**; a NaN in that vector would therefore surface as `p10` or `p90` and
+propagate into `iqr`, and the `skewness` / `kurtosis` moments would be NaN
+alongside it. The input cannot contain one: `ErrorDistribution::from_samples`
+filters `is_finite`, and both production callers of the `pub fn from_errors`
+entry point — `synapse/post_processing.rs::build_metadata` and
+`neuron/post_processing.rs::build_neuron_results` — collect their error column
+through `.filter(|e| e.is_finite())` at the point of collection. The guarantee
+lives at the callers, not in the function, so it is recorded in the float table
+above where a future caller will meet it.
+
+**Float class — the `weights/` clamps.** The issue body flagged that a NaN
+weight passing a clamp silently would be a finding, and both helpers in
+`weights/adjustment.rs` have exactly that shape: `f32::clamp` propagates NaN,
+and both `clamp_weight_update_delta`'s `delta_weight.abs() <= EPSILON` gate and
+`coordinated_structural_activation_delta`'s `noisy_weight.abs() <= EPSILON`
+gate are lost by a NaN, so each would return `Some(non-finite)` from a contract
+whose `None` means "unusable". Neither is reachable. Synapse weights are the
+only untrusted input either helper takes, and
+`ffi_types/mod.rs::deserialise_synapse_weight` rejects a non-finite weight at
+deserialisation (Issue #2132) — the `1e39`-saturates-to-`inf` path that
+Issue #2133 closed for neuron biases is closed for weights too. The other
+operand of
+`clamp_weight_update_delta` is a `calculate_optimal_outgoing_weight` return,
+and `weights/calculation.rs::compute_outgoing_weight` tests `is_finite`
+**between** its divisor guard and its clamp, which is the ordering that makes
+the difference. `structural_patterns.rs::detect_noisy_vs_trusted`, the sole
+caller of the coordinated helper, additionally drops the sample on
+`!activation.is_finite()`, so that hazard is closed twice.
+
+**Integer overflow class.** `cross_validation.rs::FoldResult::improvement_ratio`
+adds two `u32` counters before dividing; both are incremented once per sample
+of one fold, so their sum is `samples_evaluated` and cannot wrap short of a
+4-billion-sample fold. `confidence.rs`'s `count` accumulators are the same
+shape. No index arithmetic in these files subtracts without a preceding
+comparison.
+
+**Shared-state races.** None of these 10 files holds mutable shared state: every
+public function is a pure computation over a borrowed slice or a `&self` read
+of an owned `HashMap`. `CalibrationCorrection` is built once per call and
+thereafter read-only. Nothing here runs inside a rayon parallel section that
+writes a shared collection.
+
+**Panics on hostile environment values.** The only environment readers are
+`error_distribution.rs::outlier_analysis_enabled` and
+`error_distribution.rs::outlier_percentile_from_env`, which delegate to
+`config::outlier_analysis` and `config::outlier_percentile`. Neither can panic:
+the percentile is a non-panicking `parse_env::<u8>` with a range filter and a
+default (the value is `docs/CONFIGURATION.md`'s to state, not this record's),
+and the flag is a boolean presence test.
+
+**Out-of-class observation — a dead operator lever (AGENTS.md § Dead Levers).**
+Those two readers have **no callers**, and neither do the four outlier helpers
+they exist to configure — `count_outliers`, `filter_outliers`,
+`is_likely_bimodal` and `has_significant_outliers` — nor `detect_error_modes`.
+`CandidateNeuronJson::outlier_reduction_info` is assigned `None` at every one of
+its construction sites, so `OutlierReductionInfo` is never built. That makes
+`NEAT_AI_DISCOVERY_OUTLIER_ANALYSIS` and
+`NEAT_AI_DISCOVERY_OUTLIER_PERCENTILE` — both documented in
+`docs/CONFIGURATION.md` and in the `src/config/mod.rs` table — levers an
+operator can set, and tune during an incident, that change nothing. This is not
+one of the five defect classes above, so it is **not** filed as a security
+finding; it is filed as #2177 for the ordinary dead-lever cleanup.
+
+**Deliberately out of scope for this sub-issue:** the 48 rows belonging to the
+other chunk 8b audit sub-issues.
+
 ## Issues filed
 
 - `negative-result` — the `shared/` sweep found nothing worth filing.
+- `negative-result` — the `scoring` sweep found nothing worth filing; the one
+  out-of-class observation (the dead outlier lever) is #2177, not a security
+  finding.
 - `negative-result` — the `synapse scoring + target_analysis` sweep found nothing worth filing.
 - `#2161` (`security`, `lang:rust`, `severity:medium`, `confidence:high`) —
   `candidate_generation.rs::group_sources_by_locality` runs an O(n²) pairwise
