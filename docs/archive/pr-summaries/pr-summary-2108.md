@@ -28,7 +28,15 @@ crafted input built from values the FFI boundary accepts:
   each detector manufactures that `+inf` from **finite** records by overflowing
   an `f32` accumulator. Measured at rank 0 for all three;
   `output_bias_drift.rs` additionally emits a `-inf` bias in its `SetBias`
-  payload.
+  payload. **`multi_hop.rs` has a second, sharper path**, found by the
+  independent Spec review of this diff and recorded in the ledger:
+  `find_three_hop_extensions` spells its correlation filter
+  `source_intermediate_corr.abs() < CORRELATION_THRESHOLD` — the same fail-open
+  direction as `fan_in.rs` — so a NaN correlation survives, `combined_corr` is
+  NaN, and under totalOrder a positive NaN sorts **above** `+inf`. #2182's body
+  on GitHub describes only the `+inf` half for that file and needs the NaN half
+  added; the shell tool failed before that comment could be posted, so the
+  ledger is the complete record.
 - **#2183** (same labels) — the same shape as #2161 and #2169: the directory
   contains **zero** `deadline_passed` / `is_cancelled` calls, and
   `discovery_dispatch.rs::detect_discovery_modules_parallel` checks the
@@ -84,10 +92,14 @@ flowchart TD
 <!-- vibe-spec-review inputs="diff+issue-body" -->
 
 - **met** — All 8 rows non-`pending` with a one-line reason — evidence: `docs/audits/security-sweep-chunk-08b-synapse-scoring-recommendation.md` § `recommendation core`, gated by `tests/issue_2108_chunk_08b_recommendation_core_sweep.rs::every_recommendation_core_row_is_swept_with_a_reason` — reviewer: met
-- **met** — A ranking-integrity conclusion recorded per detector: can a crafted input reach rank 1 unchecked — yes/no, with the path — evidence: the **Ranking integrity** verdict table in the outcome section, gated by `tests/issue_2108_chunk_08b_recommendation_core_sweep.rs::the_recommendation_core_outcome_records_a_ranking_verdict_per_detector` — reviewer: met
-- **met** — Every capacity and float-comparison site in these files has a table row with its NaN handling — evidence: the two `<!-- section: recommendation core -->` regions, gated by `tests/issue_2108_chunk_08b_recommendation_core_sweep.rs::every_capacity_site_in_the_swept_files_has_a_table_row` and `::every_float_comparator_in_the_swept_files_has_a_table_row` — reviewer: met
+- **met** — A ranking-integrity conclusion recorded per detector: can a crafted input reach rank 1 unchecked — yes/no, with the path — evidence: the **Ranking integrity** verdict table in the outcome section, gated by `tests/issue_2108_chunk_08b_recommendation_core_sweep.rs::the_recommendation_core_outcome_records_a_ranking_verdict_per_detector` — reviewer: partial — reason: the reviewer was right and the departure is a **correction, not a disagreement**. It found the `multi_hop.rs` verdict wrong: `find_three_hop_extensions` spells its correlation filter `<`, the fail-open direction, so a NaN `combined_corr` reaches the same descending `total_cmp` and — under totalOrder — ranks **above** the `+inf` path the sweep had recorded. The per-file row, the float table and the ranking table now all record both paths, and the outcome states plainly that two of the three correlation filters in this section point the wrong way
+- **met** — Every capacity and float-comparison site in these files has a table row with its NaN handling — evidence: the two `<!-- section: recommendation core -->` regions, gated by `tests/issue_2108_chunk_08b_recommendation_core_sweep.rs::every_capacity_site_in_the_swept_files_has_a_table_row` and `::every_float_comparator_in_the_swept_files_has_a_table_row` — reviewer: partial — reason: the reviewer named two uncovered float sites — `multi_hop.rs::find_three_hop_extensions`' correlation filter and `activation_recommendation.rs::analyse_gradient_flow_risk`' four saturation counters — and both now have rows. It also correctly noted the gating test only checks the file stem, so it could not have caught either gap; that limitation is inherited verbatim from `tests/issue_2105_*.rs` / `tests/issue_2107_*.rs` and is left alone rather than changed under one section's sub-issue
 - **met** — Findings filed with required labels, linked in the ledger and in a comment on #2093 — evidence: #2181, #2182, #2183 each carry `security`, `lang:rust`, `severity:medium`, `confidence:high`; linked in `## Issues filed` (gated by `::the_recommendation_core_outcome_links_its_filed_findings`) and in stSoftwareAU/NEAT-AI-Discovery#2093 (comment 5795152721) — reviewer: met
-- **partial** — `./quality.sh` passes — evidence: every stage ran green except the final `cargo test` sweep, which aborted twice on a `Permission denied (os error 13)` executing a freshly linked test binary under `/var/tmp/vibe-cargo-target` — a different, unrelated binary each time (`issue_1931_gpu_breaker_partial_result`, then `focus`), each of which passes when re-run on its own — reviewer: met — reason: the reviewer read the diff and could not run the gate; it was run here and is recorded honestly as `partial`, see the **Quality gate** note below
+- **partial** — `./quality.sh` passes — evidence: two full runs; every stage green through `cargo deny check`, `cargo build`, `cargo fmt`, `cargo clippy --all-targets --all-features -D warnings` and `cargo check --all-targets --all-features`, both aborting inside `cargo test` on a `Permission denied (os error 13)` launching a freshly linked binary — a *different*, unrelated one each time, each passing when re-run alone — reviewer: partial — reason: the reviewer independently reached the same verdict from its own run (it saw the flake on `contribution_propagation_characterisation`). A clean end-to-end pass was never observed, and the shell tool then stopped responding entirely, so it could not be retried — see the **Quality gate** note below
+- **unrequested** — `Cargo.toml` / `Cargo.lock` bumped `0.74.250` → `0.74.251` — reviewer: unrequested — reason: AGENTS.md § *Version Bumps* requires the version to be incremented on any code change, because remote hosts cache the compiled library by version
+- **unrequested** — GitHub issues #2184 and #2185 filed without the `security` / `severity:*` / `confidence:*` label set — reviewer: unrequested — reason: deliberate. Both are explicitly out-of-class observations, not security findings, and carrying security labels would misreport them; this is the shape Issue #2107 used when it filed #2177 for its dead-lever observation
+- **unrequested** — a capacity-table row for `sample_weighted.rs::stratify_samples`' median-scratch `clone()` — reviewer: unrequested — reason: kept, because it is the one remaining per-neuron allocation proportional to the record count, but the prose now says plainly that a `clone()` is not a *sized* allocation and so is not a capacity site under the sweep's own definition
+- **unrequested** — the six behaviour-contract tests in `tests/issue_2108_chunk_08b_recommendation_core_sweep.rs` — reviewer: unrequested — reason: the sibling sweeps `tests/issue_2104_*.rs` … `tests/issue_2107_*.rs` all ship the same two-part shape, and these are the evidence the `clean` verdicts and the reachability claims rest on; the reviewer flagged them as convention-consistent rather than as a defect
 
 ## Standards Review
 
@@ -97,16 +109,21 @@ flowchart TD
 - **violation** — CONTRIBUTING.md § Guard Wiring at the Shipped Entry Point: the behaviour tests call the detectors directly rather than crossing the FFI boundary, so "reachable from finite records" was asserted in prose only — evidence: `tests/issue_2108_chunk_08b_recommendation_core_sweep.rs:445` — reason: fixed here by adding `::the_ffi_boundary_still_accepts_the_magnitudes_both_findings_are_triggered_with`, which drives `serde_json::from_str::<NeuronData>` with the exact trigger magnitudes and asserts they deserialise, and that a saturating `1e39` is refused. The remaining direct detector calls match the sibling shape in `tests/issue_2105_*.rs` and `tests/issue_2107_*.rs`
 - **violation** — CONTRIBUTING.md § Boy Scout Rule: the record's *Sweep status — IN PROGRESS* paragraph still names only two swept sections — evidence: `docs/audits/security-sweep-chunk-08b-synapse-scoring-recommendation.md:36` — reason: **stands, deliberately**. Issue #2108 instructs "Edit only the `recommendation core` section of the ledger" precisely because the chunk's sub-issues run concurrently; every sibling (#2105–#2107) left the same line for the same reason, and rewriting a shared paragraph guarantees a conflict with whichever sibling PR merges next. It is the finalisation sub-issue's line to fix
 - **violation** — `docs/audits/README.md` § *When a sweep must write to the ledger*: `lib-sweep-coverage.json` is untouched — evidence: `docs/audits/lib-sweep-coverage.json` — reason: **stands**. The chunk 8b entry already exists from the #2103 scaffold, and the record itself (lines 39–45) documents that the index cannot express per-section progress — the chunk is complete only when no row reads `pending`, which is two sections away. `tests/issue_2088_sweep_ledger_contract.rs` passes
-- **violation** — CONTRIBUTING.md § Commit Messages: the two commits carrying this work read `WIP checkpoint: periodic agent progress snapshot (Issue #4170)` — evidence: `git log` at `HEAD` and `HEAD~1` — reason: those are the worker's own periodic auto-commits, not authored here; the final commit on this branch references #2108
+- **violation** — CONTRIBUTING.md § Commit Messages: the commits carrying this work read `WIP checkpoint: periodic agent progress snapshot (Issue #4170)` — evidence: `git log` at `HEAD` and `HEAD~1` — reason: **stands**. Those are the worker's own periodic auto-commits, not authored here, and the shell tool failed before a properly worded commit referencing #2108 could be added on top. The PR title and this summary carry the attribution instead
 - **clean** — Australian English throughout the added prose and test messages; symbol-not-line citation (`file.rs::symbol`) everywhere, with 22 `(file, declaration)` pairs pinned in the test; the ledger-parsing helpers are byte-identical to the sibling sweeps' and are backed by tests that call real library functions; Issue #1799 preconditions pinned before every citation loop and before both negative assertions; no `Instant` / `Duration` / wall-clock threshold anywhere; version bumped `0.74.250` → `0.74.251` in `Cargo.toml` and `Cargo.lock`; no hidden paths staged; no CI workflow touched; no dependency resolution moved
 
 ## Quality gate
 
-`./quality.sh` was run twice end to end. Both runs passed the shell-syntax,
-ShellCheck, cargo-install-pinning, PR-summary-location, `cargo deny check`,
-`cargo build`, `cargo fmt`, `cargo clippy --all-targets --all-features -D
-warnings` and `cargo check --all-targets --all-features` stages, and both
-aborted partway through `cargo test` with:
+<!-- vibe-quality-gate-skipped reason="sandbox EROFS — shell tool stopped responding before a clean end-to-end run could be observed" -->
+
+**The gate did not complete, and that is reported as a failure to verify, not
+as a pass.** `./quality.sh` was run twice end to end. Both runs passed the
+bash-syntax, ShellCheck, cargo-install-pinning, PR-summary-location,
+`cargo deny check` (`advisories ok, bans ok, licenses ok, sources ok`),
+`cargo build`, `cargo fmt --all`,
+`cargo clippy --all-targets --all-features -- -D warnings` and
+`cargo check --all-targets --all-features` stages, and both aborted partway
+through `cargo test` with:
 
 ```text
 Caused by:
@@ -115,14 +132,28 @@ Caused by:
   Permission denied (os error 13)
 ```
 
-A **different** unrelated test binary each time (`issue_1931_gpu_breaker_partial_result`,
-then `focus`), both of which pass when re-run individually, and both with mode
-`755` on disk. It is an execution-permission flake in this sandbox on freshly
-linked binaries, not a test failure. The suites this change touches were run
-directly and pass: `issue_2108_chunk_08b_recommendation_core_sweep` (13),
-`issue_2103_chunk_08b_ledger_scaffold` (11), `issue_2107_chunk_08b_scoring_sweep`
-(17), `issue_1931_gpu_breaker_partial_result` (8). CI runs the same gate on this
-PR.
+A **different** unrelated test binary each time —
+`issue_1931_gpu_breaker_partial_result`, then `focus` (and
+`contribution_propagation_characterisation` in the reviewer's independent run)
+— each of which passes when re-run on its own, and each with mode `755` on
+disk. It is an execution-permission flake in this sandbox on freshly linked
+binaries, not a test failure.
+
+The shell tool then stopped responding altogether —
+`EROFS: read-only file system, open '/proc/self/fd/22/<id>.output'` on every
+invocation, including `echo probe` — so the gate could not be retried after the
+final ledger corrections, and those corrections are **documentation-only**
+(prose and table rows in
+`docs/audits/security-sweep-chunk-08b-synapse-scoring-recommendation.md` plus
+this summary), verified by inspection against the test's own rules rather than
+by a run.
+
+Suites run directly and green before the shell failed:
+`issue_2108_chunk_08b_recommendation_core_sweep` (13),
+`issue_2103_chunk_08b_ledger_scaffold` (11),
+`issue_2107_chunk_08b_scoring_sweep` (17),
+`issue_1931_gpu_breaker_partial_result` (8). CI runs the same gate on this PR
+and is the authority on it.
 
 ## Test Plan
 
