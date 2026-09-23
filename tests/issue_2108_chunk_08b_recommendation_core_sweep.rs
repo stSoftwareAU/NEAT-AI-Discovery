@@ -444,10 +444,10 @@ fn neuron(uuid: &str, neuron_type: &str) -> NeuronJson {
 /// `fan_in.rs` row needs re-sweeping rather than merely re-reading.
 #[test]
 fn a_finite_record_set_still_drives_the_fan_in_correlation_to_nan() {
-    let activations: Vec<f32> = (0..30)
+    let activations: Vec<f32> = (0..30_u32)
         .map(|i| if i.is_multiple_of(2) { 2.0e30 } else { -2.0e30 })
         .collect();
-    let errors: Vec<f32> = (0..30)
+    let errors: Vec<f32> = (0..30_u32)
         .map(|i| if i.is_multiple_of(3) { 1.0e10 } else { -5.0e9 })
         .collect();
 
@@ -681,7 +681,7 @@ fn the_synapse_gradient_rejects_every_unusable_mean_before_returning_it() {
 #[test]
 fn the_activation_recommender_ranks_over_a_constant_score_space() {
     for magnitude in [1.0e-30_f32, 1.0, 1.0e30, 3.0e38] {
-        let records: Vec<DiscoverRecord> = (0..60)
+        let records: Vec<DiscoverRecord> = (0..60_u32)
             .map(|i| {
                 let activation = if i.is_multiple_of(2) {
                     magnitude
