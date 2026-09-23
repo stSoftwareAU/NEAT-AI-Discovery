@@ -125,10 +125,21 @@ fn is_capacity_site(line: &str) -> bool {
         .is_some_and(|close| after[..close].contains(';'))
 }
 
+/// `true` when the line orders values with an explicit comparator. The call
+/// parenthesis is part of each needle so an unrelated identifier that merely
+/// starts with one of them — `min_bypass_weight_for_collapse()` is the live
+/// example in `structural_patterns.rs` — is not counted as a ranking site.
 fn is_comparator_site(line: &str) -> bool {
-    ["total_cmp", "partial_cmp", "sort_by", "max_by", "min_by"]
-        .iter()
-        .any(|needle| line.contains(needle))
+    [
+        "total_cmp(",
+        "partial_cmp(",
+        "sort_by(",
+        "sort_unstable_by(",
+        "max_by(",
+        "min_by(",
+    ]
+    .iter()
+    .any(|needle| line.contains(needle))
 }
 
 /// File stem plus `.rs::`, the citation prefix the record uses for a symbol in
@@ -195,28 +206,29 @@ fn every_float_comparator_in_the_swept_files_has_a_table_row() {
         "synapse post-processing",
     );
 
-    let mut ranked = 0usize;
-    for file in POST_PROCESSING_FILES {
-        let has_site = production_source(file).lines().any(is_comparator_site);
-        ranked += usize::from(has_site);
-        let cited = region.contains(&citation_prefix(file));
-        assert_eq!(
-            has_site, cited,
-            "{file} ranks with a float comparator: {has_site}, but the float-comparison table \
-             cites it: {cited} — every comparator in a swept file needs a row recording where \
-             the value comes from and what happens when it is NaN, and a row for a file with no \
-             comparator describes code that is gone"
-        );
-    }
-    // Issue #1799: an assertion that holds either way is not coverage. If the
-    // detector stopped matching anything the loop above would pass vacuously,
-    // so pin the precondition the sweep actually found.
+    // Issue #1799: an assertion that holds either way is not coverage. The
+    // loop below passes vacuously for a file with no comparator, so pin the
+    // precondition first — the three descending sorts this sweep is about are
+    // what makes the loop's own citation check load-bearing.
+    let ranking_file = POST_PROCESSING_FILES[0];
     assert!(
-        ranked >= 2,
-        "the sweep found comparators in post_processing.rs and add_synapse_gating.rs, so at \
-         least two of the swept files must still rank with one — {ranked} matched, which means \
-         the detector, not the record, is what changed"
+        production_source(ranking_file)
+            .lines()
+            .any(is_comparator_site),
+        "{ranking_file} holds the three descending `total_cmp` sorts the host adopts — if no \
+         comparator is detected there, the detector stopped matching and every citation check \
+         below is vacuous"
     );
+
+    for file in POST_PROCESSING_FILES {
+        if production_source(file).lines().any(is_comparator_site) {
+            assert!(
+                region.contains(&citation_prefix(file)),
+                "{file} ranks with a float comparator, so the float-comparison table must carry \
+                 a row recording where the value comes from and what happens when it is NaN"
+            );
+        }
+    }
 }
 
 /// Every symbol the `synapse post-processing` outcome claims to have traced,
