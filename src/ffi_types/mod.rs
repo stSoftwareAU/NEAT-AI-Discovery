@@ -332,6 +332,17 @@ pub struct SynapseJson {
 
 // ==== NeuronData float finitude validation (Issue #2134) ====
 
+/// The first non-finite element of a float vector, with its index.
+///
+/// Shared by every FFI vector validator so the scan itself is written once.
+fn first_non_finite(values: &[f32]) -> Option<(usize, f32)> {
+    values
+        .iter()
+        .copied()
+        .enumerate()
+        .find(|(_, v)| !v.is_finite())
+}
+
 /// The Issue #2134 rejection message for a non-finite `NeuronData` float.
 fn non_finite_neuron_data_detail(field: &str, raw: f32) -> String {
     format!(
@@ -393,7 +404,7 @@ where
     D: Deserializer<'de>,
 {
     let raw = Vec::<f32>::deserialize(deserialiser)?;
-    if let Some(bad) = raw.iter().copied().find(|e| !e.is_finite()) {
+    if let Some((_, bad)) = first_non_finite(&raw) {
         return Err(serde::de::Error::custom(non_finite_neuron_data_detail(
             "errors", bad,
         )));
@@ -447,12 +458,7 @@ where
     D: Deserializer<'de>,
 {
     let raw = Vec::<f32>::deserialize(deserialiser)?;
-    if let Some((index, bad)) = raw
-        .iter()
-        .copied()
-        .enumerate()
-        .find(|(_, v)| !v.is_finite())
-    {
+    if let Some((index, bad)) = first_non_finite(&raw) {
         return Err(serde::de::Error::custom(non_finite_training_vector_detail(
             field, index, bad,
         )));
