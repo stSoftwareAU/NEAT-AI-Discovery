@@ -11,9 +11,12 @@ Ledger rules: [`README.md`](README.md). Index entry:
 - **Sweep date:** `2026-09-23`
 - **Baseline commit:** `b85a551ed2521ed327469b20eb88aeda828357d2`
   — `git diff b85a551..HEAD -- src/analysis/synapse src/analysis/scoring
-  src/analysis/recommendation src/analysis/shared` is empty at the time this
-  scaffold was written, so every line reference below also describes the current
-  tree.
+  src/analysis/recommendation src/analysis/shared` was empty when this scaffold
+  was written. Since then the only change under those paths is the pair of
+  `#[cfg(test)]` regression tests Issue #2104 added to
+  `src/analysis/synapse/holdout_validation.rs`, which add no production code, so
+  every outcome below still describes the current tree. **Line counts stay as at
+  the baseline commit** — that is what a later reader diffs against.
 - **Exposure:** `internal` — none of these 58 files is an FFI entry point. They
   are reached only through the `src/ffi` boundary (chunk 2), so every input they
   see has already crossed one validation layer. Untrusted values still arrive

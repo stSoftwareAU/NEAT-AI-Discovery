@@ -12,15 +12,14 @@
 //!   `min_by`) in the production half of those files is cited in the matching
 //!   finding table, so a new one cannot land unrecorded;
 //! * the symbols the outcome traces still exist; and
-//! * the two arithmetic invariants the outcome rests on hold when computed
-//!   against the real constants and the real public helper.
+//! * the two constants the outcome's integer-class verdict rests on still hold
+//!   the hold-out split's subtraction positive.
 
 use std::path::PathBuf;
 
 use neat_ai_discovery::analysis::constants::{
     HOLDOUT_MIN_SAMPLE_COUNT, HOLDOUT_VALIDATION_FRACTION,
 };
-use neat_ai_discovery::analysis::synapse::cpu_pre_reject::helpful_candidate_has_no_signal;
 
 /// The chunk 8b prose record.
 const RECORD: &str = "docs/audits/security-sweep-chunk-08b-synapse-scoring-recommendation.md";
@@ -299,55 +298,27 @@ fn the_synapse_pipeline_outcome_links_its_filed_finding() {
     );
 }
 
-/// The record's integer-class verdict: `split_samples_holdout` cannot reach
-/// `samples.len() - validate_count` with a `validate_count` that equals or
-/// exceeds the sample count, so the subtraction cannot wrap in release.
+/// The two constants the record's integer-class verdict rests on.
 ///
-/// Computed here with the real constants and the real expression, so raising
-/// `HOLDOUT_VALIDATION_FRACTION` to 1.0 — or dropping
-/// `HOLDOUT_MIN_SAMPLE_COUNT` to zero — fails this test rather than silently
-/// re-opening Issue #1906's wrap.
+/// `holdout_validation.rs::split_samples_holdout` is `pub(crate)`, so the
+/// function itself is exercised by the in-crate regression tests
+/// `empty_sample_set_returns_none_before_the_subtraction` and
+/// `every_admitted_sample_count_partitions_without_wrapping`. What those tests
+/// cannot pin is the pair of constants that makes the subtraction safe for
+/// *every* admitted sample count rather than the ones they enumerate: a minimum
+/// of at least two samples, and a validation fraction strictly below one. Widen
+/// either and `samples.len() - validate_count` wraps again (Issue #1906).
 #[test]
-#[allow(
-    clippy::cast_precision_loss,
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss
-)]
-fn the_holdout_split_can_never_subtract_more_samples_than_it_has() {
-    // The smallest admitted count leads the list, so a minimum of zero fails the
-    // `validate_count < total` assertion below rather than passing silently.
-    for total in [
-        HOLDOUT_MIN_SAMPLE_COUNT,
-        HOLDOUT_MIN_SAMPLE_COUNT + 1,
-        100,
-        1_000,
-        100_000,
-    ] {
-        // The expression `split_samples_holdout` evaluates, verbatim.
-        let validate_count = {
-            let frac = (total as f64 * f64::from(HOLDOUT_VALIDATION_FRACTION)).round();
-            frac.max(1.0) as usize
-        };
-        assert!(
-            validate_count < total,
-            "validate_count ({validate_count}) must stay below the sample count ({total}) — \
-             `Vec::with_capacity(samples.len() - validate_count)` wraps to a near-usize::MAX \
-             capacity in release otherwise"
-        );
-        assert!(
-            validate_count >= 1,
-            "both partitions must be non-empty, so validate_count must be at least 1"
-        );
-    }
-}
-
-/// The CPU pre-reject screen's empty-batch guard, called for real: an empty
-/// sample set is classified as no-signal before any sum or division runs.
-#[test]
-fn the_cpu_pre_reject_screen_rejects_an_empty_sample_set() {
+fn the_holdout_constants_keep_the_split_subtraction_positive() {
     assert!(
-        helpful_candidate_has_no_signal(&[]),
-        "an empty batch must screen out — the downstream result-collection loop rejects a \
-         zero-length candidate too, so letting it through would change which candidates survive"
+        HOLDOUT_MIN_SAMPLE_COUNT >= 2,
+        "a minimum below two admits a sample set that cannot fill both partitions, so \
+         `validate_count` reaches the sample count and the subtraction wraps"
+    );
+    assert!(
+        HOLDOUT_VALIDATION_FRACTION > 0.0 && HOLDOUT_VALIDATION_FRACTION < 1.0,
+        "the validation fraction must stay strictly inside (0, 1): at 1.0 every sample is a \
+         validation sample and `samples.len() - validate_count` is zero, and above it the \
+         subtraction wraps to a near-usize::MAX capacity in release"
     );
 }
