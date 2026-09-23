@@ -22,7 +22,13 @@ use crate::log_version_once;
 /// is an `AtomicBool`). No pointer arguments.
 #[unsafe(no_mangle)]
 pub extern "C" fn cancel_analysis() {
-    crate::cancellation::request_cancellation();
+    // Issue #2089: an unwind out of an `extern "C"` function aborts the host
+    // process, which the Deno side cannot catch. The flag store cannot panic,
+    // but the `tracing` event it emits dispatches into a host-installed
+    // subscriber — so the wrapper stays, as on every other entry point.
+    let _ = std::panic::catch_unwind(|| {
+        crate::cancellation::request_cancellation();
+    });
 }
 
 /// Signal in-flight analysis to stop due to CRITICAL memory pressure (Issue #1099).
@@ -39,7 +45,10 @@ pub extern "C" fn cancel_analysis() {
 /// are `AtomicBool`). No pointer arguments.
 #[unsafe(no_mangle)]
 pub extern "C" fn cancel_analysis_memory_pressure() {
-    crate::cancellation::request_cancellation_memory_pressure();
+    // Issue #2089: see `cancel_analysis` — no unwind may cross this boundary.
+    let _ = std::panic::catch_unwind(|| {
+        crate::cancellation::request_cancellation_memory_pressure();
+    });
 }
 
 /// Clear a previous cancellation request.
@@ -53,7 +62,10 @@ pub extern "C" fn cancel_analysis_memory_pressure() {
 /// No pointer arguments; safe to call from any thread.
 #[unsafe(no_mangle)]
 pub extern "C" fn reset_cancellation() {
-    crate::cancellation::reset_cancellation();
+    // Issue #2089: see `cancel_analysis` — no unwind may cross this boundary.
+    let _ = std::panic::catch_unwind(|| {
+        crate::cancellation::reset_cancellation();
+    });
 }
 
 // ============================================================================
@@ -74,11 +86,11 @@ pub extern "C" fn reset_cancellation() {
 /// No pointer arguments; safe to call from any thread.
 #[unsafe(no_mangle)]
 pub extern "C" fn is_analysis_active() -> i32 {
-    if crate::cancellation::is_analysis_active() {
-        1
-    } else {
-        0
-    }
+    // Issue #2089: see `cancel_analysis` — no unwind may cross this boundary.
+    // An unreadable counter answers `1` ("active"), never `0`: the host uses
+    // this verdict to decide whether deleting the parquet temp directory is
+    // safe, so the fail-safe answer is the one that makes it wait.
+    std::panic::catch_unwind(|| i32::from(crate::cancellation::is_analysis_active())).unwrap_or(1)
 }
 
 // ============================================================================

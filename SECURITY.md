@@ -38,6 +38,8 @@ already in place:
   `fuzz/Cargo.toml` included (Issue #1908).
 - **Internal deps** — first-party `stSoftwareAU/*` releases bypass the
   quarantine window.
+- **Sweep-coverage ledger** — `docs/audits/README.md` records which parts of the
+  crate have been read for security defects, when, and against which commit.
 - **Expiring suppressions** — `deny.toml` sets
   `[advisories] unused-ignored-advisory = "deny"`, so an ignore that no longer
   matches any crate in the graph fails `cargo deny check` (Issue #1917). A

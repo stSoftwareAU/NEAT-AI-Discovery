@@ -122,11 +122,26 @@ fn truncate_panic_msg(msg: &str) -> std::borrow::Cow<'_, str> {
     std::borrow::Cow::Owned(format!("{}{}", &msg[..boundary], TRUNCATION_MARKER))
 }
 
+/// The panic response's wire shape. Serialising through `serde_json` rather
+/// than string-formatting is what makes the escaping total (Issue #2089).
+#[derive(Serialize)]
+struct PanicResponse<'a> {
+    success: bool,
+    error: &'a str,
+}
+
 /// Build an FFI-safe error response from a caught panic.
 ///
 /// Extracts the panic message, truncates it to a fixed cap (see
 /// [`MAX_PANIC_MSG_BYTES`]), and returns a JSON error string as
 /// `*mut c_char`. Never panics itself.
+///
+/// The message is escaped by `serde_json`, so the response stays parsable for
+/// **every** payload. A hand-rolled escape covering only `\` and `"` does not:
+/// a panic message carrying a control character — which every `assert!` /
+/// `assert_eq!` message does, via its newlines — produced a response the host
+/// could not parse, turning the structured `success: false` contract into
+/// unparsable text at the one moment it matters (Issue #2089).
 pub fn panic_to_ffi_json(panic_info: Box<dyn std::any::Any + Send>) -> *mut std::ffi::c_char {
     let msg = if let Some(s) = panic_info.downcast_ref::<&str>() {
         s.to_string()
@@ -136,10 +151,18 @@ pub fn panic_to_ffi_json(panic_info: Box<dyn std::any::Any + Send>) -> *mut std:
         "Unknown panic".to_string()
     };
     let msg = truncate_panic_msg(&msg);
-    let error_json = format!(
-        "{{\"success\":false,\"error\":\"Internal panic caught: {}\"}}",
-        msg.replace('\\', "\\\\").replace('"', "\\\"")
-    );
+    let error = format!("Internal panic caught: {msg}");
+    let response = PanicResponse {
+        success: false,
+        error: &error,
+    };
+    // Serialising two owned scalars cannot fail, but the fallback keeps the
+    // "never panics itself" contract without an `unwrap`.
+    let Ok(error_json) = serde_json::to_string(&response) else {
+        return ffi_error_literal(
+            r#"{"success":false,"error":"Internal panic caught (message not serialisable)"}"#,
+        );
+    };
     match CString::new(error_json) {
         Ok(c) => c.into_raw(),
         Err(_) => ffi_error_literal(

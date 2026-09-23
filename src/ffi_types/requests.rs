@@ -515,6 +515,7 @@ pub struct ReadDiscoveryInput {
     /// Neuron identity string to filter by. Must be a stable UUID or descriptive
     /// identifier — exact string matching is used. Numeric integer IDs are not
     /// permitted (Issue #952).
+    #[serde(deserialize_with = "super::deserialise_neuron_uuid")]
     pub neuron_uuid: String,
 }
 
