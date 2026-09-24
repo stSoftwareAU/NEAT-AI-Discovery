@@ -546,8 +546,12 @@ fn neither_producer_can_hand_the_deduplicator_a_non_finite_ranking_key() {
     let hostile = |phase: usize| -> Vec<HelpfulSample> {
         (0..SAMPLES)
             .map(|i| HelpfulSample {
-                activation: if (i + phase) % 2 == 0 { 3.0e38 } else { -3.0e38 },
-                avg_error: if i % 3 == 0 { 1.0e38 } else { -2.0e38 },
+                activation: if (i + phase).is_multiple_of(2) {
+                    3.0e38
+                } else {
+                    -3.0e38
+                },
+                avg_error: if i.is_multiple_of(3) { 1.0e38 } else { -2.0e38 },
                 target_value: None,
                 target_activation: None,
             })
@@ -555,9 +559,27 @@ fn neither_producer_can_hand_the_deduplicator_a_non_finite_ranking_key() {
     };
 
     let contributions = vec![
-        build_source_contribution("hostile-a", hostile(0), HelpfulStats::default(), 1.0e30, 0.0),
-        build_source_contribution("hostile-b", hostile(1), HelpfulStats::default(), -1.0e30, 0.0),
-        build_source_contribution("hostile-c", hostile(2), HelpfulStats::default(), 1.0e30, 0.5),
+        build_source_contribution(
+            "hostile-a",
+            hostile(0),
+            HelpfulStats::default(),
+            1.0e30,
+            0.0,
+        ),
+        build_source_contribution(
+            "hostile-b",
+            hostile(1),
+            HelpfulStats::default(),
+            -1.0e30,
+            0.0,
+        ),
+        build_source_contribution(
+            "hostile-c",
+            hostile(2),
+            HelpfulStats::default(),
+            1.0e30,
+            0.5,
+        ),
     ];
 
     for candidate in detect_epistatic_pairs("output-0", &contributions, 1.0, None) {
@@ -625,7 +647,7 @@ fn the_individual_candidate_detector_rejects_every_unusable_improvement_before_i
             "input-0".to_string(),
             (0..SAMPLES)
                 .map(|i| {
-                    let swing = if i % 2 == 0 { 3.0e38 } else { -3.0e38 };
+                    let swing = if i.is_multiple_of(2) { 3.0e38 } else { -3.0e38 };
                     record("input-0", i, swing, 0.0)
                 })
                 .collect(),
@@ -633,14 +655,21 @@ fn the_individual_candidate_detector_rejects_every_unusable_improvement_before_i
         (
             "input-1".to_string(),
             (0..SAMPLES)
-                .map(|i| record("input-1", i, f32::from(u16::try_from(i).unwrap()) * 0.25, 0.0))
+                .map(|i| {
+                    record(
+                        "input-1",
+                        i,
+                        f32::from(u16::try_from(i).unwrap()) * 0.25,
+                        0.0,
+                    )
+                })
                 .collect(),
         ),
         (
             "output-0".to_string(),
             (0..SAMPLES)
                 .map(|i| {
-                    let error = if i % 3 == 0 { 2.0e38 } else { -1.0e38 };
+                    let error = if i.is_multiple_of(3) { 2.0e38 } else { -1.0e38 };
                     record("output-0", i, 0.5, error)
                 })
                 .collect(),
