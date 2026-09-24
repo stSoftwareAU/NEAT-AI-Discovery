@@ -5,8 +5,6 @@
 
 use serde::Serialize;
 
-use crate::analysis;
-
 use super::NeuronStatsJson;
 
 /// Candidate to add a new synapse.
@@ -52,12 +50,6 @@ pub struct CandidateSynapseJson {
     pub improvement_magnitude_ratio: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub target_neuron_stats: Option<NeuronStatsJson>,
-    /// Information about how this candidate affects outlier samples (Issue #192).
-    ///
-    /// Only populated when outlier analysis is enabled via
-    /// `NEAT_AI_DISCOVERY_OUTLIER_ANALYSIS=1`.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub outlier_reduction_info: Option<analysis::scoring::error_distribution::OutlierReductionInfo>,
     /// Overall confidence score for this prediction (Issue #194).
     ///
     /// A value between 0.0 and 1.0 indicating how reliable the prediction is.

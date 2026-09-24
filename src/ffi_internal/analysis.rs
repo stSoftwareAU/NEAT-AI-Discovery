@@ -884,7 +884,6 @@ mod failure_cache_handshake_wiring_tests {
             total_count: 10,
             improvement_magnitude_ratio: None,
             target_neuron_stats: None,
-            outlier_reduction_info: None,
             prediction_confidence: 0.8,
             expected_score_gain_confidence_interval: [0.0, 0.02],
             comment: None,

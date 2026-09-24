@@ -609,7 +609,6 @@ pub(crate) fn collect_and_process_helpful_results(
                     // Issue #1161: magnitude-weighted ratio for downstream pessimism discounting.
                     improvement_magnitude_ratio: Some(magnitude_ratio),
                     target_neuron_stats: target_stats,
-                    outlier_reduction_info: None,
                     prediction_confidence: confidence_metrics.prediction_confidence,
                     expected_score_gain_confidence_interval: confidence_metrics
                         .expected_score_gain_confidence_interval,
@@ -722,7 +721,6 @@ pub(crate) fn process_harmful_batch_from_prepared(
             // (binary-only) discounting via `None`.
             improvement_magnitude_ratio: None,
             target_neuron_stats: target_stats,
-            outlier_reduction_info: None,
             prediction_confidence: confidence_metrics.prediction_confidence,
             expected_score_gain_confidence_interval: confidence_metrics
                 .expected_score_gain_confidence_interval,
