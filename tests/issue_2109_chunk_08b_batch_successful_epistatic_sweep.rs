@@ -367,6 +367,39 @@ fn the_outcome_links_its_filed_findings() {
     }
 }
 
+/// Every `section` lookup in this file and in the four sibling sweep contract
+/// tests ends a section at the next line starting with `#`. A prose line that
+/// wraps onto a bare issue reference — `…recorded in\n#2190's scan table…` —
+/// therefore reads as a level-1 heading and silently truncates the section, so
+/// the tests above start passing on text they never saw. This run hit that
+/// twice while writing the record, both times as a *false failure*; the
+/// dangerous direction is a truncation that removes a row a test was meant to
+/// reject.
+#[test]
+fn no_record_line_starts_with_a_bare_issue_reference() {
+    let doc = read(RECORD);
+    let offenders: Vec<String> = doc
+        .lines()
+        .enumerate()
+        .filter(|(_, line)| {
+            line.strip_prefix('#')
+                .and_then(|rest| rest.chars().next())
+                .is_some_and(|first| first.is_ascii_digit())
+        })
+        .map(|(index, line)| {
+            let excerpt: String = line.chars().take(60).collect();
+            format!("line {}: {excerpt}", index + 1)
+        })
+        .collect();
+
+    assert!(
+        offenders.is_empty(),
+        "these lines start with a bare `#<number>`, which every section parser in the sweep \
+         contract tests reads as a level-1 heading — reflow them so the reference is not the \
+         first token on its line: {offenders:?}"
+    );
+}
+
 /// The question the issue body asks this section directly: whether a NaN
 /// "dominant" candidate can suppress real candidates in the deduplicator. The
 /// outcome must answer it, not merely mention the function.
