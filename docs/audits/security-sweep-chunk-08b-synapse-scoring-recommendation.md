@@ -21,7 +21,16 @@ Ledger rules: [`README.md`](README.md). Index entry:
   — both swept in the row below — and the Issue #2184 ranking fix in
   `src/analysis/recommendation/activation_recommendation.rs` (PR #2187, commit
   `3d1b24f`), which the `recommendation core` row records as swept-and-fixed.
-  So every outcome below still describes the current tree.
+  Two further changes landed while the `recommendation batch_successful +
+  epistatic` section was being swept, and both were read against the tree this
+  record now describes: the Issue #2185 dispatch wiring in
+  `src/analysis/recommendation/output_competition.rs` (PR #2188, commit
+  `0971470`), which makes that module's `+inf` accumulator reachable and so
+  **reopens** the `recommendation core` row's "not reachable" verdict for it,
+  and a one-line change in
+  `src/analysis/synapse/target_analysis/statistics.rs` from the same PR.
+  So every outcome below still describes the current tree, with that one
+  verdict flagged for the finalisation sub-issue.
   **Line counts stay as at the baseline commit** — that is what a
   later reader diffs against.
 - **Exposure:** `internal` — none of these 59 files is an FFI entry point. They
@@ -1136,7 +1145,7 @@ Measured by
 12 fully complementary sources emit 66 candidates and 24 emit 276 — exactly
 `n(n-1)/2` at both sizes, with nothing truncating either run. The assertion is
 a ratio between two runs of the same code, never a wall-clock threshold
-(CODING-STANDARDS § *Unit Tests vs Benchmarks*).
+(CONTRIBUTING.md § *Unit Tests vs Benchmarks*).
 
 **Division and the integer class — clean, and the issue body's expectation
 about `grouping.rs` was wrong.** There is **no division at all** in

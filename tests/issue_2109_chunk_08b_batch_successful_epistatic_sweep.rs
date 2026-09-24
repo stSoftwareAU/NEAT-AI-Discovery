@@ -390,29 +390,34 @@ fn the_outcome_answers_the_nan_suppression_question() {
 // the `clean` verdicts rest on
 // =============================================================================
 
-/// `count` sources over `2 * count` samples, each firing on exactly one sample
-/// in each half and nowhere else, with a unit error everywhere.
+type Contribution = neat_ai_discovery::analysis::recommendation::epistatic::SourceContribution;
+
+/// `count` sources over `2 * count * block` samples, each firing at `magnitude`
+/// on one `block`-wide run of samples in each half and sitting at `0.0`
+/// everywhere else, with `magnitude` as the error on every sample and `1.0` as
+/// the optimal weight.
 ///
 /// Every pair is therefore fully complementary (disjoint firing indices), does
 /// no cross-sample harm (each source's activation is `0.0` wherever the other
 /// fires), is super-additive against a `0.0` individual improvement, and
 /// survives cross-validation because every source contributes to both halves.
 /// So every one of the `count * (count - 1) / 2` pairs is emitted, which is
-/// what makes the pair scan's growth observable from the outside.
-fn complementary_contributions(
-    count: usize,
-) -> Vec<neat_ai_discovery::analysis::recommendation::epistatic::SourceContribution> {
-    let sample_count = count * 2;
+/// what makes the pair scan's growth observable from the outside — and, at
+/// `block >= 4`, the residual-reduction and synergy-ratio gates of the
+/// synergistic path are cleared too, so one fixture drives both producers.
+fn complementary_contributions(count: usize, block: usize, magnitude: f32) -> Vec<Contribution> {
+    let half = count * block;
+    let sample_count = half * 2;
     (0..count)
         .map(|source| {
+            let fires = |i: usize| {
+                let offset = i % half;
+                offset >= source * block && offset < (source + 1) * block
+            };
             let samples: Vec<HelpfulSample> = (0..sample_count)
                 .map(|i| HelpfulSample {
-                    activation: if i == source || i == count + source {
-                        1.0
-                    } else {
-                        0.0
-                    },
-                    avg_error: 1.0,
+                    activation: if fires(i) { magnitude } else { 0.0 },
+                    avg_error: magnitude,
                     target_value: None,
                     target_activation: None,
                 })
@@ -434,7 +439,7 @@ fn complementary_contributions(
 /// starts.
 ///
 /// The assertion is a *ratio* between two runs of the same code at `n` and
-/// `2n` (CODING-STANDARDS § Unit Tests vs Benchmarks — never an absolute
+/// `2n` (CONTRIBUTING.md § Unit Tests vs Benchmarks — never an absolute
 /// wall-clock threshold), expressed as the exact pair count each run emits.
 /// When #2190 lands a ceiling or an early return, the larger run stops short
 /// and this test fails — which is the signal the row needs re-sweeping.
@@ -443,8 +448,18 @@ fn epistatic_pair_generation_still_scans_every_pair_with_no_ceiling() {
     const SMALL: usize = 12;
     const LARGE: usize = 24;
 
-    let small = detect_epistatic_pairs("output-0", &complementary_contributions(SMALL), 1.0, None);
-    let large = detect_epistatic_pairs("output-0", &complementary_contributions(LARGE), 1.0, None);
+    let small = detect_epistatic_pairs(
+        "output-0",
+        &complementary_contributions(SMALL, 1, 1.0),
+        1.0,
+        None,
+    );
+    let large = detect_epistatic_pairs(
+        "output-0",
+        &complementary_contributions(LARGE, 1, 1.0),
+        1.0,
+        None,
+    );
 
     assert_eq!(
         small.len(),
@@ -537,52 +552,43 @@ fn dominant_neuron_dedup_still_orders_tied_candidates_non_deterministically() {
 /// with the same `> 0.0` gate in `f64` — and the `individual_improvement >= 0.0`
 /// pre-screen is fail-closed for a NaN dominance key. This test drives both
 /// producers with finite-but-hostile records rather than asserting the prose.
+///
+/// The magnitude is chosen so that `Σ error²` over the sample set — the very
+/// accumulator #2181 / #2182 overflow to `+inf` in `f32` elsewhere in this
+/// chunk — is `~9e61`: far past `f32::MAX`, and nowhere near `f64::MAX`. That
+/// is the whole `clean` verdict for this section, so the fixture has to reach
+/// the arithmetic rather than die at a gate above it.
 #[test]
 fn neither_producer_can_hand_the_deduplicator_a_non_finite_ranking_key() {
-    const SAMPLES: usize = 64;
+    /// Each value is finite on the wire, but `magnitude²` is `9e60` — an `f32`
+    /// accumulator would saturate on the first sample.
+    const HOSTILE_MAGNITUDE: f32 = 3.0e30;
+    /// Four sources × a four-wide firing block per half = 32 samples, which
+    /// clears `MIN_SAMPLES_FOR_RESIDUAL_ANALYSIS` (30) and the
+    /// `MIN_RESIDUAL_REDUCTION_RATIO` gate of the synergistic path.
+    const SOURCES: usize = 4;
+    const BLOCK: usize = 4;
 
-    // Magnitudes that overflow an `f32` accumulator downstream but are each
-    // finite on the wire — the shape #2181 / #2182 turn on elsewhere.
-    let hostile = |phase: usize| -> Vec<HelpfulSample> {
-        (0..SAMPLES)
-            .map(|i| HelpfulSample {
-                activation: if (i + phase).is_multiple_of(2) {
-                    3.0e38
-                } else {
-                    -3.0e38
-                },
-                avg_error: if i.is_multiple_of(3) { 1.0e38 } else { -2.0e38 },
-                target_value: None,
-                target_activation: None,
-            })
-            .collect()
-    };
+    let contributions = complementary_contributions(SOURCES, BLOCK, HOSTILE_MAGNITUDE);
+    assert!(
+        contributions
+            .iter()
+            .flat_map(|c| c.samples.iter())
+            .all(|s| s.activation.is_finite() && s.avg_error.is_finite()),
+        "every sample must be finite, or the trigger bypasses the FFI gate instead of \
+         defeating it"
+    );
 
-    let contributions = vec![
-        build_source_contribution(
-            "hostile-a",
-            hostile(0),
-            HelpfulStats::default(),
-            1.0e30,
-            0.0,
-        ),
-        build_source_contribution(
-            "hostile-b",
-            hostile(1),
-            HelpfulStats::default(),
-            -1.0e30,
-            0.0,
-        ),
-        build_source_contribution(
-            "hostile-c",
-            hostile(2),
-            HelpfulStats::default(),
-            1.0e30,
-            0.5,
-        ),
-    ];
-
-    for candidate in detect_epistatic_pairs("output-0", &contributions, 1.0, None) {
+    // Issue #1799: both loops below pass vacuously on an empty result, so pin
+    // the precondition first — the fixture must actually reach the guards.
+    let pairs = detect_epistatic_pairs("output-0", &contributions, 1.0, None);
+    assert_eq!(
+        pairs.len(),
+        SOURCES * (SOURCES - 1) / 2,
+        "every complementary pair must survive the hostile magnitudes and reach the \
+         deduplicator, or this test asserts nothing about the guards"
+    );
+    for candidate in &pairs {
         assert!(
             candidate.combined_improvement.is_finite()
                 && candidate.combined_improvement > 0.0
@@ -593,11 +599,26 @@ fn neither_producer_can_hand_the_deduplicator_a_non_finite_ranking_key() {
         );
     }
 
-    for candidate in detect_synergistic_candidates("output-0", &contributions, 1.0, None) {
+    let synergistic = detect_synergistic_candidates("output-0", &contributions, 1.0, None);
+    assert!(
+        !synergistic.is_empty(),
+        "the residual-analysis path must also emit under the hostile magnitudes, or its half of \
+         the verdict is unpinned"
+    );
+    for candidate in &synergistic {
         assert!(
             candidate.combined_improvement.is_finite() && candidate.combined_improvement > 0.0,
             "a synergistic candidate reaching the deduplicator must carry a finite positive \
              ranking key, got {candidate:?}"
+        );
+    }
+
+    // The guards hold end to end: the deduplicator's own ranking key is finite
+    // for every candidate it is handed, so no NaN can head a group.
+    for candidate in deduplicate_by_dominant_neuron(pairs) {
+        assert!(
+            candidate.combined_improvement.is_finite(),
+            "the deduplicated list must carry only finite ranking keys, got {candidate:?}"
         );
     }
 }
@@ -631,47 +652,51 @@ fn the_individual_candidate_detector_rejects_every_unusable_improvement_before_i
 
     let creature = CreatureJson {
         neurons: vec![
-            neuron("input-0", "input"),
-            neuron("input-1", "input"),
+            neuron("hostile", "input"),
+            neuron("honest", "input"),
+            neuron("partial", "input"),
             neuron("output-0", "output"),
         ],
         synapses: Vec::new(),
-        input: 2,
+        input: 3,
         output: 1,
     };
 
-    // Finite on the wire, but large enough that the f64 least-squares sums and
-    // the residual SSE saturate when narrowed back to f32.
+    // The target's error is exactly proportional to `honest`'s activation, so
+    // that source yields an improvement near 1.0; `partial` carries the same
+    // signal plus an independent swing, so it yields a smaller one. Two ranked
+    // candidates is the minimum that makes the ordering assertion mean
+    // anything. `hostile` swings at ±3e38, a magnitude that saturates every
+    // `f32` accumulator downstream while staying finite on the wire.
+    let honest = |i: u32| f32::from(i16::try_from(i % 5).expect("i % 5 fits")) - 2.0;
+    let independent = |i: u32| f32::from(i16::try_from(i % 2).expect("i % 2 fits")) * 4.0 - 2.0;
+
     let records: Vec<(String, Vec<DiscoverRecord>)> = vec![
         (
-            "input-0".to_string(),
+            "hostile".to_string(),
             (0..SAMPLES)
                 .map(|i| {
                     let swing = if i.is_multiple_of(2) { 3.0e38 } else { -3.0e38 };
-                    record("input-0", i, swing, 0.0)
+                    record("hostile", i, swing, 0.0)
                 })
                 .collect(),
         ),
         (
-            "input-1".to_string(),
+            "honest".to_string(),
             (0..SAMPLES)
-                .map(|i| {
-                    record(
-                        "input-1",
-                        i,
-                        f32::from(u16::try_from(i).unwrap()) * 0.25,
-                        0.0,
-                    )
-                })
+                .map(|i| record("honest", i, honest(i), 0.0))
+                .collect(),
+        ),
+        (
+            "partial".to_string(),
+            (0..SAMPLES)
+                .map(|i| record("partial", i, honest(i) + independent(i), 0.0))
                 .collect(),
         ),
         (
             "output-0".to_string(),
             (0..SAMPLES)
-                .map(|i| {
-                    let error = if i.is_multiple_of(3) { 2.0e38 } else { -1.0e38 };
-                    record("output-0", i, 0.5, error)
-                })
+                .map(|i| record("output-0", i, 0.5, honest(i) * 0.4))
                 .collect(),
         ),
     ];
@@ -686,6 +711,19 @@ fn the_individual_candidate_detector_rejects_every_unusable_improvement_before_i
     );
 
     let candidates = detect_individually_successful(&creature, &records);
+
+    // Issue #1799: the loop below passes vacuously on an empty list, so pin the
+    // precondition — two honest sources must be ranked, and the hostile one
+    // must be the only source rejected.
+    let mut ranked: Vec<&str> = candidates.iter().map(|c| c.source_uuid.as_str()).collect();
+    ranked.sort_unstable();
+    assert_eq!(
+        ranked,
+        vec!["honest", "partial"],
+        "both well-conditioned sources must be ranked and the ±3e38 source rejected, or this \
+         test asserts nothing about the guard (the emitted order is asserted below)"
+    );
+
     let mut previous = f32::INFINITY;
     for candidate in &candidates {
         assert!(
@@ -712,26 +750,35 @@ fn the_individual_candidate_detector_rejects_every_unusable_improvement_before_i
 /// descending sort below it can see a NaN key.
 #[test]
 fn the_synergistic_prescreen_drops_a_nan_individual_improvement() {
-    const SAMPLES: usize = 64;
+    const SOURCES: usize = 4;
+    const BLOCK: usize = 4;
 
-    let samples = |offset: usize| -> Vec<HelpfulSample> {
-        (0..SAMPLES)
-            .map(|i| HelpfulSample {
-                activation: if (i + offset) % 4 < 2 { 1.0 } else { 0.0 },
-                avg_error: 0.3,
-                target_value: None,
-                target_activation: None,
-            })
-            .collect()
-    };
+    let mut contributions = complementary_contributions(SOURCES, BLOCK, 1.0);
+    // Under `total_cmp` a positive NaN outranks every finite key, so if this
+    // source were not pre-screened out it would win the `max_by` dominance
+    // choice outright and become the primary of every synergistic candidate.
+    contributions[0].source_uuid = "nan".to_string();
+    contributions[0].individual_improvement = f32::NAN;
 
-    let contributions = vec![
-        build_source_contribution("nan", samples(0), HelpfulStats::default(), 0.5, f32::NAN),
-        build_source_contribution("good-a", samples(1), HelpfulStats::default(), 0.5, 0.05),
-        build_source_contribution("good-b", samples(2), HelpfulStats::default(), 0.5, 0.02),
-    ];
+    let synergistic = detect_synergistic_candidates("output-0", &contributions, 1.0, None);
+    let pairs = detect_epistatic_pairs("output-0", &contributions, 1.0, None);
 
-    for candidate in detect_synergistic_candidates("output-0", &contributions, 1.0, None) {
+    // Issue #1799: both loops below pass vacuously on an empty result, so pin
+    // the precondition — the three surviving sources must still pair up.
+    assert!(
+        !synergistic.is_empty(),
+        "the three finite sources must still yield synergistic candidates, or the NaN \
+         assertion below is vacuous"
+    );
+    assert_eq!(
+        pairs.len(),
+        (SOURCES - 1) * (SOURCES - 2) / 2,
+        "exactly the three finite sources must pair up — a NaN source that survived the \
+         pre-screen would add {} more pairs",
+        SOURCES - 1
+    );
+
+    for candidate in &synergistic {
         assert!(
             candidate.primary_source_uuid != "nan" && candidate.complement_source_uuid != "nan",
             "a source whose individual improvement is NaN must be pre-screened out, got \
@@ -739,7 +786,7 @@ fn the_synergistic_prescreen_drops_a_nan_individual_improvement() {
         );
     }
 
-    for candidate in detect_epistatic_pairs("output-0", &contributions, 1.0, None) {
+    for candidate in &pairs {
         assert!(
             candidate.source_a_uuid != "nan" && candidate.source_b_uuid != "nan",
             "the same pre-screen guards the epistatic path, got {candidate:?}"
