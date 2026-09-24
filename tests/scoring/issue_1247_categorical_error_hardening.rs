@@ -63,4 +63,3 @@ fn distribution_stats_safe_for_zero_variance_batch() {
         assert!(dist.kurtosis.is_finite());
     }
 }
-

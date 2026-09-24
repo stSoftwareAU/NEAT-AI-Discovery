@@ -30,10 +30,11 @@ use std::path::{Path, PathBuf};
 
 use neat_ai_discovery::analysis::scoring::error_distribution::ErrorDistribution;
 
-/// Env vars already known to be dead levers, disclosed and tracked ahead of
-/// this test (see the follow-up issue filed alongside #2177). Excluded here
-/// so this gate stays focused on the #2177 regression; removing them is a
-/// separate change.
+/// Env vars documented today with no reachable reader in `src/`, already
+/// tracked by the open chunk-13 config sweeps (#2122, #2123 and #2125, which
+/// owns the wider config doc-parity reconciliation). Excluded here so this
+/// gate stays focused on the #2177 regression; removing them is a separate
+/// change under those issues.
 const DISCLOSED_DEAD_LEVERS: [&str; 3] = [
     "NEAT_AI_DISCOVERY_LIB_PATH",
     "NEAT_AI_DISCOVERY_PRELOAD_ALL",
@@ -201,15 +202,17 @@ fn extract_functions(text: &str) -> Vec<FnSpan> {
     let mut i = 0;
     while let Some(rel) = text[i..].find("fn ") {
         let start = i + rel;
-        let boundary_ok = start == 0
-            || !(bytes[start - 1] as char).is_alphanumeric() && bytes[start - 1] != b'_';
+        let boundary_ok =
+            start == 0 || !(bytes[start - 1] as char).is_alphanumeric() && bytes[start - 1] != b'_';
         if !boundary_ok {
             i = start + 3;
             continue;
         }
         let name_start = start + 3;
         let mut j = name_start;
-        while j < bytes.len() && (bytes[j] as char).is_alphanumeric() || (j < bytes.len() && bytes[j] == b'_') {
+        while j < bytes.len() && (bytes[j] as char).is_alphanumeric()
+            || (j < bytes.len() && bytes[j] == b'_')
+        {
             j += 1;
         }
         if j == name_start {
@@ -422,7 +425,7 @@ fn is_live(db: &ProdDb, var: &str) -> bool {
                 if visited.contains(caller) {
                     continue;
                 }
-                let caller_body = db.functions.get(caller).map(String::as_str).unwrap_or("");
+                let caller_body = db.functions.get(caller).map_or("", String::as_str);
                 if !is_delegating_wrapper(caller_body) {
                     return true;
                 }

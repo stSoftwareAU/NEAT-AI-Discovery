@@ -158,7 +158,6 @@ impl ErrorDistribution {
             iqr,
         })
     }
-
 }
 
 /// Compute percentiles [p10, p25, p50, p75, p90] from a slice of values.
@@ -283,5 +282,4 @@ mod tests {
             assert_eq!(d.std_dev, 0.0);
         }
     }
-
 }
