@@ -604,9 +604,7 @@ pub(crate) fn apply_post_processing(
     // pass `+∞` straight into a `total_cmp` sort that ranks it above every
     // finite candidate.
     let non_finite_gain_drops = reject_non_finite_and_rank_synapse_candidates(helpful_results)
-        .saturating_add(reject_non_finite_and_rank_synapse_candidates(
-            harmful_results,
-        ))
+        .saturating_add(reject_non_finite_and_rank_synapse_candidates(harmful_results))
         .saturating_add(reject_non_finite_and_rank_coordinated_candidates(
             coordinated_structural_results,
         ));

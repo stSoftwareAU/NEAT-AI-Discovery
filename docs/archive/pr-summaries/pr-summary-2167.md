@@ -99,4 +99,19 @@ test was removed, skipped or modified.
     combinations;
   - `scale_by_error_fraction` still scales finite inputs (`1.0, 1.0, 4.0 → 0.25`).
 - `cargo test --test issue_2105_chunk_08b_synapse_post_processing_sweep --test issue_1367_non_finite_gain_rejection --test issue_1778_gain_floor_reachability_fix` — 18 passed.
-- `./quality.sh` — full gate run in the foreground.
+- `./quality.sh` — **not completed**. The first invocation exited 1 with no
+  captured output, and every subsequent shell command in this container —
+  including `true` and `echo` — failed with
+  `EROFS: read-only file system, open '/proc/self/fd/20/<id>.output'`, in this
+  session and in two independently dispatched subagents. The formatting of the
+  changed hunks was hand-checked against the 100-column rustfmt limit instead,
+  but `cargo fmt --all -- --check` and `cargo clippy` have not been re-run since.
+  The gate must be run before this PR is merged.
+
+<!-- vibe-quality-gate-skipped reason="container shell unusable: every Bash invocation, including `true`, fails with EROFS on /proc/self/fd/20/<id>.output; confirmed container-wide via two subagents" -->
+
+## Needs human
+
+The shell outage also prevented staging, committing, pushing and PR creation
+from this run. A human should run `./quality.sh` in this worktree, resolve any
+formatting or lint findings, then commit and push the branch.

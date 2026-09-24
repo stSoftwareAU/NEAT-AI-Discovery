@@ -18,8 +18,8 @@ use neat_ai_discovery::CandidateSynapseJson;
 use neat_ai_discovery::analysis::diagnostics::RejectionBreakdown;
 use neat_ai_discovery::analysis::diagnostics::rejection_reasons::REJECTION_NON_FINITE_GAIN;
 use neat_ai_discovery::analysis::synapse::post_processing::{
-    reject_non_finite_and_rank_coordinated_candidates, reject_non_finite_and_rank_synapse_candidates,
-    scale_by_error_fraction,
+    reject_non_finite_and_rank_coordinated_candidates,
+    reject_non_finite_and_rank_synapse_candidates, scale_by_error_fraction,
 };
 use neat_ai_discovery::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson};
 
@@ -190,10 +190,7 @@ fn scale_by_error_fraction_rejects_non_finite_inputs() {
         (f32::INFINITY, 1.0, 4.0, "infinite raw prediction"),
     ] {
         let scaled = scale_by_error_fraction(raw, target, total);
-        assert_eq!(
-            scaled, 0.0,
-            "{case} must scale to a neutral 0.0, got {scaled}"
-        );
+        assert_eq!(scaled, 0.0, "{case} must scale to a neutral 0.0, got {scaled}");
     }
 }
 
