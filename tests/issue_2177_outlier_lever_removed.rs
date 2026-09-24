@@ -268,6 +268,22 @@ fn extract_functions(text: &str) -> Vec<FnSpan> {
     out
 }
 
+/// The string literal assigned to a `&str` alias, given the text from its
+/// type colon onwards. `None` when the declaration is not a `&str` bound
+/// straight to a literal (the `=` must follow the `&str` closely enough to
+/// rule out a longer type expression).
+fn alias_literal(rest: &str) -> Option<&str> {
+    let str_ty = rest.find("&str")?;
+    let eq = rest.find('=')?;
+    if eq <= str_ty || eq >= str_ty + 20 {
+        return None;
+    }
+    let q1 = rest[eq..].find('"')?;
+    let after = &rest[eq + q1 + 1..];
+    let q2 = after.find('"')?;
+    Some(&after[..q2])
+}
+
 /// Module-level `const`/`static` `&str` aliases: `const NAME: &str =
 /// "literal";` / `static NAME: &str = "literal";` (the `heartbeat.rs:32` /
 /// `recovery.rs:17` pattern), keyed by alias name.
@@ -286,19 +302,12 @@ fn extract_str_aliases(text: &str) -> BTreeMap<String, String> {
                 i = start;
                 continue;
             }
-            if let Some(str_ty) = rest.find("&str") {
-                if let Some(eq) = rest.find('=') {
-                    if eq < str_ty + 20 && eq > str_ty {
-                        if let Some(q1) = rest[eq..].find('"') {
-                            let after = &rest[eq + q1 + 1..];
-                            if let Some(q2) = after.find('"') {
-                                if !name.is_empty() {
-                                    out.insert(name, after[..q2].to_string());
-                                }
-                            }
-                        }
-                    }
-                }
+            if name.is_empty() {
+                i = start;
+                continue;
+            }
+            if let Some(value) = alias_literal(rest) {
+                out.insert(name, value.to_string());
             }
             i = start;
         }
@@ -438,7 +447,8 @@ fn is_live(db: &ProdDb, var: &str) -> bool {
     false
 }
 
-/// Parse `| \`NEAT_AI_DISCOVERY_...\` |` rows out of `docs/CONFIGURATION.md`.
+/// Parse the env-var rows out of `docs/CONFIGURATION.md` — each begins with a
+/// code-quoted `NEAT_AI_DISCOVERY_` name in the table's first column.
 fn configuration_md_vars() -> Vec<String> {
     let text = read("docs/CONFIGURATION.md");
     table_vars(text.lines(), "| `NEAT_AI_DISCOVERY_")
