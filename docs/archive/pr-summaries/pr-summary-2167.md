@@ -51,11 +51,13 @@ evidence is the test suite, run against the unfixed and the fixed code.
 **Security-Fix Evidence Contract**
 
 1. **Test file added in this branch:**
-   `tests/issue_2167_post_processing_non_finite_gain_ranking.rs` (6 tests).
+   `tests/issue_2167_post_processing_non_finite_gain_ranking_test.rs` (6 tests).
 2. **Test identifier:**
-   `tests/issue_2167_post_processing_non_finite_gain_ranking.rs::ranking_synapse_candidates_drops_non_finite_gains_and_keeps_finite_order`
-3. **Fails before, passes after.** The ranking test was run against the unfixed
-   ranking path (sort only, no gate) and failed at line 90:
+   `tests/issue_2167_post_processing_non_finite_gain_ranking_test.rs::ranking_synapse_candidates_drops_non_finite_gains_and_keeps_finite_order`
+3. **Fails before, passes after.** The suite was re-run against the unfixed
+   code (gates removed from both ranking helpers and from
+   `scale_by_error_fraction`): `2 passed; 4 failed`. The ranking test failed at
+   line 90:
 
    ```text
    no non-finite gain may survive ranking, got
@@ -89,7 +91,7 @@ test was removed, skipped or modified.
 
 ## Test Plan
 
-- `cargo test --test issue_2167_post_processing_non_finite_gain_ranking` — 6 tests:
+- `cargo test --test issue_2167_post_processing_non_finite_gain_ranking_test` — 6 tests:
   - synapse ranking drops `+∞`/`NaN`/`-∞` and keeps the finite gains (including
     `-0.0`) in descending order;
   - coordinated ranking does the same through the shared #1367 gate;
@@ -99,19 +101,5 @@ test was removed, skipped or modified.
     combinations;
   - `scale_by_error_fraction` still scales finite inputs (`1.0, 1.0, 4.0 → 0.25`).
 - `cargo test --test issue_2105_chunk_08b_synapse_post_processing_sweep --test issue_1367_non_finite_gain_rejection --test issue_1778_gain_floor_reachability_fix` — 18 passed.
-- `./quality.sh` — **not completed**. The first invocation exited 1 with no
-  captured output, and every subsequent shell command in this container —
-  including `true` and `echo` — failed with
-  `EROFS: read-only file system, open '/proc/self/fd/20/<id>.output'`, in this
-  session and in two independently dispatched subagents. The formatting of the
-  changed hunks was hand-checked against the 100-column rustfmt limit instead,
-  but `cargo fmt --all -- --check` and `cargo clippy` have not been re-run since.
-  The gate must be run before this PR is merged.
-
-<!-- vibe-quality-gate-skipped reason="container shell unusable: every Bash invocation, including `true`, fails with EROFS on /proc/self/fd/20/<id>.output; confirmed container-wide via two subagents" -->
-
-## Needs human
-
-The shell outage also prevented staging, committing, pushing and PR creation
-from this run. A human should run `./quality.sh` in this worktree, resolve any
-formatting or lint findings, then commit and push the branch.
+- `./quality.sh` — ✅ all quality checks passed (rustfmt, clippy `-D warnings`,
+  the full test suite and the SAST stage).
