@@ -529,17 +529,3 @@ fn error_distribution_from_errors_still_works_after_the_dead_lever_cleanup() {
     }
     assert!((dist.iqr - (dist.percentiles[3] - dist.percentiles[1])).abs() < 1e-6);
 }
-
-#[test]
-fn debug_gpu_timing_chain() {
-    let db = build_prod_db();
-    eprintln!("gpu_timing body: {:?}", db.functions.get("gpu_timing"));
-    eprintln!("gpu_timing_enabled body: {:?}", db.functions.get("gpu_timing_enabled"));
-    eprintln!("callers of gpu_timing: {:?}", callers_of(&db, "gpu_timing"));
-    eprintln!("callers of gpu_timing_enabled: {:?}", callers_of(&db, "gpu_timing_enabled"));
-    for c in callers_of(&db, "gpu_timing_enabled") {
-        let body = db.functions.get(c).map(String::as_str).unwrap_or("");
-        eprintln!("caller {} is_wrapper={} body_len={}", c, is_delegating_wrapper(body), body.len());
-    }
-    eprintln!("is_live(GPU_TIMING) = {}", is_live(&db, "NEAT_AI_DISCOVERY_GPU_TIMING"));
-}

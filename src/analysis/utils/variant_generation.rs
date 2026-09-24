@@ -966,7 +966,6 @@ mod calibrated_variant_tests {
             total_count: 20,
             improvement_magnitude_ratio: None,
             target_neuron_stats: None,
-            outlier_reduction_info: None,
             prediction_confidence: 0.8,
             expected_score_gain_confidence_interval: [0.0, 0.0],
             comment: None,
