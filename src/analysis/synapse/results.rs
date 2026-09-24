@@ -99,6 +99,8 @@ pub(super) fn finalise_synapse_results(
         target_saturated_drops: params.diagnostics.target_saturated_drop_count(),
         collapse_bypass_below_floor_drops,
         cpu_pre_reject_no_signal_drops: params.diagnostics.cpu_pre_reject_no_signal_drop_count(),
+        // Issue #2167: candidates discarded before ranking for a non-finite gain.
+        non_finite_gain_drops: pp_metrics.non_finite_gain_drops,
     });
     metadata.target_pass_outcomes = target_pass_outcomes;
 
