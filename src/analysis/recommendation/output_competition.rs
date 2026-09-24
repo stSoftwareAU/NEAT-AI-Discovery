@@ -79,7 +79,12 @@ pub struct OutputCompetitionCandidate {
 }
 
 /// Whether a descriptor's topology gates the output-competition detector.
-fn role_aware_topology(descriptor: &TaskDescriptor) -> bool {
+///
+/// Public so the discovery dispatcher can apply the same gate *before*
+/// loading records (Issue #2185) — one source of truth, not a duplicated
+/// `matches!` at the call site.
+#[must_use]
+pub fn role_aware_topology(descriptor: &TaskDescriptor) -> bool {
     matches!(
         descriptor.target_topology,
         TargetTopology::OneHot | TargetTopology::Simplex
@@ -164,7 +169,12 @@ pub fn detect_output_competition(
                 recommended_weight: LATERAL_INHIBITION_WEIGHT,
                 co_activation_score,
                 sample_count,
-                estimated_improvement: co_activation_score * COMPETITION_GAIN_SCALE,
+                // Issue #2185: an unbounded squash (IDENTITY, RELU) can push
+                // the score well past 1.0, which would let one pair dominate
+                // the whole candidate set. The documented ceiling is the
+                // gain scale itself; hold the estimate to it.
+                estimated_improvement: (co_activation_score * COMPETITION_GAIN_SCALE)
+                    .clamp(0.0, COMPETITION_GAIN_SCALE),
             });
         }
     }
@@ -199,6 +209,13 @@ fn co_activation(
         let Some(&b_act) = b_by_idx.get(&r.obs_index) else {
             continue;
         };
+        // Issue #2185: activations come from recorded parquet the analyser
+        // does not author. A non-finite one would push `sum_min` to +inf and
+        // the descending `total_cmp` sort below would rank the poisoned pair
+        // ahead of every genuine competitor. Drop the sample instead.
+        if !r.activation.is_finite() || !b_act.is_finite() {
+            continue;
+        }
         if r.activation > CO_ACTIVATION_THRESHOLD && b_act > CO_ACTIVATION_THRESHOLD {
             count += 1;
             sum_min += r.activation.min(b_act);
@@ -209,7 +226,14 @@ fn co_activation(
         return None;
     }
 
-    Some((sum_min / count as f32, count))
+    // Finite terms can still overflow the accumulator; a mean we cannot
+    // represent is no evidence at all.
+    let score = sum_min / count as f32;
+    if !score.is_finite() {
+        return None;
+    }
+
+    Some((score, count))
 }
 
 /// Package output-competition candidates as coordinated structural
@@ -223,7 +247,7 @@ pub fn output_competition_to_coordinated_candidates(
     for c in candidates {
         results.push(CoordinatedStructuralCandidateJson {
             remove_neuron_compensation: None,
-        constant_neuron_bias_fold: None,
+            constant_neuron_bias_fold: None,
             operations: vec![CoordinatedStructuralOpJson::AddSynapse {
                 from_neuron_uuid: c.from_output_uuid.clone(),
                 to_neuron_uuid: c.to_output_uuid.clone(),

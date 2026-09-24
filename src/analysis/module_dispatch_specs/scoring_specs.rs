@@ -3,7 +3,8 @@
 //! Covers: output bias drift, bounded range, sentinel gating, observation
 //! utilisation, input sensitivity (dominant inputs + threshold effects),
 //! sample-weighted discovery, gradient-based discovery, output squash
-//! mismatch, and error plateau detection.
+//! mismatch, error plateau detection, and output competition (lateral
+//! inhibition).
 
 use std::sync::Arc;
 
@@ -13,7 +14,7 @@ use super::super::detection::{
     output_range_compression, output_squash_mismatch, sentinel_gating,
 };
 use super::super::recommendation::{
-    batch_successful, gradient_discovery, output_bias_drift, sample_weighted,
+    batch_successful, gradient_discovery, output_bias_drift, output_competition, sample_weighted,
 };
 use super::super::task_descriptor::TaskDescriptor;
 use super::super::{cache, discovery_dispatch};
@@ -185,6 +186,43 @@ pub(crate) fn append_scoring_specs(
                 return None;
             }
             let candidates = error_plateau::error_plateaus_to_coordinated_candidates(&detected);
+            Some(discovery_dispatch::DiscoveryDetectionResult {
+                detected_count: detected.len(),
+                candidates,
+            })
+        },
+    );
+
+    // Issue #1321 / #2185: Output competition (lateral inhibition). The
+    // detector was built and tested but never dispatched — no spec existed, so
+    // a one-of-N creature with competing outputs could never receive the
+    // inhibitory synapse. Gated on the module's own topology predicate so the
+    // record load is skipped for descriptors that can emit nothing.
+    discovery_spec!(modules, "output competition detection", "output_competition_detection",
+        cache = shared_cache, creature = creature =>
+        custom: move || {
+            if !output_competition::role_aware_topology(&task_descriptor) {
+                return None;
+            }
+            let output_count = creature
+                .neurons
+                .iter()
+                .filter(|n| n.neuron_type == "output")
+                .count();
+            if output_count < 2 {
+                return None;
+            }
+            let records = cache.load_records_for_neuron_types(&creature, &["output"]);
+            let detected = output_competition::detect_output_competition(
+                &creature,
+                &records,
+                &task_descriptor,
+            );
+            if detected.is_empty() {
+                return None;
+            }
+            let candidates =
+                output_competition::output_competition_to_coordinated_candidates(&detected);
             Some(discovery_dispatch::DiscoveryDetectionResult {
                 detected_count: detected.len(),
                 candidates,
