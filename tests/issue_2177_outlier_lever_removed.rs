@@ -83,12 +83,36 @@ fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
 /// The production-only slice of a file's text: everything before the first
 /// `#[cfg(test)]` module. Mirrors `production_source` in
 /// `tests/issue_2107_chunk_08b_scoring_sweep.rs`.
+/// Truncate a source file's text at the start of its trailing test module,
+/// so only production code is handed to the function/caller extractor.
+///
+/// `#[cfg(test)]` also decorates test-only helper items interspersed among
+/// production code (e.g. `#[cfg(test)] pub use deadline::deadline_override;`
+/// in `src/analysis/utils/mod.rs`) — truncating at the *first* occurrence of
+/// any kind drops legitimate production functions defined later in the same
+/// file. Only a `#[cfg(test)]` that gates a `mod` declaration (optionally via
+/// an intervening `#[path = "..."]` attribute) marks the real test-module
+/// boundary, so only that occurrence truncates the text.
 fn production_text(path: &Path) -> String {
     let text = std::fs::read_to_string(path).unwrap_or_default();
-    match text.find("#[cfg(test)]") {
-        Some(idx) => text[..idx].to_string(),
-        None => text,
+    let mut search_from = 0;
+    while let Some(rel) = text[search_from..].find("#[cfg(test)]") {
+        let idx = search_from + rel;
+        let after = text[idx + "#[cfg(test)]".len()..].trim_start();
+        // Skip any further attributes (e.g. #[path = "..."]) before the item.
+        let mut rest = after;
+        while rest.starts_with('#') {
+            match rest.find(']') {
+                Some(end) => rest = rest[end + 1..].trim_start(),
+                None => break,
+            }
+        }
+        if rest.starts_with("mod ") || rest.starts_with("mod\t") {
+            return text[..idx].to_string();
+        }
+        search_from = idx + "#[cfg(test)]".len();
     }
+    text
 }
 
 /// Blank out `//` and `/* */` comments while leaving string literals
@@ -364,13 +388,17 @@ fn is_delegating_wrapper(body: &str) -> bool {
     body.lines().filter(|l| !l.trim().is_empty()).count() <= 2
 }
 
-/// Other functions that call `callee` (whole-word name, plus call syntax
-/// `callee(`).
+/// Other functions that call `callee`: either explicit call syntax
+/// `callee(`, or a bare whole-word reference (a function passed by name,
+/// e.g. `.unwrap_or_else(crate::config::max_wall_clock_minutes)`, has no
+/// trailing `(` at the reference site but is just as live a caller).
 fn callers_of<'a>(db: &'a ProdDb, callee: &str) -> Vec<&'a String> {
     let call = format!("{callee}(");
     db.functions
         .iter()
-        .filter(|(name, body)| name.as_str() != callee && body.contains(&call))
+        .filter(|(name, body)| {
+            name.as_str() != callee && (body.contains(&call) || contains_ident(body, callee))
+        })
         .map(|(name, _)| name)
         .collect()
 }
@@ -500,4 +528,18 @@ fn error_distribution_from_errors_still_works_after_the_dead_lever_cleanup() {
         );
     }
     assert!((dist.iqr - (dist.percentiles[3] - dist.percentiles[1])).abs() < 1e-6);
+}
+
+#[test]
+fn debug_gpu_timing_chain() {
+    let db = build_prod_db();
+    eprintln!("gpu_timing body: {:?}", db.functions.get("gpu_timing"));
+    eprintln!("gpu_timing_enabled body: {:?}", db.functions.get("gpu_timing_enabled"));
+    eprintln!("callers of gpu_timing: {:?}", callers_of(&db, "gpu_timing"));
+    eprintln!("callers of gpu_timing_enabled: {:?}", callers_of(&db, "gpu_timing_enabled"));
+    for c in callers_of(&db, "gpu_timing_enabled") {
+        let body = db.functions.get(c).map(String::as_str).unwrap_or("");
+        eprintln!("caller {} is_wrapper={} body_len={}", c, is_delegating_wrapper(body), body.len());
+    }
+    eprintln!("is_live(GPU_TIMING) = {}", is_live(&db, "NEAT_AI_DISCOVERY_GPU_TIMING"));
 }
