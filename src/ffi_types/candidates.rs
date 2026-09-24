@@ -5,8 +5,6 @@
 
 use serde::Serialize;
 
-use crate::analysis;
-
 use super::NeuronStatsJson;
 
 /// Candidate to add a new synapse.
