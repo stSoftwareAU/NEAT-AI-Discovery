@@ -46,15 +46,18 @@ Closes #2167
 ## Evidence
 
 Backend Rust library change — there is no web interface to screenshot. The
-evidence is the test suite, run against the unfixed and the fixed code.
+evidence is the regression test suite, run against the unfixed and the fixed
+code.
 
 **Security-Fix Evidence Contract**
 
 1. **Test file added in this branch:**
    `tests/issue_2167_post_processing_non_finite_gain_ranking_test.rs` (6 tests).
-2. **Test identifier:**
-   `tests/issue_2167_post_processing_non_finite_gain_ranking_test.rs::ranking_synapse_candidates_drops_non_finite_gains_and_keeps_finite_order`
-3. **Fails before, passes after.** The suite was re-run against the unfixed
+2. **Test identifier.** Added the regression test
+   `tests/issue_2167_post_processing_non_finite_gain_ranking_test.rs::ranking_synapse_candidates_drops_non_finite_gains_and_keeps_finite_order`,
+   which reproduces the flaw (a `NaN`/`+∞` gain ranked at position 0), fails
+   against the unfixed code and passes after the fix.
+3. **Fails before, passes after.** The regression test suite was re-run against the unfixed
    code (gates removed from both ranking helpers and from
    `scale_by_error_fraction`): `2 passed; 4 failed`. The ranking test failed at
    line 90:
