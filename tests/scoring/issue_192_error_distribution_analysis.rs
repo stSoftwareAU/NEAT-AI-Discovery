@@ -11,14 +11,11 @@
 
 #![allow(clippy::cast_precision_loss, clippy::cast_sign_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use neat_ai_discovery::analysis::samples::HelpfulSample;
-use neat_ai_discovery::analysis::scoring::error_distribution::{
-    ErrorDistribution, detect_error_modes, outlier_analysis_enabled, outlier_percentile_from_env,
-};
+use neat_ai_discovery::analysis::scoring::error_distribution::ErrorDistribution;
 use neat_ai_discovery::analysis::{GpuAnalyzer, analyze_synapses};
 use neat_ai_discovery::parquet_format::write_records_to_parquet;
 use neat_ai_discovery::types::DiscoverRecord;
 use neat_ai_discovery::{AnalyzeSynapsesInput, CreatureJson, NeuronJson, SynapseJson};
-use serial_test::serial;
 use tempfile::NamedTempFile;
 
 /// Skip test if no GPU available
@@ -260,138 +257,6 @@ fn test_error_distribution_single_sample() {
     }
 }
 
-/// Test: `ErrorDistribution` identifies outliers correctly.
-#[test]
-fn test_error_distribution_outlier_count() {
-    // Create distribution with clear outliers at p90
-    let mut errors: Vec<f32> = (0..90).map(|_| 0.1).collect(); // 90% have low error
-    errors.extend(vec![1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]); // 10% outliers
-
-    let samples: Vec<HelpfulSample> = errors
-        .iter()
-        .map(|&e| HelpfulSample {
-            activation: 0.5,
-            avg_error: e,
-            target_value: None,
-            target_activation: None,
-        })
-        .collect();
-
-    let dist = ErrorDistribution::from_samples(&samples).expect("Should compute distribution");
-
-    // Count samples above p90 threshold
-    let outlier_count = dist.count_outliers(&samples, 90);
-    assert!(
-        (9..=11).contains(&outlier_count),
-        "Should have ~10 outliers (10% of 100), got {outlier_count}"
-    );
-}
-
-// =============================================================================
-// Error Mode Detection Tests
-// =============================================================================
-
-/// Test: `detect_error_modes` finds distinct modes in bimodal distribution.
-#[test]
-fn test_detect_error_modes_bimodal() {
-    // Bimodal distribution: half samples near 0.1, half near 0.9
-    let mut errors: Vec<f32> = (0..50).map(|i| 0.1 + (i as f32 / 500.0) - 0.05).collect();
-    errors.extend((0..50).map(|i| 0.9 + (i as f32 / 500.0) - 0.05));
-
-    let samples: Vec<HelpfulSample> = errors
-        .iter()
-        .map(|&e| HelpfulSample {
-            activation: 0.5,
-            avg_error: e,
-            target_value: None,
-            target_activation: None,
-        })
-        .collect();
-
-    let modes = detect_error_modes(&samples);
-
-    assert!(
-        modes.len() >= 2,
-        "Bimodal distribution should detect 2+ modes, got {}",
-        modes.len()
-    );
-
-    // Check that modes are centred around 0.1 and 0.9
-    let mode_centres: Vec<f32> = modes.iter().map(|m| m.centre).collect();
-    eprintln!("Detected modes: {mode_centres:?}");
-
-    let has_low_mode = mode_centres.iter().any(|&c| c < 0.3);
-    let has_high_mode = mode_centres.iter().any(|&c| c > 0.7);
-    assert!(
-        has_low_mode && has_high_mode,
-        "Should detect modes near 0.1 and 0.9"
-    );
-}
-
-/// Test: `detect_error_modes` returns few modes for unimodal distribution.
-#[test]
-fn test_detect_error_modes_unimodal() {
-    // Unimodal distribution: all samples clustered around 0.5
-    let errors: Vec<f32> = (0..100).map(|i| 0.5 + (i as f32 / 1000.0) - 0.05).collect();
-
-    let samples: Vec<HelpfulSample> = errors
-        .iter()
-        .map(|&e| HelpfulSample {
-            activation: 0.5,
-            avg_error: e,
-            target_value: None,
-            target_activation: None,
-        })
-        .collect();
-
-    let modes = detect_error_modes(&samples);
-
-    // For a tight unimodal distribution, we expect few modes
-    // (the algorithm filters out modes with < 5% of samples)
-    eprintln!("Unimodal modes detected: {}", modes.len());
-    for m in &modes {
-        eprintln!(
-            "  Centre: {:.3}, count: {}, proportion: {:.2}",
-            m.centre, m.sample_count, m.proportion
-        );
-    }
-
-    // Should detect at most 3 modes for a unimodal distribution
-    // (histogram edge effects can create a few spurious modes)
-    assert!(
-        modes.len() <= 3,
-        "Unimodal distribution should detect at most 3 modes, got {}",
-        modes.len()
-    );
-}
-
-// =============================================================================
-// Environment Variable Configuration Tests
-// =============================================================================
-
-/// Test: `outlier_analysis_enabled` returns false by default.
-#[test]
-#[serial]
-fn test_outlier_analysis_disabled_by_default() {
-    // Ensure env var is not set
-    // SAFETY: Serialised via #[serial] — no concurrent env access.
-    unsafe { std::env::remove_var("NEAT_AI_DISCOVERY_OUTLIER_ANALYSIS") };
-
-    let enabled = outlier_analysis_enabled();
-    assert!(!enabled, "Outlier analysis should be disabled by default");
-}
-
-/// Test: `outlier_percentile_from_env` returns 90 by default.
-#[test]
-#[serial]
-fn test_outlier_percentile_default() {
-    // SAFETY: Serialised via #[serial] — no concurrent env access.
-    unsafe { std::env::remove_var("NEAT_AI_DISCOVERY_OUTLIER_PERCENTILE") };
-
-    let percentile = outlier_percentile_from_env();
-    assert_eq!(percentile, 90, "Default outlier percentile should be 90");
-}
-
 // =============================================================================
 // Integration Tests: Error Distribution in Analysis Output
 // =============================================================================
@@ -501,104 +366,6 @@ fn test_synapse_analysis_includes_error_distribution() {
         "Distribution with outliers should have positive skewness, got {}",
         dist.skewness
     );
-}
-
-/// Test: Candidate includes outlier information when outlier analysis is enabled.
-#[test]
-#[serial]
-fn test_candidate_includes_outlier_info_when_enabled() {
-    skip_without_gpu!();
-
-    // Enable outlier analysis
-    // SAFETY: Serialised via #[serial] — no concurrent env access.
-    unsafe { std::env::set_var("NEAT_AI_DISCOVERY_OUTLIER_ANALYSIS", "1") };
-
-    let creature = create_test_creature(
-        vec![
-            ("input-0", "input", "IDENTITY"),
-            ("input-1", "input", "IDENTITY"),
-            ("output-0", "output", "HARD_TANH"),
-        ],
-        vec![("input-0", "output-0", 1.0)],
-    );
-
-    let temp_file = NamedTempFile::new().unwrap();
-    let file_path = temp_file.path().to_str().unwrap();
-
-    let mut records = Vec::new();
-
-    // Create samples where input-1 correlates strongly with outlier errors
-    for i in 0..100 {
-        let obs_idx = i as u32;
-        let target_value = 0.0;
-        let target_activation = 0.0;
-
-        // Outlier pattern: high error when input-1 is high
-        let input1_activation = if i >= 90 { 1.0 } else { 0.0 };
-        let error = if i >= 90 { 1.0 } else { 0.1 };
-
-        records.push(DiscoverRecord::new(
-            obs_idx,
-            "output-0".to_string(),
-            Some(target_value),
-            target_activation,
-            vec![error],
-        ));
-
-        records.push(DiscoverRecord::new(
-            obs_idx,
-            "input-1".to_string(),
-            Some(input1_activation),
-            input1_activation,
-            vec![0.0],
-        ));
-
-        records.push(DiscoverRecord::new(
-            obs_idx,
-            "input-0".to_string(),
-            Some(0.5),
-            0.5,
-            vec![0.0],
-        ));
-    }
-
-    write_records_to_parquet(file_path, &records).unwrap();
-
-    let input = AnalyzeSynapsesInput {
-        parquet_file: file_path.to_string(),
-        creature,
-        focus_neurons: vec!["output-0".to_string()],
-        max_candidates: Some(10),
-        analysis_deadline_ms: None,
-        random_seed: None,
-        temperature: 1.0,
-        failure_cache: None,
-        discovery_outcome_log: None,
-    };
-
-    let result = analyze_synapses(&input).expect("Analysis should succeed");
-
-    // Clean up env var
-    // SAFETY: Serialised via #[serial] — no concurrent env access.
-    unsafe { std::env::remove_var("NEAT_AI_DISCOVERY_OUTLIER_ANALYSIS") };
-
-    // Check that we have candidates
-    eprintln!("Helpful synapses found: {}", result.helpful_synapses.len());
-    for c in &result.helpful_synapses {
-        eprintln!(
-            "  {} -> {}: {:.2}%",
-            c.from_neuron_uuid,
-            c.to_neuron_uuid,
-            c.expected_creature_error_reduction * 100.0
-        );
-        if let Some(ref outlier_info) = c.outlier_reduction_info {
-            eprintln!(
-                "    Outlier info: {:.2}% outlier improvement, {} outliers affected",
-                outlier_info.outlier_error_reduction * 100.0,
-                outlier_info.outlier_samples_affected
-            );
-        }
-    }
 }
 
 // =============================================================================

@@ -21,8 +21,8 @@ use std::time::Duration;
 
 use neat_ai_discovery::config::{
     DEFAULT_BLOCK_SIZE, MAX_BLOCK_SIZE, MIN_BLOCK_SIZE, block_size, dominance_threshold,
-    gradient_threshold, max_cached_blocks, noise_signal_threshold, outlier_percentile,
-    prefetch_depth, watchdog_abort_delay, watchdog_stall_timeout,
+    gradient_threshold, max_cached_blocks, noise_signal_threshold, prefetch_depth,
+    watchdog_abort_delay, watchdog_stall_timeout,
 };
 use serial_test::serial;
 
@@ -180,26 +180,4 @@ fn block_size_tolerates_surrounding_whitespace_and_still_clamps() {
 fn block_size_falls_back_when_unparsable() {
     let value = with_env("NEAT_AI_DISCOVERY_BLOCK_SIZE", "big", block_size);
     assert_eq!(value, DEFAULT_BLOCK_SIZE);
-}
-
-// ---------------------------------------------------------------------------
-// Regression guard — an accessor that already trimmed must keep its policy
-// ---------------------------------------------------------------------------
-
-#[test]
-#[serial]
-fn outlier_percentile_keeps_trim_and_range_filter() {
-    let value = with_env(
-        "NEAT_AI_DISCOVERY_OUTLIER_PERCENTILE",
-        " 95 ",
-        outlier_percentile,
-    );
-    assert_eq!(value, 95);
-
-    let rejected = with_env(
-        "NEAT_AI_DISCOVERY_OUTLIER_PERCENTILE",
-        " 0 ",
-        outlier_percentile,
-    );
-    assert_eq!(rejected, 90, "out-of-range values still fall back");
 }
