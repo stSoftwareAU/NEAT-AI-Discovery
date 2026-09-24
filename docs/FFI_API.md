@@ -1035,7 +1035,7 @@ names its own reason in `discoveryModuleStats`:
 
 ```mermaid
 flowchart LR
-    S["48 discovery module specs"] --> T{"tiered out?<br/>(large creature)"}
+    S["49 discovery module specs"] --> T{"tiered out?<br/>(large creature)"}
     T -->|yes| K1["module_tiered_out++"]
     T -->|no| G{"gated by<br/>success rate?"}
     G -->|yes| K2["module_gated_low_success++"]
