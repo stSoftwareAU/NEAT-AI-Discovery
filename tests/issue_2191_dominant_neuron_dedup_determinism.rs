@@ -50,13 +50,17 @@ fn synergistic(primary: &str, complement: &str) -> SynergisticCandidate {
     }
 }
 
-/// Eight singleton groups with distinct dominant neurons, plus one group of
-/// five whose partners arrive out of UUID order so truncation to three is
-/// exercised on a tie.
-fn fixture_ids() -> Vec<(String, String)> {
-    let mut ids: Vec<(String, String)> = (0..8)
+/// Eight singleton groups with distinct dominant neurons.
+fn singleton_ids() -> Vec<(String, String)> {
+    (0..8)
         .map(|i| (format!("dom-{i}"), format!("partner-{i}")))
-        .collect();
+        .collect()
+}
+
+/// The singletons plus one group of five whose partners arrive out of UUID
+/// order, so truncation to three is exercised on a tie.
+fn fixture_ids() -> Vec<(String, String)> {
+    let mut ids = singleton_ids();
     for partner in ["p-e", "p-b", "p-d", "p-a", "p-c"] {
         ids.push(("dom-big".to_string(), partner.to_string()));
     }
@@ -66,9 +70,7 @@ fn fixture_ids() -> Vec<(String, String)> {
 /// Expected output: all nine groups' survivors, ordered by UUID tuple, with
 /// the big group keeping its three lowest-ordered partners.
 fn expected_ids() -> Vec<(String, String)> {
-    let mut ids: Vec<(String, String)> = (0..8)
-        .map(|i| (format!("dom-{i}"), format!("partner-{i}")))
-        .collect();
+    let mut ids = singleton_ids();
     for partner in ["p-a", "p-b", "p-c"] {
         ids.push(("dom-big".to_string(), partner.to_string()));
     }
