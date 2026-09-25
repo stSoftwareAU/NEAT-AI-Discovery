@@ -123,7 +123,7 @@ fn make_fan_in_network_and_records() -> (CreatureJson, Vec<(String, Vec<Discover
 #[test]
 fn test_detects_fan_in_candidates_for_correlated_inputs() {
     let (creature, records) = make_fan_in_network_and_records();
-    let candidates = detect_fan_in_candidates(&creature, &records);
+    let candidates = detect_fan_in_candidates(&creature, &records, &None);
 
     assert!(
         !candidates.is_empty(),
@@ -186,7 +186,7 @@ fn test_no_candidates_for_uncorrelated_inputs() {
             .collect(),
     ));
 
-    let candidates = detect_fan_in_candidates(&creature, &records);
+    let candidates = detect_fan_in_candidates(&creature, &records, &None);
 
     assert!(
         candidates.is_empty(),
@@ -198,7 +198,7 @@ fn test_no_candidates_for_uncorrelated_inputs() {
 #[test]
 fn test_fan_in_uses_non_linear_activation() {
     let (creature, records) = make_fan_in_network_and_records();
-    let candidates = detect_fan_in_candidates(&creature, &records);
+    let candidates = detect_fan_in_candidates(&creature, &records, &None);
 
     assert!(!candidates.is_empty());
 
@@ -219,7 +219,7 @@ fn test_fan_in_uses_non_linear_activation() {
 #[test]
 fn test_fan_in_produces_valid_coordinated_operations() {
     let (creature, records) = make_fan_in_network_and_records();
-    let candidates = detect_fan_in_candidates(&creature, &records);
+    let candidates = detect_fan_in_candidates(&creature, &records, &None);
 
     assert!(!candidates.is_empty());
 
@@ -260,7 +260,7 @@ fn test_fan_in_produces_valid_coordinated_operations() {
 #[test]
 fn test_fan_in_deterministic_uuid() {
     let (creature, records) = make_fan_in_network_and_records();
-    let candidates = detect_fan_in_candidates(&creature, &records);
+    let candidates = detect_fan_in_candidates(&creature, &records, &None);
 
     assert!(!candidates.is_empty());
 
@@ -286,8 +286,11 @@ fn test_fan_in_empty_records() {
         vec![synapse("input-a", "output-1", 0.5)],
     );
 
-    let candidates =
-        detect_fan_in_candidates(&creature, &Vec::<(String, Vec<DiscoverRecord>)>::new());
+    let candidates = detect_fan_in_candidates(
+        &creature,
+        &Vec::<(String, Vec<DiscoverRecord>)>::new(),
+        &None,
+    );
     assert!(
         candidates.is_empty(),
         "Empty records should produce no candidates"
@@ -327,7 +330,7 @@ fn test_fan_in_insufficient_samples() {
         ),
     ];
 
-    let candidates = detect_fan_in_candidates(&creature, &records);
+    let candidates = detect_fan_in_candidates(&creature, &records, &None);
     assert!(
         candidates.is_empty(),
         "Insufficient samples should produce no candidates"
@@ -367,7 +370,7 @@ fn test_fan_in_single_input_no_candidates() {
         ),
     ];
 
-    let candidates = detect_fan_in_candidates(&creature, &records);
+    let candidates = detect_fan_in_candidates(&creature, &records, &None);
     assert!(
         candidates.is_empty(),
         "Single input cannot form fan-in pair"
@@ -441,7 +444,7 @@ fn test_fan_in_candidates_sorted_by_improvement() {
             .collect(),
     ));
 
-    let candidates = detect_fan_in_candidates(&creature, &records);
+    let candidates = detect_fan_in_candidates(&creature, &records, &None);
 
     // Verify sorting: each candidate's improvement >= the next.
     for window in candidates.windows(2) {
@@ -502,7 +505,7 @@ fn test_fan_in_filters_redundant_inputs() {
             .collect(),
     ));
 
-    let candidates = detect_fan_in_candidates(&creature, &records);
+    let candidates = detect_fan_in_candidates(&creature, &records, &None);
 
     // Redundant inputs should be filtered — high mutual correlation means
     // a single-input path would suffice.
@@ -572,7 +575,7 @@ fn test_fan_in_targets_hidden_neurons() {
             .collect(),
     ));
 
-    let candidates = detect_fan_in_candidates(&creature, &records);
+    let candidates = detect_fan_in_candidates(&creature, &records, &None);
 
     // Should find candidates targeting hidden-1.
     let hidden_targets: Vec<_> = candidates
@@ -590,7 +593,7 @@ fn test_fan_in_targets_hidden_neurons() {
 #[test]
 fn test_fan_in_improvement_positive() {
     let (creature, records) = make_fan_in_network_and_records();
-    let candidates = detect_fan_in_candidates(&creature, &records);
+    let candidates = detect_fan_in_candidates(&creature, &records, &None);
 
     for c in &candidates {
         assert!(

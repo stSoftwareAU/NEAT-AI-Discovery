@@ -129,7 +129,7 @@ fn test_detects_two_hop_candidates_via_error_correlation() {
             .collect(),
     ));
 
-    let candidates = detect_multi_hop_candidates(&creature, &neuron_records);
+    let candidates = detect_multi_hop_candidates(&creature, &neuron_records, &None);
 
     assert!(
         !candidates.is_empty(),
@@ -191,7 +191,7 @@ fn test_no_candidates_when_fully_connected() {
             .collect(),
     ));
 
-    let candidates = detect_multi_hop_candidates(&creature, &neuron_records);
+    let candidates = detect_multi_hop_candidates(&creature, &neuron_records, &None);
 
     // Candidates involving already-connected pairs should be filtered out
     for c in &candidates {
@@ -238,7 +238,7 @@ fn test_multi_hop_insufficient_samples_no_candidates() {
         ),
     ];
 
-    let candidates = detect_multi_hop_candidates(&creature, &neuron_records);
+    let candidates = detect_multi_hop_candidates(&creature, &neuron_records, &None);
 
     assert!(
         candidates.is_empty(),
@@ -257,8 +257,11 @@ fn test_multi_hop_empty_records_no_candidates() {
         vec![],
     );
 
-    let candidates =
-        detect_multi_hop_candidates(&creature, &Vec::<(String, Vec<DiscoverRecord>)>::new());
+    let candidates = detect_multi_hop_candidates(
+        &creature,
+        &Vec::<(String, Vec<DiscoverRecord>)>::new(),
+        &None,
+    );
 
     assert!(
         candidates.is_empty(),
@@ -335,7 +338,7 @@ fn test_multi_hop_estimated_improvement_positive() {
             .collect(),
     ));
 
-    let candidates = detect_multi_hop_candidates(&creature, &neuron_records);
+    let candidates = detect_multi_hop_candidates(&creature, &neuron_records, &None);
 
     for c in &candidates {
         assert!(
@@ -443,7 +446,7 @@ fn test_candidate_path_depth_bounded() {
             .collect(),
     ));
 
-    let candidates = detect_multi_hop_candidates(&creature, &neuron_records);
+    let candidates = detect_multi_hop_candidates(&creature, &neuron_records, &None);
 
     for c in &candidates {
         assert!(
@@ -510,7 +513,7 @@ fn test_multi_hop_candidates_sorted_by_improvement() {
             .collect(),
     ));
 
-    let candidates = detect_multi_hop_candidates(&creature, &neuron_records);
+    let candidates = detect_multi_hop_candidates(&creature, &neuron_records, &None);
 
     // Verify sorting: each candidate's improvement should be >= the next
     for window in candidates.windows(2) {
@@ -547,7 +550,7 @@ fn test_multi_hop_no_hidden_neurons_no_candidates() {
         ),
     ];
 
-    let candidates = detect_multi_hop_candidates(&creature, &neuron_records);
+    let candidates = detect_multi_hop_candidates(&creature, &neuron_records, &None);
 
     // With only input and output, there are no intermediate neurons for multi-hop paths.
     // Candidates may still be produced if input neurons serve as sources, but paths
@@ -593,7 +596,7 @@ fn test_handles_neurons_without_errors() {
     ];
 
     // Should not panic
-    let _candidates = detect_multi_hop_candidates(&creature, &neuron_records);
+    let _candidates = detect_multi_hop_candidates(&creature, &neuron_records, &None);
 }
 
 /// Test 11: Multi-hop correctly excludes output→output paths.
@@ -649,7 +652,7 @@ fn test_output_neurons_only_as_targets() {
             .collect(),
     ));
 
-    let candidates = detect_multi_hop_candidates(&creature, &neuron_records);
+    let candidates = detect_multi_hop_candidates(&creature, &neuron_records, &None);
 
     for c in &candidates {
         // Intermediate nodes (not first or last) should never be output neurons
@@ -733,7 +736,7 @@ fn test_three_hop_candidate() {
             .collect(),
     ));
 
-    let candidates = detect_multi_hop_candidates(&creature, &neuron_records);
+    let candidates = detect_multi_hop_candidates(&creature, &neuron_records, &None);
 
     // Should find candidates — at least some multi-hop paths
     assert!(

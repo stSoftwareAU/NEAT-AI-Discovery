@@ -29,8 +29,10 @@
 #![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use std::collections::HashMap;
 
+use crate::analysis::utils::deadline_passed;
 use crate::types::DiscoverRecord;
 use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson, CreatureJson};
+use std::time::SystemTime;
 
 // MIN_SAMPLES_FOR_GRADIENT uses MIN_NEURON_SAMPLE_COUNT (Issue #424)
 use crate::analysis::constants::MIN_NEURON_SAMPLE_COUNT as MIN_SAMPLES_FOR_GRADIENT;
@@ -138,6 +140,9 @@ pub fn compute_synapse_gradient(
 /// # Arguments
 /// * `creature` - The creature's network topology (neurons and synapses).
 /// * `neuron_records` - List of `(neuron_uuid, records)` tuples with recorded activations.
+/// * `deadline` - Discovery deadline (Issue #2183). Checked before each synapse;
+///   once it passes, or global cancellation is requested, the scan stops and
+///   returns the candidates found so far, logging a warning.
 ///
 /// # Returns
 /// A list of `GradientCandidate` for high-gradient synapses, sorted by estimated
@@ -145,6 +150,7 @@ pub fn compute_synapse_gradient(
 pub fn detect_gradient_candidates(
     creature: &CreatureJson,
     neuron_records: &[(String, impl AsRef<[DiscoverRecord]>)],
+    deadline: &Option<SystemTime>,
 ) -> Vec<GradientCandidate> {
     // Build records lookup
     let records_map: HashMap<&str, &[DiscoverRecord]> = neuron_records
@@ -180,7 +186,17 @@ pub fn detect_gradient_candidates(
 
     let mut candidates = Vec::new();
 
-    for synapse in &creature.synapses {
+    for (processed, synapse) in creature.synapses.iter().enumerate() {
+        if deadline_passed(deadline) {
+            // Issue #2183: stop loudly so a truncated scan never looks complete.
+            tracing::warn!(
+                detector = "gradient",
+                processed,
+                total = creature.synapses.len(),
+                "gradient scan stopped early (deadline passed or cancelled) — returning partial candidates"
+            );
+            break;
+        }
         // Only analyse synapses targeting output neurons (where error is directly measured)
         if !output_uuids.contains(synapse.to_uuid.as_str()) {
             continue;
