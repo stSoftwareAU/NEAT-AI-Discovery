@@ -145,7 +145,9 @@ pub fn detect_output_bias_drift(
         let sum_error: f32 = error_values.iter().sum();
         let mean_error = sum_error / n;
 
-        if mean_error.abs() < MIN_MEAN_ERROR_MAGNITUDE {
+        // Issue #2182: finite errors can overflow the f32 sum. A non-finite
+        // mean wins the `<` noise gate and would become a non-finite bias.
+        if !mean_error.is_finite() || mean_error.abs() < MIN_MEAN_ERROR_MAGNITUDE {
             continue;
         }
 
@@ -180,9 +182,16 @@ pub fn detect_output_bias_drift(
     }
 
     // Sort by estimated improvement (best first)
+    candidates.retain(is_finite_candidate);
     candidates.sort_by(|a, b| b.estimated_improvement.total_cmp(&a.estimated_improvement));
 
     candidates
+}
+
+/// Issue #2182: a non-finite gain would head the descending `total_cmp` sort,
+/// and a non-finite target bias is not a value the host can adopt.
+fn is_finite_candidate(c: &OutputBiasDriftCandidate) -> bool {
+    c.estimated_improvement.is_finite() && (c.current_bias + c.recommended_bias_delta).is_finite()
 }
 
 /// Convert output bias drift candidates into coordinated structural candidates.
@@ -193,7 +202,8 @@ pub fn output_bias_drift_to_coordinated_candidates(
 ) -> Vec<CoordinatedStructuralCandidateJson> {
     let mut results = Vec::with_capacity(candidates.len());
 
-    for c in candidates {
+    // Issue #2182: callers may hand in candidates this module did not rank.
+    for c in candidates.iter().filter(|c| is_finite_candidate(c)) {
         results.push(CoordinatedStructuralCandidateJson {
             remove_neuron_compensation: None,
         constant_neuron_bias_fold: None,
@@ -384,6 +394,9 @@ pub fn detect_output_bias_drift_with_descriptor(
         });
     }
 
+    // Issue #2182: the capacity boost can overflow a finite gain, and the
+    // synthesised delta comes from an unguarded f32 mean activation.
+    candidates.retain(is_finite_candidate);
     candidates.sort_by(|a, b| b.estimated_improvement.total_cmp(&a.estimated_improvement));
     candidates
 }

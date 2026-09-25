@@ -201,7 +201,8 @@ pub fn detect_multi_hop_candidates(
             // with the intermediate
             let estimated_improvement = corr.abs() * compute_mean_abs_error(target_errors) * 0.01;
 
-            if estimated_improvement <= 0.0 {
+            // Issue #2182: `+inf` and NaN both win `<= 0.0`; reject them explicitly.
+            if !estimated_improvement.is_finite() || estimated_improvement <= 0.0 {
                 continue;
             }
 
@@ -230,6 +231,7 @@ pub fn detect_multi_hop_candidates(
     }
 
     // Sort by estimated improvement (best first)
+    all_candidates.retain(|c| c.estimated_improvement.is_finite());
     all_candidates.sort_by(|a, b| b.estimated_improvement.total_cmp(&a.estimated_improvement));
 
     // Limit total candidates
@@ -294,7 +296,10 @@ fn find_three_hop_extensions(ctx: &ThreeHopContext<'_>, candidates: &mut Vec<Mul
         let source_intermediate_corr =
             compute_activation_activation_correlation(source_activations, intermediate_activations);
 
-        if source_intermediate_corr.abs() < CORRELATION_THRESHOLD {
+        // Issue #2182: a NaN correlation loses `<` and would be kept.
+        if !source_intermediate_corr.is_finite()
+            || source_intermediate_corr.abs() < CORRELATION_THRESHOLD
+        {
             continue;
         }
 
@@ -305,7 +310,7 @@ fn find_three_hop_extensions(ctx: &ThreeHopContext<'_>, candidates: &mut Vec<Mul
         let estimated_improvement =
             combined_corr * compute_mean_abs_error(ctx.target_errors) * 0.005;
 
-        if estimated_improvement <= 0.0 {
+        if !estimated_improvement.is_finite() || estimated_improvement <= 0.0 {
             continue;
         }
 
@@ -351,12 +356,18 @@ fn compute_activation_activation_correlation(
 }
 
 /// Compute mean absolute error from an error-by-obs map.
+///
+/// Returns `0.0` when the f32 sum overflows (Issue #2182), so the caller's
+/// `<= 0.0` gate drops the candidate instead of ranking it at `+inf`.
 fn compute_mean_abs_error(errors: &HashMap<u32, f32>) -> f32 {
     if errors.is_empty() {
         return 0.0;
     }
 
     let sum: f32 = errors.values().map(|e| e.abs()).sum();
+    if !sum.is_finite() {
+        return 0.0;
+    }
     sum / errors.len() as f32
 }
 
@@ -402,7 +413,8 @@ pub fn multi_hop_to_coordinated_candidates(
     for (idx, candidate) in candidates.iter().enumerate() {
         let path_len = candidate.path.len();
 
-        if path_len < 2 {
+        // Issue #2182: never re-rank a non-finite gain on the way out.
+        if path_len < 2 || !candidate.estimated_improvement.is_finite() {
             continue;
         }
 
