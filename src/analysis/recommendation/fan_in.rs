@@ -314,7 +314,9 @@ fn evaluate_fan_in_pair(
     // Apply conservative scaling: fan-in adds multiple operations.
     let scaled_improvement = combined_improvement * target_impact * 0.01;
 
-    if scaled_improvement <= 0.0 {
+    // Issue #2182: an f32-overflowed SSE yields `+inf`, which wins every
+    // `<` / `<=` gate above; reject it before it heads the ranking.
+    if !scaled_improvement.is_finite() || scaled_improvement <= 0.0 {
         return None;
     }
 
@@ -466,6 +468,13 @@ fn compute_two_input_regression(
 
     let improvement = (ee - residual_sse).max(0.0);
 
+    // Issue #2182: `as f32` saturates to `±inf`, so range-check the f64
+    // values before narrowing rather than after.
+    let fits_f32 = |v: f64| v.is_finite() && v.abs() <= f64::from(f32::MAX);
+    if !fits_f32(wa) || !fits_f32(wb) || !fits_f32(improvement) {
+        return None;
+    }
+
     Some((wa as f32, wb as f32, improvement as f32))
 }
 
@@ -504,7 +513,11 @@ fn fan_in_to_single_coordinated(
     candidate: &FanInCandidate,
     creature: &CreatureJson,
 ) -> Option<CoordinatedStructuralCandidateJson> {
-    if candidate.input_uuids.len() < 2 {
+    // Issue #2182: never emit a non-finite gain or weight.
+    if candidate.input_uuids.len() < 2
+        || !candidate.estimated_improvement.is_finite()
+        || !candidate.input_weights.iter().all(|w| w.is_finite())
+    {
         return None;
     }
 

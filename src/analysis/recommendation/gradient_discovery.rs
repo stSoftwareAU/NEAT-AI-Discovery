@@ -267,6 +267,12 @@ pub fn detect_gradient_candidates(
         let estimated_improvement =
             mean_gradient.abs() * effective_delta.abs() * consistency.min(3.0) * 0.01;
 
+        // Issue #2182: a huge finite weight makes `|effective_delta| ≈ 1e38`,
+        // so the finite factors can still overflow the product to `+inf`.
+        if !estimated_improvement.is_finite() {
+            continue;
+        }
+
         candidates.push(GradientCandidate {
             from_neuron_uuid: synapse.from_uuid.clone(),
             to_neuron_uuid: synapse.to_uuid.clone(),
@@ -297,6 +303,11 @@ pub fn gradient_candidates_to_coordinated(
 
     for c in candidates {
         let new_weight = c.current_weight + c.proposed_weight_delta;
+
+        // Issue #2182: never emit a non-finite gain or `SetWeight` value.
+        if !c.estimated_improvement.is_finite() || !new_weight.is_finite() {
+            continue;
+        }
 
         results.push(CoordinatedStructuralCandidateJson {
             remove_neuron_compensation: None,

@@ -24,8 +24,14 @@ use std::process::Command;
 
 /// Run the stub `rustc` in `dir` with `arg` and return its stdout, failing the
 /// test when the stub exits non-zero.
+///
+/// The stub is handed to `bash` (its own shebang interpreter) rather than
+/// exec'd directly: a sibling test thread forking while this one still held the
+/// stub open for writing leaves an inherited write fd, and exec'ing the file
+/// then fails with ETXTBSY ("Text file busy") — PR #2199's Coverage flake.
 fn stub_rustc(dir: &Path, arg: &str) -> String {
-    let out = Command::new(dir.join("rustc"))
+    let out = Command::new("bash")
+        .arg(dir.join("rustc"))
         .arg(arg)
         .stdin(std::process::Stdio::null())
         .output()
