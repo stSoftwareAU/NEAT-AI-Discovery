@@ -34,7 +34,13 @@ flowchart LR
 
 **The original trigger is closed, and there is no trivial bypass.** The check runs before any work in each outer iteration, which is the only loop in these detectors that grows with creature size. So once the deadline passes or cancellation is requested, at most one more target or synapse is scanned. The only way to skip the check is to pass `&None`, which means no deadline was set. Production goes through `prepare_and_detect_discovery_modules`, which always passes the real deadline.
 
-Regression linkage: I added `tests/issue_2183_recommendation_core_deadline.rs`. Against the unfixed code (the parameter accepted but ignored), its three elapsed-deadline tests failed because each scan still returned candidates. All six tests pass after the fix.
+Regression linkage (TDD): I added three regression tests, one per detector. Each reproduces the flaw, fails against the unfixed code and passes after the fix:
+
+- Added `tests/issue_2183_recommendation_core_deadline.rs::fan_in_elapsed_deadline_returns_no_candidates`, which reproduces the uncancellable fan-in scan. It fails against the unfixed code and passes after the fix.
+- Added `tests/issue_2183_recommendation_core_deadline.rs::multi_hop_elapsed_deadline_returns_no_candidates`, which reproduces the uncancellable multi-hop scan. It fails against the unfixed code and passes after the fix.
+- Added `tests/issue_2183_recommendation_core_deadline.rs::gradient_elapsed_deadline_returns_no_candidates`, which reproduces the uncancellable gradient scan. It fails against the unfixed code and passes after the fix.
+
+Here, "unfixed code" means the scan loops with the `deadline_passed(deadline)` check neutralised (`if false && deadline_passed(deadline)`), so the deadline is accepted but ignored as it was before this change. Run that way, `cargo test --test issue_2183_recommendation_core_deadline` gave `3 passed; 3 failed`, and the failures were exactly these three tests: each scan still returned candidates after the deadline had passed. With the fix restored, the run gave `6 passed; 0 failed`. The three `*_far_future_deadline_matches_no_deadline` tests pass both ways. They are guards against a scan that stops too early, not reproductions of this flaw.
 
 ## Test Plan
 
