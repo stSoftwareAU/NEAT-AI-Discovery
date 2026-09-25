@@ -35,8 +35,10 @@ use std::collections::{HashMap, HashSet};
 use crate::analysis::constants::MIN_DISCOVERY_SAMPLE_COUNT;
 use crate::analysis::detection::stats::pearson_correlation;
 use crate::analysis::quantised_error::is_quantised_zero_one;
+use crate::analysis::utils::deadline_passed;
 use crate::types::DiscoverRecord;
 use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson, CreatureJson};
+use std::time::SystemTime;
 
 /// Minimum absolute correlation between an input's activation and a target's
 /// error to consider that input as a fan-in contributor.
@@ -90,12 +92,16 @@ pub struct FanInCandidate {
 /// # Arguments
 /// * `creature` - Network topology.
 /// * `neuron_records` - Recorded activations and errors per neuron.
+/// * `deadline` - Discovery deadline (Issue #2183). Checked before each target;
+///   once it passes, or global cancellation is requested, the scan stops and
+///   returns the candidates found so far, logging a warning.
 ///
 /// # Returns
 /// Fan-in candidates sorted by estimated improvement (best first).
 pub fn detect_fan_in_candidates(
     creature: &CreatureJson,
     neuron_records: &[(String, impl AsRef<[DiscoverRecord]>)],
+    deadline: &Option<SystemTime>,
 ) -> Vec<FanInCandidate> {
     if neuron_records.is_empty() {
         return Vec::new();
@@ -145,7 +151,17 @@ pub fn detect_fan_in_candidates(
 
     let mut candidates = Vec::new();
 
-    for &target_uuid in &target_uuids {
+    for (processed, &target_uuid) in target_uuids.iter().enumerate() {
+        if deadline_passed(deadline) {
+            // Issue #2183: stop loudly so a truncated scan never looks complete.
+            tracing::warn!(
+                detector = "fan-in",
+                processed,
+                total = target_uuids.len(),
+                "fan-in scan stopped early (deadline passed or cancelled) — returning partial candidates"
+            );
+            break;
+        }
         let target_records = match record_map.get(target_uuid) {
             Some(r) => *r,
             None => continue,

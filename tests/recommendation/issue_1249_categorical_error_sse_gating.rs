@@ -135,7 +135,7 @@ fn fan_in_emits_candidates_for_continuous_errors() {
         },
     );
 
-    let candidates = detect_fan_in_candidates(&creature, &records);
+    let candidates = detect_fan_in_candidates(&creature, &records, &None);
     assert!(
         !candidates.is_empty(),
         "continuous fan-in baseline must emit at least one candidate (got 0); without this the gate test below is vacuous",
@@ -170,7 +170,7 @@ fn fan_in_emits_no_candidates_for_quantised_errors() {
         },
     );
 
-    let candidates = detect_fan_in_candidates(&creature, &records);
+    let candidates = detect_fan_in_candidates(&creature, &records, &None);
     assert!(
         candidates.is_empty(),
         "quantised {{0,1}} errors must gate off fan-in SSE improvement, got {} candidate(s)",

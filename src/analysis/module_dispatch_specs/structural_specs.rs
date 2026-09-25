@@ -5,6 +5,7 @@
 //! error detection, and fan-in candidate generation.
 
 use std::sync::Arc;
+use std::time::SystemTime;
 
 use super::super::detection::{
     compound_degradation, correlated_error, hard_sample_cluster, output_conflict, skip_connection,
@@ -14,12 +15,16 @@ use super::super::recommendation::{fan_in, multi_hop};
 use super::super::{cache, discovery_dispatch};
 
 /// Append structural discovery module specs to the provided vector.
+///
+/// `deadline` (Issue #2183) is forwarded into the multi-hop and fan-in
+/// scans so they stop at the discovery deadline or on global cancellation.
 pub(crate) fn append_structural_specs(
     modules: &mut Vec<discovery_dispatch::DiscoveryModuleSpec>,
     creature: &Arc<crate::CreatureJson>,
     hidden_neurons: &Arc<Vec<(String, String, f32)>>,
     shared_cache: &Arc<cache::RecordCache>,
     topo: &Arc<CreatureTopologyCache>,
+    deadline: Option<SystemTime>,
 ) {
     // Issue #344: Correlated error detection (custom: output count pre-check)
     discovery_spec!(modules, "correlated error detection", "correlated_error_detection",
@@ -54,7 +59,7 @@ pub(crate) fn append_structural_specs(
         cache = shared_cache, hidden = hidden_neurons, creature = creature =>
         guard: hidden,
         records: cache.load_records_for_all_neurons(&creature),
-        detect: |records| multi_hop::detect_multi_hop_candidates(&creature, &records),
+        detect: |records| multi_hop::detect_multi_hop_candidates(&creature, &records, &deadline),
         convert: |detected| multi_hop::multi_hop_to_coordinated_candidates(&detected, &creature),
     );
 
@@ -118,7 +123,7 @@ pub(crate) fn append_structural_specs(
     discovery_spec!(modules, "fan-in candidate generation", "fan_in_candidate_generation",
         cache = shared_cache, creature = creature =>
         records: cache.load_records_for_all_neurons(&creature),
-        detect: |records| fan_in::detect_fan_in_candidates(&creature, &records),
+        detect: |records| fan_in::detect_fan_in_candidates(&creature, &records, &deadline),
         convert: |detected| fan_in::fan_in_to_coordinated_candidates(&detected, &creature),
     );
 
