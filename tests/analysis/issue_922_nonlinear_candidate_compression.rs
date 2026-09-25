@@ -33,7 +33,6 @@ fn candidate(from: &str, to: &str, weight: f32, gain: f32) -> CandidateSynapseJs
         total_count: 100,
         improvement_magnitude_ratio: None,
         target_neuron_stats: None,
-        outlier_reduction_info: None,
         prediction_confidence: 0.8,
         expected_score_gain_confidence_interval: [gain * 0.5, gain * 1.5],
         comment: None,

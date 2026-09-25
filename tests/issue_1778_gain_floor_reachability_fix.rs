@@ -114,7 +114,6 @@ fn synapse_candidate(gain: f32) -> CandidateSynapseJson {
         total_count: 10,
         improvement_magnitude_ratio: None,
         target_neuron_stats: None,
-        outlier_reduction_info: None,
         prediction_confidence: 0.5,
         expected_score_gain_confidence_interval: [gain, gain],
         comment: None,

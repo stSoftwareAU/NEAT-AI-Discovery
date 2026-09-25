@@ -248,8 +248,7 @@ it; `unbounded` means a finding was filed.
 | `tests.rs::test_magnitude_ratio_noise_level_improvements_collapse_neuron_gain` | test fixture sizes | compile-time test values; no caller-supplied bounds | bounded |
 <!-- section: scoring -->
 | `cross_validation.rs::compute_cross_validation_score` | `Vec::with_capacity(config.fold_count)` | `fold_count` is **not** caller-controllable: the only production constructor is `CrossValidationConfig::default()` in `neuron/evaluation.rs::apply_cross_validation_penalty`, which sets the compile-time `5`, and no FFI request field deserialises into the struct. The secondary bound is weaker than it looks and must not be relied on: `fold_count < 2` does return early, but `samples.len() / fold_count < min_samples_per_fold` is never true against a `min_samples_per_fold` of `0`, so a hypothetical in-crate caller that set both `fold_count: usize::MAX` and `min_samples_per_fold: 0` would reach the reservation. The bound is the absent constructor, not the precondition | bounded |
-| `error_distribution.rs::detect_modes_histogram` | `vec![Vec::new(); NUM_BINS]` | `NUM_BINS` is a `const usize = 20` local to the function; no input reaches the size. Note this allocation is currently unreachable in production for a second reason — its only caller, `detect_error_modes`, is itself dead (see the outcome below) | bounded |
-| the other eight `scoring` files | none | none of them allocates a collection with a size hint; the input-keyed `HashMap` growth in `calibration_correction.rs` has no size hint and is analysed in the outcome below | n/a |
+| the other nine `scoring` files | none | none of them allocates a collection with a size hint; the input-keyed `HashMap` growth in `calibration_correction.rs` has no size hint and is analysed in the outcome below. The one further size-hinted allocation this sweep recorded — the histogram helper in `error_distribution.rs` — was deleted by #2177 as dead code, so no site remains to bound; see the "Out-of-class observation" note below | n/a |
 <!-- section: recommendation core -->
 | `output_bias_drift.rs::output_bias_drift_to_coordinated_candidates` | `Vec::with_capacity(candidates.len())` | `candidates` is the live vector the detector just built, at most one entry per output neuron of the deserialised creature | bounded |
 | `gradient_discovery.rs::gradient_candidates_to_coordinated` | `Vec::with_capacity(candidates.len())` | same shape — at most one entry per synapse that survived the magnitude and consistency gates | bounded |
@@ -857,6 +856,12 @@ its construction sites, so `OutlierReductionInfo` is never built. That makes
 operator can set, and tune during an incident, that change nothing. This is not
 one of the five defect classes above, so it is **not** filed as a security
 finding; it is filed as #2177 for the ordinary dead-lever cleanup.
+**Resolved by #2177**: the two env readers, the four outlier helpers,
+`detect_error_modes`/`ErrorMode`, `detect_modes_histogram`, and
+`OutlierReductionInfo` have been deleted, along with the
+`NEAT_AI_DISCOVERY_OUTLIER_ANALYSIS`/`NEAT_AI_DISCOVERY_OUTLIER_PERCENTILE` rows
+in `docs/CONFIGURATION.md` and the `src/config/mod.rs` table. This paragraph is
+left as the historical record of what the sweep found.
 
 **Deliberately out of scope for this sub-issue:** the 48 rows belonging to the
 other chunk 8b audit sub-issues.

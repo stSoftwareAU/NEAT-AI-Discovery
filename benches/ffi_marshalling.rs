@@ -87,7 +87,6 @@ fn create_synapse_candidates(count: usize) -> Vec<CandidateSynapseJson> {
                 activation_min: -0.9,
                 activation_max: 0.95,
             }),
-            outlier_reduction_info: None,
             prediction_confidence: 0.85,
             expected_score_gain_confidence_interval: [0.01, 0.09],
             comment: Some(format!("candidate-{i}")),

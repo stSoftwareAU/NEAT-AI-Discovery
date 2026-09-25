@@ -967,15 +967,9 @@ error clusters.
 - **High kurtosis** (> 4): Distribution has heavy tails (more extreme values)
 - **Large IQR** relative to mean: High variability in errors
 
-**Configuration:**
-
-```bash
-# Enable outlier-focused analysis (off by default)
-export NEAT_AI_DISCOVERY_OUTLIER_ANALYSIS=1
-
-# Set the percentile threshold for outlier identification (default: 90)
-export NEAT_AI_DISCOVERY_OUTLIER_PERCENTILE=90
-```
+The distribution block above is always computed — there is no lever to enable
+it. The outlier-analysis levers this section once documented controlled nothing
+and were removed in #2177.
 
 ---
 

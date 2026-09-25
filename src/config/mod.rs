@@ -21,8 +21,6 @@
 //! | `NEAT_AI_DISCOVERY_PRELOAD_ALL` | bool | `false` | Disable streaming; use full preload |
 //! | `NEAT_AI_DISCOVERY_BLOCK_SIZE` | usize | `10000` | Records per streaming block (10–100000) |
 //! | `NEAT_AI_DISCOVERY_CONSTANT_SOURCE_EFFECT_THRESHOLD` | f32 | `1e-7` | Constant source folding threshold (`0` to disable) |
-//! | `NEAT_AI_DISCOVERY_OUTLIER_ANALYSIS` | bool | `false` | Enable outlier-focused analysis |
-//! | `NEAT_AI_DISCOVERY_OUTLIER_PERCENTILE` | u8 | `90` | Outlier percentile threshold (1–99) |
 //! | `NEAT_AI_DISCOVERY_NEURON_TARGETS_OUTPUT_ONLY` | bool | `false` | Restrict focus targets to output neurons only |
 //! | `NEAT_AI_DISCOVERY_FOCUS_UNUSED_OBSERVATIONS` | bool | `false` | Prioritise unused input neurons |
 //! | `NEAT_AI_DISCOVERY_FOCUS_EXCLUDE_CONSTANT_NEURONS` | bool | `false` | Exclude functionally-constant hidden neurons (zero activation variance) from focus-slot eligibility; they remain available to the constant-neuron removal path (Issue #1624) |
@@ -156,14 +154,6 @@ mod tests {
         // exercises the clamp in block_size() rather than pinning the constants.
         let result = block_size();
         assert!((MIN_BLOCK_SIZE..=MAX_BLOCK_SIZE).contains(&result));
-    }
-
-    #[test]
-    fn outlier_percentile_default_value() {
-        // When no env var is set, should return 90
-        // (This test relies on the env var NOT being set in the test environment)
-        let result = outlier_percentile();
-        assert!(result > 0 && result < 100);
     }
 
     // Tautological `session_ttl_default_values` pin test removed (Issue #1469):

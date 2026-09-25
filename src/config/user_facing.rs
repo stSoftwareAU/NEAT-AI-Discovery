@@ -144,23 +144,6 @@ pub fn block_size() -> usize {
         .clamp(MIN_BLOCK_SIZE, MAX_BLOCK_SIZE)
 }
 
-/// Check if outlier analysis is enabled.
-///
-/// Set `NEAT_AI_DISCOVERY_OUTLIER_ANALYSIS=1` to enable.
-pub fn outlier_analysis() -> bool {
-    parse_bool_env("NEAT_AI_DISCOVERY_OUTLIER_ANALYSIS")
-}
-
-/// Get the outlier percentile threshold.
-///
-/// Set `NEAT_AI_DISCOVERY_OUTLIER_PERCENTILE` to a value 1–99.
-/// Default: 90.
-pub fn outlier_percentile() -> u8 {
-    parse_env::<u8>("NEAT_AI_DISCOVERY_OUTLIER_PERCENTILE")
-        .filter(|&p| p > 0 && p < 100)
-        .unwrap_or(90)
-}
-
 /// Check if neuron targets should be restricted to output neurons only.
 ///
 /// Set `NEAT_AI_DISCOVERY_NEURON_TARGETS_OUTPUT_ONLY=1` to enable.

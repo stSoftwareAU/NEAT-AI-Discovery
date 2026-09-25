@@ -279,7 +279,10 @@ fn every_scoring_file_that_executes_anything_is_cited_in_the_float_table() {
 /// Every symbol the `scoring` outcome claims to have traced, paired with the
 /// file that must still declare it. An outcome citing a symbol that no longer
 /// exists is describing code that has moved or gone.
-const TRACED_SYMBOLS: [(&str, &str); 11] = [
+// Issue #2177 removed `detect_modes_histogram` (and the other dead outlier/mode
+// helpers it fed) as an unreachable dead lever, so its row was dropped here —
+// the symbol genuinely no longer exists rather than having moved.
+const TRACED_SYMBOLS: [(&str, &str); 10] = [
     (
         "src/analysis/scoring/cross_validation.rs",
         "pub fn compute_cross_validation_score",
@@ -295,10 +298,6 @@ const TRACED_SYMBOLS: [(&str, &str); 11] = [
     (
         "src/analysis/scoring/calibration_correction.rs",
         "pub fn from_failure_cache",
-    ),
-    (
-        "src/analysis/scoring/error_distribution.rs",
-        "fn detect_modes_histogram",
     ),
     (
         "src/analysis/scoring/error_distribution.rs",
