@@ -67,13 +67,29 @@ fixture of `n` pairwise fully complementary sources. Every one of the
   and `::future_deadline_synergistic_scan_matches_the_unbounded_scan` cover the
   synergistic detector.
 
-**Red/green linkage.** Against the unfixed code this file does not compile,
-because the deadline-taking entry points do not exist. To get a behavioural
-red, I removed the outer-row deadline check and the ceiling from the fixed
-code. `elapsed_deadline_stops_the_epistatic_pair_scan_before_any_pair` and
-`epistatic_pair_scan_stops_at_the_candidate_ceiling_and_reports_it` then
-failed. With the guards restored, all 7 tests pass. So the added regression
-test fails without the fix and passes with it.
+**Red/green linkage.** Added
+`tests/issue_2190_epistatic_pair_scan_deadline.rs::elapsed_deadline_stops_the_epistatic_pair_scan_before_any_pair`,
+which reproduces the flaw (a pair scan that ignores an already-elapsed
+deadline). It fails against the unfixed code and passes after the fix. Added
+`tests/issue_2190_epistatic_pair_scan_deadline.rs::epistatic_pair_scan_stops_at_the_candidate_ceiling_and_reports_it`,
+which reproduces the unbounded candidate growth. It also fails against the
+unfixed code and passes after the fix.
+
+How this was checked: I neutralised the outer-row `deadline_passed` check and
+the `MAX_EPISTATIC_PAIR_CANDIDATES` ceiling in
+`detect_epistatic_pairs_with_deadline`, restoring the unfixed scan loop. Both
+tests then failed:
+
+- `elapsed_deadline_stops_the_epistatic_pair_scan_before_any_pair` panicked at
+  `tests/issue_2190_epistatic_pair_scan_deadline.rs:67`. The scan ran to
+  completion and reported no `DeadlinePassed` truncation.
+- `epistatic_pair_scan_stops_at_the_candidate_ceiling_and_reports_it` panicked
+  at line 104. The scan emitted every pair and reported no `CandidateCeiling`
+  truncation.
+
+With the guards restored, all 7 tests pass. Against the literal pre-fix tree
+the test file also fails to compile, because the deadline-taking entry points
+do not exist there.
 
 **Original trigger is closed.** The trigger was a large caller-supplied
 creature driving `n²/2` pair evaluations inside `detect_epistatic_pairs` with
