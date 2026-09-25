@@ -437,7 +437,7 @@ fn test_flip_is_distinct_from_gradient_delta() {
 
     // Get regular gradient candidates
     use neat_ai_discovery::analysis::recommendation::gradient_discovery::detect_gradient_candidates;
-    let gradient_candidates = detect_gradient_candidates(&creature, &records);
+    let gradient_candidates = detect_gradient_candidates(&creature, &records, &None);
 
     let flip_coord = polarity_flip_candidates_to_coordinated(&flip_candidates);
     assert!(!flip_coord.is_empty());

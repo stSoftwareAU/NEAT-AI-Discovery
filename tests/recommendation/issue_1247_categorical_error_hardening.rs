@@ -205,7 +205,7 @@ fn fan_in_handles_quantised_errors_without_nan() {
         neuron_records.push((uuid.to_string(), recs));
     }
 
-    let candidates = detect_fan_in_candidates(&creature, &neuron_records);
+    let candidates = detect_fan_in_candidates(&creature, &neuron_records, &None);
 
     for c in &candidates {
         assert!(
@@ -252,7 +252,7 @@ fn fan_in_handles_all_zero_output_errors() {
         neuron_records.push((uuid.to_string(), recs));
     }
 
-    let candidates = detect_fan_in_candidates(&creature, &neuron_records);
+    let candidates = detect_fan_in_candidates(&creature, &neuron_records, &None);
 
     // No candidate should be emitted (no error signal), and any that
     // happen to be emitted must still be finite.
