@@ -19,6 +19,11 @@ single package back. It works like this:
 3. Re-apply each out-of-window change one package at a time with
    `cargo update -p name@old`. Roll back any step that fails or drags in an
    in-quarantine package; that change is deferred to a later run.
+4. A lone `cargo update -p js-sys@old` exits 0 **without moving anything** while
+   its exact-pinned partners stay locked. Packages that did not move are
+   re-applied together in one `cargo update -p a@x -p b@y …` step, with the
+   same age check. A package that still does not move is held by a locked
+   (in-quarantine) partner and is reported as deferred, never as re-applied.
 
 Lockstep partners move together or not at all, and the in-window versions stay
 out.
@@ -38,14 +43,19 @@ flowchart TD
     H -- no --> K[keep]
     R --> F
     K --> F
+    F -- done --> S{any package that did not move?}
+    S -- yes --> T[one multi -p cargo update, same age check]
+    S -- no --> OK2[gate OK]
+    T --> OK2
 ```
 
 ### What changed
 
-- `bump-deps.sh` has the new `reapply_safe_lock_changes` (plus two helpers,
+- `bump-deps.sh` has the new `reapply_safe_lock_changes` (plus
+  `reapply_stuck_lock_changes` for lockstep families, and two helpers,
   `list_lock_removals` and `describe_lock_plan`), wired into phase 3a. The header
   and the `--help` exit-8 text are updated.
-- `tests/bump_deps_test.sh` gains Tests 26–28, which run against a stub `cargo`.
+- `tests/bump_deps_test.sh` gains Tests 26–29, which run against a stub `cargo`.
 - `AGENTS.md`'s "Dependency Bumps" section records the rollback approach and
   warns against going back to `--precise`.
 - `Cargo.lock` carries the out-of-window refresh from a real run of the fixed
@@ -62,13 +72,17 @@ lockstep pair is zerocopy/zerocopy-derive, and it is held back together:
    🚧 zerocopy-derive 0.8.56 → 0.8.59 (publish age 22h < 24h) — held back
    ✅ js-sys 0.3.105 → 0.3.106 re-applied
    ✅ wasm-bindgen 0.2.128 → 0.2.129 re-applied
+   ✅ wasm-bindgen-futures 0.4.78 → 0.4.79 re-applied
+   ✅ wasm-bindgen-macro 0.2.128 → 0.2.129 re-applied
+   ✅ wasm-bindgen-macro-support 0.2.128 → 0.2.129 re-applied
+   ✅ wasm-bindgen-shared 0.2.128 → 0.2.129 re-applied
    ✅ web-sys 0.3.105 → 0.3.106 re-applied
-   …
    lockfile quarantine gate OK (held back=2, deferred=0)
 ✅ bump-deps: no bumps (quarantined=0, lock_pinned_back=2, audit_run=1)
 ```
 
-`bash tests/bump_deps_test.sh < /dev/null` gives `Passed: 96, Failed: 0`.
+`bash tests/bump_deps_test.sh < /dev/null` gives `Passed: 107, Failed: 0`. The resulting `Cargo.lock` has
+js-sys 0.3.106, wasm-bindgen 0.2.129 and zerocopy 0.8.56.
 
 ## Test Plan
 
@@ -84,6 +98,10 @@ lockstep pair is zerocopy/zerocopy-derive, and it is held back together:
       the lockfile is byte-identical.
 - [x] Test 28 checks that the run fails loud (non-zero, naming the package)
       when the bumped manifests cannot resolve without an in-quarantine package.
+- [x] Test 29 checks that a safe lockstep family, whose lone steps are cargo
+      no-ops, is re-applied together. A package held by an in-quarantine
+      partner is reported rejected, never kept. Before the fix it failed
+      with 5 assertions, matching the false "re-applied" lines of a real run.
 - [x] `quality/shellcheck.sh .` and `quality/bash_syntax.sh .` pass.
 - [x] A real `./bump-deps.sh` run exits 0.
 - [ ] `./quality.sh` passes (see the PR checks).

@@ -603,7 +603,9 @@ bump_deps::describe_lock_plan() {
 # that still requires the new version, so the gate failed on every run. This
 # restores PRISTINE_LOCK and re-applies each out-of-window change one package
 # at a time with `cargo update -p name@old`, rolling a step back whenever it
-# fails or drags an in-quarantine package in. Prints one line per package:
+# fails or drags an in-quarantine package in. Packages a lone step cannot move
+# (exact-pinned lockstep partners) are then re-applied together in one step.
+# Prints one line per package:
 #
 #   pinned<TAB>name<TAB>old<TAB>new<TAB>age      in-window version held back
 #   skipped<TAB>name<TAB>-<TAB>new<TAB>age       in-window new package left out
@@ -693,8 +695,62 @@ bump_deps::reapply_safe_lock_changes_in() {
             continue
         fi
         mv -- "$work/next" "$work/current" || return 1
+        # A lockstep crate whose exact-pinned partners stay locked does not
+        # move on its own: cargo exits 0 without changing it.
+        if grep -qxF -- "$name"$'\t'"$old" "$work/current"; then
+            printf '%s\t%s\t%s\n' "$name" "$old" "$new" >> "$work/stuck"
+            continue
+        fi
         printf 'kept\t%s\t%s\t%s\n' "$name" "$old" "$new"
     done < "$work/removals"
+
+    [[ -s "$work/stuck" ]] || return 0
+    bump_deps::reapply_stuck_lock_changes "$work" "$manifest" "$lockfile" "$now_epoch" "$window"
+}
+
+# Re-apply every package the one-at-a-time pass could not move ($WORK/stuck)
+# in a single `cargo update -p a@x -p b@y …`, so lockstep partners move
+# together. A package still at its old version afterwards is held by a locked
+# partner (typically an in-quarantine one) and is reported rejected.
+# SIMPLE-ON-PURPOSE: one all-or-nothing step for every stuck family — upgrade when a clean family is regularly deferred because an unrelated stuck family drags an in-quarantine package in.
+bump_deps::reapply_stuck_lock_changes() {
+    local work="$1"
+    local manifest="$2"
+    local lockfile="$3"
+    local now_epoch="$4"
+    local window="$5"
+    local name old new plan reason why=""
+    local -a specs=()
+
+    while IFS=$'\t' read -r name old new; do
+        specs+=(-p "$name@$old")
+    done < "$work/stuck"
+
+    cp -- "$lockfile" "$work/step.lock" || return 1
+    if ! cargo update --manifest-path "$manifest" "${specs[@]}" > "$work/cargo.log" 2>&1; then
+        cp -- "$work/step.lock" "$lockfile" || return 1
+        reason="$(grep -m1 '^error' "$work/cargo.log" | sed -E 's/^error(\[[^]]*\])?:[[:space:]]*//' || true)"
+        why="lockstep cargo update failed: ${reason:-no error message}"
+    else
+        bump_deps::extract_lock_versions "$lockfile" > "$work/next" || return 1
+        plan="$(bump_deps::plan_lock_quarantine "$work/current" "$work/next" "$now_epoch" "$window")" || return 1
+        if [[ -n "$plan" ]]; then
+            cp -- "$work/step.lock" "$lockfile" || return 1
+            why="lockstep update drags in-quarantine $(bump_deps::describe_lock_plan "$plan")"
+        else
+            mv -- "$work/next" "$work/current" || return 1
+        fi
+    fi
+
+    while IFS=$'\t' read -r name old new; do
+        if [[ -n "$why" ]]; then
+            printf 'rejected\t%s\t%s\t%s\t%s\n' "$name" "$old" "$new" "$why"
+        elif grep -qxF -- "$name"$'\t'"$old" "$work/current"; then
+            printf 'rejected\t%s\t%s\t%s\theld by a locked lockstep partner\n' "$name" "$old" "$new"
+        else
+            printf 'kept\t%s\t%s\t%s\n' "$name" "$old" "$new"
+        fi
+    done < "$work/stuck"
 }
 
 # When sourced by the test suite we stop before parsing arguments / running.

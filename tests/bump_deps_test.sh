@@ -875,6 +875,60 @@ else
     ERRORS="${ERRORS}  FAIL: manifest resolution accepted a young package\n"
 fi
 assert_output_contains "failure names the young package" "js-sys@0\\.3\\.106" "$OUTPUT"
+echo ""
+
+# ── Test 29: a safe lockstep family moves in one step (Issue #2202) ──────
+# Real cargo treats `cargo update -p js-sys@old` as a no-op while its
+# exact-pinned partners stay locked, so each lone step "succeeds" without
+# moving anything. The family must be re-applied together, and a package
+# held by an in-quarantine partner must not be reported as kept.
+
+echo "Test 29: reapply_safe_lock_changes re-applies a stuck lockstep family together"
+for SAFE in js-sys-0.3.107 wasm-bindgen-0.2.129 web-sys-0.3.107 pair-a-1.0.1; do
+    printf '{"version":{"created_at":"2025-05-19T12:00:00.000000+00:00"}}\n' > "$REAPPLY_FIX/$SAFE.json"
+done
+printf '{"version":{"created_at":"2025-05-31T19:00:00.000000+00:00"}}\n' > "$REAPPLY_FIX/pair-b-1.0.1.json"
+write_lock "$REAPPLY_DIR/pristine29.lock" js-sys=0.3.105 wasm-bindgen=0.2.105 \
+    web-sys=0.3.105 pair-a=1.0.0 pair-b=1.0.0
+write_lock "$REAPPLY_PROJ/Cargo.lock" js-sys=0.3.107 wasm-bindgen=0.2.129 \
+    web-sys=0.3.107 pair-a=1.0.1 pair-b=1.0.1
+BUMP_DEPS_SOURCE_ONLY=1 bash -c "source '$BUMP_DEPS' && bump_deps::extract_lock_versions '$REAPPLY_DIR/pristine29.lock'" \
+    > "$REAPPLY_DIR/before29.tsv"
+cat > "$STUB_CARGO_RULES" <<'RULES'
+js-sys|noop|
+wasm-bindgen|noop|
+web-sys|noop|
+pair-a|noop|
+js-sys+pair-a+wasm-bindgen+web-sys|ok|js-sys=0.3.107 wasm-bindgen=0.2.129 web-sys=0.3.107
+RULES
+: > "$STUB_CARGO_LOG"
+set +e
+OUTPUT=$(PATH="$REAPPLY_BIN:$PATH" BUMP_DEPS_SOURCE_ONLY=1 BUMP_DEPS_TEST_FIXTURE="$REAPPLY_FIX" \
+    bash -c "source '$BUMP_DEPS' && bump_deps::reapply_safe_lock_changes '$REAPPLY_PROJ/Cargo.toml' '$REAPPLY_DIR/pristine29.lock' '$REAPPLY_DIR/before29.tsv' 1748736000 24" 2>&1)
+EXIT_CODE=$?
+set -e
+LOCK="$REAPPLY_PROJ/Cargo.lock"
+assert_exit_code "stuck lockstep family exits 0" 0 "$EXIT_CODE"
+assert_equals "safe lockstep family is re-applied (js-sys)" "0.3.107" "$(lock_version "$LOCK" js-sys)"
+assert_equals "safe lockstep family is re-applied (wasm-bindgen)" "0.2.129" "$(lock_version "$LOCK" wasm-bindgen)"
+assert_equals "safe lockstep family is re-applied (web-sys)" "0.3.107" "$(lock_version "$LOCK" web-sys)"
+assert_equals "package held by a young partner stays put" "1.0.0" "$(lock_version "$LOCK" pair-a)"
+assert_equals "young partner stays at its pre-bump version" "1.0.0" "$(lock_version "$LOCK" pair-b)"
+assert_output_contains "family member is reported kept (js-sys)" "^kept	js-sys	0\\.3\\.105	0\\.3\\.107$" "$OUTPUT"
+assert_output_contains "family member is reported kept (web-sys)" "^kept	web-sys	0\\.3\\.105	0\\.3\\.107$" "$OUTPUT"
+assert_output_contains "held package is reported rejected, not kept" "^rejected	pair-a	1\\.0\\.0	1\\.0\\.1	" "$OUTPUT"
+if grep -q "^kept	pair-a" <<< "$OUTPUT"; then
+    echo "  FAIL: a no-op step was reported as kept"
+    FAIL=$((FAIL + 1))
+    ERRORS="${ERRORS}  FAIL: no-op step reported as kept\n"
+else
+    echo "  PASS: a no-op step is never reported as kept"
+    PASS=$((PASS + 1))
+fi
+BUMP_DEPS_SOURCE_ONLY=1 bash -c "source '$BUMP_DEPS' && bump_deps::extract_lock_versions '$LOCK'" > "$REAPPLY_DIR/final29.tsv"
+RECHECK=$(BUMP_DEPS_SOURCE_ONLY=1 BUMP_DEPS_TEST_FIXTURE="$REAPPLY_FIX" \
+    bash -c "source '$BUMP_DEPS' && bump_deps::plan_lock_quarantine '$REAPPLY_DIR/before29.tsv' '$REAPPLY_DIR/final29.tsv' 1748736000 24")
+assert_equals "stuck-family lockfile has nothing inside the quarantine window" "" "$RECHECK"
 unset STUB_CARGO_LOG STUB_CARGO_RULES
 rm -rf "$REAPPLY_DIR"
 echo ""

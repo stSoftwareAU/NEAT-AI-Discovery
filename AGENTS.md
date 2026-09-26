@@ -45,7 +45,10 @@ gate verifies the tree, it must not mutate its dependency graph. Bump with
 (transitive packages included) against `VIBE_BUMP_QUARANTINE_HOURS` (default
 24h) and holds in-quarantine versions back: it rolls the lockfile back to its
 pre-bump state and re-applies each out-of-window change one package at a time,
-deferring any that drags in an in-quarantine package. Do not go back to pinning
+deferring any that drags in an in-quarantine package. A lone
+`cargo update -p js-sys@old` exits 0 without moving anything while its
+exact-pinned partners stay locked, so the packages that did not move are
+re-applied together in one multi-`-p` step. Do not go back to pinning
 single packages with `cargo update --precise` — lockstep releases with `=`
 requirements (wasm-bindgen / js-sys / web-sys) defeat it, and the gate failed
 on every run (Issue #2202). The same window is enforced on every
