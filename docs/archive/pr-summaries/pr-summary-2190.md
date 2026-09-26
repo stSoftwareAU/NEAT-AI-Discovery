@@ -26,8 +26,9 @@ and was simply not passed down. Closes #2190.
   signatures stay as thin wrappers (`&None` deadline), so the ~30 existing test
   call sites are untouched. The wrappers still honour cancellation and the
   ceiling. The production caller uses only the deadline variants.
-- `docs/ANALYSIS_DEEP_DIVE.md` documents the bounds. Version bumped
-  0.74.254 → 0.74.255.
+- `docs/ANALYSIS_DEEP_DIVE.md` documents the bounds. The version bump is
+  left to CI's `version-increment` job. The first PR (#2201) conflicted on a
+  hand-bumped `Cargo.toml` version, so this branch keeps Develop's version.
 
 ## Evidence
 
