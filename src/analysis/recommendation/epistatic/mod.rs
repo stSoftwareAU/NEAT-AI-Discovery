@@ -22,13 +22,12 @@
 //! - `candidate_generation` — Candidate pair generation, complementarity analysis, conversion
 //! - `pre_screening` — Individual operation pre-screening via residual analysis
 //! - `deduplication` — Dominant-neuron deduplication (Issue #509)
-//! - `scoring` — Interference detection and candidate filtering (Issue #415)
+//! - `scoring` — Interference filtering of epistatic/synergistic candidates (Issue #415)
 //!
 //! ## Key Functions
 //!
 //! - `detect_epistatic_pairs` - Main entry point for epistatic detection (Issue #202)
 //! - `detect_synergistic_candidates` - Residual-based synergistic discovery (Issue #189)
-//! - `detect_interfering_pairs` - Combo-successful interference detection (Issue #415)
 //! - `deduplicate_by_dominant_neuron` - Dominant neuron deduplication (Issue #509)
 
 mod candidate_generation;
@@ -49,10 +48,7 @@ pub use deduplication::{
     deduplicate_by_dominant_neuron, deduplicate_synergistic_by_dominant_neuron,
 };
 pub use pre_screening::{detect_synergistic_candidates, synergistic_to_coordinated_candidates};
-pub use scoring::{
-    detect_interfering_pairs, filter_interfering_epistatic_pairs,
-    filter_interfering_synergistic_candidates,
-};
+pub use scoring::{filter_interfering_epistatic_pairs, filter_interfering_synergistic_candidates};
 
 /// Result of evaluating a potential epistatic pair.
 #[derive(Debug, Clone)]
@@ -126,30 +122,4 @@ pub struct SourceContribution {
     pub firing_indices: HashSet<u32>,
     /// GPU evaluation stats
     pub stats: HelpfulStats,
-}
-
-/// Type of interference detected between candidate pairs (Issue #415).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum InterferenceType {
-    /// Two candidates target the same synapse with conflicting (opposite sign) weights.
-    ConflictingWeights,
-    /// Combined contributions would push target neuron into saturation.
-    SaturationRisk,
-    /// Two candidates have highly correlated activations (redundant).
-    RedundantContribution,
-}
-
-/// Result of interference analysis for a candidate pair (Issue #415).
-#[derive(Debug, Clone)]
-pub struct InterferencePairResult {
-    /// Source UUID of the first candidate.
-    pub source_a_uuid: String,
-    /// Source UUID of the second candidate.
-    pub source_b_uuid: String,
-    /// Type of interference detected.
-    pub interference_type: InterferenceType,
-    /// Severity score (0.0 to 1.0, higher = more severe interference).
-    pub severity: f32,
-    /// Description of the interference.
-    pub reason: String,
 }
