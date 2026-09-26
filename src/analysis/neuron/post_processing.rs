@@ -22,7 +22,7 @@ use crate::analysis::synapse::{
     apply_saturation_prediction_discount,
 };
 use crate::analysis::utils::{
-    lock_or_bail, log_analysis_timeout, shuffle_within_top_k, verbose_enabled,
+    char_prefix, lock_or_bail, log_analysis_timeout, shuffle_within_top_k, verbose_enabled,
 };
 
 /// Parameters for building the final neuron analysis result.
@@ -335,7 +335,7 @@ fn apply_impact_discounting(
 
         if verbose_enabled() && is_hidden {
             tracing::trace!(
-                target_uuid = %&candidate.target_neuron_uuid[..12.min(candidate.target_neuron_uuid.len())],
+                target_uuid = %char_prefix(&candidate.target_neuron_uuid, 12),
                 impact = format_args!("{impact:.3}"),
                 original_pct = format_args!("{:.4}", original * 100.0),
                 discounted_pct = format_args!("{:.4}", candidate.expected_creature_score_gain * 100.0),

@@ -6,7 +6,7 @@
 
 use crate::CandidateSynapseJson;
 use crate::analysis::diagnostics::compute_impact_scores_for_discounting;
-use crate::analysis::utils::{shuffle_within_top_k, verbose_enabled};
+use crate::analysis::utils::{char_prefix, shuffle_within_top_k, verbose_enabled};
 use std::collections::HashMap;
 
 use super::filtering::truncate_combined_synapse_candidate_sets;
@@ -223,8 +223,11 @@ fn compute_neuron_error_sq_map<'a>(
 /// and `expected_creature_score_gain` based on the target neuron's distance
 /// from outputs. Also applies creature-level error fraction scaling (Issue #730)
 /// and source-type and target-type boosts (Issues #467, #468).
+///
+/// Public (hidden) so integration tests can drive it directly (Issue #2168).
+#[doc(hidden)]
 #[allow(clippy::too_many_arguments)]
-fn apply_impact_to_helpful(
+pub fn apply_impact_to_helpful(
     candidate: &mut CandidateSynapseJson,
     impact_scores: &HashMap<String, f32>,
     neuron_type_map: &HashMap<&str, &str>,
@@ -322,7 +325,7 @@ fn apply_impact_to_helpful(
 
     if verbose_enabled() && is_hidden {
         tracing::debug!(
-            to_neuron_uuid = &candidate.to_neuron_uuid[..12.min(candidate.to_neuron_uuid.len())],
+            to_neuron_uuid = char_prefix(&candidate.to_neuron_uuid, 12),
             impact = format_args!("{impact:.3}"),
             original_pct = format_args!("{:.4}", original * 100.0),
             discounted_pct = format_args!("{:.4}", candidate.expected_creature_score_gain * 100.0),

@@ -450,7 +450,10 @@ inside a multi-byte sequence panics with "byte index 12 is not a char
 boundary". The panic unwinds out of a rayon worker, and an unwind past an
 `extern "C"` frame is an abort rather than a catchable error. The trigger needs
 both `utils::verbose_enabled()` and a hidden target neuron. Filed as #2168
-(`severity:low`, `confidence:high`).
+(`severity:low`, `confidence:high`). Fixed by #2219: the slice now goes
+through the char-safe `analysis::utils::char_prefix` helper, and the sibling
+site in `neuron/post_processing.rs::apply_impact_discounting` was fixed the same
+way.
 
 **Integer class — the untrusted tracker (#2170).**
 `add_synapse_gating.rs::should_skip_add_synapse_by_outcome` reads
