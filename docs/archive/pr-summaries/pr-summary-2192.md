@@ -16,7 +16,7 @@ The live half of the Issue #415 work is unchanged:
 
 - [x] Remove the dead functions, types, constant and re-export (`epistatic/scoring.rs`, `epistatic/mod.rs`)
 - [x] Remove the unit tests of the deleted function
-- [x] Bump the version to `0.74.257`
+- [x] Record the deletion in the chunk 8b security ledger
 - [x] `./quality.sh` green
 
 ### Test file: trimmed rather than deleted
@@ -37,9 +37,10 @@ The correlation, filter and pre-screen unit tests are kept.
 
 On `Develop`, the epistatic rows in
 `docs/audits/security-sweep-chunk-08b-synapse-scoring-recommendation.md` are
-still `pending`. The rows that cite #2192 exist only on
-`milestone/2083-security-scan-overflow-8-chunks-not-reached`, and they already
-describe this deletion, so this PR leaves the ledger untouched.
+still `pending`. The table rows that cite #2192 exist only on
+`milestone/2083-security-scan-overflow-8-chunks-not-reached`. So this PR leaves
+the table alone, which avoids a conflict, and records the deletion under
+**Related remediations (not sweep coverage)** instead, the same way #2190 did.
 
 ## Evidence
 
