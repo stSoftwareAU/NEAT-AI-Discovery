@@ -104,7 +104,7 @@ js-sys 0.3.106, wasm-bindgen 0.2.129 and zerocopy 0.8.56.
       with 5 assertions, matching the false "re-applied" lines of a real run.
 - [x] `quality/shellcheck.sh .` and `quality/bash_syntax.sh .` pass.
 - [x] A real `./bump-deps.sh` run exits 0.
-- [ ] `./quality.sh` passes (see the PR checks).
+- [x] `./quality.sh` passes: every step was run locally in the foreground in three chunks to fit the 600s tool cap, all exit 0, and CI Quality Checks are green.
 
 ## Security self-check
 
