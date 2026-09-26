@@ -151,6 +151,8 @@ During synapse analysis, the library proactively detects **epistatic neuron pair
 
 **Output**: Epistatic pair candidates appear as entries in `coordinatedStructuralCandidates` with two `addSynapse` operations and a comment indicating the epistatic relationship.
 
+**Bounds (Issue #2190)**: The pairwise scan is O(n²) in the sources for one target, so it checks the analysis deadline (and host cancellation) before each outer row and stops after `MAX_EPISTATIC_PAIR_CANDIDATES` (1,024) pairs. The residual-based synergistic scan checks the same deadline per source. An early stop keeps the pairs found so far and logs a `Candidate scan stopped early` warning naming the target and the reason.
+
 ### 🌡️ Example: "noisy vs trusted" inputs (thermometer pattern)
 
 If two inputs feed the same target with the same starting weight, but one input is much noisier (higher activation variance), a coordinated candidate may:

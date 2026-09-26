@@ -9,10 +9,11 @@ use crate::analysis::detection::redundant_path::{
     ExistingPathContribution, detect_redundant_paths, redundant_paths_to_coordinated_candidates,
 };
 use crate::analysis::recommendation::epistatic::{
-    SourceContribution, deduplicate_by_dominant_neuron, deduplicate_synergistic_by_dominant_neuron,
-    detect_epistatic_pairs, detect_synergistic_candidates,
-    epistatic_pairs_to_coordinated_candidates, filter_interfering_epistatic_pairs,
-    filter_interfering_synergistic_candidates, synergistic_to_coordinated_candidates,
+    ScanTruncation, SourceContribution, deduplicate_by_dominant_neuron,
+    deduplicate_synergistic_by_dominant_neuron, detect_epistatic_pairs_with_deadline,
+    detect_synergistic_candidates_with_deadline, epistatic_pairs_to_coordinated_candidates,
+    filter_interfering_epistatic_pairs, filter_interfering_synergistic_candidates,
+    synergistic_to_coordinated_candidates,
 };
 use crate::analysis::utils::verbose_enabled;
 
@@ -50,12 +51,16 @@ pub(crate) fn detect_epistatic_and_synergistic(
     let target_squash = ctx.neuron_squash_map.get(target_uuid).copied();
 
     // Issue #202: Detect epistatic neuron pairs
-    let epistatic_pairs = detect_epistatic_pairs(
+    // Issue #2190: bounded by the analysis deadline, cancellation and a ceiling.
+    let epistatic_scan = detect_epistatic_pairs_with_deadline(
         target_uuid,
         source_contributions,
         target_impact,
         target_squash,
+        &ctx.deadline,
     );
+    report_truncation(target_uuid, "epistatic", epistatic_scan.truncation);
+    let epistatic_pairs = epistatic_scan.candidates;
 
     if !epistatic_pairs.is_empty() {
         let filtered_pairs =
@@ -81,12 +86,15 @@ pub(crate) fn detect_epistatic_and_synergistic(
     }
 
     // Issue #189: Detect synergistic candidates via residual analysis
-    let synergistic_candidates = detect_synergistic_candidates(
+    let synergistic_scan = detect_synergistic_candidates_with_deadline(
         target_uuid,
         source_contributions,
         target_impact,
         target_squash,
+        &ctx.deadline,
     );
+    report_truncation(target_uuid, "synergistic", synergistic_scan.truncation);
+    let synergistic_candidates = synergistic_scan.candidates;
 
     if !synergistic_candidates.is_empty() {
         let filtered_synergistic =
@@ -110,6 +118,19 @@ pub(crate) fn detect_epistatic_and_synergistic(
                 }
             }
         }
+    }
+}
+
+/// Log a scan that stopped early so partial results are never mistaken for a
+/// complete scan (Issue #2190).
+fn report_truncation(target_uuid: &str, scan: &str, truncation: Option<ScanTruncation>) {
+    if let Some(reason) = truncation {
+        tracing::warn!(
+            target_uuid = target_uuid,
+            scan = scan,
+            reason = ?reason,
+            "Candidate scan stopped early; returning partial candidates."
+        );
     }
 }
 

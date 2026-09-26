@@ -28,6 +28,8 @@
 //!
 //! - `detect_epistatic_pairs` - Main entry point for epistatic detection (Issue #202)
 //! - `detect_synergistic_candidates` - Residual-based synergistic discovery (Issue #189)
+//! - `detect_epistatic_pairs_with_deadline` / `detect_synergistic_candidates_with_deadline`
+//!   - deadline- and cancellation-aware variants that report truncation (Issue #2190)
 //! - `deduplicate_by_dominant_neuron` - Dominant neuron deduplication (Issue #509)
 
 mod candidate_generation;
@@ -41,14 +43,38 @@ use std::collections::HashSet;
 
 // Re-export all public items for backward compatibility
 pub use candidate_generation::{
-    build_source_contribution, compute_firing_indices, detect_epistatic_pairs,
+    MAX_EPISTATIC_PAIR_CANDIDATES, build_source_contribution, compute_firing_indices,
+    detect_epistatic_pairs, detect_epistatic_pairs_with_deadline,
     epistatic_pairs_to_coordinated_candidates,
 };
 pub use deduplication::{
     deduplicate_by_dominant_neuron, deduplicate_synergistic_by_dominant_neuron,
 };
-pub use pre_screening::{detect_synergistic_candidates, synergistic_to_coordinated_candidates};
+pub use pre_screening::{
+    detect_synergistic_candidates, detect_synergistic_candidates_with_deadline,
+    synergistic_to_coordinated_candidates,
+};
 pub use scoring::{filter_interfering_epistatic_pairs, filter_interfering_synergistic_candidates};
+
+/// Why a candidate scan stopped before visiting every source (Issue #2190).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScanTruncation {
+    /// The analysis deadline elapsed or the host requested cancellation.
+    DeadlinePassed,
+    /// The emitted-candidate ceiling was reached.
+    CandidateCeiling,
+}
+
+/// Candidates from a deadline-bounded scan, plus whether it stopped early
+/// (Issue #2190), so a truncated scan is never presented as a complete one.
+#[derive(Debug, Clone)]
+pub struct BoundedScan<T> {
+    /// Candidates found before the scan finished or stopped, sorted by
+    /// combined improvement (descending).
+    pub candidates: Vec<T>,
+    /// `Some` when the scan stopped before visiting every source.
+    pub truncation: Option<ScanTruncation>,
+}
 
 /// Result of evaluating a potential epistatic pair.
 #[derive(Debug, Clone)]
