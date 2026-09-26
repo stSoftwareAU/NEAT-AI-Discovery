@@ -25,7 +25,7 @@ use std::time::{Duration, Instant};
 use super::fake_evaluator::{
     FakeEvaluatorFactory, FakeGpuEvaluator, FakeGpuProbe, HARNESS_HARD_CAP, WedgeBehaviour,
 };
-use super::staleness::{CallerGuard, caller_liveness_pair};
+use super::staleness::{CallerGuard, CallerLiveness, caller_liveness_pair};
 use super::submission::{GpuWaitOutcome, resolve_gpu_wait, wait_for_gpu_response};
 use super::{GpuWorkQueue, GpuWorkRequest};
 use crate::analysis::gpu::breaker::{GpuCircuitBreaker, GpuTripReason};
@@ -113,8 +113,25 @@ impl WedgedGpu {
     /// Enqueue a helpful batch exactly as a live submitter would, returning the
     /// two handles that caller holds.
     fn submit(&self, budget: GpuTimeBudget) -> (Receiver<Result<Vec<HelpfulStats>>>, CallerGuard) {
-        let (response_tx, response_rx) = bounded(1);
         let (guard, liveness) = caller_liveness_pair();
+        (self.enqueue(budget, liveness), guard)
+    }
+
+    /// Enqueue a helpful batch whose caller has already given up: the guard is
+    /// dropped *before* the send, so the worker can never dequeue it while the
+    /// caller still looks live (Issue #2206).
+    fn submit_abandoned(&self, budget: GpuTimeBudget) -> Receiver<Result<Vec<HelpfulStats>>> {
+        let (guard, liveness) = caller_liveness_pair();
+        drop(guard);
+        self.enqueue(budget, liveness)
+    }
+
+    fn enqueue(
+        &self,
+        budget: GpuTimeBudget,
+        liveness: CallerLiveness,
+    ) -> Receiver<Result<Vec<HelpfulStats>>> {
+        let (response_tx, response_rx) = bounded(1);
         self.work_tx
             .send_timeout(
                 GpuWorkRequest::HelpfulBatch {
@@ -126,7 +143,7 @@ impl WedgedGpu {
                 Duration::from_secs(1),
             )
             .expect("the test work queue must accept the request");
-        (response_rx, guard)
+        response_rx
     }
 
     /// Wait for a response the way production does — bounded by the heartbeat —
@@ -234,8 +251,10 @@ fn a_wedged_request_cannot_outlive_its_time_budget() {
 fn an_abandoned_request_never_reaches_the_wedged_gpu() {
     let gpu = WedgedGpu::spawn(WedgeBehaviour::Completes);
 
-    let (abandoned_rx, abandoned_guard) = gpu.submit(GpuTimeBudget::unbounded());
-    drop(abandoned_guard); // the submitter timed out before the worker got to it
+    // The submitter timed out before the worker got to it. Dropping the guard
+    // after the send raced the worker, which could execute the request in
+    // between (Issue #2206), so it is dropped before the request is enqueued.
+    let abandoned_rx = gpu.submit_abandoned(GpuTimeBudget::unbounded());
     let (live_rx, live_guard) = gpu.submit(GpuTimeBudget::unbounded());
 
     let live = live_rx
