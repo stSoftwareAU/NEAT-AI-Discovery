@@ -670,9 +670,12 @@ echo ""
 # every attempt. The gate now restores the pristine lockfile and re-applies
 # only the changes that stay outside the window.
 
-# Build a stub `cargo` that simulates `cargo update -p NAME@OLD` against a
+# Build a stub `cargo` that simulates `cargo update -p NAME@OLD …` against a
 # rules file: `name|ok|pkg=ver …` rewrites (or adds) each pkg, `name|fail|msg`
-# fails like a lockstep conflict. `--workspace` looks up the `@workspace` rule.
+# fails like a lockstep conflict, and `name|noop|` succeeds without changing
+# anything — real cargo does that when an exact-pinned partner stays locked.
+# Several `-p` specs look up the rule keyed by their sorted names joined with
+# `+`. `--workspace` looks up the `@workspace` rule.
 make_stub_cargo() {
     local dir="$1"
     cat > "$dir/cargo" <<'STUB'
@@ -680,15 +683,19 @@ make_stub_cargo() {
 set -euo pipefail
 manifest=""
 spec=""
+names=""
 key=""
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --manifest-path) manifest="$2"; shift 2 ;;
-        -p) spec="$2"; key="${2%@*}"; shift 2 ;;
+        -p) spec="${spec:+$spec }$2"; names="$names${2%@*}"$'\n'; shift 2 ;;
         --workspace) key="@workspace"; spec="@workspace"; shift ;;
         *) shift ;;
     esac
 done
+if [[ -z "$key" ]]; then
+    key="$(printf '%s' "$names" | sort | paste -sd+ -)"
+fi
 lock="$(dirname "$manifest")/Cargo.lock"
 printf '%s\n' "$spec" >> "$STUB_CARGO_LOG"
 rule="$(awk -F'|' -v k="$key" '$1 == k { print; exit }' "$STUB_CARGO_RULES")"
@@ -703,6 +710,7 @@ if [[ "$mode" == "fail" ]]; then
     echo "error: $body" >&2
     exit 101
 fi
+[[ "$mode" == "noop" ]] && exit 0
 for pair in $body; do
     pkg="${pair%%=*}"
     ver="${pair#*=}"
