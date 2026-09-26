@@ -855,6 +855,11 @@ sweep and never justify a non-null `last_swept`.
 - `#2078` — the house issue format every chunk 8b finding follows.
 - `#1933`, `#1930`, `#1929` — GPU queue liveness and breaker work adjacent to
   `src/analysis/synapse/gpu_evaluation.rs`; not a sweep of it.
+- `#2192` — deleted the never-called `detect_interfering_pairs`,
+  `check_saturation_risk`, `InterferenceType` and `InterferencePairResult` from
+  `recommendation/epistatic` (a dead lever, Issue #415). The live
+  `filter_interfering_*` path is unchanged. Not a sweep of the
+  `recommendation batch_successful + epistatic` section.
 - `#2190` — fix for the `recommendation batch_successful + epistatic` finding:
   `epistatic/candidate_generation.rs::detect_epistatic_pairs` ran an
   uncancellable O(n²) pair scan with no deadline and no ceiling on emitted
