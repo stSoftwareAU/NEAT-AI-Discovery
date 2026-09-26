@@ -855,6 +855,20 @@ sweep and never justify a non-null `last_swept`.
 - `#2078` — the house issue format every chunk 8b finding follows.
 - `#1933`, `#1930`, `#1929` — GPU queue liveness and breaker work adjacent to
   `src/analysis/synapse/gpu_evaluation.rs`; not a sweep of it.
+- `#2190` — fix for the `recommendation batch_successful + epistatic` finding:
+  `epistatic/candidate_generation.rs::detect_epistatic_pairs` ran an
+  uncancellable O(n²) pair scan with no deadline and no ceiling on emitted
+  candidates. `detect_epistatic_and_synergistic` now passes `ctx.deadline` to
+  `detect_epistatic_pairs_with_deadline` and
+  `detect_synergistic_candidates_with_deadline`, which check `deadline_passed`
+  (deadline or cancellation) per outer row. Output stops at
+  `MAX_EPISTATIC_PAIR_CANDIDATES` (1,024), and a `ScanTruncation` is logged so a
+  cut-short scan never reads as complete. That ceiling also bounds the
+  per-pair `find` in `scoring.rs::filter_interfering_epistatic_pairs`.
+  Regression tests:
+  `tests/issue_2190_epistatic_pair_scan_deadline.rs`. The section's file rows
+  stay `pending` here: the section's sweep (Issue #2109) records its outcomes
+  on the `milestone/2083` branch.
 
 ## Verify this record
 

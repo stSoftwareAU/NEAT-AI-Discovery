@@ -26,6 +26,16 @@ and was simply not passed down. Closes #2190.
   signatures stay as thin wrappers (`&None` deadline), so the ~30 existing test
   call sites are untouched. The wrappers still honour cancellation and the
   ceiling. The production caller uses only the deadline variants.
+- Ledger: the fix is recorded under *Related remediations* in
+  `docs/audits/security-sweep-chunk-08b-synapse-scoring-recommendation.md`.
+  On `Develop` every row of the `recommendation batch_successful + epistatic`
+  table still reads `pending`. That section's sweep (#2109, PR #2193) merged
+  into `milestone/2083-…`, which already rewrites the rows and lists #2190.
+  Editing the same rows here would conflict with that branch, so this PR
+  appends only to a section the milestone branch leaves untouched.
+- `tests/issue_2109_chunk_08b_batch_successful_epistatic_sweep.rs` also lives
+  only on that milestone branch. Its 66- and 276-pair measurements (12 and 24
+  sources) stay below the 1,024 ceiling, so it needs no change.
 - `docs/ANALYSIS_DEEP_DIVE.md` documents the bounds. The version bump is
   left to CI's `version-increment` job. The first PR (#2201) conflicted on a
   hand-bumped `Cargo.toml` version, so this branch keeps Develop's version.
