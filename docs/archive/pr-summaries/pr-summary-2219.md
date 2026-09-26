@@ -58,41 +58,31 @@ This is a backend-only change, so the evidence is test output.
 
 <!-- vibe-spec-review inputs="diff+issue-body" -->
 
-- `char_prefix("aaaaaaaaaaaé-rest", 12)` returns 12 chars / 13 bytes — reviewer: met
-- ASCII input of 12 or more chars returns its first 12 chars — reviewer: met
-- Short input returns whole, empty returns empty, and 20 emoji return 12 — reviewer: met
-- The regression test uses verbose plus a global TRACE subscriber and panics on the unfixed code — reviewer: partial
-  - reason: the reviewer only had the diff. The red run is recorded under Evidence, where it panicked at `post_processing.rs:328:55`.
-- No `[..N.min(` byte slices remain under `src/`, and the scan test enforces it — reviewer: met
-- Both former sites use `char_prefix` — reviewer: met
-- The audit ledger records the fix — reviewer: met
-- `./quality.sh` passes — reviewer: partial
-  - reason: the reviewer could not see this from the diff. The full gate ran and passed locally before push.
-- The extra `#[must_use]` and the hand-written regex-equivalent matcher with its self-test — reviewer: unrequested
-  - reason: `regex` is not a dependency, and the matcher's self-test pins it to the mandated pattern.
+- **met** — `char_prefix("aaaaaaaaaaaé-rest", 12)` returns `"aaaaaaaaaaaé"` (12 chars, 13 bytes) and does not panic — evidence: `tests/issue_2168_uuid_log_truncation_char_boundary.rs::char_prefix_keeps_a_multibyte_char_straddling_byte_twelve` — reviewer: met
+- **met** — An ASCII string of 12 or more chars yields exactly its first 12 chars — evidence: `tests/issue_2168_uuid_log_truncation_char_boundary.rs::char_prefix_takes_first_twelve_ascii_chars` — reviewer: met
+- **met** — Short input is returned whole, empty returns `""`, and 20 emoji return the first 12 — evidence: `tests/issue_2168_uuid_log_truncation_char_boundary.rs::char_prefix_returns_short_string_whole`, `::char_prefix_of_empty_is_empty`, `::char_prefix_counts_emoji_as_single_chars` — reviewer: met
+- **partial** — The regression test asserts `verbose_enabled()`, runs with a global TRACE subscriber, panics on the unfixed code and passes after the fix — evidence: `tests/issue_2168_uuid_log_truncation_char_boundary.rs::verbose_impact_log_does_not_panic_on_multibyte_uuid` — reviewer: partial — reason: the reviewer confirmed the full setup from the diff, but the red/green run cannot be seen there. The red run is recorded under Evidence (it panicked in `synapse::post_processing::apply_impact_to_helpful` on the `é` char boundary).
+- **met** — The source-scan test finds no `[..N.min(` byte slice under `src/` — evidence: `tests/issue_2168_uuid_log_truncation_char_boundary.rs::no_byte_index_min_slices_remain_in_src` — reviewer: met
+- **met** — Both former sites use the helper — evidence: `src/analysis/synapse/post_processing.rs::apply_impact_to_helpful`, `src/analysis/neuron/post_processing.rs::apply_impact_discounting` — reviewer: met
+- **met** — The ledger's #2168 paragraph records the fix — evidence: `docs/audits/security-sweep-chunk-08b-synapse-scoring-recommendation.md` ("Panic class — the UTF-8 slice (#2168)" paragraph) — reviewer: met
+- **partial** — `./quality.sh` passes (fmt, clippy, `cargo test`) — evidence: `./quality.sh` run under Evidence and Test Plan — reviewer: partial — reason: the reviewer could not confirm a run outcome from the diff. The full gate ran and passed locally before push.
+- **unrequested** — `#[must_use]` on `char_prefix` — evidence: `src/analysis/utils/mod.rs::char_prefix` — reviewer: unrequested — reason: harmless, and in line with clippy's pedantic lint.
+- **unrequested** — The hand-written matcher and its self-test `byte_min_slice_matcher_matches_the_regex_shape` — evidence: `tests/issue_2168_uuid_log_truncation_char_boundary.rs::byte_min_slice_matcher_matches_the_regex_shape` — reviewer: unrequested — reason: `regex` is not a dependency, and the self-test pins the matcher to the mandated pattern.
+- **unrequested** — The regression test also asserts `expected_creature_score_gain.is_finite()` — evidence: `tests/issue_2168_uuid_log_truncation_char_boundary.rs::verbose_impact_log_does_not_panic_on_multibyte_uuid` — reviewer: unrequested — reason: slightly stronger than "returns normally", not a deviation.
 
 ## Standards Review
 
 <!-- vibe-standards-review inputs="diff+CODING-STANDARDS.md" -->
 
-This repo has no `CODING-STANDARDS.md`, so the reviewer used `CONTRIBUTING.md` and `AGENTS.md`.
+This repo has no `CODING-STANDARDS.md`, so the reviewer used `CONTRIBUTING.md` and `AGENTS.md`. There are no blockers.
 
-- **blocker:** `apply_impact_to_helpful` became public for testing, which CONTRIBUTING "Test Organisation" forbids.
-  - reason: I disagree. Issue #2219, requirement 4, explicitly mandates `#[doc(hidden)] pub`, following the precedent of `analyze_synapses_with_cache`. The public entry points need a GPU work queue, so they are not a reliable CI path. The more specific instruction wins.
-- **minor:** the neuron-path fix has no behavioural test.
-  - reason: the issue only asks for the source scan to cover it, and the scan flagged the old code. A behavioural test would mean making a second private function public, which is out of scope.
-- **minor:** the PR summary was missing. Fixed: this file.
-- **nit:** the source-scan test goes against the no-grep doctrine.
-  - reason: the issue mandates it. It catches only literal digit bounds, which is the exact bug shape.
-- **nit:** the test file name does not match the `*_test.rs` pattern.
-  - reason: the issue mandates the name. Noted under Reproduction.
-- **Clean:**
-  - Australian English
-  - comment concision
-  - a `// SAFETY:` comment on the one `unsafe` block
-  - no manual `Cargo.toml` bump
-  - no new dependencies
-  - no Mermaid violations
+- **violation** — CONTRIBUTING "Test Organisation": tests that change environment variables should be `#[serial]` (minor) — evidence: `tests/issue_2168_uuid_log_truncation_char_boundary.rs::verbose_impact_log_does_not_panic_on_multibyte_uuid` — reason: stands. The `// SAFETY:` claim holds today because no other test in this binary reads the environment. The code already passed the gate, and this retry only changes documentation.
+- **violation** — CONTRIBUTING "Test Organisation" ("Do not make APIs public just for testing") (minor, issue-mandated) — evidence: `src/analysis/synapse/post_processing.rs::apply_impact_to_helpful` — reason: stands. Issue #2219 requirement 4 mandates `#[doc(hidden)] pub`, following the `analyze_synapses_with_cache` precedent.
+- **violation** — CONTRIBUTING "Cite Code by Symbol, Never by Line Number" (nit) — evidence: `docs/archive/pr-summaries/pr-summary-2219.md` (Evidence section) — reason: stands. The line numbers are quoted verbatim from the red-run panic and scan output as evidence. They are not code citations.
+- **violation** — CONTRIBUTING "An Assertion That Holds Either Way Is Not Coverage" (nit) — evidence: `tests/issue_2168_uuid_log_truncation_char_boundary.rs::verbose_impact_log_does_not_panic_on_multibyte_uuid` — reason: stands. The real check is "returns without panicking", which failed on the unfixed code. An `assert!(tracing::enabled!(...))` pin is a possible follow-up.
+- **violation** — CONTRIBUTING "Test Outcomes, Not Implementation" (nit, issue-mandated) — evidence: `tests/issue_2168_uuid_log_truncation_char_boundary.rs::no_byte_index_min_slices_remain_in_src` — reason: stands. Issue requirement 5 mandates the source scan as the guard on the neuron site.
+- **violation** — Test file name does not end in `_test.rs` (nit, issue-mandated name) — evidence: `tests/issue_2168_uuid_log_truncation_char_boundary.rs` — reason: stands. The issue mandates the name, and the file sits under `tests/`.
+- **clean** — Australian English, no manual `Cargo.toml` bump, no CI or script changes, no new dependencies, symbol-cited ledger sentence confined to the #2168 paragraph, rustfmt-shaped formatting, KISS/DRY helper design, a `// SAFETY:` comment on the one `unsafe` block, test placement as its own binary, no Mermaid `;` violations, and FFI and domain invariants unaffected.
 
 ## Test Plan
 
