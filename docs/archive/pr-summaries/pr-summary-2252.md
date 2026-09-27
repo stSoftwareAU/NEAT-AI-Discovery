@@ -43,30 +43,53 @@ flowchart LR
 
 <!-- vibe-spec-review inputs="diff+issue-body" -->
 
-- **met.** The two rows are `audited`, each with a one-line reason.
-  reviewer: met. The rows read `audited — no PID, process-spawn or filesystem
-  surface …` and `audited — the GlobalAlloc hooks cannot panic …`.
-- **met.** The "no PID, no filesystem" outcome is recorded with its evidence,
-  the SIGUSR1 verdict is explicit, and #2122 is cross-referenced, not refiled.
-  reviewer: met. The ledger has "PID and filesystem — none" with the grep
-  result, "SIGUSR1 — a handler is installed on the FFI path", and "Abort delay
-  — cross-referenced, not refiled".
-- **met.** The ledger records counter-wrap reachability, the hooks verdict,
-  and why no test exercises the wrap. reviewer: met. It says "no sound test
-  can exercise the wrap — which is why none does".
-- **met.** Both `allocated()` consumers are named, each with a verdict.
-  reviewer: met. The `.unwrap_or(0)` fallback is dead code, and
-  `is_memory_budget_exceeded` → `analyze_all` has no spurious cancel.
-- **met.** No `file.rs:<line>` citation appears. reviewer: met. A grep for
-  `\.rs:[0-9]` on the diff is empty, and the new test enforces it.
-- **met.** Each surviving finding has one issue. There are none new: both
-  surviving defects are already tracked by open #2259. Tracker #2095 has a
-  comment saying so. reviewer: met, with no new findings. The reviewer
-  judged this justified, because refiling would duplicate #2259.
-- **met.** No other ledger section changes, and `./quality.sh` passes.
-  reviewer: partial. The reviewer confirmed that only the watchdog section and
-  its mutation-marker region changed, but did not run the gate.
-  `./quality.sh` has since passed. See the Test Plan.
+- **met** — The `src/watchdog.rs` and `src/tracking_alloc.rs` rows are
+  `audited`, each with a one-line reason — evidence: `docs/audits/security-sweep-chunk-11-filesystem-lifecycle.md § watchdog + tracking_alloc + discovery_history` (inventory table),
+  `tests/issue_2252_chunk_11c1_watchdog_tracking_alloc_test.rs::watchdog_and_tracking_alloc_rows_are_audited_with_a_reason` —
+  reviewer: met
+- **met** — The ledger records the "no PID, no filesystem" outcome with its
+  evidence, an explicit `SIGUSR1` verdict, and the abort delay
+  cross-referenced to #2122, not refiled — evidence: `docs/audits/security-sweep-chunk-11-filesystem-lifecycle.md § watchdog + tracking_alloc + discovery_history` ("PID and
+  filesystem — none.", "SIGUSR1 — a handler is installed on the FFI path.",
+  "Abort delay — cross-referenced, not refiled."),
+  `tests/issue_2252_chunk_11c1_watchdog_tracking_alloc_test.rs::the_section_records_the_signal_verdict_cross_references_and_consumers`
+  — reviewer: met
+- **met** — The ledger records counter-wrap reachability, the no-panic,
+  no-allocate, no-recurse verdict for the hooks, and why no test exercises the
+  wrap — evidence: `docs/audits/security-sweep-chunk-11-filesystem-lifecycle.md § watchdog + tracking_alloc + discovery_history` ("Allocator hooks — no panic, no allocation, no
+  recursion.", "Counter wrap — reachable only through undefined behaviour.")
+  — reviewer: met
+- **met** — Both `allocated()` consumers are named, each with a
+  spurious-cancel verdict — evidence: `docs/audits/security-sweep-chunk-11-filesystem-lifecycle.md § watchdog + tracking_alloc + discovery_history` ("Consumer
+  `ffi/utilities.rs::discovery_memory_usage_bytes` — no spurious zero.",
+  "Consumer `analysis/utils/memory.rs::is_memory_budget_exceeded` →
+  `analysis/orchestration.rs::analyze_all` — no spurious cancel.", "No other
+  consumers."),
+  `tests/issue_2252_chunk_11c1_watchdog_tracking_alloc_test.rs::the_section_records_the_signal_verdict_cross_references_and_consumers`
+  — reviewer: met
+- **met** — No `file.rs:<line>` citation appears in this section — evidence:
+  `tests/issue_2252_chunk_11c1_watchdog_tracking_alloc_test.rs::every_cited_symbol_exists_and_no_citation_uses_a_line_number`; a grep
+  of the diff's added lines for `\.rs:[0-9]` is empty — reviewer: met
+- **partial** — Each surviving finding has exactly one house-format issue,
+  linked in the ledger and on #2095 — evidence: `docs/audits/security-sweep-chunk-11-filesystem-lifecycle.md § watchdog + tracking_alloc + discovery_history` (the `src/watchdog.rs`
+  row and the "Abort delay" and "Stall-timeout truncation" bullets link open
+  #2259, findings A and B); the "Chunk 11c-1 (#2252) — No new findings"
+  comment on #2095 — reviewer: partial — reason: both defects are linked and
+  tracked by open #2259, which will file them, but no house-format issue
+  (`finding-id`/`cwe` markers, `security`/`severity:*` labels) exists yet;
+  refiling here would duplicate #2259, and the issue forbids refiling the
+  abort delay
+- **partial** — No other ledger section changes, and `./quality.sh` passes —
+  evidence: `git diff 85bdfec..HEAD -- docs/audits/security-sweep-chunk-11-filesystem-lifecycle.md`
+  touches only the watchdog section and its `<!-- section: … -->` row in
+  "Filesystem mutation sites";
+  `tests/issue_2233_chunk_11_ledger_scaffold.rs` and `tests/issue_2252_chunk_11c1_watchdog_tracking_alloc_test.rs` pass 4/4 each —
+  reviewer: partial — reason: the reviewer confirmed the ledger scope and ran
+  both test targets but did not run `./quality.sh`; the worker re-runs the
+  gate before raising the PR
+- **unrequested** — The new contract test `tests/issue_2252_chunk_11c1_watchdog_tracking_alloc_test.rs` — reviewer: unrequested —
+  reason: pins the ledger rows and citations so a later edit cannot silently
+  regress them, matching the sibling chunk 11 ledger tests
 
 Review fix: the reviewer caught the phrase "filed as #2259 finding A/B", which
 is wrong because #2259 is still open. It now reads "tracked by open #2259 as
@@ -77,16 +100,26 @@ its finding A/B".
 <!-- vibe-standards-review inputs="diff+CODING-STANDARDS.md" -->
 
 This repo has no `CODING-STANDARDS.md`, so the review used `CONTRIBUTING.md`
-and `AGENTS.md` instead. Verdict: pass-with-notes.
+and `AGENTS.md` instead.
 
-- **Fixed.** The new test file was not rustfmt-clean. `cargo fmt --all` has
-  now been applied.
-- **Fixed.** Two over-long ledger lines have been rewrapped.
-- **Noted, not changed.** The test helpers are copied from the 2251 sibling
-  test, which matches the existing pattern. A shared `tests/common` helper is
-  a possible follow-up.
-- **Passed:** Australian English, `file.rs::symbol` citations, no hidden
-  files, scope, and no edits to `ci.yml`.
+- **violation** — Cite code by symbol (Issue #1942): a test that claims to
+  check every cited symbol should check them all — evidence:
+  `tests/issue_2252_chunk_11c1_watchdog_tracking_alloc_test.rs::CITED` — reason: stands; `CITED` pins 11 of the 15 symbols the section
+  cites (`lib.rs::log_version_once`, `debug.rs::init_debug_handlers`,
+  `debug.rs::shutdown_debug_handlers` and `watchdog.rs::start_from_env` are
+  unchecked). All four exist today, so nothing is stale; a follow-up can add
+  them
+- **violation** — DRY (CONTRIBUTING.md § Principles) — evidence:
+  `tests/issue_2252_chunk_11c1_watchdog_tracking_alloc_test.rs::{repo_root, read, section, marker_region, table_rows, file_rows}`,
+  copied from `tests/issue_2251_chunk_11b_debug_sampler_test.rs` — reason:
+  stands; the same helpers are already copied into about 15 ledger tests, so
+  this follows the existing pattern. Moving them into the existing
+  `tests/common/mod.rs` is a possible follow-up
+- **clean** — Australian English, `file.rs::symbol` citations (no
+  `.rs:<line>`), `cargo fmt --all -- --check`, `cargo clippy` on the new test
+  with `-D warnings`, the new and sibling tests (2233, 2251) passing, no hidden
+  files, no `ci.yml` edits, no bare `;` in the Mermaid block, markdownlint on
+  the ledger, the PR summary location check, ledger scope, and test doctrine
 
 ## Test Plan
 
@@ -105,5 +138,5 @@ The new test checks four things:
   still present;
 - the section names SIGUSR1, #2122, #2259, #2234 and both consumers;
 - the mutation region has a `none` row for both files;
-- every cited `file.rs::symbol` still exists in source, and no `.rs:<line>`
-  citation is used.
+- every `file.rs::symbol` in its `CITED` list still exists in source, and no
+  `.rs:<line>` citation is used.
