@@ -30,9 +30,9 @@ concurrency:
   cancel-in-progress: true
 
 # Minimal top-level permissions — narrow the default GITHUB_TOKEN scope to
-# read-only for unprivileged jobs (quality, validation, spell-check). Jobs
-# that need write access (version-increment, auto-format) declare their own
-# per-job `permissions:` blocks which override this default.
+# read-only for every job. The jobs that push (version-increment, auto-format)
+# push with the ACTIONS_PUSH PAT, not the GITHUB_TOKEN, so they need no write
+# grant either (Issue #2102).
 permissions:
   contents: read
 
@@ -49,9 +49,10 @@ jobs:
     # as fast failures rather than letting them tie up a runner for the
     # GitHub default 6h (Issue #1287).
     timeout-minutes: 15
+    # Read-only: the push authenticates with the ACTIONS_PUSH PAT, so a
+    # GITHUB_TOKEN write grant would be unused privilege (Issue #2102).
     permissions:
-      contents: write
-      pull-requests: write
+      contents: read
     
     steps:
     - name: Checkout code
@@ -434,9 +435,10 @@ jobs:
     # rustfmt + commit-and-push; 15 minutes covers a cold toolchain
     # install while still bounding hangs (Issue #1287).
     timeout-minutes: 15
+    # Read-only: the push authenticates with the ACTIONS_PUSH PAT, so a
+    # GITHUB_TOKEN write grant would be unused privilege (Issue #2102).
     permissions:
-      contents: write
-      pull-requests: write
+      contents: read
     
     steps:
     - name: Checkout code
