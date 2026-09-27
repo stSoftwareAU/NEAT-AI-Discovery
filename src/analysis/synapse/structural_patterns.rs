@@ -698,3 +698,7 @@ mod tests {
         // dispatch-side counter stays zero when the floor is disabled.
     }
 }
+
+#[cfg(test)]
+#[path = "issue_2169_structural_patterns_cancellation_test.rs"]
+mod issue_2169_test;
