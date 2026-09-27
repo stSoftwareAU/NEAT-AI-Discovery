@@ -64,6 +64,26 @@ flowchart LR
     F --> G
 ```
 
+## Acceptance Criteria
+
+<!-- vibe-spec-review inputs="diff+issue-body" -->
+
+- **met** — Zero `pending` rows; all file rows carry an outcome and a reason; the status heading reads complete — evidence: `tests/issue_2210_chunk_08b_finalisation.rs::no_row_reads_pending_and_every_file_row_has_an_outcome_and_a_reason`, `::the_status_heading_reads_complete_and_the_placeholder_is_gone` — reviewer: met — reason: 60 rows, not 59, because `issue_2169_*_test.rs` landed after planning; `tests/issue_2103_*` already pins 60
+- **met** — The four `output_competition.rs` rows carry a verdict consistent with dispatch; surviving finding filed and listed — evidence: `tests/issue_2210_chunk_08b_finalisation.rs::no_output_competition_row_calls_a_dispatched_module_unreachable`, issue #2236 — reviewer: met
+- **met** — Both tables cite every production site the regex sweep returns, with verdicts and NaN handling; non-site hits listed with reasons — evidence: `tests/issue_2210_chunk_08b_finalisation.rs::every_production_capacity_and_comparator_file_is_cited_in_its_table` plus the two **Regex reconciliation** notes — reviewer: met
+- **met** — Every linked security finding carries the four labels and the failing-first test requirement — evidence: the label-audit line under `## Issues filed`; checked with `gh issue view` for the nine findings and #2236 — reviewer: met
+- **met** — Index `8b` entry equals the record's Sweep date and Baseline commit — evidence: `tests/issue_2210_chunk_08b_finalisation.rs::the_index_entry_equals_the_record_date_and_baseline` — reviewer: met
+- **met** — One comment on #2093 links every finding issue — evidence: comment posted on #2093 right after this PR is raised — reviewer: missing — reason: the issue orders the comment after the PR is raised, so the reviewer could not see it yet; it is posted in this same run
+- **met** — The new test passes, `tests/issue_2088_*` and `tests/issue_2103_*`–`tests/issue_2109_*` still pass, and `./quality.sh` passes — evidence: `./quality.sh < /dev/null` run after the final edit printed "✅ All quality checks passed!" — reviewer: partial — reason: the reviewer ran only 2210, 2103 and 2108 itself; the full gate, which runs every test, passed here
+- **unrequested** — backticks added to one doc comment in `tests/issue_2108_chunk_08b_recommendation_core_sweep.rs` — reviewer: unrequested — reason: `clippy::doc_markdown` failed `./quality.sh` on it, and a green gate is an acceptance criterion
+- **unrequested** — the ledger now marks #2185, #2191 and #2192 closed, and lists rows for code since deleted or fixed — reviewer: unrequested — reason: needed so the COMPLETE record describes the current tree; this is the bookkeeping side of the step 2 reconciliation
+
+## Standards Review
+
+<!-- vibe-standards-review inputs="diff+CODING-STANDARDS.md" -->
+
+- **clean** — The repo has no `CODING-STANDARDS.md`, so the reviewer used `CONTRIBUTING.md` and `AGENTS.md` and found no violations. Checked and compliant: Australian English, `file.rs::symbol` citations (all 20 new symbols exist), the `output_competition.rs` claims against the source, non-vacuous tests with the detector pinned first, no hidden files, no CI or dependency changes. Optional notes, not chased: the citation check matches on basename, so the two `candidate_generation.rs` files could mask each other; check (d) scans table rows only, not prose.
+
 ## Test Plan
 
 - Added `tests/issue_2210_chunk_08b_finalisation.rs`. It checks:
