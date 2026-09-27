@@ -56,7 +56,7 @@ const MUTATION_SITES: [(&str, &str, &str); 5] = [
     ),
 ];
 
-/// `(issue, guard test file the row must cite)`.
+/// `(issue, guard surface the row must cite)`.
 const REVERIFIED: [(&str, &str); 2] = [
     ("#1905", "tests/issue_1905_sample_temp_dir.rs"),
     ("#1904", "src/analysis/utils/platform.rs"),
@@ -72,12 +72,21 @@ fn read(rel: &str) -> String {
         .unwrap_or_else(|e| panic!("{} must exist and be readable: {e}", path.display()))
 }
 
-/// The text of a Markdown section, from its heading to the next heading of the
-/// same or a higher level.
+/// The text of a Markdown section, from its heading line to the next heading
+/// of the same or a higher level.
 fn section<'a>(doc: &'a str, heading: &str) -> &'a str {
     let start = doc
-        .find(heading)
-        .unwrap_or_else(|| panic!("{RECORD} must carry the heading `{heading}`"));
+        .lines()
+        .scan(0usize, |offset, line| {
+            let at = *offset;
+            *offset += line.len() + 1;
+            Some((at, line))
+        })
+        .find(|(_, line)| line.trim_end() == heading)
+        .map_or_else(
+            || panic!("{RECORD} must carry the heading `{heading}`"),
+            |(at, _)| at,
+        );
     let level = heading.chars().take_while(|c| *c == '#').count();
     let body_start = start + heading.len();
     let mut cursor = body_start;
@@ -157,7 +166,10 @@ fn no_debug_sampler_row_reads_pending_and_each_has_an_outcome_and_a_reason() {
         );
     }
 
-    let (_, capture_outcome) = &rows[1];
+    let (_, capture_outcome) = rows
+        .iter()
+        .find(|(path, _)| path == "src/debug/sample_capture.rs")
+        .expect("the sample_capture.rs row is present");
     assert!(
         capture_outcome.contains(FINDING),
         "the sample_capture.rs row must link the finding it filed ({FINDING}): {capture_outcome}"
