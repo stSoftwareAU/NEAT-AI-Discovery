@@ -388,8 +388,7 @@ which honours `$TMPDIR`) into a string bash re-parses when the trap fires.
 `_INSTALL_TMP_DIR` (`:34`, `:126`) and arms `trap _cleanup_tmp EXIT` (`:127`),
 a function name; INT and TERM are the fixed literals `'exit 130'` and
 `'exit 143'` (`:129-130`). Guarded by the three `TMPDIR` tests named in the
-Findings row. Everything else on this file is the #1911 path re-verified above
-(line numbers there are at `4f269d6`; the fix shifted every line after `:31` down by 13).
+Findings row. Everything else on this file is the #1911 path re-verified above.
 
 ### `scripts/benchmark-ci.sh` — 217 lines
 
