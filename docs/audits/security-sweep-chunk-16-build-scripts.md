@@ -387,8 +387,8 @@ which honours `$TMPDIR`) into a string bash re-parses when the trap fires.
 **Fixed** by Issue #2209: `install_rustup` stores the path in the script-level
 `_INSTALL_TMP_DIR` and arms `trap _cleanup_tmp EXIT`, a function name; INT and
 TERM are the fixed literals `'exit 130'` and `'exit 143'`. Guarded by the three
-`TMPDIR` tests named in the Findings row. Everything else on this file is the
-#1911 path re-verified above (line numbers there are at `4f269d6`; the fix shifted
+`TMPDIR` tests named in the Findings row. Everything else on this file is
+the #1911 path re-verified above (line numbers there are at `4f269d6`; the fix shifted
 `:33-114` down by 11 and every line after `:117` down by 13).
 
 ### `scripts/benchmark-ci.sh` — 217 lines
