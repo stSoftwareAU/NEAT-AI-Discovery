@@ -337,8 +337,10 @@ fn no_output_competition_row_calls_a_dispatched_module_unreachable() {
 fn record_field<'a>(doc: &'a str, field: &str) -> &'a str {
     doc.split_once(&format!("**{field}:** `"))
         .and_then(|(_, rest)| rest.split_once('`'))
-        .map(|(value, _)| value)
-        .unwrap_or_else(|| panic!("{RECORD} must carry a `**{field}:**` field"))
+        .map_or_else(
+            || panic!("{RECORD} must carry a `**{field}:**` field"),
+            |(value, _)| value,
+        )
 }
 
 #[test]
