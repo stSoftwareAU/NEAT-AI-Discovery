@@ -383,7 +383,7 @@ so the lock file is never absent while the directory still exists.
 - **Path validation** (Issue #1866): `tempDir` is recursively deleted, so it is
   accepted only when it is positively identifiable as a discovery directory —
   a path component contains `.discovery`, **or** the directory contains
-  `discovery.lock` or `discovery_data.parquet`. Paths containing `..`,
+  `discovery.lock`, `.discovery.lock` or `discovery_data.parquet`. Paths containing `..`,
   symlinked directories, and non-directories are refused. A rejected path
   yields `{"success": false, "errorKind": "data_validation", "retryable": false}` and nothing is
   removed. The check runs before any existence probe, so a non-existent path
@@ -394,8 +394,8 @@ so the lock file is never absent while the directory still exists.
 
 ### Orphaned Directory Sweep (`clean_orphaned_discovery_dirs`, Issue #1100)
 
-Scan a base directory for orphaned discovery directories (subdirectories with no
-`discovery.lock` file) and remove them. `NotFound` races are suppressed because
+Scan a base directory for orphaned discovery directories (subdirectories with
+neither a `discovery.lock` nor a `.discovery.lock` file) and remove them. `NotFound` races are suppressed because
 the async cleanup actor may have removed a directory between the orphan check and
 the removal call.
 
@@ -422,6 +422,11 @@ the removal call.
   The lock probe uses `symlink_metadata` and fails closed: only a `NotFound`
   error means "no lock", so a dangling-symlink `discovery.lock` or a permissions
   error leaves the directory in place.
+- **Lock-file names** (Issue #2256): both spellings mark a directory as in use —
+  `discovery.lock` and `.discovery.lock` (leading dot), the name NEAT-AI's
+  `src/discovery/DiscoveryCleanup.ts` writes. The orphan check, the claim
+  re-check and the `cleanup_discovery_dir` contents check all honour either
+  name, so a live NEAT-AI session is never swept.
 - **Memory**: the returned pointer **must** be freed with `free_discovery_result`.
 
 ---
