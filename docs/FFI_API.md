@@ -1357,6 +1357,27 @@ this boundary.
 `costOfGrowth` is a `rank_focus_neurons` tuning parameter rather than part of
 `CreatureJson`, so it has no row in the table below.
 
+#### Module Outcome Tracker (Issue #2170)
+
+`AnalyzeParallelInput.module_outcome_tracker` (`moduleOutcomeTracker`) is the
+caller's persisted history, handed back verbatim, so serde bypasses the
+invariants `record()` and `record_soft_failures()` keep. `analyze_parallel`
+runs `validate_module_outcome_tracker`
+(`src/ffi_types/module_tracker_validation.rs`) straight after
+`validate_creature`, before any analysis, and rejects the payload with
+`success: false` and `errorKind: "data_validation"` when any module's
+`ModuleStats` has:
+
+- `successes` greater than `attempts`, or
+- `softFailures` that is non-finite, negative, or above `u32::MAX` (4294967295).
+
+The error names the offending field and at most 64 characters of the
+caller-supplied module name (`MODULE_NAME_DETAIL_MAX_CHARS`, cut on a `char`
+boundary), so no unbounded caller string is echoed. The tracker is rejected,
+never silently repaired. An absent tracker is unaffected. `AnalyzeAllInput`
+has no FFI entry point of its own and receives the tracker only through
+`analyze_parallel`, so this gate covers it.
+
 | FFI entry point | Accepts `CreatureJson` | Validates | Notes |
 |-----------------|------------------------|-----------|-------|
 | `record_discovery` | yes | yes | via `record_discovery_internal` |
@@ -1364,7 +1385,7 @@ this boundary.
 | `append_discovery_records` | no | n/a | references session by ID; creature is captured at session start |
 | `finish_discovery_session` | no | n/a | session ID only |
 | `cancel_discovery_session` | no | n/a | session ID only |
-| `analyze_parallel` | yes | yes | via `analyze_parallel_internal` |
+| `analyze_parallel` | yes | yes | via `analyze_parallel_internal`; also runs `validate_module_outcome_tracker` on `moduleOutcomeTracker` (Issue #2170) |
 | `rank_focus_neurons` | yes | yes | via `rank_focus_neurons_internal` |
 | `export_visualisation_snapshot` | yes | yes | via `export_visualisation_snapshot_internal` (Issue #1188) |
 | `merge_discovery_parquet` | no | n/a | parquet I/O only |

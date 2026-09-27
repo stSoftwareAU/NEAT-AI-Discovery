@@ -98,6 +98,8 @@ pub use ffi_types::{
     // Creature bounds gate (`ffi_types::creature_bounds`).
     MAX_CREATURE_INPUT_NEURONS,
     MAX_CREATURE_OUTPUT_NEURONS,
+    // Module-tracker validation gate (Issue #2170).
+    MODULE_NAME_DETAIL_MAX_CHARS,
     McmcDiagnosticsJson,
     MergeParquetInput,
     MergeParquetOutput,
@@ -147,6 +149,8 @@ pub use ffi_types::{
     validate_creature_input_bounds,
     // Forward-only validation helper.
     validate_forward_only_synapses,
+    validate_module_outcome_tracker,
+    validate_module_stats,
 };
 
 // Re-export the internal business-logic functions so that existing

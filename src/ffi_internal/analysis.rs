@@ -71,7 +71,15 @@ pub fn analyze_parallel_internal(input_json: &str) -> Result<String> {
     // `loadFrom` strip warnings) instead of letting it taint discovery.
     // Issue #1867: the same gate bounds the creature's input-neuron count,
     // which sizes per-input allocations downstream.
-    if let Err(typed) = validate_creature(&input.creature) {
+    // Issue #2170: the caller's persisted tracker is untrusted too — reject
+    // stats that break the `record()` invariants rather than gate on them.
+    let validation = validate_creature(&input.creature).and_then(|()| {
+        input
+            .module_outcome_tracker
+            .as_ref()
+            .map_or(Ok(()), validate_module_outcome_tracker)
+    });
+    if let Err(typed) = validation {
         let kind = typed.error_kind();
         let output = AnalyzeParallelOutput {
             success: false,
