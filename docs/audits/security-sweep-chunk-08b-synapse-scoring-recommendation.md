@@ -88,7 +88,7 @@ correctness.
 
 ## Files swept
 
-60 files, 21,630 lines. Line counts as at the baseline commit, except the two
+60 files, 21,641 lines. Line counts as at the baseline commit, except the two
 files added after it (`issue_2161_locality_cancellation_test.rs` and
 `issue_2169_structural_patterns_cancellation_test.rs`, counted as they stand
 today). Every row starts
@@ -124,13 +124,13 @@ one sub-issue's file list.
 
 ### synapse post-processing
 
-3,087 lines.
+3,098 lines.
 
 | Path | Lines | Outcome |
 | --- | --- | --- |
 | `src/analysis/synapse/post_processing.rs` | 945 | findings filed — #2167 (the three descending `total_cmp` sorts rank a non-finite gain first, and no `retain` filter ahead of them drops `+inf`) and #2168 (`apply_impact_to_helpful` byte-slices a UUID at index 12 inside a verbose log, panicking on a multi-byte char boundary) |
 | `src/analysis/synapse/structural_patterns.rs` | 700 | finding filed — #2169, remediated by #2221: `detect_noisy_vs_trusted` ran a quadratic pairwise scan and `detect_collapsible_hidden_neurons` a linear neuron pass whose per-neuron body walked the records, and neither consulted `deadline_passed` or the cancellation flag; the noisy scan now refuses more than `MAX_INCOMING_INPUTS_FOR_NOISY_SCAN` inputs and both loops check `deadline_passed` per iteration, the collapse pass memoising its activation maps; every capacity site is bounded by a live collection length |
-| `src/analysis/synapse/issue_2169_structural_patterns_cancellation_test.rs` | 473 | clean — `#[cfg(test)]` only (declared behind `#[cfg(test)] #[path = …]` in `structural_patterns.rs`), so no untrusted-input reachability; fixtures are built from loop indices and compile-time counts, and each timing assertion compares two readings of the same work rather than a wall-clock constant |
+| `src/analysis/synapse/issue_2169_structural_patterns_cancellation_test.rs` | 484 | clean — `#[cfg(test)]` only (declared behind `#[cfg(test)] #[path = …]` in `structural_patterns.rs`), so no untrusted-input reachability; fixtures are built from loop indices and compile-time counts, and each timing assertion compares two readings of the same work rather than a wall-clock constant |
 | `src/analysis/synapse/adaptive_proposal.rs` | 511 | clean — the only `with_capacity` is sized by the compile-time `ADAPTIVE_PROPOSAL_CANDIDATE_COUNT`; the Box-Muller `ln` is floored away from zero, and `record_batch`'s counters are incremented once per real candidate batch |
 | `src/analysis/synapse/add_synapse_gating.rs` | 458 | finding filed — #2170: the FFI-supplied `ModuleOutcomeTracker` reaches `should_skip_add_synapse_by_outcome` unvalidated, so a deserialised `successes > attempts` underflows `ModuleStats::success_rate` and flips the gate; the density gate's divisor is guarded against zero |
 

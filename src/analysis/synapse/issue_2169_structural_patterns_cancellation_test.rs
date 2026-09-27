@@ -8,6 +8,10 @@
 //! request could not interrupt them once started. These tests pin the
 //! deadline exits, the incoming-input ceiling, the linear cost of both scans,
 //! and that the detectors' output is unchanged below the ceiling.
+//!
+//! Every test is `#[serial]`: the scans honour the process-global cancellation
+//! flag, which the `#[serial]` tests in `cancellation.rs` set and reset, so a
+//! concurrent run would cut a scan short and fail the full-output assertions.
 
 #![allow(clippy::cast_precision_loss)] // Synthetic fixtures map small u32 indices onto f32 activations.
 
@@ -22,6 +26,7 @@ use crate::types::DiscoverRecord;
 use crate::{
     AnalyzeSynapsesInput, CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson,
 };
+use serial_test::serial;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
@@ -140,6 +145,7 @@ fn expired_deadline() -> Option<SystemTime> {
 }
 
 #[test]
+#[serial]
 fn noisy_vs_trusted_output_is_unchanged_without_deadline() {
     let fixture = build_noisy_fixture();
     let candidate = run_noisy(
@@ -162,6 +168,7 @@ fn noisy_vs_trusted_output_is_unchanged_without_deadline() {
 }
 
 #[test]
+#[serial]
 fn expired_deadline_stops_noisy_vs_trusted_scan() {
     let fixture = build_noisy_fixture();
 
@@ -242,6 +249,7 @@ fn min_noisy_time(
 }
 
 #[test]
+#[serial]
 fn noisy_vs_trusted_cost_does_not_grow_quadratically() {
     let small = MAX_INCOMING_INPUTS_FOR_NOISY_SCAN + 1;
     let large = small * 2;
@@ -369,6 +377,7 @@ fn collapsed_neurons(candidates: &[CoordinatedStructuralCandidateJson]) -> Vec<S
 }
 
 #[test]
+#[serial]
 fn collapse_output_is_unchanged_without_deadline() {
     let (input, cache) = build_collapse_fixture(3, 16, 16);
     let outcome = detect_collapsible_hidden_neurons(&input, &cache, &None);
@@ -405,6 +414,7 @@ fn collapse_output_is_unchanged_without_deadline() {
 }
 
 #[test]
+#[serial]
 fn expired_deadline_stops_collapse_scan() {
     let (input, cache) = build_collapse_fixture(3, 16, 16);
 
@@ -448,6 +458,7 @@ fn min_collapse_time(
 }
 
 #[test]
+#[serial]
 fn collapse_cost_does_not_grow_with_hidden_times_records() {
     // Hidden neurons share one `a` and one `b`. Doubling both the hidden count
     // and the shared record count quadruples the work when the shared maps are
