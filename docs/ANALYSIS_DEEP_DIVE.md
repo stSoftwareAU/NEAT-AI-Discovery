@@ -163,6 +163,8 @@ If two inputs feed the same target with the same starting weight, but one input 
 
 This preserves (or improves) behaviour while reducing variance and redundancy, and avoids the "single edit looks bad" trap during ablation.
 
+**Bounds (Issue #2169)**: The pair scan is O(n²) in the target's incoming inputs, so a target with more than `MAX_INCOMING_INPUTS_FOR_NOISY_SCAN` (1,024) inputs skips it and yields no candidate, and the scan checks the analysis deadline (and host cancellation) before each pair's record join, keeping the best pair found so far. The 1-in/1-out collapse scan likewise checks the deadline before each neuron and returns the candidates found so far, and memoises the shared source activation maps and target error maps by UUID, driving each neuron's samples from its own records, so its cost stays linear in the records. Each early stop logs a warning naming the reason.
+
 ### ✂️ Redundant Path Pruning with Renormalisation (Issue #164)
 
 When two existing subnetworks (paths) feeding the same output compute effectively the same

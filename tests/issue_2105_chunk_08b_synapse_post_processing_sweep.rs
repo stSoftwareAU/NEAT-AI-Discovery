@@ -6,7 +6,7 @@
 //! `synapse pipeline` section. This file gates the section Issue #2105 owns,
 //! against the source it claims to have swept:
 //!
-//! * the 4 rows this sub-issue owns are present and none still reads
+//! * the 5 rows this sub-issue owns are present and none still reads
 //!   `pending`, each with a reason a later reader can check;
 //! * every capacity site (`with_capacity` / `vec![_; n]` / `reserve`) and
 //!   every comparator site (`total_cmp` / `partial_cmp` / `sort_by` /
@@ -21,10 +21,12 @@ use std::path::PathBuf;
 /// The chunk 8b prose record.
 const RECORD: &str = "docs/audits/security-sweep-chunk-08b-synapse-scoring-recommendation.md";
 
-/// The 4 files Issue #2105 swept, in record order.
-const POST_PROCESSING_FILES: [&str; 4] = [
+/// The 4 files Issue #2105 swept, plus the `#[cfg(test)]` regression file
+/// Issue #2221 added beside `structural_patterns.rs`, in record order.
+const POST_PROCESSING_FILES: [&str; 5] = [
     "src/analysis/synapse/post_processing.rs",
     "src/analysis/synapse/structural_patterns.rs",
+    "src/analysis/synapse/issue_2169_structural_patterns_cancellation_test.rs",
     "src/analysis/synapse/adaptive_proposal.rs",
     "src/analysis/synapse/add_synapse_gating.rs",
 ];

@@ -217,6 +217,7 @@ pub(crate) fn analyze_synapses_with_cache_impl(
         cache,
         order_map: &ctx.order_map,
         mcmc_summary,
+        deadline,
     })?;
     // Issue #1796: turn the within-batch short-circuit skips into a rejection
     // reason so the starvation classifier (which reads only the breakdown) can

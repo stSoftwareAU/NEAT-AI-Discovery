@@ -9,6 +9,7 @@ use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::SystemTime;
 
 use crate::analysis::diagnostics::TargetDiagnostics;
 use crate::analysis::shared::AnalyzeSynapsesResult;
@@ -31,6 +32,8 @@ pub(super) struct FinaliseParams<'a> {
     pub order_map: &'a HashMap<String, usize>,
     /// Issue #1021: MCMC diagnostics summary for inclusion in metadata.
     pub mcmc_summary: crate::analysis::diagnostics::mcmc_diagnostics::McmcDiagnosticsSummary,
+    /// Issue #2169: analysis deadline honoured by the collapsible-hidden-neuron scan.
+    pub deadline: Option<SystemTime>,
 }
 
 /// Collect results from merged state, apply post-processing, and build the final output.
@@ -52,8 +55,11 @@ pub(super) fn finalise_synapse_results(
     // Collapse 1-in/1-out hidden neurons into direct synapses (Issue #425).
     // Issue #1270: also surfaces the count of chains rejected by the bypass-
     // weight floor so the metadata's rejection_breakdown reports the drop.
-    let collapse_outcome =
-        structural_patterns::detect_collapsible_hidden_neurons(params.input, params.cache.as_ref());
+    let collapse_outcome = structural_patterns::detect_collapsible_hidden_neurons(
+        params.input,
+        params.cache.as_ref(),
+        &params.deadline,
+    );
     coordinated_structural_results.extend(collapse_outcome.candidates);
     let collapse_bypass_below_floor_drops = collapse_outcome.bypass_weight_below_floor_drops;
 
