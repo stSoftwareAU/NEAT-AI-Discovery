@@ -100,6 +100,18 @@ pub fn verbose_enabled() -> bool {
     crate::config::verbose()
 }
 
+/// Borrow at most the first `max_chars` characters of `s` (whole `s` if shorter).
+///
+/// Char-safe replacement for `&s[..n.min(s.len())]`, which panics when byte `n`
+/// falls inside a multi-byte character (Issue #2168).
+#[must_use]
+pub fn char_prefix(s: &str, max_chars: usize) -> &str {
+    match s.char_indices().nth(max_chars) {
+        Some((idx, _)) => &s[..idx],
+        None => s,
+    }
+}
+
 /// Check if GPU timing is enabled. Result is cached for performance.
 /// Set `NEAT_AI_DISCOVERY_GPU_TIMING=1` to enable GPU timing collection.
 /// This adds ~5% overhead when enabled but provides detailed timing breakdown.

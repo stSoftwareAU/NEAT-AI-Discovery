@@ -12,9 +12,13 @@ set -euo pipefail
 #   * The window is enforced against the RESOLVED graph, not just the manifest
 #     requirement strings: after `cargo update` the lockfile is diffed against
 #     its pre-bump state and every in-quarantine change — transitive included —
-#     is pinned back with `cargo update --precise` (Issue #1865). A newly-pulled
-#     package inside the window has no earlier version to pin back to, so the
-#     run fails loud instead.
+#     is held back (Issue #1865). The lockfile is rolled back to its pre-bump
+#     state and each out-of-window change re-applied one package at a time;
+#     a change that drags in an in-quarantine package (e.g. one lockstep
+#     wasm-bindgen / js-sys release) is deferred to a later run, not pinned
+#     with `--precise`, which lockstep `=` requirements defeat (Issue #2202).
+#     The run fails loud only if the bumped manifests cannot resolve at all
+#     without an in-quarantine package.
 #   * The manifest gate covers EVERY tracked Cargo.toml (root and `fuzz/`) and
 #     EVERY dependency table Cargo recognises — `[dependencies]`,
 #     `[dev-dependencies]`, `[build-dependencies]`, their `[target.<spec>.*]`
@@ -558,6 +562,197 @@ bump_deps::describe_deny_failure() {
     return 0
 }
 
+# bump_deps::list_lock_removals BEFORE AFTER
+# Print `name<TAB>old<TAB>new` for every name@old pair in BEFORE that AFTER no
+# longer carries. `new` lists AFTER's versions of that name absent from BEFORE
+# (comma-separated), or `-` when the package was dropped. The diff is by
+# (name, version) pair, so a crate locked at several versions is not confused.
+bump_deps::list_lock_removals() {
+    { cat -- "$1"; echo '@@'; cat -- "$2"; echo '@@'; cat -- "$1"; } | awk -F '\t' '
+        $0 == "@@" { part++; next }
+        part == 0 { before[$1 "\t" $2] = 1; next }
+        part == 1 {
+            after[$1 "\t" $2] = 1
+            if (!(($1 "\t" $2) in before)) {
+                # Build the value first: awk creates added[$1] before the RHS runs.
+                joined = ($1 in added) ? added[$1] "," $2 : $2
+                added[$1] = joined
+            }
+            next
+        }
+        !(($1 "\t" $2) in after) {
+            printf "%s\t%s\t%s\n", $1, $2, (($1 in added) ? added[$1] : "-")
+        }
+    '
+}
+
+# bump_deps::describe_lock_plan PLAN
+# Render plan_lock_quarantine output as `name@version(age) …` for messages.
+bump_deps::describe_lock_plan() {
+    printf '%s\n' "$1" | awk -F '\t' 'NF >= 5 { printf "%s%s@%s(%s)", sep, $2, $4, $5; sep = " " }'
+}
+
+# bump_deps::reapply_safe_lock_changes MANIFEST PRISTINE_LOCK BEFORE NOW_EPOCH WINDOW_HOURS
+# Enforce the quarantine window on the lockfile beside MANIFEST after a
+# `cargo update` (Issue #2202). BEFORE is the `name<TAB>version` listing of
+# PRISTINE_LOCK, the lockfile as it stood before the refresh.
+#
+# Pinning one package back with `cargo update --precise` cannot work for
+# crates released in lockstep with exact `=` requirements (wasm-bindgen,
+# js-sys, web-sys, wasm-bindgen-futures): the pin conflicts with a partner
+# that still requires the new version, so the gate failed on every run. This
+# restores PRISTINE_LOCK and re-applies each out-of-window change one package
+# at a time with `cargo update -p name@old`, rolling a step back whenever it
+# fails or drags an in-quarantine package in. Packages a lone step cannot move
+# (exact-pinned lockstep partners) are then re-applied together in one step.
+# Prints one line per package:
+#
+#   pinned<TAB>name<TAB>old<TAB>new<TAB>age      in-window version held back
+#   skipped<TAB>name<TAB>-<TAB>new<TAB>age       in-window new package left out
+#   kept<TAB>name<TAB>old<TAB>new                safe change re-applied
+#   rejected<TAB>name<TAB>old<TAB>new<TAB>why    safe change that cannot land
+#
+# Prints nothing and leaves the lockfile untouched when nothing is in the
+# window. Returns non-zero when the bumped manifests cannot resolve at all
+# without an in-quarantine package — that bump is never accepted silently.
+bump_deps::reapply_safe_lock_changes() {
+    local work status=0
+    work="$(mktemp -d)" || return 1
+    bump_deps::reapply_safe_lock_changes_in "$work" "$@" || status=$?
+    rm -rf -- "$work"
+    return "$status"
+}
+
+# Worker for reapply_safe_lock_changes; WORK is its scratch directory. Every
+# step checks its own status — errexit does not apply under `||` or `$(…)`.
+bump_deps::reapply_safe_lock_changes_in() {
+    local work="$1"
+    local manifest="$2"
+    local pristine="$3"
+    local before="$4"
+    local now_epoch="$5"
+    local window="$6"
+    local lockfile plan verdict name old new age reason
+
+    lockfile="$(dirname -- "$manifest")/Cargo.lock"
+    bump_deps::extract_lock_versions "$lockfile" > "$work/after" || return 1
+    plan="$(bump_deps::plan_lock_quarantine "$before" "$work/after" "$now_epoch" "$window")" || return 1
+    if [[ -z "$plan" ]]; then
+        return 0
+    fi
+
+    while IFS=$'\t' read -r verdict name old new age; do
+        case "$verdict" in
+            revert) printf 'pinned\t%s\t%s\t%s\t%s\n' "$name" "$old" "$new" "$age" ;;
+            block) printf 'skipped\t%s\t-\t%s\t%s\n' "$name" "$new" "$age" ;;
+            *)
+                echo "ERROR: unexpected lockfile quarantine verdict '$verdict' for '$name'" >&2
+                return 1
+                ;;
+        esac
+    done <<< "$plan"
+    printf '%s\n' "$plan" | cut -f2 | sort -u > "$work/quarantined" || return 1
+    bump_deps::list_lock_removals "$before" "$work/after" > "$work/removals" || return 1
+
+    # Roll back to the pre-refresh lockfile, then resolve only what the bumped
+    # manifests strictly require.
+    if [[ -s "$pristine" ]]; then
+        cp -- "$pristine" "$lockfile" || return 1
+    else
+        rm -f -- "$lockfile" || return 1
+    fi
+    if ! cargo update --workspace --manifest-path "$manifest" > "$work/cargo.log" 2>&1; then
+        echo "ERROR: cargo update --workspace failed on the restored lockfile:" >&2
+        tail -20 "$work/cargo.log" >&2
+        return 1
+    fi
+    bump_deps::extract_lock_versions "$lockfile" > "$work/current" || return 1
+    plan="$(bump_deps::plan_lock_quarantine "$before" "$work/current" "$now_epoch" "$window")" || return 1
+    if [[ -n "$plan" ]]; then
+        echo "ERROR: the bumped manifests cannot resolve without an in-quarantine package: $(bump_deps::describe_lock_plan "$plan")" >&2
+        return 1
+    fi
+
+    while IFS=$'\t' read -r name old new; do
+        [[ -z "$name" || "$new" == "-" ]] && continue
+        grep -qxF -- "$name" "$work/quarantined" && continue
+        # Already moved by a lockstep partner re-applied earlier.
+        grep -qxF -- "$name"$'\t'"$old" "$work/current" || continue
+
+        cp -- "$lockfile" "$work/step.lock" || return 1
+        if ! cargo update --manifest-path "$manifest" -p "$name@$old" > "$work/cargo.log" 2>&1; then
+            cp -- "$work/step.lock" "$lockfile" || return 1
+            reason="$(grep -m1 '^error' "$work/cargo.log" | sed -E 's/^error(\[[^]]*\])?:[[:space:]]*//' || true)"
+            printf 'rejected\t%s\t%s\t%s\tcargo update failed: %s\n' "$name" "$old" "$new" "${reason:-no error message}"
+            continue
+        fi
+        bump_deps::extract_lock_versions "$lockfile" > "$work/next" || return 1
+        # Age-check only this step's delta: every earlier step is already clean.
+        plan="$(bump_deps::plan_lock_quarantine "$work/current" "$work/next" "$now_epoch" "$window")" || return 1
+        if [[ -n "$plan" ]]; then
+            cp -- "$work/step.lock" "$lockfile" || return 1
+            printf 'rejected\t%s\t%s\t%s\tdrags in-quarantine %s\n' "$name" "$old" "$new" "$(bump_deps::describe_lock_plan "$plan")"
+            continue
+        fi
+        mv -- "$work/next" "$work/current" || return 1
+        # A lockstep crate whose exact-pinned partners stay locked does not
+        # move on its own: cargo exits 0 without changing it.
+        if grep -qxF -- "$name"$'\t'"$old" "$work/current"; then
+            printf '%s\t%s\t%s\n' "$name" "$old" "$new" >> "$work/stuck"
+            continue
+        fi
+        printf 'kept\t%s\t%s\t%s\n' "$name" "$old" "$new"
+    done < "$work/removals"
+
+    [[ -s "$work/stuck" ]] || return 0
+    bump_deps::reapply_stuck_lock_changes "$work" "$manifest" "$lockfile" "$now_epoch" "$window"
+}
+
+# Re-apply every package the one-at-a-time pass could not move ($WORK/stuck)
+# in a single `cargo update -p a@x -p b@y …`, so lockstep partners move
+# together. A package still at its old version afterwards is held by a locked
+# partner (typically an in-quarantine one) and is reported rejected.
+# SIMPLE-ON-PURPOSE: one all-or-nothing step for every stuck family — upgrade when a clean family is regularly deferred because an unrelated stuck family drags an in-quarantine package in.
+bump_deps::reapply_stuck_lock_changes() {
+    local work="$1"
+    local manifest="$2"
+    local lockfile="$3"
+    local now_epoch="$4"
+    local window="$5"
+    local name old new plan reason why=""
+    local -a specs=()
+
+    while IFS=$'\t' read -r name old new; do
+        specs+=(-p "$name@$old")
+    done < "$work/stuck"
+
+    cp -- "$lockfile" "$work/step.lock" || return 1
+    if ! cargo update --manifest-path "$manifest" "${specs[@]}" > "$work/cargo.log" 2>&1; then
+        cp -- "$work/step.lock" "$lockfile" || return 1
+        reason="$(grep -m1 '^error' "$work/cargo.log" | sed -E 's/^error(\[[^]]*\])?:[[:space:]]*//' || true)"
+        why="lockstep cargo update failed: ${reason:-no error message}"
+    else
+        bump_deps::extract_lock_versions "$lockfile" > "$work/next" || return 1
+        plan="$(bump_deps::plan_lock_quarantine "$work/current" "$work/next" "$now_epoch" "$window")" || return 1
+        if [[ -n "$plan" ]]; then
+            cp -- "$work/step.lock" "$lockfile" || return 1
+            why="lockstep update drags in-quarantine $(bump_deps::describe_lock_plan "$plan")"
+        else
+            mv -- "$work/next" "$work/current" || return 1
+        fi
+    fi
+
+    while IFS=$'\t' read -r name old new; do
+        if [[ -n "$why" ]]; then
+            printf 'rejected\t%s\t%s\t%s\t%s\n' "$name" "$old" "$new" "$why"
+        elif grep -qxF -- "$name"$'\t'"$old" "$work/current"; then
+            printf 'rejected\t%s\t%s\t%s\theld by a locked lockstep partner\n' "$name" "$old" "$new"
+        else
+            printf 'kept\t%s\t%s\t%s\n' "$name" "$old" "$new"
+        fi
+    done < "$work/stuck"
+}
+
 # When sourced by the test suite we stop before parsing arguments / running.
 if [[ "${BUMP_DEPS_SOURCE_ONLY:-0}" == "1" ]]; then
     # shellcheck disable=SC2317  # `exit 0` is the fallback when not sourced.
@@ -608,8 +803,10 @@ Environment:
 
 Exit codes:
   0  clean (or no-op)
-  8  bump rejected — a package inside the quarantine window could not be
-     pinned back (new transitive package, or --precise failed).
+  8  bump rejected — the lockfile could not be held outside the quarantine
+     window (the bumped manifests need an in-quarantine package, or the
+     rollback failed). In-window lockfile changes are otherwise held back
+     and the run continues (Issue #2202).
   9  cargo-deny is not installed — the audit gate cannot run and is never
      skipped (install: cargo install --locked cargo-deny).
   *  bump rejected — audit failure, lockfile drift, or bad input.
@@ -712,6 +909,7 @@ echo ""
 # removes them all, on the success and the failure path alike.
 LOCK_BEFORE="$(mktemp)"
 LOCK_AFTER="$(mktemp)"
+LOCK_PRISTINE="$(mktemp)"
 UPGRADE_LOG="$(mktemp)"
 CHECK_LOG="$(mktemp)"
 DENY_LOG="$(mktemp)"
@@ -721,7 +919,7 @@ SNAPSHOT_DIR="$(mktemp -d)"
 # trap. SC2317 is the pre-0.10 spelling of the same "unreachable" note.
 bump_deps::cleanup_temp_files() {
     rm -rf -- \
-        "$LOCK_BEFORE" "$LOCK_AFTER" "$UPGRADE_LOG" "$CHECK_LOG" "$DENY_LOG" \
+        "$LOCK_BEFORE" "$LOCK_AFTER" "$LOCK_PRISTINE" "$UPGRADE_LOG" "$CHECK_LOG" "$DENY_LOG" \
         "$SNAPSHOT_DIR"
 }
 trap bump_deps::cleanup_temp_files EXIT INT TERM
@@ -731,6 +929,10 @@ trap bump_deps::cleanup_temp_files EXIT INT TERM
 # never sees (Issue #1865).
 CARGO_LOCK="$PROJECT_ROOT/Cargo.lock"
 bump_deps::extract_lock_versions "$CARGO_LOCK" > "$LOCK_BEFORE"
+# Keep the pre-bump lockfile itself: phase 3a rolls back to it (Issue #2202).
+if [[ -f "$CARGO_LOCK" ]]; then
+    cp -- "$CARGO_LOCK" "$LOCK_PRISTINE"
+fi
 
 # Phase 1: internal deps.
 INTERNAL_DEPS="$(bump_deps::list_internal_deps "$CARGO_MANIFEST")"
@@ -881,53 +1083,57 @@ elif [[ "$DRY_RUN" -eq 0 && -f "$CARGO_MANIFEST" ]]; then
     # `cargo update` re-resolves transitive dependencies that the manifest
     # gate in phase 2 never inspects — the exact surface recent registry
     # compromises pivoted through. Diff the lockfile against the pre-bump
-    # snapshot and pin every in-quarantine change back with --precise.
+    # snapshot and hold every in-quarantine change back. A per-package
+    # `--precise` pin cannot undo lockstep releases pinned to each other with
+    # `=` requirements (Issue #2202), so roll back to the pre-bump lockfile
+    # and re-apply only the out-of-window changes that resolve cleanly.
     echo "🛡️  Lockfile quarantine gate (window=${QUARANTINE_HOURS}h)…"
-    bump_deps::extract_lock_versions "$CARGO_LOCK" > "$LOCK_AFTER"
     LOCK_NOW_EPOCH="$(bump_deps::current_epoch)"
-    LOCK_PLAN="$(bump_deps::plan_lock_quarantine "$LOCK_BEFORE" "$LOCK_AFTER" "$LOCK_NOW_EPOCH" "$QUARANTINE_HOURS")"
-    LOCK_BLOCKED=""
-    if [[ -n "$LOCK_PLAN" ]]; then
-        while IFS=$'\t' read -r VERDICT PKG_NAME PKG_OLD PKG_NEW PKG_AGE; do
+    if ! LOCK_REAPPLY="$(bump_deps::reapply_safe_lock_changes "$CARGO_MANIFEST" "$LOCK_PRISTINE" "$LOCK_BEFORE" "$LOCK_NOW_EPOCH" "$QUARANTINE_HOURS")"; then
+        echo "ERROR: could not hold the lockfile outside the ${QUARANTINE_HOURS}h quarantine window — refusing to accept an in-quarantine dependency" >&2
+        echo "       Re-run ./bump-deps.sh once the window has elapsed." >&2
+        exit 8
+    fi
+    LOCK_REJECTED=0
+    if [[ -n "$LOCK_REAPPLY" ]]; then
+        while IFS=$'\t' read -r VERDICT PKG_NAME PKG_OLD PKG_NEW PKG_DETAIL; do
             [[ -z "$VERDICT" ]] && continue
             case "$VERDICT" in
-                revert)
-                    echo "   🚧 $PKG_NAME $PKG_OLD → $PKG_NEW (publish age $PKG_AGE < ${QUARANTINE_HOURS}h) — pinning back"
-                    if ! cargo update -p "${PKG_NAME}@${PKG_NEW}" --precise "$PKG_OLD" >/dev/null 2>&1; then
-                        echo "ERROR: could not pin $PKG_NAME back to $PKG_OLD — refusing to accept an in-quarantine dependency" >&2
-                        exit 8
-                    fi
+                pinned)
+                    echo "   🚧 $PKG_NAME $PKG_OLD → $PKG_NEW (publish age $PKG_DETAIL < ${QUARANTINE_HOURS}h) — held back"
                     LOCK_REVERTED=$(( LOCK_REVERTED + 1 ))
-                    QUARANTINED_DEPS="${QUARANTINED_DEPS} ${PKG_NAME}@${PKG_NEW}(${PKG_AGE},lock)"
+                    QUARANTINED_DEPS="${QUARANTINED_DEPS} ${PKG_NAME}@${PKG_NEW}(${PKG_DETAIL},lock)"
                     ;;
-                block)
-                    echo "   ⛔ $PKG_NAME@$PKG_NEW is a NEW package published $PKG_AGE ago — inside the quarantine window"
-                    LOCK_BLOCKED="${LOCK_BLOCKED} ${PKG_NAME}@${PKG_NEW}(${PKG_AGE})"
+                skipped)
+                    echo "   ⛔ $PKG_NAME@$PKG_NEW is a NEW package published $PKG_DETAIL ago — left out"
+                    LOCK_REVERTED=$(( LOCK_REVERTED + 1 ))
+                    QUARANTINED_DEPS="${QUARANTINED_DEPS} ${PKG_NAME}@${PKG_NEW}(${PKG_DETAIL},lock)"
+                    ;;
+                kept)
+                    echo "   ✅ $PKG_NAME $PKG_OLD → $PKG_NEW re-applied"
+                    ;;
+                rejected)
+                    echo "   ↩️  $PKG_NAME $PKG_OLD → $PKG_NEW deferred — $PKG_DETAIL"
+                    LOCK_REJECTED=$(( LOCK_REJECTED + 1 ))
                     ;;
                 *)
                     echo "ERROR: unrecognised quarantine verdict '$VERDICT' for $PKG_NAME" >&2
                     exit 8
                     ;;
             esac
-        done <<< "$LOCK_PLAN"
-    fi
-    if [[ -n "$LOCK_BLOCKED" ]]; then
-        echo "ERROR: new dependencies published inside the ${QUARANTINE_HOURS}h quarantine window:${LOCK_BLOCKED}" >&2
-        echo "       They are newly pulled, so there is no earlier version to pin back to." >&2
-        echo "       Re-run ./bump-deps.sh once the window has elapsed." >&2
-        exit 8
+        done <<< "$LOCK_REAPPLY"
     fi
 
-    # Confirm success positively: re-diff after pinning and fail loud if any
+    # Confirm success positively: re-diff after the rollback and fail loud if any
     # in-quarantine package survived (absence of an error is not a pass).
     bump_deps::extract_lock_versions "$CARGO_LOCK" > "$LOCK_AFTER"
     LOCK_RECHECK="$(bump_deps::plan_lock_quarantine "$LOCK_BEFORE" "$LOCK_AFTER" "$LOCK_NOW_EPOCH" "$QUARANTINE_HOURS")"
     if [[ -n "$LOCK_RECHECK" ]]; then
-        echo "ERROR: lockfile still contains in-quarantine packages after pinning:" >&2
+        echo "ERROR: lockfile still contains in-quarantine packages after the rollback:" >&2
         echo "$LOCK_RECHECK" >&2
         exit 8
     fi
-    echo "   lockfile quarantine gate OK (pinned back=$LOCK_REVERTED)"
+    echo "   lockfile quarantine gate OK (held back=$LOCK_REVERTED, deferred=$LOCK_REJECTED)"
     echo ""
 
     # Phase 3b: lockfile integrity — registry hashes must match.

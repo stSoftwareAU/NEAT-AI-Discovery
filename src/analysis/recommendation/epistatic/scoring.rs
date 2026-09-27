@@ -1,112 +1,17 @@
-//! Epistatic candidate scoring and interference detection (Issue #415).
+//! Epistatic candidate interference filtering (Issue #415).
 //!
 //! This module handles:
-//! - Detecting interfering candidate pairs (conflicting weights, saturation, redundancy)
-//! - Filtering epistatic and synergistic candidates that would fail when combined
+//! - Filtering epistatic and synergistic candidates whose sources are redundant
 //! - Computing activation correlations between sample sets
 
 #![allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use crate::analysis::samples::HelpfulSample;
 
-use super::{
-    EpistaticPairCandidate, InterferencePairResult, InterferenceType, SourceContribution,
-    SynergisticCandidate,
-};
+use super::{EpistaticPairCandidate, SourceContribution, SynergisticCandidate};
 
 /// Minimum correlation threshold to consider two sources as redundant.
 /// Correlation >= 0.9 indicates the sources compute essentially the same thing.
 const REDUNDANCY_CORRELATION_THRESHOLD: f64 = 0.9;
-
-/// Threshold for detecting saturation risk.
-/// If combined contribution exceeds this, there's risk of activation saturation.
-const SATURATION_RISK_THRESHOLD: f32 = 1.5;
-
-/// Detect interfering candidate pairs that would fail if combined (Issue #415).
-///
-/// This function analyses pairs of source candidates to detect interference patterns
-/// that would cause combo-successful discovery to fail. Three types of interference
-/// are detected:
-///
-/// 1. **Conflicting weights**: Two candidates target the same synapse with opposite
-///    sign weights, cancelling each other out.
-///
-/// 2. **Saturation risk**: Combined contributions would push the target neuron into
-///    activation saturation, making the combined effect sub-additive.
-///
-/// 3. **Redundant contribution**: Two candidates have highly correlated activation
-///    patterns, making their combination redundant (no better than one alone).
-///
-/// # Arguments
-/// * `target_uuid` - The target neuron UUID.
-/// * `candidates` - List of (`source_uuid`, samples, `suggested_weight`) tuples.
-///
-/// # Returns
-/// A list of interference results for pairs that would fail when combined.
-pub fn detect_interfering_pairs(
-    target_uuid: &str,
-    candidates: &[(&str, &[HelpfulSample], f32)],
-) -> Vec<InterferencePairResult> {
-    if candidates.len() < 2 {
-        return Vec::new();
-    }
-
-    let mut results = Vec::new();
-
-    // Check all pairs of candidates for interference
-    for i in 0..candidates.len() {
-        for j in (i + 1)..candidates.len() {
-            let (source_a, samples_a, weight_a) = candidates[i];
-            let (source_b, samples_b, weight_b) = candidates[j];
-
-            // Check for conflicting weights (same source targeting same synapse)
-            if source_a == source_b && (weight_a * weight_b) < 0.0 {
-                results.push(InterferencePairResult {
-                    source_a_uuid: source_a.to_string(),
-                    source_b_uuid: source_b.to_string(),
-                    interference_type: InterferenceType::ConflictingWeights,
-                    severity: 1.0,
-                    reason: format!(
-                        "Conflicting weights: {source_a} with weights {weight_a:.3} and {weight_b:.3} (opposite signs)"
-                    ),
-                });
-                continue;
-            }
-
-            // Compute activation correlation between the two sources
-            let correlation = compute_sample_correlation(samples_a, samples_b);
-
-            // Check for redundancy (high correlation)
-            if correlation >= REDUNDANCY_CORRELATION_THRESHOLD {
-                let correlation_percent = correlation * 100.0;
-                results.push(InterferencePairResult {
-                    source_a_uuid: source_a.to_string(),
-                    source_b_uuid: source_b.to_string(),
-                    interference_type: InterferenceType::RedundantContribution,
-                    severity: correlation as f32,
-                    reason: format!(
-                        "Redundant: {source_a} and {source_b} have {correlation_percent:.0}% activation correlation"
-                    ),
-                });
-                continue;
-            }
-
-            // Check for saturation risk
-            if let Some(saturation_result) = check_saturation_risk(
-                target_uuid,
-                source_a,
-                source_b,
-                samples_a,
-                samples_b,
-                weight_a,
-                weight_b,
-            ) {
-                results.push(saturation_result);
-            }
-        }
-    }
-
-    results
-}
 
 /// Compute Pearson correlation between two sets of activation samples.
 pub(crate) fn compute_sample_correlation(
@@ -115,68 +20,6 @@ pub(crate) fn compute_sample_correlation(
 ) -> f64 {
     let n = samples_a.len().min(samples_b.len());
     crate::analysis::detection::stats::pearson_correlation_samples(samples_a, samples_b, n)
-}
-
-/// Check if combining two candidates would cause saturation risk.
-fn check_saturation_risk(
-    _target_uuid: &str,
-    source_a: &str,
-    source_b: &str,
-    samples_a: &[HelpfulSample],
-    samples_b: &[HelpfulSample],
-    weight_a: f32,
-    weight_b: f32,
-) -> Option<InterferencePairResult> {
-    let n = samples_a.len().min(samples_b.len());
-    if n < 10 {
-        return None;
-    }
-
-    // Check if combined contributions exceed saturation threshold
-    let mut saturation_count = 0;
-    let mut total_combined = 0.0f32;
-
-    for i in 0..n {
-        let contribution_a = samples_a[i].activation * weight_a;
-        let contribution_b = samples_b[i].activation * weight_b;
-        let combined = (contribution_a + contribution_b).abs();
-
-        total_combined += combined;
-
-        // Check if this sample would saturate
-        if let (Some(target_val), Some(target_act)) =
-            (samples_a[i].target_value, samples_a[i].target_activation)
-        {
-            // If target is already near saturation and we're pushing further, that's a risk
-            if target_act.abs() > 0.7 && combined > 0.3 {
-                let would_saturate = (target_val + contribution_a + contribution_b).abs()
-                    > SATURATION_RISK_THRESHOLD;
-                if would_saturate {
-                    saturation_count += 1;
-                }
-            }
-        }
-    }
-
-    let avg_combined = total_combined / n as f32;
-    let saturation_fraction = saturation_count as f32 / n as f32;
-
-    // High combined contribution or significant saturation fraction indicates risk
-    if avg_combined > SATURATION_RISK_THRESHOLD || saturation_fraction > 0.3 {
-        let saturation_percent = saturation_fraction * 100.0;
-        Some(InterferencePairResult {
-            source_a_uuid: source_a.to_string(),
-            source_b_uuid: source_b.to_string(),
-            interference_type: InterferenceType::SaturationRisk,
-            severity: (avg_combined / SATURATION_RISK_THRESHOLD).min(1.0),
-            reason: format!(
-                "Saturation risk: {source_a} and {source_b} combined contribution {avg_combined:.2} exceeds threshold, \
-                 {saturation_percent:.0}% of samples would saturate"
-            ),
-        })
-    } else {
-        None
-    }
 }
 
 /// Filter epistatic pairs to remove those that would interfere (Issue #415).
@@ -252,65 +95,6 @@ mod tests {
     use super::*;
     use crate::analysis::samples::HelpfulStats;
     use std::collections::HashSet;
-
-    #[test]
-    fn test_detect_interfering_pairs_redundant() {
-        // Create samples with identical activations (100% correlation = redundant)
-        let samples: Vec<HelpfulSample> = (0..64)
-            .map(|i| HelpfulSample {
-                activation: (i as f32 / 64.0) * 2.0 - 1.0,
-                avg_error: 0.3,
-                target_value: None,
-                target_activation: None,
-            })
-            .collect();
-
-        let interference = detect_interfering_pairs(
-            "output-0",
-            &[
-                ("input-0", &samples, 0.5),
-                ("input-1", &samples, 0.5), // Same samples = redundant
-            ],
-        );
-
-        assert!(!interference.is_empty(), "Should detect redundancy");
-        assert_eq!(
-            interference[0].interference_type,
-            InterferenceType::RedundantContribution
-        );
-    }
-
-    #[test]
-    fn test_detect_interfering_pairs_no_interference_complementary() {
-        // Create complementary activation patterns (low correlation)
-        let samples_a: Vec<HelpfulSample> = (0..64)
-            .map(|i| HelpfulSample {
-                activation: if i < 32 { 1.0 } else { 0.0 },
-                avg_error: 0.3,
-                target_value: None,
-                target_activation: None,
-            })
-            .collect();
-
-        let samples_b: Vec<HelpfulSample> = (0..64)
-            .map(|i| HelpfulSample {
-                activation: if i < 32 { 0.0 } else { 1.0 },
-                avg_error: 0.3,
-                target_value: None,
-                target_activation: None,
-            })
-            .collect();
-
-        let interference = detect_interfering_pairs(
-            "output-0",
-            &[("input-0", &samples_a, 0.5), ("input-1", &samples_b, 0.5)],
-        );
-
-        assert!(
-            interference.is_empty(),
-            "Complementary patterns should not interfere: {interference:?}"
-        );
-    }
 
     #[test]
     fn test_compute_sample_correlation_identical() {

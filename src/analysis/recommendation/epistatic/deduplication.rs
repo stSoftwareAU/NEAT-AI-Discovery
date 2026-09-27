@@ -3,6 +3,7 @@
 //! When many epistatic or synergistic pairs share the same dominant source neuron,
 //! this module caps pairs per group to free candidate budget for alternative sources.
 
+use std::cmp::Ordering;
 use std::collections::HashMap;
 
 use super::{EpistaticPairCandidate, SynergisticCandidate};
@@ -18,6 +19,26 @@ use super::{EpistaticPairCandidate, SynergisticCandidate};
 /// 10 pairs sharing the same dominant neuron, all failing identically. Capping
 /// to 3 frees 7 candidate slots with no loss of coverage.
 const MAX_PAIRS_PER_DOMINANT_NEURON: usize = 3;
+
+/// Total order for epistatic pairs: combined improvement descending, ties
+/// broken by UUIDs so output never depends on `HashMap` seed (Issue #2191).
+fn cmp_epistatic(a: &EpistaticPairCandidate, b: &EpistaticPairCandidate) -> Ordering {
+    b.combined_improvement
+        .total_cmp(&a.combined_improvement)
+        .then_with(|| a.source_a_uuid.cmp(&b.source_a_uuid))
+        .then_with(|| a.source_b_uuid.cmp(&b.source_b_uuid))
+        .then_with(|| a.target_uuid.cmp(&b.target_uuid))
+}
+
+/// Total order for synergistic candidates: combined improvement descending,
+/// ties broken by UUIDs so output never depends on `HashMap` seed (Issue #2191).
+fn cmp_synergistic(a: &SynergisticCandidate, b: &SynergisticCandidate) -> Ordering {
+    b.combined_improvement
+        .total_cmp(&a.combined_improvement)
+        .then_with(|| a.primary_source_uuid.cmp(&b.primary_source_uuid))
+        .then_with(|| a.complement_source_uuid.cmp(&b.complement_source_uuid))
+        .then_with(|| a.target_uuid.cmp(&b.target_uuid))
+}
 
 /// Deduplicate epistatic pairs that share a common dominant neuron (Issue #509).
 ///
@@ -51,14 +72,14 @@ pub fn deduplicate_by_dominant_neuron(
 
     let mut result = Vec::new();
     for (_dominant, mut group) in groups {
-        // Sort by combined improvement descending — keep the best
-        group.sort_by(|a, b| b.combined_improvement.total_cmp(&a.combined_improvement));
+        // Best combined improvement first, UUID tie-break — keep the best
+        group.sort_by(cmp_epistatic);
         group.truncate(MAX_PAIRS_PER_DOMINANT_NEURON);
         result.extend(group);
     }
 
-    // Maintain overall ordering by combined improvement
-    result.sort_by(|a, b| b.combined_improvement.total_cmp(&a.combined_improvement));
+    // Overall order: combined improvement, then UUIDs (never hash order)
+    result.sort_by(cmp_epistatic);
     result
 }
 
@@ -90,11 +111,11 @@ pub fn deduplicate_synergistic_by_dominant_neuron(
 
     let mut result = Vec::new();
     for (_primary, mut group) in groups {
-        group.sort_by(|a, b| b.combined_improvement.total_cmp(&a.combined_improvement));
+        group.sort_by(cmp_synergistic);
         group.truncate(MAX_PAIRS_PER_DOMINANT_NEURON);
         result.extend(group);
     }
 
-    result.sort_by(|a, b| b.combined_improvement.total_cmp(&a.combined_improvement));
+    result.sort_by(cmp_synergistic);
     result
 }

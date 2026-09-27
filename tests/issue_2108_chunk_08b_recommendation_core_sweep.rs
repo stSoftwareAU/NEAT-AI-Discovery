@@ -605,9 +605,9 @@ fn fan_in_candidates_still_depend_on_the_order_the_caller_lists_neurons_in() {
     }
 
     let (creature, records) = build(false);
-    let honest_first = detect_fan_in_candidates(&creature, &records);
+    let honest_first = detect_fan_in_candidates(&creature, &records, &None);
     let (creature, records) = build(true);
-    let poison_first = detect_fan_in_candidates(&creature, &records);
+    let poison_first = detect_fan_in_candidates(&creature, &records, &None);
 
     assert!(
         !honest_first.is_empty(),
@@ -651,10 +651,17 @@ fn fan_in_candidates_still_depend_on_the_order_the_caller_lists_neurons_in() {
 /// candidate is emitted and the descending sort puts it first.
 ///
 /// Every recorded value is finite, so the FFI gates of Issues #2134 / #2135 do
-/// not apply. When #2182 grows a finitude gate on `estimated_improvement` this
-/// test must fail, which is the signal the `fan_in.rs` row needs re-sweeping.
+/// not apply.
+///
+/// **Since fixed (Issue #2182, PR #2199, commit `6984029`/`2423b71`,
+/// merged into this branch):** `evaluate_fan_in_pair` now rejects a
+/// non-finite `scaled_improvement` outright before the sort ever sees it.
+/// This test keeps the same crafted trigger as a regression guard — it failed
+/// against the unfixed code and now proves the candidate is dropped rather
+/// than ranked. See `docs/audits/security-sweep-chunk-08b-synapse-scoring-recommendation.md`
+/// § "recommendation core" for the fan_in.rs row this re-sweeps.
 #[test]
-fn a_finite_record_set_still_ranks_a_fan_in_candidate_at_infinity() {
+fn a_finite_record_set_no_longer_ranks_a_fan_in_candidate_at_infinity() {
     const SAMPLES: u32 = 60;
     /// Large enough that `error²` summed over `SAMPLES` overflows the `f32`
     /// `original_sse`, small enough that every value itself is finite and
@@ -739,15 +746,15 @@ fn a_finite_record_set_still_ranks_a_fan_in_candidate_at_infinity() {
         );
     }
 
-    let candidates = detect_fan_in_candidates(&creature, &records);
-    let first = candidates
-        .first()
-        .expect("the crafted pair must still produce a fan-in candidate");
-    assert_eq!(
-        first.estimated_improvement,
-        f32::INFINITY,
-        "#2182 says rank 0 still carries `+inf` as its estimated_improvement; if it is finite \
-         now, the improvement is gated and the `fan_in.rs` row must be re-swept"
+    let candidates = detect_fan_in_candidates(&creature, &records, &None);
+    // With only this one input pair evaluated, an empty result confirms the
+    // #2182 finitude gate fired — it is not merely that some other candidate
+    // outranked the poisoned one.
+    assert!(
+        candidates.is_empty(),
+        "fan_in.rs's #2182 finitude gate must reject this crafted pair outright now that it is \
+         fixed; got {} candidate(s) instead of none",
+        candidates.len()
     );
 }
 

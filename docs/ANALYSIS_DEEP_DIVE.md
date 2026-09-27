@@ -151,6 +151,8 @@ During synapse analysis, the library proactively detects **epistatic neuron pair
 
 **Output**: Epistatic pair candidates appear as entries in `coordinatedStructuralCandidates` with two `addSynapse` operations and a comment indicating the epistatic relationship.
 
+**Bounds (Issue #2190)**: The pairwise scan is O(n²) in the sources for one target, so it checks the analysis deadline (and host cancellation) before each outer row and stops after `MAX_EPISTATIC_PAIR_CANDIDATES` (1,024) pairs. The residual-based synergistic scan checks the same deadline per source. An early stop keeps the pairs found so far and logs a `Candidate scan stopped early` warning naming the target and the reason.
+
 ### 🌡️ Example: "noisy vs trusted" inputs (thermometer pattern)
 
 If two inputs feed the same target with the same starting weight, but one input is much noisier (higher activation variance), a coordinated candidate may:
@@ -160,6 +162,8 @@ If two inputs feed the same target with the same starting weight, but one input 
 - add the trusted synapse back with a higher weight
 
 This preserves (or improves) behaviour while reducing variance and redundancy, and avoids the "single edit looks bad" trap during ablation.
+
+**Bounds (Issue #2169)**: The pair scan is O(n²) in the target's incoming inputs, so a target with more than `MAX_INCOMING_INPUTS_FOR_NOISY_SCAN` (1,024) inputs skips it and yields no candidate, and the scan checks the analysis deadline (and host cancellation) before each pair's record join, keeping the best pair found so far. The 1-in/1-out collapse scan likewise checks the deadline before each neuron and returns the candidates found so far, and memoises the shared source activation maps and target error maps by UUID, driving each neuron's samples from its own records, so its cost stays linear in the records. Each early stop logs a warning naming the reason.
 
 ### ✂️ Redundant Path Pruning with Renormalisation (Issue #164)
 

@@ -24,7 +24,10 @@ use crate::analysis::constants::MAX_INDIVIDUAL_HARM_FOR_PAIRING;
 // Issue #897: Conservative weight scale for coordinated estimation
 use crate::analysis::constants::COORDINATED_ESTIMATION_WEIGHT_SCALE;
 
-use super::{EpistaticPairCandidate, SourceContribution};
+use crate::analysis::utils::deadline_passed;
+use std::time::SystemTime;
+
+use super::{BoundedScan, EpistaticPairCandidate, ScanTruncation, SourceContribution};
 
 /// Minimum activation threshold to consider a neuron "firing" for pattern detection.
 const ACTIVATION_FIRING_THRESHOLD: f32 = 0.5;
@@ -33,11 +36,20 @@ const ACTIVATION_FIRING_THRESHOLD: f32 = 0.5;
 /// A ratio of 0.7 means 70% of samples are covered by one neuron but not the other.
 const MIN_COMPLEMENTARITY_RATIO: f32 = 0.7;
 
+/// Ceiling on the epistatic pair candidates a single scan may emit
+/// (Issue #2190). Stops a fully complementary source set growing memory
+/// quadratically before `deduplicate_by_dominant_neuron` caps the output.
+/// Above today's realistic yield (46 valid sources are needed to exceed it).
+pub const MAX_EPISTATIC_PAIR_CANDIDATES: usize = 1024;
+
 /// Detect epistatic neuron pairs targeting the same output.
 ///
 /// This function analyses pairs of source neurons that could benefit from being
 /// added together (as a coordinated structural change) even if neither would
 /// improve the score individually.
+///
+/// Honours host cancellation and [`MAX_EPISTATIC_PAIR_CANDIDATES`] but has no
+/// deadline; production code uses [`detect_epistatic_pairs_with_deadline`].
 ///
 /// # Arguments
 /// * `target_uuid` - The target neuron UUID
@@ -52,8 +64,35 @@ pub fn detect_epistatic_pairs(
     target_impact: f32,
     target_squash: Option<&str>,
 ) -> Vec<EpistaticPairCandidate> {
+    detect_epistatic_pairs_with_deadline(
+        target_uuid,
+        contributions,
+        target_impact,
+        target_squash,
+        &None,
+    )
+    .candidates
+}
+
+/// Deadline-bounded epistatic pair detection (Issue #2190).
+///
+/// The O(n²) pair scan checks `deadline_passed` (which also reports host
+/// cancellation, Issue #1047) at the top of every outer iteration and stops
+/// once [`MAX_EPISTATIC_PAIR_CANDIDATES`] candidates have been emitted. Either
+/// early return is reported through [`BoundedScan::truncation`].
+pub fn detect_epistatic_pairs_with_deadline(
+    target_uuid: &str,
+    contributions: &[SourceContribution],
+    target_impact: f32,
+    target_squash: Option<&str>,
+    deadline: &Option<SystemTime>,
+) -> BoundedScan<EpistaticPairCandidate> {
+    let mut scan = BoundedScan {
+        candidates: Vec::new(),
+        truncation: None,
+    };
     if contributions.len() < 2 {
-        return Vec::new();
+        return scan;
     }
 
     // Issue #897: Resolve target activation function for saturation-aware simulation
@@ -69,14 +108,22 @@ pub fn detect_epistatic_pairs(
         .collect();
 
     if valid_sources.len() < 2 {
-        return Vec::new();
+        return scan;
     }
 
-    let mut candidates = Vec::new();
-
     // Check pairs for complementary activation patterns
-    for i in 0..valid_sources.len() {
+    'outer: for i in 0..valid_sources.len() {
+        // Issue #2190: one check per outer row bounds the overrun to O(n) pairs.
+        if deadline_passed(deadline) {
+            scan.truncation = Some(ScanTruncation::DeadlinePassed);
+            break;
+        }
         for j in (i + 1)..valid_sources.len() {
+            // Only truncated if a pair is left unevaluated at the ceiling.
+            if scan.candidates.len() >= MAX_EPISTATIC_PAIR_CANDIDATES {
+                scan.truncation = Some(ScanTruncation::CandidateCeiling);
+                break 'outer;
+            }
             let source_a = valid_sources[i];
             let source_b = valid_sources[j];
 
@@ -87,15 +134,16 @@ pub fn detect_epistatic_pairs(
                 target_impact,
                 target_activation_fn,
             ) {
-                candidates.push(candidate);
+                scan.candidates.push(candidate);
             }
         }
     }
 
     // Sort by combined improvement (descending)
-    candidates.sort_by(|a, b| b.combined_improvement.total_cmp(&a.combined_improvement));
+    scan.candidates
+        .sort_by(|a, b| b.combined_improvement.total_cmp(&a.combined_improvement));
 
-    candidates
+    scan
 }
 
 /// Evaluate a pair of sources for epistatic relationship (Issue #731).

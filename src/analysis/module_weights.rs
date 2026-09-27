@@ -62,13 +62,24 @@ impl ModuleStats {
     /// - Converges to raw success rate with many samples
     /// - Soft failures increase the effective failure count
     /// - Never returns exactly 0.0 or 1.0
+    ///
+    /// Total for any field values (Issue #2222): a deserialised record can
+    /// break the invariants `record()` keeps, so `successes` is clamped to
+    /// `attempts` and a non-finite or negative `soft_failures` counts as 0.0.
+    /// The result is always finite and within [0, 1].
     pub fn success_rate(&self) -> f64 {
-        if self.attempts == 0 && self.soft_failures <= 0.0 {
+        let soft_failures = if self.soft_failures.is_finite() && self.soft_failures > 0.0 {
+            self.soft_failures
+        } else {
+            0.0
+        };
+        if self.attempts == 0 && soft_failures == 0.0 {
             return 0.5;
         }
-        let alpha = self.successes as f64 + 1.0;
-        let real_failures = (self.attempts - self.successes) as f64;
-        let beta = real_failures + self.soft_failures + 1.0;
+        let successes = self.successes.min(self.attempts);
+        let alpha = successes as f64 + 1.0;
+        let real_failures = (self.attempts - successes) as f64;
+        let beta = real_failures + soft_failures + 1.0;
         alpha / (alpha + beta)
     }
 }
@@ -499,5 +510,69 @@ pub fn apply_module_boost_to_candidates(
         if (boost - 1.0).abs() > f64::EPSILON {
             candidate.expected_creature_score_gain *= boost as f32;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ModuleStats;
+
+    fn stats(attempts: u32, successes: u32, soft_failures: f64) -> ModuleStats {
+        ModuleStats {
+            attempts,
+            successes,
+            candidates_produced: 0,
+            soft_failures,
+        }
+    }
+
+    fn assert_bounded(rate: f64) {
+        assert!(
+            rate.is_finite() && (0.0..=1.0).contains(&rate),
+            "got {rate}"
+        );
+    }
+
+    #[test]
+    fn success_rate_well_formed_records_are_unchanged() {
+        assert_eq!(stats(0, 0, 0.0).success_rate(), 0.5);
+        // Beta(1,1) posterior mean: (3 + 1) / (10 + 2 + 1.5).
+        assert_eq!(stats(10, 3, 1.5).success_rate(), 4.0 / 13.5);
+        assert_eq!(stats(0, 0, 2.0).success_rate(), 1.0 / 4.0);
+    }
+
+    #[test]
+    fn success_rate_clamps_successes_to_attempts() {
+        let rate = stats(10, 20, 0.0).success_rate();
+        assert_bounded(rate);
+        assert_eq!(rate, stats(10, 10, 0.0).success_rate());
+        assert_eq!(stats(0, u32::MAX, 0.0).success_rate(), 0.5);
+        assert_bounded(stats(1, u32::MAX, f64::MAX).success_rate());
+    }
+
+    #[test]
+    fn success_rate_ignores_negative_soft_failures() {
+        let rate = stats(10, 10, -12.0).success_rate();
+        assert_bounded(rate);
+        assert_eq!(rate, stats(10, 10, 0.0).success_rate());
+        assert_eq!(stats(0, 0, -1.0).success_rate(), 0.5);
+    }
+
+    #[test]
+    fn success_rate_ignores_non_finite_soft_failures() {
+        for soft in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            let rate = stats(10, 4, soft).success_rate();
+            assert_bounded(rate);
+            assert_eq!(rate, stats(10, 4, 0.0).success_rate(), "soft {soft}");
+            // With no attempts the 0.5 prior must still apply.
+            assert_eq!(stats(0, 0, soft).success_rate(), 0.5, "soft {soft}");
+        }
+    }
+
+    #[test]
+    fn success_rate_stays_finite_at_f64_max_soft_failures() {
+        let rate = stats(10, 10, f64::MAX).success_rate();
+        assert_bounded(rate);
+        assert!(rate < 1e-300, "got {rate}");
     }
 }

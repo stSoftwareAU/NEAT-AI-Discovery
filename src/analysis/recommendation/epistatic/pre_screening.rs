@@ -19,7 +19,10 @@ use crate::analysis::constants::MAX_INDIVIDUAL_HARM_FOR_PAIRING;
 // Issue #897: Conservative weight scale for coordinated estimation
 use crate::analysis::constants::COORDINATED_ESTIMATION_WEIGHT_SCALE;
 
-use super::{SourceContribution, SynergisticCandidate};
+use crate::analysis::utils::deadline_passed;
+use std::time::SystemTime;
+
+use super::{BoundedScan, ScanTruncation, SourceContribution, SynergisticCandidate};
 
 /// Minimum residual reduction ratio for synergistic detection (Issue #189).
 /// The second source must reduce residual error by at least this fraction.
@@ -49,14 +52,43 @@ const MIN_SAMPLES_FOR_RESIDUAL_ANALYSIS: usize = 30;
 ///
 /// # Returns
 /// A list of synergistic candidates that should be returned as coordinated structural candidates.
+///
+/// Honours host cancellation but has no deadline; production code uses
+/// [`detect_synergistic_candidates_with_deadline`] (Issue #2190).
 pub fn detect_synergistic_candidates(
     target_uuid: &str,
     contributions: &[SourceContribution],
     target_impact: f32,
     target_squash: Option<&str>,
 ) -> Vec<SynergisticCandidate> {
+    detect_synergistic_candidates_with_deadline(
+        target_uuid,
+        contributions,
+        target_impact,
+        target_squash,
+        &None,
+    )
+    .candidates
+}
+
+/// Deadline-bounded synergistic detection (Issue #2190).
+///
+/// Checks `deadline_passed` (which also reports host cancellation) before each
+/// complement source and reports an early return through
+/// [`BoundedScan::truncation`].
+pub fn detect_synergistic_candidates_with_deadline(
+    target_uuid: &str,
+    contributions: &[SourceContribution],
+    target_impact: f32,
+    target_squash: Option<&str>,
+    deadline: &Option<SystemTime>,
+) -> BoundedScan<SynergisticCandidate> {
+    let mut scan = BoundedScan {
+        candidates: Vec::new(),
+        truncation: None,
+    };
     if contributions.len() < 2 {
-        return Vec::new();
+        return scan;
     }
 
     // Issue #897: Resolve target activation function for saturation-aware simulation
@@ -72,7 +104,7 @@ pub fn detect_synergistic_candidates(
         .collect();
 
     if valid_sources.len() < 2 {
-        return Vec::new();
+        return scan;
     }
 
     // Step 1: Find the best single-source candidate
@@ -82,7 +114,7 @@ pub fn detect_synergistic_candidates(
     });
 
     let Some(primary) = best_primary else {
-        return Vec::new();
+        return scan;
     };
 
     // Step 2: Compute residual errors after applying primary source
@@ -93,9 +125,11 @@ pub fn detect_synergistic_candidates(
     );
 
     // Step 3: Search for complementary sources that reduce the residual
-    let mut candidates = Vec::new();
-
     for source in &valid_sources {
+        if deadline_passed(deadline) {
+            scan.truncation = Some(ScanTruncation::DeadlinePassed);
+            break;
+        }
         // Skip the primary source itself
         if source.source_uuid == primary.source_uuid {
             continue;
@@ -110,14 +144,15 @@ pub fn detect_synergistic_candidates(
             target_impact,
             target_activation_fn,
         ) {
-            candidates.push(candidate);
+            scan.candidates.push(candidate);
         }
     }
 
     // Sort by combined improvement (descending)
-    candidates.sort_by(|a, b| b.combined_improvement.total_cmp(&a.combined_improvement));
+    scan.candidates
+        .sort_by(|a, b| b.combined_improvement.total_cmp(&a.combined_improvement));
 
-    candidates
+    scan
 }
 
 /// Compute residual errors after applying a source with given weight (Issue #897).

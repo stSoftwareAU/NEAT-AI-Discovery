@@ -42,6 +42,9 @@ use super::{
 /// Issue #754: A shared `CreatureTopologyCache` is pre-computed once and passed
 /// to all detection modules, eliminating redundant `HashMap` / `HashSet`
 /// construction across 30+ modules.
+///
+/// Issue #2183: `deadline` is captured by the recommendation-core scans
+/// (multi-hop, fan-in, gradient) so each stops mid-scan once it passes.
 pub(crate) fn build_discovery_module_specs(
     creature: &Arc<crate::CreatureJson>,
     hidden_neurons: &Arc<Vec<(String, String, f32)>>,
@@ -49,6 +52,7 @@ pub(crate) fn build_discovery_module_specs(
     topo: &Arc<CreatureTopologyCache>,
     cost_hint: CostFunctionHint,
     task_descriptor: TaskDescriptor,
+    deadline: Option<std::time::SystemTime>,
 ) -> Vec<discovery_dispatch::DiscoveryModuleSpec> {
     let mut modules: Vec<discovery_dispatch::DiscoveryModuleSpec> = Vec::with_capacity(32);
 
@@ -67,6 +71,7 @@ pub(crate) fn build_discovery_module_specs(
         hidden_neurons,
         shared_cache,
         topo,
+        deadline,
     );
     scoring_specs::append_scoring_specs(
         &mut modules,
@@ -74,6 +79,7 @@ pub(crate) fn build_discovery_module_specs(
         shared_cache,
         cost_hint,
         task_descriptor,
+        deadline,
     );
 
     modules
@@ -137,6 +143,7 @@ pub(crate) fn prepare_and_detect_discovery_modules(
         &topo,
         cost_hint,
         task_descriptor,
+        deadline,
     );
 
     // Issue #1547: Creature-scale module tiering — on large creatures outside
@@ -514,6 +521,7 @@ mod tests {
             &topo,
             CostFunctionHint::Unknown,
             TaskDescriptor::neutral(),
+            None,
         );
 
         // We expect 49 modules across all four spec groups (batch-successful
@@ -604,6 +612,7 @@ mod tests {
             &topo,
             CostFunctionHint::Unknown,
             TaskDescriptor::neutral(),
+            None,
         );
         let mut phase_names: Vec<&str> = specs.iter().map(|s| s.phase_name).collect();
         let total = phase_names.len();
@@ -699,6 +708,7 @@ mod tests {
             &topo,
             CostFunctionHint::Unknown,
             descriptor,
+            None,
         )
     }
 
@@ -779,6 +789,7 @@ mod tests {
             &topo,
             CostFunctionHint::Unknown,
             TaskDescriptor::neutral(),
+            None,
         );
 
         // With empty hidden neurons and no records, all modules should return None.

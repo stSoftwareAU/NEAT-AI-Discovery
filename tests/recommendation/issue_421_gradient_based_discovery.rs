@@ -142,7 +142,7 @@ fn test_detects_high_gradient_synapse() {
         ("output-0".to_string(), output_records),
     ];
 
-    let candidates = detect_gradient_candidates(&creature, &records);
+    let candidates = detect_gradient_candidates(&creature, &records, &None);
 
     assert!(
         !candidates.is_empty(),
@@ -195,7 +195,7 @@ fn test_weight_adjustment_direction() {
         ("output-0".to_string(), output_records),
     ];
 
-    let candidates = detect_gradient_candidates(&creature, &records);
+    let candidates = detect_gradient_candidates(&creature, &records, &None);
 
     assert!(!candidates.is_empty(), "Should detect candidates");
 
@@ -249,7 +249,7 @@ fn test_low_gradient_not_detected() {
         ("output-0".to_string(), output_records),
     ];
 
-    let candidates = detect_gradient_candidates(&creature, &records);
+    let candidates = detect_gradient_candidates(&creature, &records, &None);
 
     assert!(
         candidates.is_empty(),
@@ -294,7 +294,7 @@ fn test_gradient_to_coordinated_candidates() {
         ("output-0".to_string(), output_records),
     ];
 
-    let candidates = detect_gradient_candidates(&creature, &records);
+    let candidates = detect_gradient_candidates(&creature, &records, &None);
     assert!(!candidates.is_empty(), "Should detect candidates");
 
     let coordinated = gradient_candidates_to_coordinated(&candidates);
@@ -334,7 +334,7 @@ fn test_gradient_discovery_empty_records_no_candidates() {
     );
 
     let records: Vec<(String, Vec<DiscoverRecord>)> = vec![];
-    let candidates = detect_gradient_candidates(&creature, &records);
+    let candidates = detect_gradient_candidates(&creature, &records, &None);
 
     assert!(
         candidates.is_empty(),
@@ -366,7 +366,7 @@ fn test_gradient_discovery_insufficient_samples_no_candidates() {
         ("output-0".to_string(), output_records),
     ];
 
-    let candidates = detect_gradient_candidates(&creature, &records);
+    let candidates = detect_gradient_candidates(&creature, &records, &None);
 
     assert!(
         candidates.is_empty(),
@@ -403,7 +403,7 @@ fn test_non_finite_values_handled() {
     ];
 
     // Should not panic
-    let _candidates = detect_gradient_candidates(&creature, &records);
+    let _candidates = detect_gradient_candidates(&creature, &records, &None);
 }
 
 // =============================================================================
@@ -446,7 +446,7 @@ fn test_gradient_sign_determines_direction() {
         ("output-0".to_string(), output_records),
     ];
 
-    let candidates = detect_gradient_candidates(&creature, &records);
+    let candidates = detect_gradient_candidates(&creature, &records, &None);
 
     if !candidates.is_empty() {
         let c = &candidates[0];
@@ -508,7 +508,7 @@ fn test_improvement_scales_with_gradient() {
         ("output-0".to_string(), output_records),
     ];
 
-    let candidates = detect_gradient_candidates(&creature, &records);
+    let candidates = detect_gradient_candidates(&creature, &records, &None);
 
     let strong = candidates.iter().find(|c| c.from_neuron_uuid == "input-0");
     let weak = candidates.iter().find(|c| c.from_neuron_uuid == "input-1");
@@ -576,7 +576,7 @@ fn test_gradient_discovery_candidates_sorted_by_improvement() {
         ("output-0".to_string(), output_records),
     ];
 
-    let candidates = detect_gradient_candidates(&creature, &records);
+    let candidates = detect_gradient_candidates(&creature, &records, &None);
 
     if candidates.len() >= 2 {
         for i in 1..candidates.len() {

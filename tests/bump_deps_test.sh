@@ -663,6 +663,276 @@ fi
 rm -rf "$NOEDIT_BIN" "$NOEDIT_HOME"
 echo ""
 
+# ── Test 26: lockstep releases are rolled back, not pinned (Issue #2202) ─
+# wasm-bindgen / js-sys / wasm-bindgen-futures release in lockstep with exact
+# `=` requirements, so `cargo update -p js-sys --precise <old>` cannot succeed
+# while a safe partner still requires the new js-sys — the run exited 8 on
+# every attempt. The gate now restores the pristine lockfile and re-applies
+# only the changes that stay outside the window.
+
+# Build a stub `cargo` that simulates `cargo update -p NAME@OLD …` against a
+# rules file: `name|ok|pkg=ver …` rewrites (or adds) each pkg, `name|fail|msg`
+# fails like a lockstep conflict, and `name|noop|` succeeds without changing
+# anything — real cargo does that when an exact-pinned partner stays locked.
+# Several `-p` specs look up the rule keyed by their sorted names joined with
+# `+`. `--workspace` looks up the `@workspace` rule.
+make_stub_cargo() {
+    local dir="$1"
+    cat > "$dir/cargo" <<'STUB'
+#!/bin/bash
+set -euo pipefail
+manifest=""
+spec=""
+names=""
+key=""
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --manifest-path) manifest="$2"; shift 2 ;;
+        -p) spec="${spec:+$spec }$2"; names="$names${2%@*}"$'\n'; shift 2 ;;
+        --workspace) key="@workspace"; spec="@workspace"; shift ;;
+        *) shift ;;
+    esac
+done
+if [[ -z "$key" ]]; then
+    key="$(printf '%s' "$names" | sort | paste -sd+ -)"
+fi
+lock="$(dirname "$manifest")/Cargo.lock"
+printf '%s\n' "$spec" >> "$STUB_CARGO_LOG"
+rule="$(awk -F'|' -v k="$key" '$1 == k { print; exit }' "$STUB_CARGO_RULES")"
+if [[ -z "$rule" ]]; then
+    [[ "$key" == "@workspace" ]] && exit 0
+    echo "error: package ID specification \`$spec\` did not match any packages" >&2
+    exit 101
+fi
+mode="$(printf '%s' "$rule" | cut -d'|' -f2)"
+body="$(printf '%s' "$rule" | cut -d'|' -f3)"
+if [[ "$mode" == "fail" ]]; then
+    echo "error: $body" >&2
+    exit 101
+fi
+[[ "$mode" == "noop" ]] && exit 0
+for pair in $body; do
+    pkg="${pair%%=*}"
+    ver="${pair#*=}"
+    if grep -q "^name = \"$pkg\"$" "$lock"; then
+        awk -v p="$pkg" -v v="$ver" '
+            /^name = / { hit = ($0 == "name = \"" p "\"") }
+            hit && /^version = / { $0 = "version = \"" v "\""; hit = 0 }
+            { print }
+        ' "$lock" > "$lock.tmp" && mv "$lock.tmp" "$lock"
+    else
+        printf '\n[[package]]\nname = "%s"\nversion = "%s"\n' "$pkg" "$ver" >> "$lock"
+    fi
+done
+STUB
+    chmod +x "$dir/cargo"
+}
+
+# write_lock FILE name=ver … — emit a minimal Cargo.lock.
+write_lock() {
+    local file="$1"
+    shift
+    printf 'version = 4\n' > "$file"
+    local pair
+    for pair in "$@"; do
+        printf '\n[[package]]\nname = "%s"\nversion = "%s"\n' "${pair%%=*}" "${pair#*=}" >> "$file"
+    done
+}
+
+# lock_version FILE NAME — print NAME's version in FILE (empty when absent).
+lock_version() {
+    BUMP_DEPS_SOURCE_ONLY=1 bash -c "source '$BUMP_DEPS' && bump_deps::extract_lock_versions '$1'" \
+        | awk -F'\t' -v n="$2" '$1 == n { print $2 }'
+}
+
+assert_equals() {
+    local description="$1"
+    local expected="$2"
+    local actual="$3"
+    if [[ "$expected" == "$actual" ]]; then
+        echo "  PASS: $description"
+        PASS=$((PASS + 1))
+    else
+        echo "  FAIL: $description (expected '$expected', got '$actual')"
+        FAIL=$((FAIL + 1))
+        ERRORS="${ERRORS}  FAIL: ${description}\n"
+    fi
+}
+
+echo "Test 26: reapply_safe_lock_changes rolls back lockstep in-quarantine releases"
+REAPPLY_DIR="$(mktemp -d)"
+REAPPLY_BIN="$REAPPLY_DIR/bin"
+REAPPLY_PROJ="$REAPPLY_DIR/proj"
+REAPPLY_FIX="$REAPPLY_DIR/fixtures"
+mkdir -p "$REAPPLY_BIN" "$REAPPLY_PROJ" "$REAPPLY_FIX"
+make_stub_cargo "$REAPPLY_BIN"
+: > "$REAPPLY_PROJ/Cargo.toml"
+export STUB_CARGO_LOG="$REAPPLY_DIR/cargo.log"
+export STUB_CARGO_RULES="$REAPPLY_DIR/rules"
+: > "$STUB_CARGO_LOG"
+
+# "now" = 2025-06-01T00:00:00Z. Old = 300h ago (safe); young = 5h ago.
+for SAFE in wasm-bindgen-futures-0.4.79 serde-1.0.201 zerocopy-0.8.2 \
+    zerocopy-derive-0.8.2 tokio-1.41.0 mio-1.0.1; do
+    printf '{"version":{"created_at":"2025-05-19T12:00:00.000000+00:00"}}\n' > "$REAPPLY_FIX/$SAFE.json"
+done
+for YOUNG in js-sys-0.3.106 wasm-bindgen-0.2.106 evil-0.1.0; do
+    printf '{"version":{"created_at":"2025-05-31T19:00:00.000000+00:00"}}\n' > "$REAPPLY_FIX/$YOUNG.json"
+done
+
+write_lock "$REAPPLY_DIR/pristine.lock" js-sys=0.3.105 wasm-bindgen=0.2.105 \
+    wasm-bindgen-futures=0.4.78 serde=1.0.200 zerocopy-derive=0.8.1 \
+    zerocopy=0.8.1 tokio=1.40.0 mio=1.0.0
+# The state `cargo update` leaves behind: every package bumped, a young
+# lockstep pair, and a young brand-new transitive dragged in by tokio.
+write_lock "$REAPPLY_PROJ/Cargo.lock" js-sys=0.3.106 wasm-bindgen=0.2.106 \
+    wasm-bindgen-futures=0.4.79 serde=1.0.201 zerocopy-derive=0.8.2 \
+    zerocopy=0.8.2 tokio=1.41.0 mio=1.0.1 evil=0.1.0
+BUMP_DEPS_SOURCE_ONLY=1 bash -c "source '$BUMP_DEPS' && bump_deps::extract_lock_versions '$REAPPLY_DIR/pristine.lock'" \
+    > "$REAPPLY_DIR/before.tsv"
+cat > "$STUB_CARGO_RULES" <<'RULES'
+wasm-bindgen-futures|ok|wasm-bindgen-futures=0.4.79 js-sys=0.3.106 wasm-bindgen=0.2.106
+serde|ok|serde=1.0.201
+zerocopy-derive|ok|zerocopy-derive=0.8.2 zerocopy=0.8.2
+zerocopy|ok|zerocopy=0.8.2 zerocopy-derive=0.8.2
+tokio|ok|tokio=1.41.0 evil=0.1.0
+mio|fail|failed to select a version for the requirement `mio = "=1.0.0"`
+RULES
+
+set +e
+OUTPUT=$(PATH="$REAPPLY_BIN:$PATH" BUMP_DEPS_SOURCE_ONLY=1 BUMP_DEPS_TEST_FIXTURE="$REAPPLY_FIX" \
+    bash -c "source '$BUMP_DEPS' && bump_deps::reapply_safe_lock_changes '$REAPPLY_PROJ/Cargo.toml' '$REAPPLY_DIR/pristine.lock' '$REAPPLY_DIR/before.tsv' 1748736000 24" 2>&1)
+EXIT_CODE=$?
+set -e
+LOCK="$REAPPLY_PROJ/Cargo.lock"
+assert_exit_code "reapply_safe_lock_changes exits 0 on lockstep releases" 0 "$EXIT_CODE"
+assert_equals "in-quarantine js-sys stays at its pre-bump version" "0.3.105" "$(lock_version "$LOCK" js-sys)"
+assert_equals "in-quarantine wasm-bindgen stays at its pre-bump version" "0.2.105" "$(lock_version "$LOCK" wasm-bindgen)"
+assert_equals "safe bump that drags a young partner is rejected" "0.4.78" "$(lock_version "$LOCK" wasm-bindgen-futures)"
+assert_equals "safe independent bump is kept" "1.0.201" "$(lock_version "$LOCK" serde)"
+assert_equals "safe lockstep pair is kept (zerocopy)" "0.8.2" "$(lock_version "$LOCK" zerocopy)"
+assert_equals "safe lockstep pair is kept (zerocopy-derive)" "0.8.2" "$(lock_version "$LOCK" zerocopy-derive)"
+assert_equals "bump that pulls a young new package is rejected" "1.40.0" "$(lock_version "$LOCK" tokio)"
+assert_equals "young new package is not in the lockfile" "" "$(lock_version "$LOCK" evil)"
+assert_equals "bump cargo cannot re-apply is rejected" "1.0.0" "$(lock_version "$LOCK" mio)"
+assert_output_contains "young lockstep release is reported as pinned" "^pinned	js-sys	0\\.3\\.105	0\\.3\\.106	5h$" "$OUTPUT"
+assert_output_contains "young new package is reported as skipped" "^skipped	evil	-	0\\.1\\.0	5h$" "$OUTPUT"
+assert_output_contains "kept bump is reported" "^kept	serde	1\\.0\\.200	1\\.0\\.201$" "$OUTPUT"
+assert_output_contains "rejection names the young package it drags in" "^rejected	wasm-bindgen-futures	0\\.4\\.78	0\\.4\\.79	.*js-sys@0\\.3\\.106" "$OUTPUT"
+assert_output_contains "rejection names the young new package" "^rejected	tokio	1\\.40\\.0	1\\.41\\.0	.*evil@0\\.1\\.0" "$OUTPUT"
+assert_output_contains "cargo failure is reported with its reason" "^rejected	mio	1\\.0\\.0	1\\.0\\.1	.*failed to select" "$OUTPUT"
+assert_equals "a partner already re-applied is not updated twice" "0" "$(grep -c '^zerocopy@' "$STUB_CARGO_LOG" || true)"
+BUMP_DEPS_SOURCE_ONLY=1 bash -c "source '$BUMP_DEPS' && bump_deps::extract_lock_versions '$LOCK'" > "$REAPPLY_DIR/final.tsv"
+RECHECK=$(BUMP_DEPS_SOURCE_ONLY=1 BUMP_DEPS_TEST_FIXTURE="$REAPPLY_FIX" \
+    bash -c "source '$BUMP_DEPS' && bump_deps::plan_lock_quarantine '$REAPPLY_DIR/before.tsv' '$REAPPLY_DIR/final.tsv' 1748736000 24")
+assert_equals "final lockfile has nothing inside the quarantine window" "" "$RECHECK"
+echo ""
+
+# ── Test 27: nothing in quarantine ⇒ the refreshed lockfile is kept as-is ─
+
+echo "Test 27: reapply_safe_lock_changes leaves a fully-aged refresh untouched"
+write_lock "$REAPPLY_PROJ/Cargo.lock" js-sys=0.3.105 wasm-bindgen=0.2.105 \
+    wasm-bindgen-futures=0.4.78 serde=1.0.201 zerocopy-derive=0.8.1 \
+    zerocopy=0.8.1 tokio=1.40.0 mio=1.0.0
+cp "$REAPPLY_PROJ/Cargo.lock" "$REAPPLY_DIR/expected.lock"
+: > "$STUB_CARGO_LOG"
+set +e
+OUTPUT=$(PATH="$REAPPLY_BIN:$PATH" BUMP_DEPS_SOURCE_ONLY=1 BUMP_DEPS_TEST_FIXTURE="$REAPPLY_FIX" \
+    bash -c "source '$BUMP_DEPS' && bump_deps::reapply_safe_lock_changes '$REAPPLY_PROJ/Cargo.toml' '$REAPPLY_DIR/pristine.lock' '$REAPPLY_DIR/before.tsv' 1748736000 24" 2>&1)
+EXIT_CODE=$?
+set -e
+assert_exit_code "no-op gate exits 0" 0 "$EXIT_CODE"
+assert_equals "no-op gate prints nothing" "" "$OUTPUT"
+assert_equals "no-op gate never re-runs cargo" "0" "$(grep -c . "$STUB_CARGO_LOG" || true)"
+if cmp -s "$REAPPLY_PROJ/Cargo.lock" "$REAPPLY_DIR/expected.lock"; then
+    echo "  PASS: aged refresh is left byte-for-byte intact"
+    PASS=$((PASS + 1))
+else
+    echo "  FAIL: aged refresh was rewritten"
+    FAIL=$((FAIL + 1))
+    ERRORS="${ERRORS}  FAIL: aged refresh rewritten\n"
+fi
+echo ""
+
+# ── Test 28: a manifest bump that cannot resolve safely fails loud ───────
+
+echo "Test 28: reapply_safe_lock_changes fails loud when the manifest itself needs a young package"
+write_lock "$REAPPLY_PROJ/Cargo.lock" js-sys=0.3.106 wasm-bindgen=0.2.105 \
+    wasm-bindgen-futures=0.4.78 serde=1.0.200 zerocopy-derive=0.8.1 \
+    zerocopy=0.8.1 tokio=1.40.0 mio=1.0.0
+printf '@workspace|ok|js-sys=0.3.106\n' > "$STUB_CARGO_RULES"
+set +e
+OUTPUT=$(PATH="$REAPPLY_BIN:$PATH" BUMP_DEPS_SOURCE_ONLY=1 BUMP_DEPS_TEST_FIXTURE="$REAPPLY_FIX" \
+    bash -c "source '$BUMP_DEPS' && bump_deps::reapply_safe_lock_changes '$REAPPLY_PROJ/Cargo.toml' '$REAPPLY_DIR/pristine.lock' '$REAPPLY_DIR/before.tsv' 1748736000 24" 2>&1)
+EXIT_CODE=$?
+set -e
+if [[ "$EXIT_CODE" -ne 0 ]]; then
+    echo "  PASS: in-quarantine manifest resolution exits non-zero ($EXIT_CODE)"
+    PASS=$((PASS + 1))
+else
+    echo "  FAIL: in-quarantine manifest resolution exited 0"
+    FAIL=$((FAIL + 1))
+    ERRORS="${ERRORS}  FAIL: manifest resolution accepted a young package\n"
+fi
+assert_output_contains "failure names the young package" "js-sys@0\\.3\\.106" "$OUTPUT"
+echo ""
+
+# ── Test 29: a safe lockstep family moves in one step (Issue #2202) ──────
+# Real cargo treats `cargo update -p js-sys@old` as a no-op while its
+# exact-pinned partners stay locked, so each lone step "succeeds" without
+# moving anything. The family must be re-applied together, and a package
+# held by an in-quarantine partner must not be reported as kept.
+
+echo "Test 29: reapply_safe_lock_changes re-applies a stuck lockstep family together"
+for SAFE in js-sys-0.3.107 wasm-bindgen-0.2.129 web-sys-0.3.107 pair-a-1.0.1; do
+    printf '{"version":{"created_at":"2025-05-19T12:00:00.000000+00:00"}}\n' > "$REAPPLY_FIX/$SAFE.json"
+done
+printf '{"version":{"created_at":"2025-05-31T19:00:00.000000+00:00"}}\n' > "$REAPPLY_FIX/pair-b-1.0.1.json"
+write_lock "$REAPPLY_DIR/pristine29.lock" js-sys=0.3.105 wasm-bindgen=0.2.105 \
+    web-sys=0.3.105 pair-a=1.0.0 pair-b=1.0.0
+write_lock "$REAPPLY_PROJ/Cargo.lock" js-sys=0.3.107 wasm-bindgen=0.2.129 \
+    web-sys=0.3.107 pair-a=1.0.1 pair-b=1.0.1
+BUMP_DEPS_SOURCE_ONLY=1 bash -c "source '$BUMP_DEPS' && bump_deps::extract_lock_versions '$REAPPLY_DIR/pristine29.lock'" \
+    > "$REAPPLY_DIR/before29.tsv"
+cat > "$STUB_CARGO_RULES" <<'RULES'
+js-sys|noop|
+wasm-bindgen|noop|
+web-sys|noop|
+pair-a|noop|
+js-sys+pair-a+wasm-bindgen+web-sys|ok|js-sys=0.3.107 wasm-bindgen=0.2.129 web-sys=0.3.107
+RULES
+: > "$STUB_CARGO_LOG"
+set +e
+OUTPUT=$(PATH="$REAPPLY_BIN:$PATH" BUMP_DEPS_SOURCE_ONLY=1 BUMP_DEPS_TEST_FIXTURE="$REAPPLY_FIX" \
+    bash -c "source '$BUMP_DEPS' && bump_deps::reapply_safe_lock_changes '$REAPPLY_PROJ/Cargo.toml' '$REAPPLY_DIR/pristine29.lock' '$REAPPLY_DIR/before29.tsv' 1748736000 24" 2>&1)
+EXIT_CODE=$?
+set -e
+LOCK="$REAPPLY_PROJ/Cargo.lock"
+assert_exit_code "stuck lockstep family exits 0" 0 "$EXIT_CODE"
+assert_equals "safe lockstep family is re-applied (js-sys)" "0.3.107" "$(lock_version "$LOCK" js-sys)"
+assert_equals "safe lockstep family is re-applied (wasm-bindgen)" "0.2.129" "$(lock_version "$LOCK" wasm-bindgen)"
+assert_equals "safe lockstep family is re-applied (web-sys)" "0.3.107" "$(lock_version "$LOCK" web-sys)"
+assert_equals "package held by a young partner stays put" "1.0.0" "$(lock_version "$LOCK" pair-a)"
+assert_equals "young partner stays at its pre-bump version" "1.0.0" "$(lock_version "$LOCK" pair-b)"
+assert_output_contains "family member is reported kept (js-sys)" "^kept	js-sys	0\\.3\\.105	0\\.3\\.107$" "$OUTPUT"
+assert_output_contains "family member is reported kept (web-sys)" "^kept	web-sys	0\\.3\\.105	0\\.3\\.107$" "$OUTPUT"
+assert_output_contains "held package is reported rejected, not kept" "^rejected	pair-a	1\\.0\\.0	1\\.0\\.1	" "$OUTPUT"
+if grep -q "^kept	pair-a" <<< "$OUTPUT"; then
+    echo "  FAIL: a no-op step was reported as kept"
+    FAIL=$((FAIL + 1))
+    ERRORS="${ERRORS}  FAIL: no-op step reported as kept\n"
+else
+    echo "  PASS: a no-op step is never reported as kept"
+    PASS=$((PASS + 1))
+fi
+BUMP_DEPS_SOURCE_ONLY=1 bash -c "source '$BUMP_DEPS' && bump_deps::extract_lock_versions '$LOCK'" > "$REAPPLY_DIR/final29.tsv"
+RECHECK=$(BUMP_DEPS_SOURCE_ONLY=1 BUMP_DEPS_TEST_FIXTURE="$REAPPLY_FIX" \
+    bash -c "source '$BUMP_DEPS' && bump_deps::plan_lock_quarantine '$REAPPLY_DIR/before29.tsv' '$REAPPLY_DIR/final29.tsv' 1748736000 24")
+assert_equals "stuck-family lockfile has nothing inside the quarantine window" "" "$RECHECK"
+unset STUB_CARGO_LOG STUB_CARGO_RULES
+rm -rf "$REAPPLY_DIR"
+echo ""
+
 # ── Summary ──────────────────────────────────────────────────────────
 
 echo ""

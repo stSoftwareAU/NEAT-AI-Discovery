@@ -29,8 +29,10 @@
 #![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use std::collections::{HashMap, HashSet};
 
+use crate::analysis::utils::deadline_passed;
 use crate::types::DiscoverRecord;
 use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson, CreatureJson};
+use std::time::SystemTime;
 
 /// Maximum path length (number of nodes) for multi-hop analysis.
 /// A path of 4 nodes = 3 hops. Deeper paths have diminishing returns and exponential cost.
@@ -68,12 +70,16 @@ pub struct MultiHopCandidate {
 /// * `creature` - The creature's network topology (neurons and synapses).
 /// * `neuron_records` - List of `(neuron_uuid, records)` tuples with recorded
 ///   activations and errors.
+/// * `deadline` - Discovery deadline (Issue #2183). Checked before each target;
+///   once it passes, or global cancellation is requested, the scan stops and
+///   returns the candidates found so far, logging a warning.
 ///
 /// # Returns
 /// A list of `MultiHopCandidate` sorted by estimated improvement (best first).
 pub fn detect_multi_hop_candidates(
     creature: &CreatureJson,
     neuron_records: &[(String, impl AsRef<[DiscoverRecord]>)],
+    deadline: &Option<SystemTime>,
 ) -> Vec<MultiHopCandidate> {
     if neuron_records.is_empty() {
         return Vec::new();
@@ -159,7 +165,17 @@ pub fn detect_multi_hop_candidates(
 
     let mut all_candidates: Vec<MultiHopCandidate> = Vec::new();
 
-    for &target_uuid in &target_uuids {
+    for (processed, &target_uuid) in target_uuids.iter().enumerate() {
+        if deadline_passed(deadline) {
+            // Issue #2183: stop loudly so a truncated scan never looks complete.
+            tracing::warn!(
+                detector = "multi-hop",
+                processed,
+                total = target_uuids.len(),
+                "multi-hop scan stopped early (deadline passed or cancelled) — returning partial candidates"
+            );
+            break;
+        }
         let target_errors = match error_by_obs.get(target_uuid) {
             Some(e) => e,
             None => continue,

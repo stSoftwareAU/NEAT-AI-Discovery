@@ -384,6 +384,7 @@ pub(crate) fn analyse_single_target(
             cache,
             target_map_ref,
             &ctx.neuron_squash_map,
+            &ctx.deadline,
         )
     {
         results.coordinated.push(candidate);

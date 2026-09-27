@@ -7,6 +7,7 @@
 //! inhibition).
 
 use std::sync::Arc;
+use std::time::SystemTime;
 
 use super::super::cost_function_hint::CostFunctionHint;
 use super::super::detection::{
@@ -26,12 +27,16 @@ use super::super::{cache, discovery_dispatch};
 /// squash comparison that reconstructs the implied target via
 /// `activation − error`) is skipped when the recorded error is not a
 /// linear residual (or is unknown).
+///
+/// `deadline` (Issue #2183) is forwarded into the gradient-based discovery
+/// scan so it stops at the discovery deadline or on global cancellation.
 pub(crate) fn append_scoring_specs(
     modules: &mut Vec<discovery_dispatch::DiscoveryModuleSpec>,
     creature: &Arc<crate::CreatureJson>,
     shared_cache: &Arc<cache::RecordCache>,
     cost_hint: CostFunctionHint,
     task_descriptor: TaskDescriptor,
+    deadline: Option<SystemTime>,
 ) {
     // Issue #361 / #1316: Output bias drift detection. Under OneHot / Simplex
     // descriptors the role-aware path additionally weights up output neurons
@@ -115,7 +120,7 @@ pub(crate) fn append_scoring_specs(
         cache = shared_cache, creature = creature =>
         records: cache.load_records_for_all_neurons(&creature),
         guard_records,
-        detect: |records| gradient_discovery::detect_gradient_candidates(&creature, &records),
+        detect: |records| gradient_discovery::detect_gradient_candidates(&creature, &records, &deadline),
         convert: |detected| gradient_discovery::gradient_candidates_to_coordinated(&detected),
     );
 

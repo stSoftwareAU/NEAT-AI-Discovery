@@ -258,7 +258,7 @@ fn every_float_comparator_in_the_swept_files_has_a_table_row() {
 /// Every symbol the outcome claims to have traced, paired with the file that
 /// must still declare it. An outcome citing a symbol that no longer exists is
 /// describing code that has moved or gone.
-const TRACED_SYMBOLS: [(&str, &str); 14] = [
+const TRACED_SYMBOLS: [(&str, &str); 12] = [
     (
         "src/analysis/recommendation/epistatic/candidate_generation.rs",
         "pub fn detect_epistatic_pairs",
@@ -291,14 +291,9 @@ const TRACED_SYMBOLS: [(&str, &str); 14] = [
         "src/analysis/recommendation/epistatic/pre_screening.rs",
         "fn evaluate_residual_reduction",
     ),
-    (
-        "src/analysis/recommendation/epistatic/scoring.rs",
-        "pub fn detect_interfering_pairs",
-    ),
-    (
-        "src/analysis/recommendation/epistatic/scoring.rs",
-        "fn check_saturation_risk",
-    ),
+    // `detect_interfering_pairs` and `check_saturation_risk` were deleted as a
+    // dead lever by #2192 (AGENTS.md § Dead Levers) — no longer traced here;
+    // see `## Related remediations` in the record.
     (
         "src/analysis/recommendation/batch_successful/detection.rs",
         "pub fn detect_individually_successful",
@@ -537,10 +532,14 @@ fn pair(source_a: &str, source_b: &str, combined_improvement: f32) -> EpistaticP
 /// for structurally different pairs, and a caller who supplies the records
 /// chooses them outright.
 ///
-/// When #2191 lands a deterministic tie-break this test must fail, which is the
-/// signal the `deduplication.rs` row needs re-sweeping.
+/// **Since fixed (Issue #2191, commit `d37b088`/`6df987d`, merged into this
+/// branch):** `cmp_epistatic`/`cmp_synergistic` now break a tied
+/// `combined_improvement` by UUID instead of leaving it to `HashMap`
+/// iteration order. This test keeps the same crafted tie as a regression
+/// guard — it failed against the unfixed code (more than one ordering across
+/// 64 calls) and now proves every call agrees.
 #[test]
-fn dominant_neuron_dedup_still_orders_tied_candidates_non_deterministically() {
+fn dominant_neuron_dedup_now_orders_tied_candidates_deterministically() {
     const GROUPS: usize = 8;
     const TRIALS: usize = 64;
 
@@ -566,11 +565,11 @@ fn dominant_neuron_dedup_still_orders_tied_candidates_non_deterministically() {
         "each distinct dominant neuron forms its own group, so all {GROUPS} pairs must survive \
          the per-group cap"
     );
-    assert!(
-        orders.len() > 1,
-        "#2191 says {TRIALS} calls on identical input still produce more than one ordering; \
-         seeing exactly one means the tie-break is now deterministic and the `deduplication.rs` \
-         row must be re-swept"
+    assert_eq!(
+        orders.len(),
+        1,
+        "fixed #2191's UUID tie-break must make {TRIALS} calls on identical input agree on one \
+         ordering; seeing more than one means the tie-break regressed to `HashMap`-seed order"
     );
 }
 

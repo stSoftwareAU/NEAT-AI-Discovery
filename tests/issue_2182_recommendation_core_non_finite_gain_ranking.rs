@@ -262,7 +262,7 @@ fn multi_hop_drops_an_overflowed_mean_abs_error_and_ranks_the_honest_candidate_f
     ];
     assert_all_records_finite(&records);
 
-    let candidates = detect_multi_hop_candidates(&creature, &records);
+    let candidates = detect_multi_hop_candidates(&creature, &records, &None);
 
     assert!(
         !candidates.is_empty(),
@@ -327,7 +327,7 @@ fn multi_hop_three_hop_drops_a_nan_source_intermediate_correlation() {
     ];
     assert_all_records_finite(&records);
 
-    let candidates = detect_multi_hop_candidates(&creature, &records);
+    let candidates = detect_multi_hop_candidates(&creature, &records, &None);
 
     assert!(
         !candidates.is_empty(),
@@ -401,7 +401,7 @@ fn gradient_drops_an_overflowed_improvement_and_ranks_the_honest_candidate_first
     ];
     assert_all_records_finite(&records);
 
-    let candidates = detect_gradient_candidates(&creature, &records);
+    let candidates = detect_gradient_candidates(&creature, &records, &None);
 
     assert!(
         !candidates.is_empty(),
@@ -506,7 +506,7 @@ fn fan_in_drops_an_overflowed_improvement_and_ranks_the_honest_candidate_first()
     ];
     assert_all_records_finite(&records);
 
-    let candidates = detect_fan_in_candidates(&creature, &records);
+    let candidates = detect_fan_in_candidates(&creature, &records, &None);
 
     assert!(
         !candidates.is_empty(),
