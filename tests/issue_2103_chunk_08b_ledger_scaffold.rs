@@ -54,9 +54,10 @@ const SHARED_FILES: [&str; 4] = [
 ];
 
 /// Total in-scope file count: the 58 files named by Issue #2103 at the
-/// baseline, plus `issue_2161_locality_cancellation_test.rs`, added under
-/// `src/analysis/synapse/` after it and swept in the same change.
-const EXPECTED_FILE_COUNT: usize = 59;
+/// baseline, plus `issue_2161_locality_cancellation_test.rs` and
+/// `issue_2169_structural_patterns_cancellation_test.rs` (Issue #2221), each
+/// added under `src/analysis/synapse/` after it and swept in the same change.
+const EXPECTED_FILE_COUNT: usize = 60;
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
