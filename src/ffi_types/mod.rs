@@ -9,6 +9,7 @@ mod creature_bounds;
 mod creature_validation;
 mod error_classification;
 mod forward_only_validation;
+mod module_tracker_validation;
 mod neuron_bias;
 mod requests;
 mod responses;
@@ -24,6 +25,9 @@ pub use creature_bounds::{
 pub use creature_validation::validate_creature;
 pub use error_classification::*;
 pub use forward_only_validation::validate_forward_only_synapses;
+pub use module_tracker_validation::{
+    MODULE_NAME_DETAIL_MAX_CHARS, validate_module_outcome_tracker, validate_module_stats,
+};
 // Crate-internal (Issue #2133): the bias gate is reached through
 // `validate_creature`, so it adds no name to the public FFI surface.
 pub(crate) use neuron_bias::{non_finite_bias_detail, validate_neuron_biases};

@@ -124,3 +124,181 @@ fn non_finite_soft_failures_are_ignored() {
     };
     assert_eq!(empty_nan.success_rate(), 0.5);
 }
+
+// ---------------------------------------------------------------------------
+// Issue #2223 (part of #2170): the FFI boundary rejects a corrupt tracker as
+// `data_validation` before any analysis runs, rather than computing a gate.
+// ---------------------------------------------------------------------------
+
+use neat_ai_discovery::{
+    DiscoveryErrorKind, MODULE_NAME_DETAIL_MAX_CHARS, analyze_parallel_internal,
+    validate_module_outcome_tracker, validate_module_stats,
+};
+
+/// An `analyze_parallel` payload for a minimal forward-only creature. Both
+/// phases are disabled so a well-formed payload completes without Parquet data.
+fn analyze_parallel_payload(tracker_json: Option<&str>) -> String {
+    let tracker = tracker_json.map_or(String::new(), |t| format!(r#","moduleOutcomeTracker":{t}"#));
+    format!(
+        r#"{{
+            "parquetFile": "/tmp/issue-2223-does-not-exist.parquet",
+            "creature": {{
+                "neurons": [
+                    {{"uuid": "input-0", "type": "input", "squash": "IDENTITY"}},
+                    {{"uuid": "output-0", "type": "output", "squash": "LOGISTIC", "bias": 0.0}}
+                ],
+                "synapses": [{{"fromUUID": "input-0", "toUUID": "output-0", "weight": 0.5}}],
+                "input": 1,
+                "output": 1
+            }},
+            "focusNeurons": ["output-0"],
+            "includeSynapseAnalysis": false,
+            "includeNeuronAnalysis": false{tracker}
+        }}"#
+    )
+}
+
+fn tracker_json(name: &str, attempts: u32, successes: u32, soft_failures: &str) -> String {
+    format!(
+        r#"{{"modules":{{"{name}":{{"attempts":{attempts},"successes":{successes},"candidatesProduced":0,"softFailures":{soft_failures}}}}}}}"#
+    )
+}
+
+fn analyze(tracker_json: Option<&str>) -> serde_json::Value {
+    let result = analyze_parallel_internal(&analyze_parallel_payload(tracker_json))
+        .expect("analyze_parallel_internal must return a JSON payload");
+    serde_json::from_str(&result).expect("response must be valid JSON")
+}
+
+fn assert_rejected(tracker: &str, field: &str) -> String {
+    let parsed = analyze(Some(tracker));
+    assert_eq!(parsed["success"], false, "must reject {tracker}: {parsed}");
+    assert_eq!(
+        parsed["errorKind"], "data_validation",
+        "must classify {tracker} as data_validation: {parsed}"
+    );
+    assert_eq!(parsed["retryable"], false, "{parsed}");
+    let error = parsed["error"].as_str().expect("error must be present");
+    assert!(error.contains(field), "error must name `{field}`: {error}");
+    assert!(
+        error.contains("Issue #2170"),
+        "error must cite the issue: {error}"
+    );
+    error.to_string()
+}
+
+#[test]
+fn analyze_parallel_rejects_successes_above_attempts() {
+    assert_rejected(
+        &tracker_json(ADD_SYNAPSE_MODULE_NAME, 10, 20, "0.0"),
+        "successes",
+    );
+}
+
+#[test]
+fn analyze_parallel_rejects_negative_soft_failures() {
+    assert_rejected(
+        &tracker_json(ADD_SYNAPSE_MODULE_NAME, 10, 10, "-12.0"),
+        "softFailures",
+    );
+}
+
+#[test]
+fn analyze_parallel_rejects_soft_failures_above_u32_max() {
+    assert_rejected(
+        &tracker_json(ADD_SYNAPSE_MODULE_NAME, 10, 10, "1.7976931348623157e308"),
+        "softFailures",
+    );
+}
+
+#[test]
+fn analyze_parallel_accepts_a_well_formed_tracker() {
+    let parsed = analyze(Some(&tracker_json(ADD_SYNAPSE_MODULE_NAME, 10, 3, "4.5")));
+    assert_eq!(parsed["success"], true, "well-formed tracker: {parsed}");
+    // The caller's tracker is handed back for persistence.
+    assert_eq!(
+        parsed["moduleOutcomeTracker"]["modules"][ADD_SYNAPSE_MODULE_NAME]["successes"], 3,
+        "{parsed}"
+    );
+}
+
+#[test]
+fn analyze_parallel_is_unaffected_by_a_missing_tracker() {
+    let parsed = analyze(None);
+    assert_eq!(parsed["success"], true, "absent tracker: {parsed}");
+}
+
+#[test]
+fn validate_module_stats_accepts_the_boundaries() {
+    for (attempts, successes, soft_failures) in [
+        (0, 0, 0.0),
+        (10, 10, 0.0),
+        (u32::MAX, u32::MAX, f64::from(u32::MAX)),
+    ] {
+        let stats = ModuleStats {
+            attempts,
+            successes,
+            soft_failures,
+            ..ModuleStats::default()
+        };
+        validate_module_stats("m", &stats).unwrap_or_else(|e| {
+            panic!("({attempts}, {successes}, {soft_failures}) must be accepted: {e}")
+        });
+    }
+}
+
+#[test]
+fn validate_module_stats_rejects_non_finite_soft_failures() {
+    for soft_failures in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+        let stats = ModuleStats {
+            attempts: 10,
+            successes: 10,
+            soft_failures,
+            ..ModuleStats::default()
+        };
+        let err = validate_module_stats("add-synapse", &stats)
+            .expect_err("a non-finite soft_failures must be rejected");
+        assert_eq!(
+            err.error_kind(),
+            DiscoveryErrorKind::DataValidation,
+            "{soft_failures}"
+        );
+        assert!(err.to_string().contains("softFailures"), "{err}");
+    }
+}
+
+#[test]
+fn validate_module_stats_rejects_soft_failures_just_above_u32_max() {
+    let stats = ModuleStats {
+        soft_failures: f64::from(u32::MAX) + 1.0,
+        ..ModuleStats::default()
+    };
+    assert!(validate_module_stats("m", &stats).is_err());
+}
+
+#[test]
+fn validate_module_outcome_tracker_checks_every_module() {
+    let json = r#"{"modules":{"good":{"attempts":5,"successes":1,"candidatesProduced":0},"bad":{"attempts":1,"successes":2,"candidatesProduced":0}}}"#;
+    let tracker: ModuleOutcomeTracker = serde_json::from_str(json).expect("tracker JSON");
+    let err = validate_module_outcome_tracker(&tracker).expect_err("`bad` must be rejected");
+    assert!(err.to_string().contains("\"bad\""), "{err}");
+
+    validate_module_outcome_tracker(&ModuleOutcomeTracker::new())
+        .expect("an empty tracker must be accepted");
+}
+
+#[test]
+fn error_detail_truncates_a_long_module_name() {
+    // Multi-byte characters prove the cut lands on a `char` boundary.
+    let name = "é".repeat(MODULE_NAME_DETAIL_MAX_CHARS * 4);
+    let error = assert_rejected(&tracker_json(&name, 1, 2, "0.0"), "successes");
+    assert!(!error.contains(&name), "the full name must not be echoed");
+    assert!(
+        error.contains(&"é".repeat(MODULE_NAME_DETAIL_MAX_CHARS)),
+        "the truncated prefix must identify the module: {error}"
+    );
+    assert!(
+        !error.contains(&"é".repeat(MODULE_NAME_DETAIL_MAX_CHARS + 1)),
+        "no more than the limit may be echoed: {error}"
+    );
+}
