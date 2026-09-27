@@ -68,8 +68,8 @@ Tests in `tests/issue_2266_sample_manual_hint_private_dir_test.rs`:
 - `empty_capture_hint_points_at_a_fresh_private_dir` (exit 0, no capture)
 - `unspawnable_sampler_hint_points_at_a_fresh_private_dir` (spawn error)
 
-The existing `issue_1934_sample_fallback` (5 tests) and
-`issue_1905_sample_temp_dir` (4 tests) suites still pass.
+The existing `issue_1934_sample_fallback` and
+`issue_1905_sample_temp_dir` suites still pass.
 
 ### Quality Gate
 
