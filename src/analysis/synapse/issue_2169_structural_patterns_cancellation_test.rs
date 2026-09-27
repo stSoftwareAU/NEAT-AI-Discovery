@@ -95,6 +95,13 @@ struct NoisyFixture {
 }
 
 fn build_noisy_fixture() -> NoisyFixture {
+    build_padded_noisy_fixture(0)
+}
+
+/// The noisy/trusted fixture plus `padding` constant `input-pad-*` inputs.
+/// Their weight (0.25) differs from the fixture pair's, so they only raise the
+/// incoming-input count and never form a pair with `input-0`/`input-1`.
+fn build_padded_noisy_fixture(padding: usize) -> NoisyFixture {
     let trusted = |k: u32| if k.is_multiple_of(2) { 0.1f32 } else { -0.1 };
     let noisy = |k: u32| {
         if (k / 2).is_multiple_of(2) {
@@ -109,10 +116,19 @@ fn build_noisy_fixture() -> NoisyFixture {
             .map(|k| DiscoverRecord::new(k, uuid.to_string(), Some(act(k)), act(k), Vec::new()))
             .collect()
     };
-    let records: HashMap<String, Vec<DiscoverRecord>> = HashMap::from([
+    let mut records: HashMap<String, Vec<DiscoverRecord>> = HashMap::from([
         ("input-0".to_string(), rows("input-0", &trusted)),
         ("input-1".to_string(), rows("input-1", &noisy)),
     ]);
+    let mut synapses = vec![
+        synapse("input-0", TARGET, 0.5),
+        synapse("input-1", TARGET, 0.5),
+    ];
+    for i in 0..padding {
+        let uuid = format!("input-pad-{i}");
+        records.insert(uuid.clone(), rows(&uuid, &|_| 0.0));
+        synapses.push(synapse(&uuid, TARGET, 0.25));
+    }
     let target_records: Vec<DiscoverRecord> = (0..NOISY_OBS)
         .map(|k| {
             let error = 0.5 * (trusted(k) - noisy(k));
@@ -121,10 +137,7 @@ fn build_noisy_fixture() -> NoisyFixture {
         .collect();
 
     NoisyFixture {
-        synapses: vec![
-            synapse("input-0", TARGET, 0.5),
-            synapse("input-1", TARGET, 0.5),
-        ],
+        synapses,
         cache: map_loader(records),
         target_map: TargetMap::from_records(&target_records),
     }
@@ -195,6 +208,31 @@ fn expired_deadline_stops_noisy_vs_trusted_scan() {
     assert!(
         cancelled.is_none(),
         "an expired deadline must stop the pairwise scan before any pair is scored"
+    );
+}
+
+#[test]
+#[serial]
+fn noisy_vs_trusted_is_skipped_above_the_incoming_input_cap() {
+    // Issue #1799: at exactly the cap the padded fixture still yields its
+    // candidate, so the `None` one input past the cap is the cap at work and
+    // not a fixture that never pairs.
+    let at_cap = build_padded_noisy_fixture(MAX_INCOMING_INPUTS_FOR_NOISY_SCAN - 2);
+    assert!(
+        run_noisy(&at_cap.synapses, &at_cap.cache, &at_cap.target_map, &None).is_some(),
+        "a fixture at exactly the cap must still be scanned and yield its candidate"
+    );
+
+    let above_cap = build_padded_noisy_fixture(MAX_INCOMING_INPUTS_FOR_NOISY_SCAN - 1);
+    assert!(
+        run_noisy(
+            &above_cap.synapses,
+            &above_cap.cache,
+            &above_cap.target_map,
+            &None
+        )
+        .is_none(),
+        "a target with more than MAX_INCOMING_INPUTS_FOR_NOISY_SCAN inputs must skip the scan"
     );
 }
 
