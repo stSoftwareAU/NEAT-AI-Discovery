@@ -101,10 +101,11 @@ enum LockRecheck {
 ///
 /// Like the sibling scanner's gate, this runs **before** any existence probe
 /// so a caller cannot bypass it by passing a path that does not yet exist.
-fn assert_is_discovery_dir(path: &Path, temp_dir: &str) -> io::Result<()> {
+fn assert_is_discovery_dir(path: &Path) -> io::Result<()> {
     let invalid = |detail: String| io::Error::new(io::ErrorKind::InvalidInput, detail);
+    let temp_dir = path.display();
 
-    if temp_dir.is_empty() {
+    if path.as_os_str().is_empty() {
         return Err(invalid("temp_dir must not be empty".to_string()));
     }
 
@@ -149,8 +150,8 @@ fn assert_is_discovery_dir(path: &Path, temp_dir: &str) -> io::Result<()> {
 /// [`LOCK_FILE_NAME`], [`HOST_LOCK_FILE_NAME`] or [`DISCOVERY_DATA_FILE_NAME`]
 /// file. Any other I/O
 /// failure from the recursive removal is propagated unchanged.
-pub fn cleanup_discovery_dir(temp_dir: &str) -> io::Result<CleanupOutcome> {
-    remove_discovery_dir(temp_dir, LockRecheck::Skip)
+pub fn cleanup_discovery_dir(temp_dir: impl AsRef<Path>) -> io::Result<CleanupOutcome> {
+    remove_discovery_dir(temp_dir.as_ref(), LockRecheck::Skip)
 }
 
 /// Remove a discovery directory the *orphan sweep* believes is abandoned
@@ -168,14 +169,15 @@ pub fn cleanup_discovery_dir(temp_dir: &str) -> io::Result<CleanupOutcome> {
 /// # Errors
 ///
 /// Same as [`cleanup_discovery_dir`].
-pub fn cleanup_orphaned_discovery_dir(temp_dir: &str) -> io::Result<CleanupOutcome> {
-    remove_discovery_dir(temp_dir, LockRecheck::Enforce)
+pub fn cleanup_orphaned_discovery_dir(temp_dir: impl AsRef<Path>) -> io::Result<CleanupOutcome> {
+    remove_discovery_dir(temp_dir.as_ref(), LockRecheck::Enforce)
 }
 
-fn remove_discovery_dir(temp_dir: &str, recheck: LockRecheck) -> io::Result<CleanupOutcome> {
-    let path = Path::new(temp_dir);
-
-    assert_is_discovery_dir(path, temp_dir)?;
+/// Remove `path` itself — never a string rendering of it. `display()` is lossy
+/// for non-UTF-8 names, so it is used for log and error text only (Issue #2255).
+fn remove_discovery_dir(path: &Path, recheck: LockRecheck) -> io::Result<CleanupOutcome> {
+    assert_is_discovery_dir(path)?;
+    let temp_dir = path.display();
 
     // Probe with `symlink_metadata` rather than `exists()` so a symlinked
     // `temp_dir` is never followed: `fs::remove_dir_all` on a symlinked
@@ -461,11 +463,12 @@ pub fn clean_orphaned_discovery_dirs_since(
             }
         }
 
-        let dir_str = path.display().to_string();
-        match cleanup_orphaned_discovery_dir(&dir_str) {
+        // Remove the exact entry the guards above vetted (Issue #2255): a
+        // lossy string round-trip could name a different, unvetted sibling.
+        match remove_discovery_dir(&path, LockRecheck::Enforce) {
             Ok(CleanupOutcome::Removed) => {
                 tracing::info!(
-                    path = %dir_str,
+                    path = %path.display(),
                     "Removed orphaned discovery directory"
                 );
                 result.removed += 1;
@@ -478,7 +481,8 @@ pub fn clean_orphaned_discovery_dirs_since(
             }
             Err(err) => {
                 result.errors.push(format!(
-                    "Failed to remove orphaned directory {dir_str}: {err}"
+                    "Failed to remove orphaned directory {}: {err}",
+                    path.display()
                 ));
             }
         }
