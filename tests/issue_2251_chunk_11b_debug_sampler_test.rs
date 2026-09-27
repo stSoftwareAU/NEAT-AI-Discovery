@@ -138,7 +138,10 @@ fn no_debug_sampler_row_reads_pending_and_each_has_an_outcome_and_a_reason() {
     let rows = file_rows(section(files_swept, &format!("### {SECTION}")));
 
     let paths: Vec<&str> = rows.iter().map(|(path, _)| path.as_str()).collect();
-    assert_eq!(paths, FILES, "the section must carry exactly its four files");
+    assert_eq!(
+        paths, FILES,
+        "the section must carry exactly its four files"
+    );
 
     for (path, outcome) in &rows {
         assert!(
