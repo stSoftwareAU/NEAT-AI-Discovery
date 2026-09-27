@@ -696,9 +696,11 @@ export NEAT_AI_DISCOVERY_WATCHDOG_ABORT_DELAY_SECS=2
 ```bash
 lldb -p <pid> -o 'thread backtrace all' -o 'quit'
 
-# Or use the sample tool
-sudo sample <pid> 1 -file /tmp/sample.txt
-cat /tmp/sample.txt
+# Or use the sample tool — write into a fresh private directory, never a
+# fixed /tmp path that could be pre-planted as a symlink (Issue #2266)
+dir="$(mktemp -d)"
+sudo sample <pid> 1 -file "$dir/sample.txt"
+cat "$dir/sample.txt"
 ```
 
 **Linux (GDB):**
