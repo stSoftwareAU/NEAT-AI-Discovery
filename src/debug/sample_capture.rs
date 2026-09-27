@@ -199,10 +199,12 @@ fn read_capture(out: &mut String, path: &std::path::Path) -> Option<String> {
     }
 }
 
+/// Point the operator at a fresh owner-only directory, never a fixed `/tmp`
+/// path an attacker could pre-plant as a symlink (Issues #1905, #2266).
 fn write_manual_hint(out: &mut String, pid: u32) {
     let _ = writeln!(
         out,
-        "Try manually: sample {pid} 1 -mayDie -file /tmp/sample.txt"
+        "Try manually: sample {pid} 1 -mayDie -file \"$(mktemp -d)/sample.txt\""
     );
 }
 
