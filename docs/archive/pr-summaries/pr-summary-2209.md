@@ -44,8 +44,8 @@ Closes #2209.
 - `grep -n SC2064 scripts/install-rustup.sh` returns nothing.
   `quality/shellcheck.sh` and `quality/bash_syntax.sh` both report
   "OK — 24 script(s) passed".
-- `./quality.sh` passed on this branch in the worker's quality gate before the
-  PR-summary step.
+- `./quality.sh < /dev/null` exited 0 ("✅ All quality checks passed!") on
+  this branch after the final code and ledger changes.
 
 ## Reproduction
 
@@ -83,7 +83,7 @@ existing test kept:
 - **met** — The interrupt test asserts that a TERM during the download exits non-zero, never executes the installer, and reaps the temp directory — evidence: `tests/issue_1911_rustup_digest_verification.rs::a_term_during_the_download_exits_non_zero_and_reaps_the_temp_dir` — reviewer: met
 - **met** — Every existing test in `tests/issue_1911_rustup_digest_verification.rs` and `tests/issue_2097_rustup_pin_parity.rs` still passes — evidence: 12/12 and 5/5 passed — reviewer: met
 - **met** — The chunk-16 ledger records #2127 as **fixed** and names the guarding test(s) — evidence: `docs/audits/security-sweep-chunk-16-build-scripts.md` #2127 Findings row, coverage row and `### scripts/install-rustup.sh` section — reviewer: met
-- **met** — `./quality.sh` passes — evidence: QUALITY_EVIDENCE — reviewer: missing — reason: the reviewer said "unverified" because it did not run the full gate; it ran the shellcheck, bash-syntax and both test sub-gates, which passed, and the full gate was run here
+- **met** — `./quality.sh` passes — evidence: `./quality.sh < /dev/null` exited 0 ("✅ All quality checks passed!") on this branch after the ledger and test changes — reviewer: missing — reason: the reviewer said "unverified" because it did not run the full gate; it ran the shellcheck, bash-syntax and both test sub-gates, which passed, and the full gate was run here
 - **unrequested** — a note in the ledger's `### scripts/install-rustup.sh` section recording how far the fix shifted the baseline `#1911` line citations — reviewer: unrequested — reason: the reviewer judged it not asked for but in line with the ledger's own baseline-citation rule; without it those citations read as current lines
 
 ## Standards Review
