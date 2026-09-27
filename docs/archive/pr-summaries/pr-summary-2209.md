@@ -24,7 +24,10 @@ Closes #2209.
 - **Ledger.** `docs/audits/security-sweep-chunk-16-build-scripts.md` flips
   the #2127 Findings row to **fixed** and names the guarding tests. The
   file-coverage row and the `### scripts/install-rustup.sh` section are
-  updated.
+  updated. They follow the ledger's baseline convention: the fix is cited by
+  symbol, the coverage row keeps the `4f269d6` count (151), the section heading
+  reads "151 lines (164 after #2209)", and a note records how far the fix
+  shifted the baseline `#1911` line citations.
 
 ## Evidence
 
@@ -43,6 +46,12 @@ Closes #2209.
   "OK — 24 script(s) passed".
 - `./quality.sh` passed on this branch in the worker's quality gate before the
   PR-summary step.
+
+## Reproduction
+
+- **symptom** — a `TMPDIR` containing `'; touch <path>; '` made `install-rustup.sh` run the embedded `touch` when its `EXIT` trap re-parsed the interpolated `mktemp -d` path
+- **status** — `verified` — the regression test was observed failing against the unfixed code (the base script restored in place: 11 passed, 1 failed, panic at `tests/issue_1911_rustup_digest_verification.rs:351`, "a quote-bearing TMPDIR must never execute a command") and passing after the fix (12 passed)
+- **regression test** — `tests/issue_1911_rustup_digest_verification.rs::a_quote_bearing_tmpdir_executes_nothing_and_is_reaped`
 
 ## Test Plan
 
@@ -68,21 +77,19 @@ existing test kept:
 <!-- vibe-spec-review inputs="diff+issue-body" -->
 
 - **met** — `scripts/install-rustup.sh` arms cleanup with `trap _cleanup_tmp EXIT` (a function name), and its INT/TERM traps are fixed literals — evidence: `scripts/install-rustup.sh::install_rustup` (`trap _cleanup_tmp EXIT`, `trap 'exit 130' INT`, `trap 'exit 143' TERM`), `::_cleanup_tmp` — reviewer: met
-- **met** — `grep -n SC2064 scripts/install-rustup.sh` returns nothing, and `quality/shellcheck.sh` and `quality/bash_syntax.sh` pass — evidence: grep exits 1 with no output; both gates report "OK — 24 script(s) passed" — reviewer: met
-- **met** — The hostile-`TMPDIR` test asserts a non-zero exit, an absent sentinel and a reaped mktemp directory, and the PR summary states that it fails against the unfixed script — evidence: `tests/issue_1911_rustup_digest_verification.rs::a_quote_bearing_tmpdir_executes_nothing_and_is_reaped`; the unfixed-script failure is recorded under **Evidence** above — reviewer: partial — reason: the reviewer found the assertions complete and reproduced the sentinel against the base script by hand; it marked partial only because this summary did not exist yet when it reviewed
+- **met** — `grep -n SC2064 scripts/install-rustup.sh` returns nothing, and `quality/shellcheck.sh` and `quality/bash_syntax.sh` pass — evidence: grep prints nothing; both gates report "OK — 24 script(s) passed" — reviewer: met
+- **met** — The hostile-`TMPDIR` test asserts a non-zero exit, an absent sentinel and a reaped mktemp directory, and the PR summary states that it fails against the unfixed script — evidence: `tests/issue_1911_rustup_digest_verification.rs::a_quote_bearing_tmpdir_executes_nothing_and_is_reaped`; the unfixed-script failure is recorded under **Evidence** and **Reproduction** — reviewer: met
 - **met** — The happy-path test asserts that the `TMPDIR` directory is empty after a successful run — evidence: `tests/issue_1911_rustup_digest_verification.rs::executes_the_installer_when_the_digest_matches` — reviewer: met
 - **met** — The interrupt test asserts that a TERM during the download exits non-zero, never executes the installer, and reaps the temp directory — evidence: `tests/issue_1911_rustup_digest_verification.rs::a_term_during_the_download_exits_non_zero_and_reaps_the_temp_dir` — reviewer: met
 - **met** — Every existing test in `tests/issue_1911_rustup_digest_verification.rs` and `tests/issue_2097_rustup_pin_parity.rs` still passes — evidence: 12/12 and 5/5 passed — reviewer: met
 - **met** — The chunk-16 ledger records #2127 as **fixed** and names the guarding test(s) — evidence: `docs/audits/security-sweep-chunk-16-build-scripts.md` #2127 Findings row, coverage row and `### scripts/install-rustup.sh` section — reviewer: met
-- **met** — `./quality.sh` passes — evidence: the worker's quality gate passed on this branch before the PR-summary step — reviewer: partial — reason: the reviewer did not run the full `./quality.sh` itself (too long); it ran the shellcheck and bash-syntax sub-gates and both test targets, and all passed
-- **unrequested** — WIP checkpoint `44a6570` removed the ledger caveat that the older #1911 line citations are at `4f269d6` and shift by 13 lines after `:31` — reviewer: unrequested — reason: an automated snapshot, not part of the issue; without the caveat, the #1911 citations at ledger `:103`, `:153`, `:163`, `:169` and `:175` read as current-file lines and are now stale. This retry is limited to the summary file, so it is left for a follow-up.
+- **met** — `./quality.sh` passes — evidence: QUALITY_EVIDENCE — reviewer: missing — reason: the reviewer said "unverified" because it did not run the full gate; it ran the shellcheck, bash-syntax and both test sub-gates, which passed, and the full gate was run here
+- **unrequested** — a note in the ledger's `### scripts/install-rustup.sh` section recording how far the fix shifted the baseline `#1911` line citations — reviewer: unrequested — reason: the reviewer judged it not asked for but in line with the ledger's own baseline-citation rule; without it those citations read as current lines
 
 ## Standards Review
 
 <!-- vibe-standards-review inputs="diff+CODING-STANDARDS.md" -->
 
-- **violation** — the ledger's baseline line-count rule and single source of truth — evidence: `docs/audits/security-sweep-chunk-16-build-scripts.md:56` and `:382` now say 164 lines, but the table header (`:49`) says counts are taken at the baseline commit (151 at `4f269d6`, inside the 2,106-line total) — reason: stands. The issue explicitly asked to update "its line count", and this retry is limited to the summary file. The #2139/#2140 fixes kept their baseline counts, so a follow-up should restore 151.
-- **violation** — CONTRIBUTING.md "Cite Code by Symbol, Never by Line Number" (Issue #1942) — evidence: `docs/audits/security-sweep-chunk-16-build-scripts.md:56`, `:213`, `:387-390` cite current-file lines (`:34`, `:38-42`, `:126`, `:127`, `:129-130`) outside the ledger's `4f269d6` baseline exception — reason: stands, softened because every citation also names its symbol (`_INSTALL_TMP_DIR`, `_cleanup_tmp`, `install_rustup`) and all of them match the current script. This retry is limited to the summary file, so dropping the line numbers is left for a follow-up.
-- **clean** — Australian English in all added comments and prose. The script passes `shellcheck` and `bash -n`, the `rm -rf --` is quoted and guarded, and the comments are short and explain why. The tests check outcomes, live in `tests/` and set `TMPDIR` on the child `Command`, so no `#[serial]` is needed. They pass `rustfmt --check` and `cargo clippy -D warnings`. The change is scoped with no over-engineering, `.github/workflows/ci.yml` is untouched, and the version bump is left to CI's `version-increment` job.
+- **clean** — no violations. The reviewer used `CONTRIBUTING.md` and `AGENTS.md`; the repository has no `CODING-STANDARDS.md`. It checked the function-name `EXIT` trap, the literal INT/TERM traps and the guarded `rm -rf --`, and confirmed shellcheck passes with the `SC2064` disable gone. It re-ran the hostile `TMPDIR` against the baseline script and saw the sentinel created. It confirmed `current_dir` is pinned to the sandbox. The ledger cites baseline lines alongside symbols and keeps the baseline 151-line count. Australian English is used throughout, and `ci.yml` and the dependencies are untouched. Optional notes: the ledger shift range should start at `:33`, not `:32` (fixed in this diff); the heading's "164 after #2209" is a HEAD-relative count, kept because the issue asked for the line count to be updated; the version bump is left to CI's `version-increment` job; the INT/TERM traps are global when the script is sourced, which is harmless because nothing else sources it.
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)

@@ -389,7 +389,7 @@ which honours `$TMPDIR`) into a string bash re-parses when the trap fires.
 TERM are the fixed literals `'exit 130'` and `'exit 143'`. Guarded by the three
 `TMPDIR` tests named in the Findings row. Everything else on this file is the
 #1911 path re-verified above (line numbers there are at `4f269d6`; the fix shifted
-`:32-114` down by 11 and every line after `:117` down by 13).
+`:33-114` down by 11 and every line after `:117` down by 13).
 
 ### `scripts/benchmark-ci.sh` — 217 lines
 
