@@ -424,7 +424,8 @@ pub unsafe extern "C" fn cleanup_discovery_dir(
 /// Scan a base directory for orphaned discovery directories and remove them
 /// (Issue #1100).
 ///
-/// A subdirectory is considered orphaned when it has no `discovery.lock` file.
+/// A subdirectory is considered orphaned when it has neither a `discovery.lock`
+/// nor the host's `.discovery.lock` file (Issue #2256).
 /// `NotFound` errors are suppressed because the async cleanup actor may have
 /// removed the directory between the orphan check and the removal call.
 ///
