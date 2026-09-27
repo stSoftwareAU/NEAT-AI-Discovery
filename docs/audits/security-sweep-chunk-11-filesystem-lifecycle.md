@@ -106,10 +106,65 @@ Probe dispositions (Issue #2234):
 
 | Path | Lines | Outcome |
 | --- | --- | --- |
-| `src/debug.rs` | 604 | pending |
-| `src/debug/sample_capture.rs` | 509 | pending |
-| `src/debug/sample_dir.rs` | 285 | pending |
-| `src/debug/process_state.rs` | 150 | pending |
+| `src/debug.rs` | 604 | no finding — no filesystem mutation and no process spawn (a grep for `fs::`, `File::`, `OpenOptions`, `DirBuilder`, `Command::new`, `.exists()` and `remove_dir_all` has no hits); SIGUSR1 is only deliverable by the same uid or root, and dumps are serialised on one thread (signal/lifecycle probe) |
+| `src/debug/sample_capture.rs` | 509 | finding filed — #2266 (`sample_capture.rs::write_manual_hint` tells the operator to run the sampler with `-file /tmp/sample.txt`, re-creating the predictable shared-tmp path #1905 removed); the spawn itself is shell-free with a fixed argv and a program only the same uid can choose |
+| `src/debug/sample_dir.rs` | 285 | no finding — exclusive, non-recursive `0700` directory creation under `std::env::temp_dir()`; `read_guarded` refuses a symlink or a foreign-owned file, and its stat→read window sits inside the euid-owned `0700` directory |
+| `src/debug/process_state.rs` | 150 | no finding — in-memory only: renders the breaker, heartbeat, outstanding-request and local-backtrace state into a `String`, with no filesystem or process access |
+
+Probe dispositions (Issue #2251):
+
+- **External process — no finding.** `sample_capture.rs::sampler_program`
+  picks the non-empty `NEAT_AI_DISCOVERY_SAMPLE_PROGRAM` override
+  (`config::sample_program_override`), else `"sample"` on macOS (resolved via
+  `PATH`), else none. `sample_capture.rs::run_external_command_with_timeout`
+  spawns it through `Command::new` — no shell — with the fixed argv
+  `[pid, "1", "-mayDie", "-file", <capture path>]` and `Stdio::null()` on
+  stdout and stderr, and kills it after `SAMPLE_TIMEOUT_SECS` (5 s) plus
+  `SAMPLE_KILL_GRACE_MS` (500 ms). Only the process's own environment chooses
+  the program, and same-uid control of env or `PATH` is outside the attacker
+  model. The config reader is not re-audited here: the override surface is
+  #2096 (closed), with #2123 and #2124 as its open follow-ups. A child still
+  alive after the grace window is returned with `status: None` and not
+  reaped — a zombie until process exit, a hygiene point, not a security one.
+- **Output handling — same-uid disclosure only.**
+  `sample_capture.rs::read_capture` and
+  `sample_capture.rs::write_filtered_sample_output` copy the process's own
+  stack symbols into the dump, which goes to its own stderr and so to the
+  operator's log. A refusal from `read_guarded` is written into the dump as a
+  WARNING rather than swallowed.
+- **`/tmp/sample.txt` manual hint — finding filed (#2266).**
+  `sample_capture.rs::write_manual_hint` prints
+  `Try manually: sample <pid> 1 -mayDie -file /tmp/sample.txt` on every
+  fallback, steering the operator to exactly the predictable path in a
+  world-writable directory that #1905 removed from the automated path.
+  `tests/issue_1934_sample_fallback.rs` pins the `Try manually: sample`
+  prefix, so the fix keeps that prefix.
+- **Signal/lifecycle — no finding.** `debug.rs::init_debug_handlers` runs once
+  (a `OnceLock`, from the library's one-time initialisation) and
+  `debug.rs::install_signal_handler` registers SIGUSR1 through
+  `signal_hook::iterator::Signals`, so `debug.rs::dump_all_threads` runs on the
+  `signal-handler` thread, outside signal context, one dump at a time. Only
+  the same uid or root can send SIGUSR1. The public
+  `debug.rs::render_thread_dump` can run concurrently with a signalled dump,
+  but each call gets its own capture directory (nanoseconds plus a
+  process-local counter in `sample_dir.rs::unique_suffix`), so two dumps never
+  share a path. `debug.rs::shutdown_debug_handlers` (FFI
+  `cleanup_discovery_lib`) closes the signal iterator and joins each thread
+  with a 10 s bound, so shutdown cannot hang on a wedged dump.
+- **Tmp directory and read TOCTOU — refuted.** A co-tenant can predict the
+  `neat_ai_discovery.sample.<pid>.<nanos>.<seq>.<attempt>.d` name and
+  pre-create it, but `sample_dir.rs::create_private_dir` is a non-recursive
+  `mkdir` that fails with `AlreadyExists` on anything present — a symlink
+  included — so `sample_dir.rs::SampleDir::create` moves to the next name.
+  Squatting all eight attempts is a denial of the capture only, and it
+  degrades loudly: a WARNING, the manual hint and a `NoBacktraces` banner. The
+  window between `read_guarded`'s `symlink_metadata` and its `read_to_string`
+  is not exploitable: the capture path's parent is the euid-owned `0700`
+  directory, so no other uid can swap the entry.
+- **Test-only predictable names — noted, not a finding.** The
+  `sample_capture.rs` test module writes helper scripts at predictable
+  `$TMPDIR` names. It never ships in the library, and a co-tenant racing a
+  developer's test run is outside the sweep's production scope.
 
 ### watchdog + tracking_alloc + discovery_history
 
@@ -154,6 +209,11 @@ Probe dispositions (Issue #2234):
 | `discovery_cleanup.rs::clean_orphaned_discovery_dirs_since` | `cleanup_orphaned_discovery_dir(&path.display().to_string())` | a child of `base_dir` | **no — finding #2255**: the lossy string can name a different, literal-U+FFFD sibling that skipped the age floor |
 
 <!-- section: debug + sampler -->
+| `sample_dir.rs::create_private_dir` | `DirBuilder` with `mode(0o700)` and `recursive(false)`, then `set_permissions(0o700)` (unix); a mode-less non-recursive `create` elsewhere | `std::env::temp_dir()` joined with the per-invocation name from `SampleDir::create` | yes — `mkdir` does not follow the final component, so a planted symlink or any existing entry fails with `AlreadyExists`; `set_permissions` runs only on the directory this call just created |
+| `sample_dir.rs::SampleDir::create` | up to `MAX_CREATE_ATTEMPTS` (8) calls to `create_private_dir` on `neat_ai_discovery.sample.<pid>.<nanos>.<seq>.<attempt>.d` | `std::env::temp_dir()` | yes — every attempt is exclusive; a co-tenant squatting all eight names only denies the capture, which is reported (WARNING, manual hint, `NoBacktraces`) |
+| `sample_dir.rs::Drop::drop` | `fs::remove_dir_all(dir)`; `NotFound` ignored, any other error printed as a WARNING | the directory `SampleDir::create` made | yes — std does not follow a top-level symlink nor symlinks within the tree, and the directory is euid-owned `0700`, so no other uid can plant inside it |
+| `sample_dir.rs::read_guarded` | `fs::symlink_metadata(path)`, refuse a non-regular file (`InvalidData`) or a uid other than the euid (`PermissionDenied`), then `fs::read_to_string(path)` | `<SampleDir>/sample.txt` | yes — the final component is not followed; the stat→read TOCTOU is refuted because the parent is the euid-owned `0700` directory |
+| `sample_capture.rs::run_external_command_with_timeout` | process spawn: `Command::new(program)` with the argv `[pid, "1", "-mayDie", "-file", <capture path>]` and null stdout/stderr; killed after 5 s plus a 500 ms grace | the sampler writes `<SampleDir>/sample.txt` | yes — no shell; the output path is inside the private directory, and the program comes only from the process's own env or `PATH` (same uid) |
 
 <!-- section: watchdog + tracking_alloc + discovery_history -->
 
@@ -165,6 +225,8 @@ Probe dispositions (Issue #2234):
 | #1903 | lock re-read immediately before removal (`LockRecheck::Enforce` → `CleanupOutcome::Claimed`); fail-closed lock probe (only `NotFound` means "no lock"); age floor (a child touched at or after `scan_started` is counted `claimed`) | `discovery_cleanup.rs::remove_discovery_dir` (re-check), `discovery_cleanup.rs::is_directory_orphaned` (fail-closed probe), `discovery_cleanup.rs::directory_touched_since` and the age-floor match in `discovery_cleanup.rs::clean_orphaned_discovery_dirs_since`; regression surface `tests/issue_1903_orphan_sweep_lock_recheck.rs` | yes — FFI `ffi/utilities.rs::clean_orphaned_discovery_dirs` → `discovery_cleanup.rs::clean_orphaned_discovery_dirs` → `clean_orphaned_discovery_dirs_since` → `cleanup_orphaned_discovery_dir` (`LockRecheck::Enforce`). Holds for UTF-8 names; #2255 bypasses the age floor for a non-UTF-8 entry, and #2256 means the guard keys on a name the known host never writes |
 
 <!-- section: debug + sampler -->
+| #1905 | owner-only per-invocation capture directory removed on `Drop` on every exit path, including kill-on-timeout; a symlink or foreign-owned file at the capture path is refused, not followed; guard test `tests/issue_1905_sample_temp_dir.rs` | `sample_dir.rs::SampleDir::create`, `sample_dir.rs::create_private_dir`, `sample_dir.rs::Drop::drop`, `sample_dir.rs::read_guarded` (via `sample_capture.rs::read_capture`); regression surface for the fallback text `tests/issue_1934_sample_fallback.rs` | yes — SIGUSR1 → `debug.rs::dump_all_threads` → `debug.rs::render_thread_dump` → `sample_capture.rs::capture`. The manual fallback hint still names `/tmp/sample.txt` (#2266) |
+| #1904 | `RUNTIME_DIR_MODE` (`0700`) and `prepare_runtime_dir` in `src/analysis/utils/platform.rs`: create owner-only, re-apply the mode past the umask, refuse a pre-existing world-writable directory or a symlink | `platform.rs::prepare_runtime_dir`, pinned by its `xdg_runtime_dir_*` unit tests; the sampler only mirrors the pattern in `sample_dir.rs::create_private_dir` and does not call it | yes on Linux (`platform.rs::ensure_xdg_runtime_dir`); not on the sampler path — no `src/debug*` file references it |
 
 <!-- section: watchdog + tracking_alloc + discovery_history -->
 
