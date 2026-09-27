@@ -489,10 +489,6 @@ pub(crate) fn detect_collapsible_hidden_neurons(
     }
 }
 
-// =============================================================================
-// Tests (Issue #1270)
-// =============================================================================
-
 /// Map each record's `obs_index` to its activation, skipping non-finite ones.
 fn build_act_map(records: &[DiscoverRecord]) -> HashMap<u32, f32> {
     let mut map: HashMap<u32, f32> = HashMap::with_capacity(records.len());
@@ -503,6 +499,10 @@ fn build_act_map(records: &[DiscoverRecord]) -> HashMap<u32, f32> {
     }
     map
 }
+
+// =============================================================================
+// Tests (Issue #1270)
+// =============================================================================
 
 #[cfg(test)]
 mod tests {
