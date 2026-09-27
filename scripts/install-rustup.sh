@@ -30,6 +30,17 @@ RUSTUP_ARCHIVE_BASE_URL="https://static.rust-lang.org/rustup/archive"
 _script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DIGEST_MANIFEST="${_script_dir}/rustup-init.sha256"
 
+# Script-level so the EXIT trap can still see it once install_rustup returns.
+_INSTALL_TMP_DIR=""
+
+# EXIT-trap cleanup, armed by function name so the mktemp path — which honours
+# a caller-controlled TMPDIR — is never re-parsed as shell (Issue #2209).
+_cleanup_tmp() {
+  if [[ -n "$_INSTALL_TMP_DIR" && -d "$_INSTALL_TMP_DIR" ]]; then
+    rm -rf -- "$_INSTALL_TMP_DIR"
+  fi
+}
+
 # Echo the SHA-256 of "$1" as lower-case hex, using whichever standard tool the
 # host provides. No digest tool means no verification, which means no install.
 _sha256_of() {
@@ -107,15 +118,17 @@ _pinned_digest() {
 }
 
 install_rustup() {
-  local target url tmp_dir installer expected actual
+  local target url installer expected actual
   target="$(_host_target)"
   expected="$(_pinned_digest "$target")"
   url="${RUSTUP_ARCHIVE_BASE_URL}/${RUSTUP_VERSION}/${target}/rustup-init"
 
-  tmp_dir="$(mktemp -d)"
-  # shellcheck disable=SC2064  # expand tmp_dir now, so cleanup runs on any exit
-  trap "rm -rf '$tmp_dir'" EXIT
-  installer="${tmp_dir}/rustup-init"
+  _INSTALL_TMP_DIR="$(mktemp -d)"
+  trap _cleanup_tmp EXIT
+  # An interrupt ends the run non-zero; `exit` fires the EXIT trap to clean up.
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  installer="${_INSTALL_TMP_DIR}/rustup-init"
 
   echo "Downloading rustup-init ${RUSTUP_VERSION} for ${target}..." >&2
   if ! curl --proto "=https" --tlsv1.2 -sSfL \

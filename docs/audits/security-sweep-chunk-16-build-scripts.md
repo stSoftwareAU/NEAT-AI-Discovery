@@ -53,7 +53,7 @@ repository. Its citations are the ones to re-derive from the named symbol first.
 | `scripts/runlib.sh` | 1164 | accepted: staging names under `$CARGO_HOME` are predictable, but planting the symlink already needs write access to the destination directory — no privilege is crossed (see [runlib.sh](#scriptsrunlibsh--1164-lines)) |
 | `scripts/benchmark-ci.sh` | 217 | clean — the only externally-set value, `BENCHMARK_THRESHOLD`/`--threshold`, is validated by `benchmark_threshold::require_valid`, called at `benchmark-ci.sh:101` before it reaches `bc` |
 | `benchmark.sh` | 165 | finding #2140 — `eval "$cmd" … \|\| true` (`:32`) times a suite that never completed and prints it as a speed-up |
-| `scripts/install-rustup.sh` | 151 | finding #2127 — `$tmp_dir` interpolated into the `EXIT` trap string (`:117`); the #1911 digest path itself re-verified clean |
+| `scripts/install-rustup.sh` | 151 | finding #2127 **fixed** by #2209 — the `EXIT` trap was the interpolated string at `:117`; it now names the `install-rustup.sh::_cleanup_tmp` function; the #1911 digest path itself re-verified clean |
 | `scripts/install-rust-toolchain.sh` | 126 | finding #2126 — `RUST_TOOLCHAIN_MAX_ATTEMPTS` reaches the `[[ -ge ]]` arithmetic unvalidated (`:104`); the argument allowlist (`:57-65`) is clean |
 | `scripts/fuzz-ci.sh` | 73 | accepted: `MAX_TIME` (`:15`) reaches libFuzzer as one quoted argv element (`:59`), never an arithmetic or `eval` context, and a bad value fails loud |
 | `scripts/check-version-no-downgrade.sh` | 56 | clean — both versions are regex-validated (`:33`) before any arithmetic test |
@@ -210,7 +210,7 @@ crates.io, so it carries no third-party `build.rs` — which is the risk the
 | issue | `file:line` | class | severity | status |
 | --- | --- | --- | --- | --- |
 | [#2126](https://github.com/stSoftwareAU/NEAT-AI-Discovery/issues/2126) | `scripts/install-rust-toolchain.sh:52,104` | arithmetic-context injection via unvalidated environment | low | open — filed before this sweep, re-confirmed here |
-| [#2127](https://github.com/stSoftwareAU/NEAT-AI-Discovery/issues/2127) | `scripts/install-rustup.sh:115-117` | temporary path interpolated into an `EXIT` trap string | low | open — filed before this sweep, re-confirmed here |
+| [#2127](https://github.com/stSoftwareAU/NEAT-AI-Discovery/issues/2127) | `scripts/install-rustup.sh:115-117` | temporary path interpolated into an `EXIT` trap string | low | **fixed** (Issue #2209) — `install-rustup.sh::install_rustup` holds the `mktemp -d` result in the script-level `_INSTALL_TMP_DIR` and reaps it with `install-rustup.sh::_cleanup_tmp` (`rm -rf --` only when the variable is non-empty and a directory) under `trap _cleanup_tmp EXIT`, a function name, so the path — which honours a caller-controlled `TMPDIR` — is never re-parsed as shell. INT and TERM are fixed literals (`trap 'exit 130' INT`, `trap 'exit 143' TERM`) whose `exit` fires the `EXIT` cleanup, so an interrupted run ends non-zero instead of resuming past a deleted directory; no trap argument expands anything, and the `SC2064` disable is gone. Guarded by `tests/issue_1911_rustup_digest_verification.rs::a_quote_bearing_tmpdir_executes_nothing_and_is_reaped` (a `TMPDIR` containing `'; touch <sandbox>/pwned; '` with a failing stub `curl`: non-zero exit, no sentinel, mktemp directory reaped — it created the sentinel against the unfixed script), `::executes_the_installer_when_the_digest_matches` (temp directory reaped after a successful run) and `::a_term_during_the_download_exits_non_zero_and_reaps_the_temp_dir` (TERM mid-download: non-zero exit, installer never executed, temp directory reaped) |
 | [#2139](https://github.com/stSoftwareAU/NEAT-AI-Discovery/issues/2139) | `scripts/check-pr-summary-location.sh:22,35` | fail-silent | low | **fixed** — the scan now lands in an `mktemp` file (cleaned by an `EXIT` trap) instead of a process substitution, `2>/dev/null` is gone so `find`'s own diagnostic reaches the operator, and both `find` and `sort` have their exit status checked explicitly: either failing prints `❌ … the PR summary layout was NOT checked.` on stderr and `exit 1`s, so no ✅ line can follow a scan that never ran. The read is now NUL-delimited end to end (`find -print0`, `sort -z`, `read -r -d ''`) over a plain file redirect, so no process substitution remains anywhere and paths containing spaces survive intact; the stray-file message and its `exit 1` are unchanged. Guarded by `tests/issue_2139_pr_summary_gate_fails_loud.rs::a_scan_that_cannot_run_fails_loud_instead_of_reporting_a_clean_tree`, which drives the real script in a sandbox with no `docs/` |
 | [#2140](https://github.com/stSoftwareAU/NEAT-AI-Discovery/issues/2140) | `benchmark.sh:32` | fail-silent + `eval` on a variable | low | **fixed** — `benchmark.sh::run_benchmark` now takes the command as arguments and invokes `"$@"` (no `eval` remains in the file); a non-zero status prints the label, the argv and the last 20 lines of the captured output on stderr and `exit 1`s, so no duration or improvement figure is produced for a run that did not complete. Guarded by `tests/issue_2140_benchmark_failure_is_loud.rs::a_failing_benchmark_command_fails_the_script_loudly`, which drives the real script with a failing stub `cargo` |
 
@@ -379,12 +379,17 @@ clean-tree ✅ line and the stray-file `exit 1` are byte-for-byte unchanged.
   `rustc --version` and `cargo --version` through the new toolchain) rather than
   assumed from a zero exit.
 
-### `scripts/install-rustup.sh` — 151 lines
+### `scripts/install-rustup.sh` — 151 lines (164 after #2209)
 
 **Finding #2127** (filed before this sweep, re-confirmed at `4f269d6`): `:117`
-`trap "rm -rf '$tmp_dir'" EXIT` interpolates the `mktemp -d` result (`:115`,
+`trap "rm -rf '$tmp_dir'" EXIT` interpolated the `mktemp -d` result (`:115`,
 which honours `$TMPDIR`) into a string bash re-parses when the trap fires.
-Everything else on this file is the #1911 path re-verified above.
+**Fixed** by Issue #2209: `install_rustup` stores the path in the script-level
+`_INSTALL_TMP_DIR` and arms `trap _cleanup_tmp EXIT`, a function name; INT and
+TERM are the fixed literals `'exit 130'` and `'exit 143'`. Guarded by the three
+`TMPDIR` tests named in the Findings row. Everything else on this file is
+the #1911 path re-verified above (line numbers there are at `4f269d6`; the fix shifted
+`:33-114` down by 11 and every line after `:117` down by 13).
 
 ### `scripts/benchmark-ci.sh` — 217 lines
 

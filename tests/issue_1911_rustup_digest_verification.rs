@@ -101,6 +101,18 @@ impl Sandbox {
     /// whose digest is recorded in the manifest. Passing different bodies
     /// simulates a tampered download. `download_ok` false makes `curl` fail.
     fn new(served: &str, pinned: &str, download_ok: bool) -> Self {
+        Self::with_curl_prelude(served, pinned, download_ok, "")
+    }
+
+    /// Like `new` with a working download, but the stub `curl` first sends
+    /// TERM to the script (its parent) and then completes the download — an
+    /// interrupt arriving mid-download (Issue #2209).
+    fn interrupted_mid_download(served: &str, pinned: &str) -> Self {
+        Self::with_curl_prelude(served, pinned, true, "kill -TERM \"$PPID\"\n")
+    }
+
+    /// `prelude` is shell run by the stub `curl` before it downloads.
+    fn with_curl_prelude(served: &str, pinned: &str, download_ok: bool, prelude: &str) -> Self {
         let dir = tempfile::tempdir().expect("create temp dir");
         let bin = dir.path().join("bin");
         let scripts = dir.path().join("scripts");
@@ -135,7 +147,7 @@ impl Sandbox {
         let stub = format!(
             r#"#!/bin/bash
 echo "$*" >> "{log}"
-out=""
+{prelude}out=""
 prev=""
 for a in "$@"; do
     if [[ "$prev" == "-o" ]]; then out="$a"; fi
@@ -149,6 +161,7 @@ cp "{served}" "$out"
 "#,
             log = curl_log.display(),
             ok = download_ok,
+            prelude = prelude,
             served = served_path.display(),
         );
         let stub_path = bin.join("curl");
@@ -158,10 +171,14 @@ cp "{served}" "$out"
         Self { dir }
     }
 
-    fn run(&self, args: &[&str]) -> Output {
-        Command::new("bash")
-            .arg(self.dir.path().join("scripts/install-rustup.sh"))
+    /// Runs the copied script from the sandbox root, so an injected relative
+    /// command can never write into the repository. `tmpdir`, when given, is
+    /// exported as `TMPDIR` — the parent `mktemp -d` honours (Issue #2209).
+    fn run(&self, args: &[&str], tmpdir: Option<&Path>) -> Output {
+        let mut cmd = Command::new("bash");
+        cmd.arg(self.dir.path().join("scripts/install-rustup.sh"))
             .args(args)
+            .current_dir(self.dir.path())
             .env_clear()
             .env(
                 "PATH",
@@ -170,9 +187,18 @@ cp "{served}" "$out"
                     self.dir.path().join("bin").display()
                 ),
             )
-            .env("HOME", self.dir.path().join("home"))
-            .output()
-            .expect("run install-rustup.sh")
+            .env("HOME", self.dir.path().join("home"));
+        if let Some(tmpdir) = tmpdir {
+            cmd.env("TMPDIR", tmpdir);
+        }
+        cmd.output().expect("run install-rustup.sh")
+    }
+
+    /// A fresh, empty directory under the sandbox for use as `TMPDIR`.
+    fn plain_tmpdir(&self) -> PathBuf {
+        let tmpdir = self.dir.path().join("tmpdir");
+        fs::create_dir_all(&tmpdir).expect("create TMPDIR");
+        tmpdir
     }
 
     /// Contents of the sentinel file, present only if the download was executed.
@@ -183,6 +209,19 @@ cp "{served}" "$out"
     fn curl_invocations(&self) -> usize {
         fs::read_to_string(self.dir.path().join("curl.log")).map_or(0, |log| log.lines().count())
     }
+}
+
+/// Names of whatever the script left behind in `tmpdir`.
+fn entries_of(tmpdir: &Path) -> Vec<String> {
+    fs::read_dir(tmpdir)
+        .expect("read TMPDIR")
+        .map(|e| {
+            e.expect("TMPDIR entry")
+                .file_name()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect()
 }
 
 /// A payload that records the arguments it was invoked with.
@@ -211,7 +250,8 @@ fn script_is_committed_and_executable() {
 #[test]
 fn executes_the_installer_when_the_digest_matches() {
     let sandbox = Sandbox::new(INSTALLER, INSTALLER, true);
-    let out = sandbox.run(&["-y"]);
+    let tmpdir = sandbox.plain_tmpdir();
+    let out = sandbox.run(&["-y"], Some(&tmpdir));
     assert!(
         out.status.success(),
         "a digest-matching installer must run; stderr: {}",
@@ -222,12 +262,17 @@ fn executes_the_installer_when_the_digest_matches() {
         Some("-y"),
         "the verified installer must be executed with the forwarded arguments"
     );
+    assert!(
+        entries_of(&tmpdir).is_empty(),
+        "a successful run must reap its mktemp directory (Issue #2209), left: {:?}",
+        entries_of(&tmpdir)
+    );
 }
 
 #[test]
 fn defaults_to_the_unattended_flag_when_no_arguments_are_given() {
     let sandbox = Sandbox::new(INSTALLER, INSTALLER, true);
-    let out = sandbox.run(&[]);
+    let out = sandbox.run(&[], None);
     assert!(out.status.success(), "stderr: {}", stderr_of(&out));
     assert_eq!(
         sandbox.executed().as_deref().map(str::trim),
@@ -240,7 +285,7 @@ fn defaults_to_the_unattended_flag_when_no_arguments_are_given() {
 fn rejects_a_tampered_download_without_executing_it() {
     // The acceptance criterion: served bytes differ from the pinned digest.
     let sandbox = Sandbox::new(TAMPERED_INSTALLER, INSTALLER, true);
-    let out = sandbox.run(&["-y"]);
+    let out = sandbox.run(&["-y"], None);
 
     assert!(
         !out.status.success(),
@@ -267,7 +312,7 @@ fn rejects_a_tampered_download_without_executing_it() {
 #[test]
 fn fails_loud_when_the_download_fails() {
     let sandbox = Sandbox::new(INSTALLER, INSTALLER, false);
-    let out = sandbox.run(&["-y"]);
+    let out = sandbox.run(&["-y"], None);
     assert!(
         !out.status.success(),
         "a failed download must not be reported as success"
@@ -284,6 +329,64 @@ fn fails_loud_when_the_download_fails() {
 }
 
 #[test]
+fn a_quote_bearing_tmpdir_executes_nothing_and_is_reaped() {
+    // `mktemp -d` honours TMPDIR, so the temp path is attacker-shaped. A
+    // cleanup trap that interpolates it into a string re-parses it at exit and
+    // runs the embedded `touch` (Issue #2209).
+    let sandbox = Sandbox::new(INSTALLER, INSTALLER, false);
+    let pwned = sandbox.dir.path().join("pwned");
+    let tmpdir = sandbox
+        .dir
+        .path()
+        .join("tmp")
+        .join(format!("x'; touch {}; '", pwned.display()));
+    fs::create_dir_all(&tmpdir).expect("create hostile TMPDIR");
+
+    let out = sandbox.run(&["-y"], Some(&tmpdir));
+    assert!(
+        !out.status.success(),
+        "a failed download must still exit non-zero, stderr: {}",
+        stderr_of(&out)
+    );
+    assert!(
+        !pwned.exists(),
+        "a quote-bearing TMPDIR must never execute a command (Issue #2209); stderr: {}",
+        stderr_of(&out)
+    );
+    assert!(
+        entries_of(&tmpdir).is_empty(),
+        "the mktemp directory must be reaped even under a hostile TMPDIR, left: {:?}",
+        entries_of(&tmpdir)
+    );
+    assert!(
+        sandbox.executed().is_none(),
+        "nothing may be executed when the download failed"
+    );
+}
+
+#[test]
+fn a_term_during_the_download_exits_non_zero_and_reaps_the_temp_dir() {
+    let sandbox = Sandbox::interrupted_mid_download(INSTALLER, INSTALLER);
+    let tmpdir = sandbox.plain_tmpdir();
+    let out = sandbox.run(&["-y"], Some(&tmpdir));
+    assert!(
+        !out.status.success(),
+        "an interrupted install must not be reported as success (Issue #2209), stderr: {}",
+        stderr_of(&out)
+    );
+    assert!(
+        sandbox.executed().is_none(),
+        "an interrupted install must never execute the installer, got: {:?}",
+        sandbox.executed()
+    );
+    assert!(
+        entries_of(&tmpdir).is_empty(),
+        "an interrupted install must reap its mktemp directory, left: {:?}",
+        entries_of(&tmpdir)
+    );
+}
+
+#[test]
 fn fails_closed_when_no_digest_is_pinned_for_the_host_target() {
     let sandbox = Sandbox::new(INSTALLER, INSTALLER, true);
     // Drop every pin: an unpinned host must abort before any download.
@@ -293,7 +396,7 @@ fn fails_closed_when_no_digest_is_pinned_for_the_host_target() {
     )
     .expect("truncate manifest");
 
-    let out = sandbox.run(&["-y"]);
+    let out = sandbox.run(&["-y"], None);
     assert!(
         !out.status.success(),
         "an unpinned target must exit non-zero"
@@ -316,7 +419,7 @@ fn fails_closed_when_the_digest_manifest_is_missing() {
     fs::remove_file(sandbox.dir.path().join("scripts/rustup-init.sha256"))
         .expect("remove manifest");
 
-    let out = sandbox.run(&["-y"]);
+    let out = sandbox.run(&["-y"], None);
     assert!(
         !out.status.success(),
         "a missing digest manifest must exit non-zero"
