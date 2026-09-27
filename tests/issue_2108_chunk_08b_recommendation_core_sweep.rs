@@ -659,7 +659,7 @@ fn fan_in_candidates_still_depend_on_the_order_the_caller_lists_neurons_in() {
 /// This test keeps the same crafted trigger as a regression guard — it failed
 /// against the unfixed code and now proves the candidate is dropped rather
 /// than ranked. See `docs/audits/security-sweep-chunk-08b-synapse-scoring-recommendation.md`
-/// § "recommendation core" for the fan_in.rs row this re-sweeps.
+/// § "recommendation core" for the `fan_in.rs` row this re-sweeps.
 #[test]
 fn a_finite_record_set_no_longer_ranks_a_fan_in_candidate_at_infinity() {
     const SAMPLES: u32 = 60;
