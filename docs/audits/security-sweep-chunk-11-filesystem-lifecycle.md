@@ -63,8 +63,8 @@ Probe dispositions (Issue #2234):
   `fs::symlink_metadata`, which refuses a symlink and, via its `is_dir()`
   check, any non-directory. The residual window between that probe and
   `fs::remove_dir_all` is harmless: the `std::fs::remove_dir_all`
-  documentation states it "does **not** follow symbolic links and will simply
-  remove the symbolic link itself" at the top-level path, and does not follow
+  documentation states it "does **not** follow symbolic links and it will
+  simply remove the symbolic link itself" at the top-level path, and does not follow
   symlinks within the tree either (it unlinks them). The race is not
   deterministically testable, so there is no race test;
   `tests/issue_1903_orphan_sweep_lock_recheck.rs` stays the regression surface
@@ -75,8 +75,9 @@ Probe dispositions (Issue #2234):
   entry can never be absolute or contain `..`. Pinned by
   `tests/issue_2095_cleanup_entry_names.rs`: unicode, `...`, dash-led,
   newline and bidi-override orphans are removed and a lock-less canary beside
-  the root survives; a `..`-climbing `temp_dir` is refused and its canary
-  survives. The lossy case is a finding: the sweep passes
+  the root survives. The `..` refusal and its surviving target are already
+  pinned by
+  `tests/issue_1866_cleanup_dir_path_guard.rs::test_cleanup_rejects_parent_dir_traversal`. The lossy case is a finding: the sweep passes
   `path.display().to_string()` to `cleanup_orphaned_discovery_dir`, so a
   non-UTF-8 name becomes U+FFFD and the removal targets a literal-U+FFFD
   sibling that skipped the age floor (reproduced: sibling touched after
@@ -139,10 +140,10 @@ Probe dispositions (Issue #2234):
 | Site (`file.rs::symbol`) | Operation | Path root | Symlink-safe (yes/no/why) |
 | --- | --- | --- | --- |
 <!-- section: discovery_cleanup -->
-| `discovery_cleanup.rs::assert_is_discovery_dir` | `path.join(LOCK_FILE_NAME).exists()` and `path.join(DISCOVERY_DATA_FILE_NAME).exists()` — read-only gate | caller-supplied `temp_dir`, after the empty and `..` checks | follows symlinks — yes, read-only: a followed link can only admit a path, and `remove_discovery_dir` refuses a symlinked `temp_dir` next |
-| `discovery_cleanup.rs::remove_discovery_dir` | `fs::symlink_metadata(path)` | caller-supplied `temp_dir` after `assert_is_discovery_dir` | yes — does not follow the final component; a symlink is refused (`InvalidInput`) and so is a non-directory. Intermediate components resolve, which probe (a) accepts for a caller-owned root |
-| `discovery_cleanup.rs::remove_discovery_dir` | `fs::canonicalize(path)` — audit log only | caller-supplied `temp_dir` after `assert_is_discovery_dir` | follows symlinks — yes, log only: the resolved path is never acted on, and an error falls back to the raw path |
-| `discovery_cleanup.rs::remove_discovery_dir` | `fs::remove_dir_all(path)` | caller-supplied `temp_dir` after `assert_is_discovery_dir` and the `symlink_metadata` refusal | yes — std does not follow a top-level symlink nor symlinks within the tree (probe b); only intermediate components resolve (probe a) |
+| `discovery_cleanup.rs::assert_is_discovery_dir` | `path.join(LOCK_FILE_NAME).exists()` and `path.join(DISCOVERY_DATA_FILE_NAME).exists()` — read-only gate | caller-supplied `temp_dir` after the empty and `..` checks, or a swept `<base_dir>/<child>` via `cleanup_orphaned_discovery_dir` | follows symlinks — yes, read-only: a followed link can only admit a path, and `remove_discovery_dir` refuses a symlinked `temp_dir` next |
+| `discovery_cleanup.rs::remove_discovery_dir` | `fs::symlink_metadata(path)` | caller-supplied `temp_dir`, or a swept `<base_dir>/<child>`, after `assert_is_discovery_dir` | yes — does not follow the final component; a symlink is refused (`InvalidInput`) and so is a non-directory. Intermediate components resolve, which probe (a) accepts for a caller-owned root |
+| `discovery_cleanup.rs::remove_discovery_dir` | `fs::canonicalize(path)` — audit log only | caller-supplied `temp_dir`, or a swept `<base_dir>/<child>`, after `assert_is_discovery_dir` | follows symlinks — yes, log only: the resolved path is never acted on, and an error falls back to the raw path |
+| `discovery_cleanup.rs::remove_discovery_dir` | `fs::remove_dir_all(path)` | caller-supplied `temp_dir`, or a swept `<base_dir>/<child>`, after `assert_is_discovery_dir` and the `symlink_metadata` refusal | yes — std does not follow a top-level symlink nor symlinks within the tree (probe b); only intermediate components resolve (probe a) |
 | `discovery_cleanup.rs::is_directory_orphaned` | `fs::symlink_metadata(dir.join(LOCK_FILE_NAME))` | a swept child of `base_dir`, or `temp_dir` during the #1903 re-check | yes — the lock itself is not followed; fails closed on any error but `NotFound` (probe d) |
 | `discovery_cleanup.rs::directory_touched_since` | `fs::symlink_metadata(dir)?.modified()` | a swept child of `base_dir` after the marker gate | yes — reads the entry's own mtime, not a link target's; errors propagate |
 | `discovery_cleanup.rs::clean_orphaned_discovery_dirs_since` | `base_path.exists()` | `base_dir` after the marker gate | follows a symlinked root — accepted, probe (a): the root is caller-owned |
