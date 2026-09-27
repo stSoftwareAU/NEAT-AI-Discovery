@@ -14,8 +14,9 @@ use crate::analysis::utils::char_prefix;
 /// Most characters of a caller-supplied module name echoed in an error detail.
 pub const MODULE_NAME_DETAIL_MAX_CHARS: usize = 64;
 
-/// Upper bound on `soft_failures`: `record_soft_failures` adds at most 1.0 per
-/// filtered candidate, and candidate counts are `u32`.
+/// Upper bound on `soft_failures` (Issue #2223): `record_soft_failures` adds at
+/// most 1.0 per filtered candidate, so this matches the `u32` range of the
+/// sibling `attempts` and `candidatesProduced` counters.
 const MAX_SOFT_FAILURES: f64 = u32::MAX as f64;
 
 fn invalid(name: &str, problem: &str) -> DiscoveryError {
