@@ -18,10 +18,14 @@ Ledger rules: [`README.md`](README.md). Index entry:
   the Issue #2161 deadline/ceiling fix in
   `src/analysis/synapse/candidate_generation.rs` with its `#[cfg(test)]`
   regression file `src/analysis/synapse/issue_2161_locality_cancellation_test.rs`
-  — both swept in the row below — so every outcome below still describes the
-  current tree. **Line counts stay as at the baseline commit** — that is what a
+  — both swept in the row below — and the Issue #2221 deadline/input-cap fix in
+  `src/analysis/synapse/structural_patterns.rs` with its `#[cfg(test)]`
+  regression file
+  `src/analysis/synapse/issue_2169_structural_patterns_cancellation_test.rs`,
+  swept in the `synapse post-processing` rows, so every outcome below still
+  describes the current tree. **Line counts stay as at the baseline commit** — that is what a
   later reader diffs against.
-- **Exposure:** `internal` — none of these 59 files is an FFI entry point. They
+- **Exposure:** `internal` — none of these 60 files is an FFI entry point. They
   are reached only through the `src/ffi` boundary (chunk 2), so every input they
   see has already crossed one validation layer. Untrusted values still arrive
   here: the caller-supplied `creature` topology, the Parquet record stream, and
@@ -84,9 +88,10 @@ correctness.
 
 ## Files swept
 
-59 files, 21,157 lines. Line counts as at the baseline commit, except the one
-file added after it (`issue_2161_locality_cancellation_test.rs`, counted as it
-stands today). Every row starts
+60 files, 21,630 lines. Line counts as at the baseline commit, except the two
+files added after it (`issue_2161_locality_cancellation_test.rs` and
+`issue_2169_structural_patterns_cancellation_test.rs`, counted as they stand
+today). Every row starts
 `pending`; the sub-issue owning the section replaces it with an outcome and a
 one-line reason.
 
@@ -119,12 +124,13 @@ one sub-issue's file list.
 
 ### synapse post-processing
 
-2,614 lines.
+3,087 lines.
 
 | Path | Lines | Outcome |
 | --- | --- | --- |
 | `src/analysis/synapse/post_processing.rs` | 945 | findings filed — #2167 (the three descending `total_cmp` sorts rank a non-finite gain first, and no `retain` filter ahead of them drops `+inf`) and #2168 (`apply_impact_to_helpful` byte-slices a UUID at index 12 inside a verbose log, panicking on a multi-byte char boundary) |
-| `src/analysis/synapse/structural_patterns.rs` | 700 | finding filed — #2169: `detect_noisy_vs_trusted` runs a quadratic pairwise scan and `detect_collapsible_hidden_neurons` a linear neuron pass whose per-neuron body walks the records, and neither consults `deadline_passed` or the cancellation flag; the four capacity sites are all bounded by live collection lengths |
+| `src/analysis/synapse/structural_patterns.rs` | 700 | finding filed — #2169, remediated by #2221: `detect_noisy_vs_trusted` ran a quadratic pairwise scan and `detect_collapsible_hidden_neurons` a linear neuron pass whose per-neuron body walked the records, and neither consulted `deadline_passed` or the cancellation flag; the noisy scan now refuses more than `MAX_INCOMING_INPUTS_FOR_NOISY_SCAN` inputs and both loops check `deadline_passed` per iteration, the collapse pass memoising its activation maps; every capacity site is bounded by a live collection length |
+| `src/analysis/synapse/issue_2169_structural_patterns_cancellation_test.rs` | 473 | clean — `#[cfg(test)]` only (declared behind `#[cfg(test)] #[path = …]` in `structural_patterns.rs`), so no untrusted-input reachability; fixtures are built from loop indices and compile-time counts, and each timing assertion compares two readings of the same work rather than a wall-clock constant |
 | `src/analysis/synapse/adaptive_proposal.rs` | 511 | clean — the only `with_capacity` is sized by the compile-time `ADAPTIVE_PROPOSAL_CANDIDATE_COUNT`; the Box-Muller `ln` is floored away from zero, and `record_batch`'s counters are incremented once per real candidate batch |
 | `src/analysis/synapse/add_synapse_gating.rs` | 458 | finding filed — #2170: the FFI-supplied `ModuleOutcomeTracker` reaches `should_skip_add_synapse_by_outcome` unvalidated, so a deserialised `successes > attempts` underflows `ModuleStats::success_rate` and flips the gate; the density gate's divisor is guarded against zero |
 
@@ -224,10 +230,11 @@ it; `unbounded` means a finding was filed.
 <!-- section: synapse post-processing -->
 | `structural_patterns.rs::detect_noisy_vs_trusted` | `HashMap::with_capacity(records.len())` | `records` is a live slice of already-materialised observation records, so the hint is the length of a collection the loader has itself allocated | bounded |
 | `structural_patterns.rs::detect_noisy_vs_trusted` | `Vec::with_capacity(target_map.map.len())` | `target_map.map` is a live `HashMap` built earlier in the same pass; its length is at most the record count | bounded |
-| `structural_patterns.rs::detect_collapsible_hidden_neurons` | `HashMap::with_capacity(records.len())` | same live record slice; the reservation cannot exceed what the records already occupy | bounded |
-| `structural_patterns.rs::detect_collapsible_hidden_neurons` | `Vec::with_capacity(target_map_b.map.len())` | same live `HashMap` length, not a caller-supplied count | bounded |
+| `structural_patterns.rs::build_act_map` | `HashMap::with_capacity(records.len())` | same live record slice, memoised once per neuron by `detect_collapsible_hidden_neurons`; the reservation cannot exceed what the records already occupy | bounded |
+| `structural_patterns.rs::detect_collapsible_hidden_neurons` | `Vec::with_capacity(h_map.len())` | the hidden neuron's memoised activation map — a live `HashMap` no longer than the record slice, not a caller-supplied count | bounded |
 | `adaptive_proposal.rs::generate_gaussian_candidates` | `Vec::with_capacity(count)` | `count` is bound from the compile-time constant `ADAPTIVE_PROPOSAL_CANDIDATE_COUNT` (12) and no caller can override it — the issue body's question about the origin of `count` resolves to a constant, not to input | bounded |
 | `structural_patterns.rs::build_collapse_input` | `Vec::with_capacity(n_samples as usize)` ×3 | `#[cfg(test)]` fixture builder — `n_samples` is a loop bound from compile-time literals, and the symbol is not compiled into the shipped `cdylib`, so no untrusted path reaches it | n/a — test-only |
+| `issue_2169_structural_patterns_cancellation_test.rs::build_uniform_inputs`, `issue_2169_structural_patterns_cancellation_test.rs::build_collapse_fixture` | `HashMap::with_capacity` / `Vec::with_capacity` ×5 | fixture builders in a file declared behind `#[cfg(test)] #[path = …]` in `structural_patterns.rs`, so they are not compiled into the shipped `cdylib` — every count is a compile-time value passed by the tests, and no untrusted path reaches it | n/a — test-only |
 | `post_processing.rs`, `add_synapse_gating.rs` | none | neither file allocates a collection with a size hint | n/a |
 <!-- section: synapse scoring + target_analysis -->
 | `statistics.rs::filter_and_load_sources` | materialised `Vec<SourceMetadata>` on the per-target source list | `sources` is the result of SQL-like filtering of a live candidate set, bounded by the input creature's topology and the FFI validation layer | bounded |
@@ -440,7 +447,12 @@ O(neurons × records) on the same terms. The only cap on either is the size of
 the untrusted creature: `ffi_types/creature_bounds.rs::validate_creature_input_bounds`
 bounds input and output width (1,000,000 each, Issues #1867, #2020, #2078) and
 says nothing about hidden-neuron or synapse count. Filed as #2169
-(`severity:medium`, `confidence:high`) — the same shape as #2161.
+(`severity:medium`, `confidence:high`) — the same shape as #2161. Remediated
+by #2221: `detect_noisy_vs_trusted` refuses a target with more than
+`MAX_INCOMING_INPUTS_FOR_NOISY_SCAN` incoming inputs and breaks out of its pair
+scan once `deadline_passed`, and `detect_collapsible_hidden_neurons` checks
+`deadline_passed` per hidden neuron and memoises its activation maps, so its
+sample walk is driven by the hidden neuron's own map.
 
 **Panic class — the UTF-8 slice (#2168).**
 `post_processing.rs::apply_impact_to_helpful` byte-slices a neuron UUID at

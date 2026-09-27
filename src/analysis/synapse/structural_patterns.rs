@@ -12,9 +12,12 @@ use crate::analysis::constants::{MIN_NEURON_SAMPLE_COUNT, min_bypass_weight_for_
 use crate::analysis::diagnostics::TargetMap;
 use crate::analysis::samples::{EPSILON, HelpfulSample};
 use crate::analysis::scoring::weights::calculate_optimal_outgoing_weight;
+use crate::analysis::utils::deadline_passed;
 use crate::types::DiscoverRecord;
 use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson, SynapseJson};
 use std::collections::{HashMap, HashSet};
+use std::time::SystemTime;
+use tracing::warn;
 
 /// Output of [`detect_collapsible_hidden_neurons`] paired with the count of
 /// candidates rejected by the bypass-weight floor (Issue #1270).
@@ -35,6 +38,17 @@ pub(crate) struct CollapseDetectionOutcome {
 // Noisy vs Trusted Input Folding (Issue #165)
 // =============================================================================
 
+/// Incoming-input count above which [`detect_noisy_vs_trusted`] skips its
+/// pairwise scan and returns no candidate (Issue #2169).
+///
+/// The scan compares every pair of incoming inputs, so it is O(n²) in the
+/// input count. The per-pair deadline check bounds it only when the caller
+/// supplies a deadline, and callers may pass none. Without this ceiling a
+/// hostile creature with a very wide input layer would pin a rayon worker in
+/// the scan. 1024 inputs is roughly half a million pair comparisons, well
+/// above any real target's fan-in.
+pub(crate) const MAX_INCOMING_INPUTS_FOR_NOISY_SCAN: usize = 1024;
+
 /// Detect noisy vs trusted input pairs feeding the same target neuron.
 ///
 /// When two input signals have the same mean and the same starting synapse weight,
@@ -44,12 +58,16 @@ pub(crate) struct CollapseDetectionOutcome {
 /// - Add the trusted synapse back with a higher weight (typically doubled)
 ///
 /// Returns `Some(candidate)` if a beneficial noisy-vs-trusted pair is found.
+/// Returns `None` without scanning when the target has more than
+/// [`MAX_INCOMING_INPUTS_FOR_NOISY_SCAN`] incoming inputs. When `deadline`
+/// passes mid-scan, it returns the best pair found so far (Issue #2169).
 pub(crate) fn detect_noisy_vs_trusted(
     target_uuid: &str,
     synapses_by_target: &[&SynapseJson],
     cache: &RecordCache,
     target_map: &TargetMap,
     neuron_squash_map: &HashMap<&str, &str>,
+    deadline: &Option<SystemTime>,
 ) -> Option<CoordinatedStructuralCandidateJson> {
     fn activation_mean_and_variance(records: &[DiscoverRecord]) -> Option<(f32, f32)> {
         let mut n = 0.0f32;
@@ -113,6 +131,13 @@ pub(crate) fn detect_noisy_vs_trusted(
     if incoming_inputs.len() < 2 || target_map.map.is_empty() {
         return None;
     }
+    if incoming_inputs.len() > MAX_INCOMING_INPUTS_FOR_NOISY_SCAN {
+        warn!(
+            "noisy-vs-trusted scan skipped for target {target_uuid}: {} incoming inputs exceed the cap of {MAX_INCOMING_INPUTS_FOR_NOISY_SCAN} (Issue #2169)",
+            incoming_inputs.len()
+        );
+        return None;
+    }
 
     // Strict matching for the simple-case test: same weights and same means.
     const WEIGHT_EPS: f32 = 1e-6;
@@ -123,7 +148,7 @@ pub(crate) fn detect_noisy_vs_trusted(
 
     let mut best: Option<(IncomingInput<'_>, IncomingInput<'_>, f32)> = None; // (noisy, trusted, gain)
 
-    for i in 0..incoming_inputs.len() {
+    'pairs: for i in 0..incoming_inputs.len() {
         for j in (i + 1)..incoming_inputs.len() {
             let a = &incoming_inputs[i];
             let b = &incoming_inputs[j];
@@ -139,6 +164,16 @@ pub(crate) fn detect_noisy_vs_trusted(
             let ratio = noisy.var / trusted.var.max(EPSILON);
             if ratio < MIN_VAR_RATIO {
                 continue;
+            }
+
+            // Issue #2169: the per-pair work below loads and joins records, so
+            // stop here once the analysis deadline or a host cancel arrives.
+            if deadline_passed(deadline) {
+                warn!(
+                    "noisy-vs-trusted scan for target {target_uuid} stopped at its deadline after {i} of {} inputs (Issue #2169)",
+                    incoming_inputs.len()
+                );
+                break 'pairs;
             }
 
             let Ok(noisy_records_arc) = cache.get(noisy.from_uuid) else {
@@ -254,6 +289,7 @@ pub(crate) fn detect_noisy_vs_trusted(
 pub(crate) fn detect_collapsible_hidden_neurons(
     input: &crate::AnalyzeSynapsesInput,
     cache: &RecordCache,
+    deadline: &Option<SystemTime>,
 ) -> CollapseDetectionOutcome {
     let mut results = Vec::new();
     let mut bypass_weight_below_floor_drops: u32 = 0;
@@ -281,7 +317,23 @@ pub(crate) fn detect_collapsible_hidden_neurons(
         existing_edges.insert((s.from_uuid.as_str(), s.to_uuid.as_str()));
     }
 
-    for neuron in &input.creature.neurons {
+    // Issue #2169: many hidden neurons can share the same `a` source and `b`
+    // target, so memoise their per-source activation maps and per-target maps
+    // for this call rather than rebuilding them once per hidden neuron.
+    let mut a_maps: HashMap<&str, HashMap<u32, f32>> = HashMap::new();
+    let mut b_target_maps: HashMap<&str, TargetMap> = HashMap::new();
+    let neuron_total = input.creature.neurons.len();
+
+    for (processed, neuron) in input.creature.neurons.iter().enumerate() {
+        if deadline_passed(deadline) {
+            warn!(
+                "collapsible-hidden-neuron scan stopped at its deadline after {processed} of {neuron_total} neurons (Issue #2169)"
+            );
+            return CollapseDetectionOutcome {
+                candidates: results,
+                bypass_weight_below_floor_drops,
+            };
+        }
         if neuron.neuron_type != "hidden" {
             continue;
         }
@@ -315,41 +367,37 @@ pub(crate) fn detect_collapsible_hidden_neurons(
         }
 
         // Build samples: correlate a's activation to b's adjusted error after removing h→b.
-        let Ok(a_records) = cache.get(a) else {
-            continue;
-        };
+        if !a_maps.contains_key(a) {
+            let Ok(a_records) = cache.get(a) else {
+                continue;
+            };
+            a_maps.insert(a, build_act_map(a_records.as_ref()));
+        }
+        if !b_target_maps.contains_key(b) {
+            let Ok(b_records) = cache.get(b) else {
+                continue;
+            };
+            b_target_maps.insert(b, TargetMap::from_records(b_records.as_ref()));
+        }
         let Ok(h_records) = cache.get(h) else {
             continue;
         };
-        let Ok(b_records) = cache.get(b) else {
+        let (Some(a_map), Some(target_map_b)) = (a_maps.get(a), b_target_maps.get(b)) else {
             continue;
         };
-        if a_records.is_empty() || h_records.is_empty() || b_records.is_empty() {
+        if a_map.is_empty() || h_records.is_empty() || target_map_b.map.is_empty() {
             continue;
         }
-
-        let target_map_b = TargetMap::from_records(b_records.as_ref());
-        if target_map_b.map.is_empty() {
-            continue;
-        }
-        let build_act_map = |records: &[DiscoverRecord]| -> HashMap<u32, f32> {
-            let mut map: HashMap<u32, f32> = HashMap::with_capacity(records.len());
-            for r in records {
-                if r.activation.is_finite() {
-                    map.insert(r.obs_index, r.activation);
-                }
-            }
-            map
-        };
-        let a_map = build_act_map(a_records.as_ref());
         let h_map = build_act_map(h_records.as_ref());
 
-        let mut samples: Vec<HelpfulSample> = Vec::with_capacity(target_map_b.map.len());
-        for (obs_index, target) in &target_map_b.map {
+        // Driven from the hidden neuron's own samples, so the per-neuron cost
+        // tracks h's record count rather than the shared target's.
+        let mut samples: Vec<HelpfulSample> = Vec::with_capacity(h_map.len());
+        for (obs_index, h_act) in &h_map {
             let Some(a_act) = a_map.get(obs_index) else {
                 continue;
             };
-            let Some(h_act) = h_map.get(obs_index) else {
+            let Some(target) = target_map_b.map.get(obs_index) else {
                 continue;
             };
             if !a_act.is_finite() || !h_act.is_finite() || !target.avg_error.is_finite() {
@@ -444,6 +492,17 @@ pub(crate) fn detect_collapsible_hidden_neurons(
 // =============================================================================
 // Tests (Issue #1270)
 // =============================================================================
+
+/// Map each record's `obs_index` to its activation, skipping non-finite ones.
+fn build_act_map(records: &[DiscoverRecord]) -> HashMap<u32, f32> {
+    let mut map: HashMap<u32, f32> = HashMap::with_capacity(records.len());
+    for r in records {
+        if r.activation.is_finite() {
+            map.insert(r.obs_index, r.activation);
+        }
+    }
+    map
+}
 
 #[cfg(test)]
 mod tests {
@@ -623,7 +682,7 @@ mod tests {
         let _guard = BypassFloorGuard::new("0.01");
 
         let (input, cache) = build_collapse_input(0.005, 12);
-        let outcome = detect_collapsible_hidden_neurons(&input, &cache);
+        let outcome = detect_collapsible_hidden_neurons(&input, &cache, &None);
 
         assert!(
             outcome.candidates.is_empty(),
@@ -643,7 +702,7 @@ mod tests {
         let _guard = BypassFloorGuard::new("0.01");
 
         let (input, cache) = build_collapse_input(0.0021, 12);
-        let outcome = detect_collapsible_hidden_neurons(&input, &cache);
+        let outcome = detect_collapsible_hidden_neurons(&input, &cache, &None);
 
         assert!(
             outcome.candidates.is_empty(),
@@ -664,7 +723,7 @@ mod tests {
 
         // Computed weight ~0.05, comfortably above the 0.01 default floor.
         let (input, cache) = build_collapse_input(0.05, 12);
-        let outcome = detect_collapsible_hidden_neurons(&input, &cache);
+        let outcome = detect_collapsible_hidden_neurons(&input, &cache, &None);
 
         assert_eq!(
             outcome.bypass_weight_below_floor_drops, 0,
@@ -687,7 +746,7 @@ mod tests {
         let _guard = BypassFloorGuard::new("0");
 
         let (input, cache) = build_collapse_input(0.005, 12);
-        let outcome = detect_collapsible_hidden_neurons(&input, &cache);
+        let outcome = detect_collapsible_hidden_neurons(&input, &cache, &None);
 
         assert_eq!(
             outcome.bypass_weight_below_floor_drops, 0,

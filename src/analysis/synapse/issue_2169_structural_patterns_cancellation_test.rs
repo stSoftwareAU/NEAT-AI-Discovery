@@ -9,15 +9,22 @@
 //! deadline exits, the incoming-input ceiling, the linear cost of both scans,
 //! and that the detectors' output is unchanged below the ceiling.
 
-use super::{detect_collapsible_hidden_neurons, detect_noisy_vs_trusted};
+#![allow(clippy::cast_precision_loss)] // Synthetic fixtures map small u32 indices onto f32 activations.
+
+use super::{
+    MAX_INCOMING_INPUTS_FOR_NOISY_SCAN, detect_collapsible_hidden_neurons, detect_noisy_vs_trusted,
+};
 use crate::analysis::cache::RecordCache;
 use crate::analysis::diagnostics::TargetMap;
+use crate::analysis::scoring::weights::calculate_optimal_outgoing_weight;
 use crate::ffi_types::{CreatureJson, NeuronJson, SynapseJson};
 use crate::types::DiscoverRecord;
-use crate::{AnalyzeSynapsesInput, CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson};
+use crate::{
+    AnalyzeSynapsesInput, CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson,
+};
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 const TARGET: &str = "target-0";
 
@@ -83,8 +90,14 @@ struct NoisyFixture {
 }
 
 fn build_noisy_fixture() -> NoisyFixture {
-    let trusted = |k: u32| if k % 2 == 0 { 0.1f32 } else { -0.1 };
-    let noisy = |k: u32| if (k / 2) % 2 == 0 { 1.0f32 } else { -1.0 };
+    let trusted = |k: u32| if k.is_multiple_of(2) { 0.1f32 } else { -0.1 };
+    let noisy = |k: u32| {
+        if (k / 2).is_multiple_of(2) {
+            1.0f32
+        } else {
+            -1.0
+        }
+    };
 
     let rows = |uuid: &str, act: &dyn Fn(u32) -> f32| -> Vec<DiscoverRecord> {
         (0..NOISY_OBS)
@@ -116,16 +129,26 @@ fn run_noisy(
     synapses: &[SynapseJson],
     cache: &RecordCache,
     target_map: &TargetMap,
+    deadline: &Option<SystemTime>,
 ) -> Option<CoordinatedStructuralCandidateJson> {
     let refs: Vec<&SynapseJson> = synapses.iter().collect();
-    detect_noisy_vs_trusted(TARGET, &refs, cache, target_map, &HashMap::new())
+    detect_noisy_vs_trusted(TARGET, &refs, cache, target_map, &HashMap::new(), deadline)
+}
+
+fn expired_deadline() -> Option<SystemTime> {
+    Some(SystemTime::now() - Duration::from_secs(60))
 }
 
 #[test]
 fn noisy_vs_trusted_output_is_unchanged_without_deadline() {
     let fixture = build_noisy_fixture();
-    let candidate = run_noisy(&fixture.synapses, &fixture.cache, &fixture.target_map)
-        .expect("the noisy/trusted fixture must yield a candidate");
+    let candidate = run_noisy(
+        &fixture.synapses,
+        &fixture.cache,
+        &fixture.target_map,
+        &None,
+    )
+    .expect("the noisy/trusted fixture must yield a candidate");
 
     assert_eq!(
         op_identities(&candidate),
@@ -136,6 +159,36 @@ fn noisy_vs_trusted_output_is_unchanged_without_deadline() {
         ]
     );
     assert!(candidate.expected_creature_score_gain > 0.0);
+}
+
+#[test]
+fn expired_deadline_stops_noisy_vs_trusted_scan() {
+    let fixture = build_noisy_fixture();
+
+    // Issue #1799: establish the positive precondition first — without a
+    // deadline this fixture really does yield a candidate, so the assertion
+    // below is observing cancellation and not an inert fixture.
+    assert!(
+        run_noisy(
+            &fixture.synapses,
+            &fixture.cache,
+            &fixture.target_map,
+            &None
+        )
+        .is_some(),
+        "the noisy/trusted fixture must yield a candidate without a deadline"
+    );
+
+    let cancelled = run_noisy(
+        &fixture.synapses,
+        &fixture.cache,
+        &fixture.target_map,
+        &expired_deadline(),
+    );
+    assert!(
+        cancelled.is_none(),
+        "an expired deadline must stop the pairwise scan before any pair is scored"
+    );
 }
 
 /// `count` inputs with identical records: every pair passes the weight and
@@ -166,13 +219,17 @@ fn build_uniform_inputs(count: usize) -> (Vec<SynapseJson>, RecordCache, TargetM
     )
 }
 
-fn min_noisy_time(synapses: &[SynapseJson], cache: &RecordCache, target_map: &TargetMap) -> Duration {
+fn min_noisy_time(
+    synapses: &[SynapseJson],
+    cache: &RecordCache,
+    target_map: &TargetMap,
+) -> Duration {
     const RUNS: usize = 5;
 
     (0..RUNS)
         .map(|_| {
             let start = Instant::now();
-            let candidate = run_noisy(synapses, cache, target_map);
+            let candidate = run_noisy(synapses, cache, target_map, &None);
             let elapsed = start.elapsed();
             assert!(
                 candidate.is_none(),
@@ -186,7 +243,7 @@ fn min_noisy_time(synapses: &[SynapseJson], cache: &RecordCache, target_map: &Ta
 
 #[test]
 fn noisy_vs_trusted_cost_does_not_grow_quadratically() {
-    let small = 1024 + 1;
+    let small = MAX_INCOMING_INPUTS_FOR_NOISY_SCAN + 1;
     let large = small * 2;
 
     // Fixtures are built once, outside the timed region, and the smaller run
@@ -250,7 +307,15 @@ fn build_collapse_fixture(
     let a_act = |k: u32| -1.0 + 2.0 * (k as f32) / denom;
 
     let input0: Vec<DiscoverRecord> = (0..shared_obs)
-        .map(|k| DiscoverRecord::new(k, "input-0".to_string(), Some(a_act(k)), a_act(k), Vec::new()))
+        .map(|k| {
+            DiscoverRecord::new(
+                k,
+                "input-0".to_string(),
+                Some(a_act(k)),
+                a_act(k),
+                Vec::new(),
+            )
+        })
         .collect();
     let output0: Vec<DiscoverRecord> = (0..shared_obs)
         .map(|k| {
@@ -263,7 +328,9 @@ fn build_collapse_fixture(
     let mut records: HashMap<String, Vec<DiscoverRecord>> = HashMap::with_capacity(hidden + 2);
     for neuron in neurons.iter().filter(|n| n.neuron_type == "hidden") {
         let rows = (0..hidden_obs)
-            .map(|k| DiscoverRecord::new(k, neuron.uuid.clone(), Some(a_act(k)), a_act(k), Vec::new()))
+            .map(|k| {
+                DiscoverRecord::new(k, neuron.uuid.clone(), Some(a_act(k)), a_act(k), Vec::new())
+            })
             .collect();
         records.insert(neuron.uuid.clone(), rows);
     }
@@ -304,7 +371,7 @@ fn collapsed_neurons(candidates: &[CoordinatedStructuralCandidateJson]) -> Vec<S
 #[test]
 fn collapse_output_is_unchanged_without_deadline() {
     let (input, cache) = build_collapse_fixture(3, 16, 16);
-    let outcome = detect_collapsible_hidden_neurons(&input, &cache);
+    let outcome = detect_collapsible_hidden_neurons(&input, &cache, &None);
 
     assert_eq!(outcome.bypass_weight_below_floor_drops, 0);
     assert_eq!(
@@ -326,20 +393,48 @@ fn collapse_output_is_unchanged_without_deadline() {
         else {
             panic!("the last collapse op must add the bypass synapse");
         };
+        // The least-squares fit is BYPASS_WEIGHT; the production clamp then
+        // applies, so derive the expectation through the same function.
+        let expected = calculate_optimal_outgoing_weight(BYPASS_WEIGHT, 1.0, 1.0)
+            .expect("the fixture's bypass fit is non-degenerate");
         assert!(
-            (weight - BYPASS_WEIGHT).abs() < 1e-4,
-            "bypass weight {weight} drifted from {BYPASS_WEIGHT}"
+            (weight - expected).abs() < 1e-6,
+            "bypass weight {weight} drifted from {expected}"
         );
     }
 }
 
-fn min_collapse_time(input: &AnalyzeSynapsesInput, cache: &RecordCache, expected: usize) -> Duration {
+#[test]
+fn expired_deadline_stops_collapse_scan() {
+    let (input, cache) = build_collapse_fixture(3, 16, 16);
+
+    // Issue #1799: the positive precondition — without a deadline the fixture
+    // really does yield collapse candidates.
+    let baseline = detect_collapsible_hidden_neurons(&input, &cache, &None);
+    assert!(
+        !baseline.candidates.is_empty(),
+        "the collapse fixture must yield candidates without a deadline"
+    );
+
+    let cancelled = detect_collapsible_hidden_neurons(&input, &cache, &expired_deadline());
+    assert!(
+        cancelled.candidates.is_empty(),
+        "an expired deadline must stop the scan before any neuron is examined"
+    );
+    assert_eq!(cancelled.bypass_weight_below_floor_drops, 0);
+}
+
+fn min_collapse_time(
+    input: &AnalyzeSynapsesInput,
+    cache: &RecordCache,
+    expected: usize,
+) -> Duration {
     const RUNS: usize = 5;
 
     (0..RUNS)
         .map(|_| {
             let start = Instant::now();
-            let outcome = detect_collapsible_hidden_neurons(input, cache);
+            let outcome = detect_collapsible_hidden_neurons(input, cache, &None);
             let elapsed = start.elapsed();
             assert_eq!(
                 outcome.candidates.len(),
