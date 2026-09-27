@@ -5,7 +5,10 @@
 //! lossy: a non-UTF-8 name such as `orphan-\xff` became `orphan-\u{FFFD}`, so
 //! the removal hit a *different* directory — one the age floor had never
 //! vetted — and the real orphan survived while being counted as `already_gone`.
-#![cfg(unix)]
+//!
+//! Linux-only: the fixtures need a filesystem that accepts arbitrary name
+//! bytes. macOS APFS rejects `orphan-\xff` with EILSEQ (errno 92).
+#![cfg(target_os = "linux")]
 
 use std::ffi::OsStr;
 use std::fs::{self, File};
