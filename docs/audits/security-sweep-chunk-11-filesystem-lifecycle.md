@@ -171,7 +171,7 @@ Probe dispositions (Issue #2251):
 
 | Path | Lines | Outcome |
 | --- | --- | --- |
-| `src/watchdog.rs` | 364 | audited — no PID, process-spawn or filesystem surface (it only raises SIGUSR1 at its own process and aborts); the uncapped abort delay and the stall-timeout truncation are already owned by #2259 under #2122, so nothing new is filed |
+| `src/watchdog.rs` | 364 | audited — no PID, process-spawn or filesystem surface (it only raises SIGUSR1 at its own process and aborts); the uncapped abort delay and the stall-timeout truncation are already tracked by open #2259 under #2122, so nothing new is filed |
 | `src/tracking_alloc.rs` | 234 | audited — the `GlobalAlloc` hooks cannot panic, allocate or recurse; the counter wraps only on a caller layout mismatch, which is undefined behaviour; neither consumer of `tracking_alloc.rs::TrackingAlloc::allocated` can spuriously cancel or return early |
 | `src/discovery_history.rs` | 626 | pending |
 
@@ -186,8 +186,8 @@ Probe dispositions (Issue #2252):
   stored or reused. An abort skips every `Drop`, so a live session directory
   is left for the orphan sweep; the #1903 guards on that sweep are
   re-verified by #2234 in the discovery_cleanup section, not here.
-- **SIGUSR1 — a handler is installed on the FFI path.** The analysis FFI entries run
-  `lib.rs::log_version_once` → `debug.rs::init_debug_handlers` →
+- **SIGUSR1 — a handler is installed on the FFI path.** The analysis FFI
+  entries run `lib.rs::log_version_once` → `debug.rs::init_debug_handlers` →
   `debug.rs::install_signal_handler`, which registers SIGUSR1 through
   `signal_hook::iterator::Signals` before `analysis/orchestration.rs::analyze_all`
   calls `watchdog.rs::start_from_env`. The raise therefore dumps the threads,
@@ -208,12 +208,12 @@ Probe dispositions (Issue #2252):
   `config/user_facing.rs::watchdog_abort_delay` accepts any `u64` seconds, so
   a huge `NEAT_AI_DISCOVERY_WATCHDOG_ABORT_DELAY_SECS` makes
   `watchdog_loop`'s `thread::sleep(config.abort_delay)` turn the abort into
-  the very hang the watchdog exists to end. This is #2122's finding, filed as
-  #2259 finding A.
+  the very hang the watchdog exists to end. This is #2122's finding, tracked
+  by open #2259 as its finding A.
 - **Stall-timeout truncation — cross-referenced, not refiled.**
   `watchdog_loop` compares against `config.stall_timeout.as_millis() as u64`;
   a stall of `18446744073709552` seconds truncates to about 384 ms and fires
-  on a healthy run (CWE-197). Filed as #2259 finding B.
+  on a healthy run (CWE-197). Tracked by open #2259 as its finding B.
 - **Lifecycle — no finding.** `watchdog.rs::WatchdogConfig::from_env` returns
   `None` unless the stall timeout is positive. `watchdog.rs::Watchdog::start`
   publishes its state in `ACTIVE` (the last start wins) and spawns the
@@ -240,8 +240,8 @@ Probe dispositions (Issue #2252):
   makes that undefined behaviour, so no sound test can exercise the wrap —
   which is why none does — and safe Rust cannot reach it.
 - **Consumer `ffi/utilities.rs::discovery_memory_usage_bytes` — no spurious
-  zero.** It returns `tracking_alloc.rs::TrackingAlloc::allocated` through a `catch_unwind` whose
-  `.unwrap_or(0)` fallback is dead code: the closure is a single atomic load
+  zero.** It returns `tracking_alloc.rs::TrackingAlloc::allocated` through
+  a `catch_unwind` whose `.unwrap_or(0)` fallback is dead code: the closure is a single atomic load
   and cannot panic, so the FFI never reports a false 0.
 - **Consumer `analysis/utils/memory.rs::is_memory_budget_exceeded` →
   `analysis/orchestration.rs::analyze_all` — no spurious cancel.** Without

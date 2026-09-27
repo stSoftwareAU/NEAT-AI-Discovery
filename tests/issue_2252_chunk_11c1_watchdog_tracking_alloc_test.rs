@@ -35,17 +35,61 @@ const REQUIRED_TERMS: [&str; 6] = [
 
 /// `(cited site, source file, definition the symbol must still match)`.
 const CITED: [(&str, &str, &str); 11] = [
-    ("watchdog.rs::watchdog_loop", "src/watchdog.rs", "fn watchdog_loop("),
-    ("watchdog.rs::Watchdog::start", "src/watchdog.rs", "fn start(config: WatchdogConfig)"),
-    ("watchdog.rs::Drop::drop", "src/watchdog.rs", "impl Drop for Watchdog"),
-    ("watchdog.rs::heartbeat_snapshot", "src/watchdog.rs", "fn heartbeat_snapshot("),
-    ("watchdog.rs::WatchdogConfig::from_env", "src/watchdog.rs", "fn from_env() -> Option<Self>"),
-    ("tracking_alloc.rs::TrackingAlloc::allocated", "src/tracking_alloc.rs", "pub fn allocated(&self)"),
-    ("ffi/utilities.rs::discovery_memory_usage_bytes", "src/ffi/utilities.rs", "fn discovery_memory_usage_bytes("),
-    ("analysis/utils/memory.rs::is_memory_budget_exceeded", "src/analysis/utils/memory.rs", "fn is_memory_budget_exceeded("),
-    ("analysis/orchestration.rs::analyze_all", "src/analysis/orchestration.rs", "fn analyze_all("),
-    ("config/user_facing.rs::watchdog_abort_delay", "src/config/user_facing.rs", "fn watchdog_abort_delay("),
-    ("debug.rs::install_signal_handler", "src/debug.rs", "fn install_signal_handler("),
+    (
+        "watchdog.rs::watchdog_loop",
+        "src/watchdog.rs",
+        "fn watchdog_loop(",
+    ),
+    (
+        "watchdog.rs::Watchdog::start",
+        "src/watchdog.rs",
+        "fn start(config: WatchdogConfig)",
+    ),
+    (
+        "watchdog.rs::Drop::drop",
+        "src/watchdog.rs",
+        "impl Drop for Watchdog",
+    ),
+    (
+        "watchdog.rs::heartbeat_snapshot",
+        "src/watchdog.rs",
+        "fn heartbeat_snapshot(",
+    ),
+    (
+        "watchdog.rs::WatchdogConfig::from_env",
+        "src/watchdog.rs",
+        "fn from_env() -> Option<Self>",
+    ),
+    (
+        "tracking_alloc.rs::TrackingAlloc::allocated",
+        "src/tracking_alloc.rs",
+        "pub fn allocated(&self)",
+    ),
+    (
+        "ffi/utilities.rs::discovery_memory_usage_bytes",
+        "src/ffi/utilities.rs",
+        "fn discovery_memory_usage_bytes(",
+    ),
+    (
+        "analysis/utils/memory.rs::is_memory_budget_exceeded",
+        "src/analysis/utils/memory.rs",
+        "fn is_memory_budget_exceeded(",
+    ),
+    (
+        "analysis/orchestration.rs::analyze_all",
+        "src/analysis/orchestration.rs",
+        "fn analyze_all(",
+    ),
+    (
+        "config/user_facing.rs::watchdog_abort_delay",
+        "src/config/user_facing.rs",
+        "fn watchdog_abort_delay(",
+    ),
+    (
+        "debug.rs::install_signal_handler",
+        "src/debug.rs",
+        "fn install_signal_handler(",
+    ),
 ];
 
 fn repo_root() -> PathBuf {
@@ -141,10 +185,14 @@ fn watchdog_and_tracking_alloc_rows_are_audited_with_a_reason() {
             panic!("{path} must read `audited — <reason>`, got: {outcome}");
         };
         assert_eq!(verdict.trim(), "audited", "{path} verdict: {outcome}");
-        assert!(!reason.trim().is_empty(), "{path} must give a reason: {outcome}");
+        assert!(
+            !reason.trim().is_empty(),
+            "{path} must give a reason: {outcome}"
+        );
     }
     assert!(
-        rows.iter().any(|(path, _)| path == "src/discovery_history.rs"),
+        rows.iter()
+            .any(|(path, _)| path == "src/discovery_history.rs"),
         "the discovery_history.rs row (11c-2) must stay in the section"
     );
 }
@@ -154,7 +202,10 @@ fn the_section_records_the_signal_verdict_cross_references_and_consumers() {
     let doc = read(RECORD);
     let body = section(section(&doc, "## Files swept"), &format!("### {SECTION}"));
     for term in REQUIRED_TERMS {
-        assert!(body.contains(term), "the {SECTION} section must mention `{term}`");
+        assert!(
+            body.contains(term),
+            "the {SECTION} section must mention `{term}`"
+        );
     }
 }
 
@@ -168,7 +219,10 @@ fn the_mutation_region_states_neither_file_has_a_site() {
         .unwrap_or_else(|| {
             panic!("the {SECTION} mutation region must carry a row for watchdog.rs and tracking_alloc.rs")
         });
-    assert!(row.contains("none"), "the row must state there is no site: {row}");
+    assert!(
+        row.contains("none"),
+        "the row must state there is no site: {row}"
+    );
 }
 
 #[test]
@@ -176,7 +230,10 @@ fn every_cited_symbol_exists_and_no_citation_uses_a_line_number() {
     let doc = read(RECORD);
     let body = section(section(&doc, "## Files swept"), &format!("### {SECTION}"));
     for (site, file, definition) in CITED {
-        assert!(body.contains(site), "the {SECTION} section must cite `{site}`");
+        assert!(
+            body.contains(site),
+            "the {SECTION} section must cite `{site}`"
+        );
         // Issue #1942: a symbol citation is only worth something while the
         // symbol still exists.
         assert!(
@@ -188,5 +245,8 @@ fn every_cited_symbol_exists_and_no_citation_uses_a_line_number() {
     let line_cited = body
         .match_indices(".rs:")
         .any(|(at, _)| bytes.get(at + 4).is_some_and(u8::is_ascii_digit));
-    assert!(!line_cited, "the {SECTION} section must cite by symbol, not `file.rs:<line>`");
+    assert!(
+        !line_cited,
+        "the {SECTION} section must cite by symbol, not `file.rs:<line>`"
+    );
 }
