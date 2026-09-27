@@ -27,7 +27,8 @@ on:
       - "*"
       - milestone/*
 
-# Read-only by default; the sync job below grants itself the write it needs.
+# Read-only throughout: the sync job pushes with the ACTIONS_PUSH PAT, not the
+# GITHUB_TOKEN, so it needs no write grant (Issue #2102).
 permissions:
   contents: read
 
@@ -45,8 +46,9 @@ jobs:
     # Same-repo guard, as on version-increment: a fork PR gets no push
     # credential, so the sync could only fail there.
     if: github.event.pull_request.head.repo.full_name == github.repository
+    # Read-only: the push authenticates with the ACTIONS_PUSH PAT (Issue #2102).
     permissions:
-      contents: write
+      contents: read
     env:
       CANONICAL_URL: https://raw.githubusercontent.com/stSoftwareAU/NEAT-AI-core/Develop/scripts/runlib.sh
 
