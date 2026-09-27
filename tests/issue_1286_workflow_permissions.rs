@@ -13,16 +13,25 @@
 //! dependency tree) and asserts:
 //!   1. A top-level `permissions:` block exists at column 0.
 //!   2. The block sets `contents: read`.
-//!   3. The `version-increment` and `auto-format` jobs retain their
-//!      per-job `permissions:` blocks with `contents: write` so they can
-//!      still push commits.
+//!   3. Issue #2102: the jobs that push commits (`version-increment` and
+//!      `auto-format` in ci.yml, `family-sync` in family-sync.yml) grant the
+//!      `GITHUB_TOKEN` no write scope. They push with the `ACTIONS_PUSH` PAT
+//!      through an explicit remote URL and check out with
+//!      `persist-credentials: false`, so a write grant would be unused
+//!      privilege.
 
 use std::fs;
 use std::path::Path;
 
-fn load_ci_yml() -> String {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(".github/workflows/ci.yml");
+fn load_workflow(name: &str) -> String {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join(".github/workflows")
+        .join(name);
     fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()))
+}
+
+fn load_ci_yml() -> String {
+    load_workflow("ci.yml")
 }
 
 /// Returns true if `body` contains a top-level (column-0) `permissions:`
@@ -100,21 +109,45 @@ fn job_block<'a>(body: &'a str, job_name: &str) -> Option<&'a str> {
     Some(after)
 }
 
+/// Returns the scopes a job block grants `write`, e.g. `["contents"]`.
+fn write_scopes(block: &str) -> Vec<&str> {
+    block
+        .lines()
+        .filter_map(|line| line.trim().strip_suffix(": write"))
+        .collect()
+}
+
 #[test]
-fn write_capable_jobs_retain_per_job_permissions() {
-    let body = load_ci_yml();
-    for job_name in ["version-increment", "auto-format"] {
+fn pat_pushing_jobs_grant_github_token_no_write() {
+    let jobs = [
+        ("ci.yml", "version-increment"),
+        ("ci.yml", "auto-format"),
+        ("family-sync.yml", "family-sync"),
+    ];
+    for (file, job_name) in jobs {
+        let body = load_workflow(file);
         let block = job_block(&body, job_name)
-            .unwrap_or_else(|| panic!("job `{job_name}` not found in ci.yml"));
+            .unwrap_or_else(|| panic!("job `{job_name}` not found in {file}"));
+        // Precondition: the push goes through the PAT, which is what makes a
+        // GITHUB_TOKEN write grant redundant.
         assert!(
-            block.contains("    permissions:"),
-            "job `{job_name}` must keep its own `permissions:` block to \
-             override the top-level read-only default (Issue #1286)",
+            block.contains("secrets.ACTIONS_PUSH") && block.contains("persist-credentials: false"),
+            "job `{job_name}` in {file} must push via the ACTIONS_PUSH PAT with \
+             `persist-credentials: false` (Issue #1868)",
         );
         assert!(
-            block.contains("      contents: write"),
-            "job `{job_name}` must declare `contents: write` to retain \
-             push capability (Issue #1286)",
+            write_scopes(block).is_empty(),
+            "job `{job_name}` in {file} pushes with the ACTIONS_PUSH PAT, so it \
+             must not grant the GITHUB_TOKEN write scopes {:?} (Issue #2102)",
+            write_scopes(block),
         );
     }
+}
+
+#[test]
+fn write_scopes_detects_write_grants() {
+    let block = "  job:\n    permissions:\n      contents: write\n      pull-requests: write\n      issues: read\n";
+    assert_eq!(write_scopes(block), vec!["contents", "pull-requests"]);
+    assert!(write_scopes("  job:\n    permissions:\n      contents: read\n").is_empty());
+    assert!(write_scopes("").is_empty());
 }
