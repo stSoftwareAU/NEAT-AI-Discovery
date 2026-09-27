@@ -259,6 +259,11 @@ the gate runs on milestone sub-issue PRs too, not just the rollup into `Develop`
   refreshed copy onto the PR branch when it differs and failing the job when
   core's copy cannot be fetched (Issue #2072). Skipped on fork pull requests,
   which carry no push credential
+- `CodeQL` (separate workflow `.github/workflows/codeql.yml`) — CodeQL
+  advanced setup for `actions` and `rust`, on pull requests and pushes to
+  `Develop` plus a weekly schedule. `.github/codeql/codeql-config.yml` excludes
+  the three rules that misfire on neural-network code
+  (stSoftwareAU/VibeCoder#2716); every other query stays on
 
 Every one of these separate workflows triggers on `pull_request` against both
 `"*"` and `milestone/*` — the `*` glob does not cross `/`, so milestone
