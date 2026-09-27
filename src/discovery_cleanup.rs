@@ -33,6 +33,15 @@ use std::time::SystemTime;
 /// to indicate it is still in use.
 pub const LOCK_FILE_NAME: &str = "discovery.lock";
 
+/// The host's spelling of the lock file: NEAT-AI
+/// (`src/discovery/DiscoveryCleanup.ts`) writes `.discovery.lock`, with a
+/// leading dot. Either name marks a directory as in use (Issue #2256).
+pub const HOST_LOCK_FILE_NAME: &str = ".discovery.lock";
+
+/// Every lock-file spelling that marks a discovery directory as in use. The
+/// liveness probe fails closed on any of them (Issue #2256).
+pub const LOCK_FILE_NAMES: [&str; 2] = [LOCK_FILE_NAME, HOST_LOCK_FILE_NAME];
+
 /// Conventional parquet data-file name written inside a discovery temp
 /// directory. Used alongside [`LOCK_FILE_NAME`] as positive evidence that a
 /// directory really is a discovery session (Issue #1866).
@@ -84,8 +93,8 @@ enum LockRecheck {
 /// * some path component contains [`DISCOVERY_DIR_MARKER`] (the same allowlist
 ///   [`clean_orphaned_discovery_dirs`] already applies, which also covers the
 ///   scanner's internal delegation), **or**
-/// * the directory itself contains a [`LOCK_FILE_NAME`] or
-///   [`DISCOVERY_DATA_FILE_NAME`] file.
+/// * the directory itself contains a [`LOCK_FILE_NAME`],
+///   [`HOST_LOCK_FILE_NAME`] or [`DISCOVERY_DATA_FILE_NAME`] file.
 ///
 /// `..` components are refused outright because they could escape a genuine
 /// discovery root while still carrying a marker component.
@@ -109,8 +118,10 @@ fn assert_is_discovery_dir(path: &Path) -> io::Result<()> {
     let has_marker_component = path.components().any(|c| {
         matches!(c, Component::Normal(name) if name.to_str().is_some_and(|n| n.contains(DISCOVERY_DIR_MARKER)))
     });
-    let has_discovery_contents =
-        path.join(LOCK_FILE_NAME).exists() || path.join(DISCOVERY_DATA_FILE_NAME).exists();
+    let has_discovery_contents = LOCK_FILE_NAMES
+        .iter()
+        .chain([&DISCOVERY_DATA_FILE_NAME])
+        .any(|name| path.join(name).exists());
 
     if has_marker_component || has_discovery_contents {
         return Ok(());
@@ -118,8 +129,8 @@ fn assert_is_discovery_dir(path: &Path) -> io::Result<()> {
 
     Err(invalid(format!(
         "temp_dir must be a discovery directory (a path component must contain \
-         {DISCOVERY_DIR_MARKER}, or the directory must contain {LOCK_FILE_NAME} \
-         or {DISCOVERY_DATA_FILE_NAME}): {temp_dir}"
+         {DISCOVERY_DIR_MARKER}, or the directory must contain {LOCK_FILE_NAME}, \
+         {HOST_LOCK_FILE_NAME} or {DISCOVERY_DATA_FILE_NAME}): {temp_dir}"
     )))
 }
 
@@ -136,7 +147,8 @@ fn assert_is_discovery_dir(path: &Path) -> io::Result<()> {
 /// as a discovery directory, contains a `..` component, is a symlink, or is not
 /// a directory at all (Issue #1866). A path is recognised when a path component
 /// contains [`DISCOVERY_DIR_MARKER`], or the directory contains a
-/// [`LOCK_FILE_NAME`] or [`DISCOVERY_DATA_FILE_NAME`] file. Any other I/O
+/// [`LOCK_FILE_NAME`], [`HOST_LOCK_FILE_NAME`] or [`DISCOVERY_DATA_FILE_NAME`]
+/// file. Any other I/O
 /// failure from the recursive removal is propagated unchanged.
 pub fn cleanup_discovery_dir(temp_dir: impl AsRef<Path>) -> io::Result<CleanupOutcome> {
     remove_discovery_dir(temp_dir.as_ref(), LockRecheck::Skip)
@@ -247,9 +259,10 @@ fn remove_discovery_dir(path: &Path, recheck: LockRecheck) -> io::Result<Cleanup
 
 /// Check whether a discovery directory is orphaned.
 ///
-/// A directory is considered orphaned when its lock file is absent, meaning
-/// no active discovery process owns it. Directories that still contain a
-/// lock file are actively in use and must not be removed.
+/// A directory is considered orphaned when every lock-file spelling in
+/// [`LOCK_FILE_NAMES`] is absent, meaning no active discovery process owns it.
+/// A directory holding either `discovery.lock` or the host's `.discovery.lock`
+/// is in use and must not be removed (Issue #2256).
 ///
 /// The probe uses `fs::symlink_metadata` and **fails closed** (Issue #1903):
 /// only a `NotFound` error means "no lock". `Path::exists()` followed symlinks
@@ -257,19 +270,21 @@ fn remove_discovery_dir(path: &Path, recheck: LockRecheck) -> io::Result<Cleanup
 /// that could not be stat'd because of a permissions error, reported the
 /// directory as orphaned and eligible for deletion.
 pub fn is_directory_orphaned(dir: &Path) -> bool {
-    let lock_path = dir.join(LOCK_FILE_NAME);
-    match fs::symlink_metadata(&lock_path) {
-        Ok(_) => false,
-        Err(err) if err.kind() == io::ErrorKind::NotFound => true,
-        Err(err) => {
-            tracing::warn!(
-                path = %lock_path.display(),
-                error = %err,
-                "Could not stat discovery lock file — treating the directory as in use"
-            );
-            false
+    LOCK_FILE_NAMES.iter().all(|name| {
+        let lock_path = dir.join(name);
+        match fs::symlink_metadata(&lock_path) {
+            Ok(_) => false,
+            Err(err) if err.kind() == io::ErrorKind::NotFound => true,
+            Err(err) => {
+                tracing::warn!(
+                    path = %lock_path.display(),
+                    error = %err,
+                    "Could not stat discovery lock file — treating the directory as in use"
+                );
+                false
+            }
         }
-    }
+    })
 }
 
 /// Whether `dir` was last modified at or after `scan_started` (Issue #1903).
@@ -301,8 +316,8 @@ pub struct OrphanCleanupResult {
 /// Scan a base directory for orphaned discovery temp directories and remove them
 /// (Issue #1100).
 ///
-/// A subdirectory is considered orphaned when it has no `discovery.lock` file.
-/// Removal suppresses `NotFound` errors because the async cleanup actor may
+/// A subdirectory is considered orphaned when it has neither a `discovery.lock`
+/// nor the host's `.discovery.lock` file (Issue #2256). Removal suppresses `NotFound` errors because the async cleanup actor may
 /// have removed the directory between the orphan check and the removal call.
 ///
 /// The orphan decision is re-validated immediately before each removal
