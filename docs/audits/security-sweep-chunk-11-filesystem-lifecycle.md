@@ -171,9 +171,90 @@ Probe dispositions (Issue #2251):
 
 | Path | Lines | Outcome |
 | --- | --- | --- |
-| `src/watchdog.rs` | 364 | pending |
-| `src/tracking_alloc.rs` | 234 | pending |
+| `src/watchdog.rs` | 364 | audited — no PID, process-spawn or filesystem surface (it only raises SIGUSR1 at its own process and aborts); the uncapped abort delay and the stall-timeout truncation are already tracked by open #2259 under #2122, so nothing new is filed |
+| `src/tracking_alloc.rs` | 234 | audited — the `GlobalAlloc` hooks cannot panic, allocate or recurse; the counter wraps only on a caller layout mismatch, which is undefined behaviour; neither consumer of `tracking_alloc.rs::TrackingAlloc::allocated` can spuriously cancel or return early |
 | `src/discovery_history.rs` | 626 | pending |
+
+Probe dispositions (Issue #2252):
+
+- **PID and filesystem — none.** A grep of `src/watchdog.rs` and
+  `src/tracking_alloc.rs` for `fs::`, `File`, `remove`, `OpenOptions`,
+  `Command`, `pid` and `process::id` has one hit: the test module's
+  `std::env::remove_var("NEAT_AI_DISCOVERY_WATCHDOG_STALL_SECS")`.
+  `watchdog.rs::watchdog_loop` signals only its own process
+  (`signal_hook::low_level::raise`, not `kill(pid, …)`), so no PID is read,
+  stored or reused. An abort skips every `Drop`, so a live session directory
+  is left for the orphan sweep; the #1903 guards on that sweep are
+  re-verified by #2234 in the discovery_cleanup section, not here.
+- **SIGUSR1 — a handler is installed on the FFI path.** The analysis FFI
+  entries run `lib.rs::log_version_once` → `debug.rs::init_debug_handlers` →
+  `debug.rs::install_signal_handler`, which registers SIGUSR1 through
+  `signal_hook::iterator::Signals` before `analysis/orchestration.rs::analyze_all`
+  calls `watchdog.rs::start_from_env`. The raise therefore dumps the threads,
+  and `std::process::abort` follows `abort_delay` later. After
+  `cleanup_discovery_lib` → `debug.rs::shutdown_debug_handlers` closes the
+  iterator, signal-hook-registry keeps its low-level handler installed, so a
+  later raise is a no-op and the abort still follows. Only when `Signals::new`
+  failed (logged as a WARNING) or a direct Rust caller skipped the one-time
+  initialisation does SIGUSR1 keep its default disposition, which terminates
+  the process at once without the dump. The stall is still logged at ERROR
+  first, so this costs diagnosis, not safety. Observation only: the
+  `debug.rs::install_signal_handler` doc comment says SIGUSR1 has "no default
+  action", but POSIX's default action for it is to terminate the process.
+- **Discarded `raise` result — hides nothing.** `let _ = raise(SIGUSR1)`
+  drops a result that can only be an error for an invalid signal number, and
+  SIGUSR1 is a constant.
+- **Abort delay — cross-referenced, not refiled.**
+  `config/user_facing.rs::watchdog_abort_delay` accepts any `u64` seconds, so
+  a huge `NEAT_AI_DISCOVERY_WATCHDOG_ABORT_DELAY_SECS` makes
+  `watchdog_loop`'s `thread::sleep(config.abort_delay)` turn the abort into
+  the very hang the watchdog exists to end. This is #2122's finding, tracked
+  by open #2259 as its finding A.
+- **Stall-timeout truncation — cross-referenced, not refiled.**
+  `watchdog_loop` compares against `config.stall_timeout.as_millis() as u64`;
+  a stall of `18446744073709552` seconds truncates to about 384 ms and fires
+  on a healthy run (CWE-197). Tracked by open #2259 as its finding B.
+- **Lifecycle — no finding.** `watchdog.rs::WatchdogConfig::from_env` returns
+  `None` unless the stall timeout is positive. `watchdog.rs::Watchdog::start`
+  publishes its state in `ACTIVE` (the last start wins) and spawns the
+  `hang-watchdog` thread with `.ok()`, so a failed spawn silently runs with no
+  watchdog — a hygiene point, not a security one. `watchdog.rs::Drop::drop`
+  sets the stop flag, clears `ACTIVE` only when `Arc::ptr_eq` matches (a
+  stale handle cannot clear a newer watchdog) and joins without holding
+  `ACTIVE`; the loop polls at most every 5 s, so the join is bounded. Once a
+  stall is detected the loop no longer checks the stop flag, so the abort is
+  inevitable and a concurrent join waits for it — by design.
+  `watchdog.rs::heartbeat_snapshot` takes both locks with a 50 ms
+  `try_lock_for`, so a thread dump never blocks on them; the stall path's
+  blocking `stage.lock()` contends only with `beat`, which holds it for one
+  assignment.
+- **Allocator hooks — no panic, no allocation, no recursion.** `alloc`,
+  `alloc_zeroed`, `dealloc` and `realloc` call only `System` and a Relaxed
+  `fetch_add` or `fetch_sub`: no formatting, no locking, no logging and no
+  `Vec`, so a hook can neither re-enter the allocator nor panic inside it.
+  Relaxed is enough for a statistics counter that orders nothing else.
+- **Counter wrap — reachable only through undefined behaviour.** `dealloc`
+  subtracts `layout.size()` unconditionally, and `realloc` subtracts the
+  shrink delta, so the counter can wrap only when a caller frees with a
+  layout other than the one it allocated with. The `GlobalAlloc` contract
+  makes that undefined behaviour, so no sound test can exercise the wrap —
+  which is why none does — and safe Rust cannot reach it.
+- **Consumer `ffi/utilities.rs::discovery_memory_usage_bytes` — no spurious
+  zero.** It returns `tracking_alloc.rs::TrackingAlloc::allocated` through
+  a `catch_unwind` whose `.unwrap_or(0)` fallback is dead code: the closure is a single atomic load
+  and cannot panic, so the FFI never reports a false 0.
+- **Consumer `analysis/utils/memory.rs::is_memory_budget_exceeded` →
+  `analysis/orchestration.rs::analyze_all` — no spurious cancel.** Without
+  undefined behaviour the counter never over-counts, so the budget cannot
+  trip early. It measures the whole process, by design (#1028). The two
+  early returns in `analyze_all` set `memory_budget_exceeded: true` and log a
+  WARNING, so a cancel is reported, never silent; the third check skips only
+  post-processing and keeps the candidates. A budget of 0 is the caller's
+  explicit request. The three `allocated_bytes` log fields in `analyze_all`
+  only read the counter.
+- **No other consumers.** A grep of `src`, `benches`, `fuzz` and `tests`
+  for `.allocated()` finds only the sites above (benches and tests would be
+  out of scope anyway).
 
 ## Defect classes probed
 
@@ -217,6 +298,7 @@ Probe dispositions (Issue #2251):
 | `sample_capture.rs::run_external_command_with_timeout` | process spawn: `Command::new(program)` with the argv `[pid, "1", "-mayDie", "-file", <capture path>]` and null stdout/stderr; killed after 5 s plus a 500 ms grace | the sampler writes `<SampleDir>/sample.txt` | yes — no shell; the output path is inside the private directory, and the program comes only from the process's own env or `PATH` (same uid) |
 
 <!-- section: watchdog + tracking_alloc + discovery_history -->
+| none — `src/watchdog.rs`, `src/tracking_alloc.rs` (Issue #2252) | no filesystem operation or process spawn: a grep for `fs::`, `File`, `remove`, `OpenOptions`, `Command`, `pid` and `process::id` hits only a test-module `remove_var` | n/a | n/a — no path is touched; `src/discovery_history.rs` is swept by 11c-2 |
 
 ## Re-verified remediations
 
