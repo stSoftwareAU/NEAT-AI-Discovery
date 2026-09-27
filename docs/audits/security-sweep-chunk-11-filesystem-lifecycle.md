@@ -13,8 +13,8 @@ Ledger rules: [`README.md`](README.md). Index entry:
 - **Baseline commit:** `b85a551ed2521ed327469b20eb88aeda828357d2`
 - **Exposure:** `local`
 - **Swept by:** Issue #2095 (chunk 11 of the #2083 overflow tracker), split
-  across audit sub-issues of #2117, #2118, #2119 and #2120; scaffolded by
-  Issue #2233.
+  across its audit sub-issues #2117 (11a), #2118 (11b), #2119 (11c) and #2120
+  (11d); scaffolded by Issue #2233.
 - **Tracker issue:** `#2095`
 
 ### Sweep status — IN PROGRESS

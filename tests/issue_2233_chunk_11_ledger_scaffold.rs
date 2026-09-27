@@ -63,8 +63,10 @@ fn section<'a>(doc: &'a str, heading: &str) -> &'a str {
             Some((at, line))
         })
         .find(|(_, line)| line.trim_end() == heading)
-        .map(|(at, _)| at)
-        .unwrap_or_else(|| panic!("{RECORD} must carry the heading `{heading}`"));
+        .map_or_else(
+            || panic!("{RECORD} must carry the heading `{heading}`"),
+            |(at, _)| at,
+        );
     let level = heading.chars().take_while(|c| *c == '#').count();
     let body_start = start + heading.len();
 
