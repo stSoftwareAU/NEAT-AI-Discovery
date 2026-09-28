@@ -29,7 +29,8 @@ use super::super::{cache, discovery_dispatch};
 /// linear residual (or is unknown).
 ///
 /// `deadline` (Issue #2183) is forwarded into the gradient-based discovery
-/// scan so it stops at the discovery deadline or on global cancellation.
+/// scan, and (Issue #2236) into the output-competition pair scan, so both
+/// stop at the discovery deadline or on global cancellation.
 pub(crate) fn append_scoring_specs(
     modules: &mut Vec<discovery_dispatch::DiscoveryModuleSpec>,
     creature: &Arc<crate::CreatureJson>,
@@ -218,11 +219,22 @@ pub(crate) fn append_scoring_specs(
                 return None;
             }
             let records = cache.load_records_for_neuron_types(&creature, &["output"]);
-            let detected = output_competition::detect_output_competition(
+            // Issue #2236: the O(outputs²) pair scan stops at the deadline
+            // or on cancellation; a partial scan is logged, not hidden.
+            let scan = output_competition::detect_output_competition_with_deadline(
                 &creature,
                 &records,
                 &task_descriptor,
+                &deadline,
             );
+            if let Some(reason) = scan.truncation {
+                tracing::warn!(
+                    reason = ?reason,
+                    returned = scan.candidates.len(),
+                    "Output competition scan stopped early; returning partial candidates."
+                );
+            }
+            let detected = scan.candidates;
             if detected.is_empty() {
                 return None;
             }
