@@ -18,7 +18,7 @@ and writes the result into the `shaders` region of
   unused `epsilon` (L22) and its L228 ceil-div are both refuted with reasons.
   The ceil-div cannot wrap because `wgpu::Limits::default()` caps the
   `samples` binding at 2^24 elements.
-- **One finding:** #2308 (`SEC-e8e1dd84a447`, CWE-754, low). `is_finite_value`
+- **One finding:** #2308 (CWE-754, low; filed, not fixed here). `is_finite_value`
   is a float self-comparison that fast-math may fold away. It is linked from a
   `## Ledger` row.
 - **Dead shaders:** `matching.wgsl` is recorded as dead and `relu_reduce.wgsl`
@@ -37,7 +37,7 @@ This change is docs only; no code changes.
 - **met** — Each of the 10 `workgroupBarrier()` sites has a verdict — evidence: `docs/audits/security-sweep-chunk-9-gpu-wgsl.md` (the **Barrier sites** table, 10 rows, all uniform) — reviewer: met
 - **met** — The unused `bias.wgsl` `epsilon` field and the L228 ceil-div each appear as a ledger finding or a refutation with a reason — evidence: two rows in the `shaders` region of `## Refuted / not findings`, citing `bias_evaluation.rs:125`/`:130`, `analyzer.rs:291`/`:394` and wgpu-types `limits.rs:441` — reviewer: met
 - **met** — `matching.wgsl` is recorded as dead and `relu_reduce.wgsl` as unused, and exactly one removal follow-up is linked — evidence: the **Dead shaders** paragraph and the `## Files swept` rows link #2309 — reviewer: met
-- **met** — Every surviving finding has its own issue, linked from a `## Ledger` row — evidence: the `SEC-e8e1dd84a447` ledger row reads `open — #2308`. #2308 is in house format, with its markers, all five sections and the `security`, `lang:rust`, `severity:low` and `confidence:low` labels — reviewer: met
+- **met** — Every surviving finding has its own issue, linked from a `## Ledger` row — evidence: the #2308 ledger row reads `open — #2308`. #2308 is in house format, with its markers, all five sections and the `security`, `lang:rust`, `severity:low` and `confidence:low` labels — reviewer: met
 - **met** — None of the 10 `.wgsl` rows in `## Files swept` reads `pending` — evidence: `docs/audits/security-sweep-chunk-9-gpu-wgsl.md` (`### shaders` inventory) — reviewer: met
 - **met** — `./quality.sh` passes, including `tests/issue_2088_sweep_ledger_contract.rs` — evidence: the worker's `./quality.sh` run on this branch; `cargo test --test issue_2088_sweep_ledger_contract --test issue_2288_chunk_09_ledger_scaffold --test issue_2289_gpu_struct_layout` passes 9/9, 4/4 and 5/5 — reviewer: partial — reason: the reviewer ran only those three test targets (all passing), not the full `./quality.sh`. The worker's quality gate did run and passed on this branch.
 - **unrequested** — Five extra refutation rows: NaN tile padding, barrier uniformity, out-of-range index, `activation.wgsl`'s unused `epsilon`, and `relu.wgsl`'s unused `threshold` — reviewer: unrequested — reason: these suspicions came up while sweeping the same kernels and are recorded so no later slice re-opens them. They are within the audit's scope.
@@ -53,7 +53,7 @@ This repository has no `CODING-STANDARDS.md`, so the reviewer used
 - **violation** — PR summary file missing (CONTRIBUTING.md "PR Summary File") — evidence: `docs/archive/pr-summaries/pr-summary-2290.md` — reason: fixed here; this file was added.
 - **violation** — The change cites code by line number, against "Cite Code by Symbol, Never by Line Number" (CONTRIBUTING.md, Issue #1942) — evidence: `docs/audits/security-sweep-chunk-9-gpu-wgsl.md` (about 44 new `file:N` citations) — reason: stands. The chunk-9 record's own scaffold (#2288) requires a `file:line` ledger column, and the issue asks for `file:line` guards. The record is pinned to a baseline SHA and has a `## Verify this record` drift check. The reviewer judged this justified, but no written exemption for SHA-pinned audit records exists yet.
 - **violation** — Edits outside the slice's own regions — evidence: `docs/audits/security-sweep-chunk-9-gpu-wgsl.md` (the shared `## Outcome` paragraph and the intro line of `## Issues filed`) — reason: stands. This is minor: a merge-conflict risk for sibling chunk-9 slices, not a correctness problem.
-- **violation** — The ledger row's `file:line` cell holds more than one location — evidence: `docs/audits/security-sweep-chunk-9-gpu-wgsl.md` (`SEC-e8e1dd84a447` row) — reason: stands as a cosmetic point. The row keeps the required five columns, and the contract test passes.
+- **violation** — The ledger row's `file:line` cell holds more than one location — evidence: `docs/audits/security-sweep-chunk-9-gpu-wgsl.md` (the #2308 row) — reason: stands as a cosmetic point. The row keeps the required five columns, and the contract test passes.
 - **clean** — Areas the reviewer checked and found compliant:
   - Australian English.
   - No Mermaid was added.
