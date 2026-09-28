@@ -94,8 +94,8 @@ the `submission.rs` bounded wait) go to **queue-core**;
 | --- | --- | --- |
 | `src/analysis/gpu/activation_evaluation.rs` | 718 | pending — #2112 |
 | `src/analysis/gpu/bias_evaluation.rs` | 225 | pending — #2112 |
-| `src/analysis/gpu/harmful_evaluation.rs` | 453 | pending — #2112 |
-| `src/analysis/gpu/helpful_evaluation.rs` | 591 | pending — #2112 |
+| `src/analysis/gpu/harmful_evaluation.rs` | 453 | finding filed — #2313 (the `map_async` callback `.expect` at L376 panics when a timed-out wait drops its receivers, and aborts with two or more pending maps), #2314 (a set of 8,388,609+ samples exceeds the 128 MiB binding limit at `create_bind_group` L217, and wgpu 30 panics instead of returning `Err`); the casts at L206/L245/L255/L274, the staging buffers at L320/L334 and the map-wait propagation at L383 are refuted |
+| `src/analysis/gpu/helpful_evaluation.rs` | 591 | finding filed — #2313 (the `map_async` callback `.expect` at L446 panics when a timed-out wait drops its receivers, and aborts with two or more pending maps), #2314 (a set of 2,796,203+ samples exceeds the 128 MiB binding limit at `create_bind_group` L124, and wgpu 30 panics instead of returning `Err`); the casts at L295/L349/L365/L374/L382, the `copy_size` readback chain L374→L405→L426→L441/L461 and the map-wait propagation at L455 are refuted |
 | `src/analysis/gpu/relu_evaluation.rs` | 242 | pending — #2112 |
 
 ### device
@@ -418,7 +418,151 @@ the other five constants and the module surface are sound.
 
 <!-- section: evaluation -->
 
-Pending — #2112 (#2237, #2238).
+`src/analysis/gpu/helpful_evaluation.rs` (591 lines) and
+`src/analysis/gpu/harmful_evaluation.rs` (453 lines) were read in full at the
+baseline (Issue #2237). The bias, relu and activation sub-sections are still
+pending under #2238, which cites the shared dispatch/binding-limit verdict
+below. Kernel-side tail handling is #2232's verdict, which is linked here rather
+than re-derived: the shaders region above records the zero-padded loads at
+`helpful_reduce.wgsl:91`–`:95` and `harmful_reduce.wgsl:67`–`:71`.
+
+#### Dispatch and binding limits — shared verdict (Issue #2237)
+
+**Premise correction.** `cap_gpu_batch_size_by_bytes`
+(`src/analysis/utils/memory.rs:633`) caps the **number of sample sets** in a
+chunk: `(max_batch_bytes / bytes_per_op).max(1)` at `memory.rs:648`, which is
+never below 1. It never caps the length of a single set. The helpful module
+(L262) and the harmful module (L137) are the only callers. Nothing upstream caps
+a set either. `build_samples_from` (`src/analysis/diagnostics/target_data.rs:67`)
+yields one sample per matched `obs_index`, and `record_discovery_data` accepts
+any number of training rows (`src/record/mod.rs:51`–`:56`).
+
+**Device limits.** Both `request_device` calls pass `wgpu::Limits::default()`
+(`src/analysis/gpu/analyzer.rs:291`, `:394`). wgpu-core adopts the requested
+limits as they are (`wgpu-core-30.0.1/src/device/resource.rs:553`):
+
+- `max_storage_buffer_binding_size`: 134,217,728 B
+- `max_buffer_size`: 268,435,456 B
+- `max_compute_workgroups_per_dimension`: 65,535
+
+**Which limit trips first.** The #2112 premise used the 8-byte
+`GpuHelpfulSample` binding, which trips at 16,777,217 samples. The contribution
+buffers have a wider stride, so they trip much earlier. Each module reaches the
+contribution buffer's allocation or binding before it reaches any dispatch:
+
+| Module | Buffer / call | Stride | Limit | First failing set length | Site (program order) |
+| --- | --- | --- | --- | --- | --- |
+| helpful | contributions, bound at `@binding(1)` | 48 B `HelpfulContribution` | `max_storage_buffer_binding_size` | 2,796,203 | `create_bind_group` `helpful_evaluation.rs:124`, reached through `HelpfulSlotBuffers::new` (L299) — **trips first** |
+| helpful | contributions buffer | 48 B | `max_buffer_size` | 5,592,406 | `create_buffer` `helpful_evaluation.rs:110`, which runs before `:124` |
+| helpful | samples, bound at `@binding(0)` | 8 B `GpuHelpfulSample` | `max_storage_buffer_binding_size` | 16,777,217 | never first, because `:110`/`:124` have already fired |
+| helpful | `dispatch_workgroups` L366 (main), L402 (reduce) | 256 per workgroup | `max_compute_workgroups_per_dimension` | 16,776,961 | never reached |
+| harmful | contributions, bound at `@binding(1)` | 16 B `HarmfulContribution` | `max_storage_buffer_binding_size` | 8,388,609 | `create_bind_group` `harmful_evaluation.rs:217` — **trips first** |
+| harmful | contributions buffer | 16 B | `max_buffer_size` | 16,777,217 | `create_buffer_init` `harmful_evaluation.rs:196`, which runs before `:217` |
+| harmful | `dispatch_workgroups` L246 (main), L316 (reduce) | 256 per workgroup | `max_compute_workgroups_per_dimension` | 16,776,961 | never reached, because `:217` has already fired at every length ≥ 8,388,609 |
+
+**How wgpu 30 reports it: as a panic, not an `Err`.** `CreateBindGroupError::BufferRangeTooLarge`
+("Buffer binding {binding} range {given} exceeds `max_*_buffer_binding_size`
+limit {limit}", `wgpu-core-30.0.1/src/binding_model.rs:185`) and
+`CreateBufferError::MaxBufferSize` (`resource.rs:1146`, classed `Validation` at
+`:1174`) both reach `handle_error`. `src` installs no `push_error_scope` and no
+`on_uncaptured_error`, so `handle_error_or_return_handler` finds neither a scope
+nor a custom handler. It calls `default_error_handler`, which panics with
+`"wgpu error: Validation Error …"` (`wgpu-30.0.1/src/backend/wgpu_core.rs:678`,
+`:692`–`:694`).
+
+**Queue classification.** The panic unwinds the dedicated GPU thread
+(`queue/scheduling.rs:51`). `is_device_lost_error` (`queue/recovery.rs:56`) is
+only consulted on an `Err` that `evaluate_*_batch` returns
+(`queue/execution.rs:97`–`:101`), so it is **never reached**. The submitter
+instead gets `"GPU response channel closed unexpectedly — the GPU thread may
+have exited or panicked"` (`queue/submission.rs:143`–`:146`), and later
+submissions get `"GPU work queue channel closed"` (`submission.rs:230`).
+
+None of the patterns at `recovery.rs:60`–`:71` matches either message, or the
+validation text itself. In particular, `"internal error"` (`:64`) does not
+match: wgpu's `Internal` error type is a different filter from `Validation`
+(`wgpu_core.rs:659`–`:661`). So there is no device re-initialisation, no retry
+and no breaker trip. The request fails, and the analysis call that shares the
+queue (`orchestration.rs:872`–`:876`) loses every other GPU request. The same
+data fails the same way on the next call.
+
+```mermaid
+flowchart LR
+    A["set of 2,796,203+ samples"] --> B["create_bind_group<br/>helpful_evaluation.rs:124"]
+    B --> C["BufferRangeTooLarge<br/>(Validation)"]
+    C --> D["default_error_handler<br/>panic!"]
+    D --> E["GPU thread unwinds"]
+    E --> F["submitter: response channel closed"]
+    F --> G["is_device_lost_error not consulted<br/>no re-init, no retry"]
+```
+
+**Verdict: finding — #2314** (`SEC-1a9af762e205`, CWE-1284, low). The
+dispatch-limit overflow itself is refuted as a separate defect: for both
+modules, the dispatch limit is never the limit that trips first.
+
+#### `helpful_evaluation.rs` (Issue #2237)
+
+| Check | Verdict | Evidence |
+| --- | --- | --- |
+| 1 — dispatch / binding limits | finding — #2314 | The dispatches at L366 and L402 are never reached for an oversized set, because the pool's `create_bind_group` (`helpful_evaluation.rs:124`) panics once a set reaches 2,796,203 samples (shared verdict above) |
+| 2 — `bias_evaluation.rs` `num_steps` | n/a — bias only, #2238 | This file has no step or range arithmetic |
+| 3 — `usize as u32` truncations | refuted — `helpful_evaluation.rs:124` | The five length casts are L295 `max_sample_len as u32`, L349 `length`, L365 `workgroups`, L374 `num_workgroups` and L382 `contribution_count`. Each would wrap only above 4,294,967,295 samples, which is about 103 GB of 24-byte `HelpfulSample`s on the host. L295 runs first, but its wrapped value only sizes `partial_buf_size` (L296). The pool's `create_buffer` at L104/L110 and `create_bind_group` at L124 panic long before that, at 2,796,203. L349–L382 run only after the pool exists, so no truncated value ever reaches a buffer or a dispatch |
+| 4 — uninitialised pool / staging buffers | refuted — `helpful_evaluation.rs:441`, `:461` | See the chain below. Each map and read covers only `[0, copy_size)`, and `copy_size` comes from the **current** set's length. The kernels write every element in that range: `helpful.wgsl:95` for `idx < length`, and `helpful_reduce.wgsl:113`–`:114` for each of the `num_workgroups` groups dispatched at L402. Kernel side: the #2232 zero-pad verdict |
+| 5 — zeroed vs uninitialised outputs | refuted — `helpful.wgsl:95`, `helpful_reduce.wgsl:114` | Every pool buffer is `create_buffer`, so its contents are not initialised: samples L104, contributions L110, uniforms L118, partial sums L143, reduction uniforms L151 and staging L176. The inputs are rewritten before each dispatch: `write_buffer` samples at L346 and uniforms at L354 and L387. Each output element that is read back is written by its kernel first. As defence in depth, wgpu-core zero-fills any range that was never written before its first use (`wgpu-core-30.0.1/src/command/memory_init.rs:161`, `:250`) |
+| 6 — map wait | finding — #2313 | The wait itself fails loud. `wait_for_buffer_maps_batch(...).context(...)?` at L455–L456 propagates every `Err`: map error `device.rs:372`, disconnect `:362` and timeout `:382`. `get_mapped_range()` is also propagated with `?` at L462–L464, and no zero-result fallback exists. However, the `map_async` callback's `.expect` (L446) panics when that `?` drops `map_receivers` (L439) before `pool` (L288), because dropping a pending map fires its callback inline (#2313) |
+
+**`copy_size` chain (check 4).**
+
+1. `num_workgroups = (samples.len() as u32).div_ceil(WORKGROUP_SIZE)` (L374) is
+   computed for the set being dispatched **now**.
+2. `partial_sums_size = size_of::<HelpfulContribution>() * num_workgroups`
+   (L375–L377).
+3. `used.push((slot_idx, partial_sums_size, num_workgroups as usize, true))`
+   (L405). On the non-reduction path, `contribution_size = 48 * samples.len()`
+   is pushed instead (L408–L410).
+4. `encoder.copy_buffer_to_buffer(source, 0, &pool[slot].staging_buffer, 0, copy_size)`
+   (L426). The source is `partial_sums_buffer` or `contributions_buffer`
+   (L421–L425).
+5. `pool[slot].staging_buffer.slice(0..copy_size)` is mapped at L441 and read at
+   L461.
+
+The copy stays inside both of its buffers. The pool is sized from
+`max_sample_len` (L293–L296): `partial_buf_size = ceil(max/256) × 48` and
+`contrib_buf_size = max × 48`, and the staging buffer is also sized
+`contrib_buf_size` (L178). Any set in the batch has `N ≤ max`, so
+`ceil(N/256) × 48 ≤ partial_buf_size` and `N × 48 ≤ contrib_buf_size`.
+
+**Verdict: refuted.** A slot sized for a longer set and reused for a shorter one
+keeps its stale bytes only past `copy_size`, and those bytes are never copied
+or mapped.
+
+Within a chunk, `slot_idx` gives each set its own slot (L335, L413). Across
+chunks, the previous chunk has finished before a slot is rewritten: every map
+was awaited (L455) and the device was polled idle (L504). `pool[slot_idx]`
+cannot go out of range: a chunk holds at most `effective_batch_size` sets
+(L311), and `pool_size = effective_batch_size.min(samples_batch.len())` (L287).
+
+#### `harmful_evaluation.rs` (Issue #2237)
+
+| Check | Verdict | Evidence |
+| --- | --- | --- |
+| 1 — dispatch / binding limits | finding — #2314 | The dispatches at L246 and L316 are never reached for an oversized set, because `create_bind_group` (`harmful_evaluation.rs:217`) panics once a set reaches 8,388,609 samples, and `create_buffer_init` (`:196`) panics once it reaches 16,777,217 (shared verdict above) |
+| 2 — `bias_evaluation.rs` `num_steps` | n/a — bias only, #2238 | This file has no step or range arithmetic |
+| 3 — `usize as u32` truncations | refuted — `harmful_evaluation.rs:196`, `:217` | The four length casts are L206 `length`, L245 `workgroups`, L255 `num_workgroups` and L274 `contribution_count`; L262 and L257 only widen `u32` to `usize`. Each would wrap only above 4,294,967,295 samples. In program order, all four run after `create_buffer_init` L190/L196 and `create_bind_group` L217, which panic at 8,388,609, so no truncated value reaches the GPU |
+| 4 — uninitialised staging buffers | refuted — `harmful_evaluation.rs:350`–`:356` | Each staging buffer is created fresh for one set and one chunk and is never reused. The reduction path creates it at L320 with `size: partial_sums_size`, and the full path at L334 with `size: contribution_size`. It is pushed together with its source and size (L327–L329 or L341–L343), then filled over its whole length by `copy_buffer_to_buffer(..., contribution_size)` at L350–L356. The whole buffer is mapped at L371 and read at L403 with `slice(..)`, and those are exactly the copied bytes. The zeroed `partial_sums` init (L261–L270) is overwritten by `harmful_reduce.wgsl:90` for each of the `num_workgroups` groups dispatched at L316. Kernel side: the #2232 zero-pad verdict |
+| 5 — zeroed vs uninitialised outputs | refuted — `harmful.wgsl:62`, `harmful_reduce.wgsl:90` | These outputs are `create_buffer_init`, so they start zeroed: contributions L196 (from `HarmfulContribution::zeroed()`, L188) and partial sums L263. The inputs are also `create_buffer_init` with their contents: samples L190, uniforms L211 and reduction uniforms L280. The only uninitialised buffers are the staging buffers at L320 and L334, and they are fully overwritten by the copy before they are mapped (check 4). The kernels also write every element that is read back |
+| 6 — map wait | finding — #2313 | The wait itself fails loud. `wait_for_buffer_maps_batch(...).context(...)?` at L383–L384 propagates map errors, disconnects and timeouts (`device.rs:362`, `:372`, `:382`). `get_mapped_range()` is also propagated with `?` at L404–L406, and no zero-result fallback exists. However, the callback's `.expect` (L376) panics when that `?` drops `map_receivers` (L369) before `batch_staging_buffers` (L163) (#2313) |
+
+**Outcome (#2237): two findings.**
+
+- #2313 (`SEC-d3bf886bc1d3`, CWE-248, medium): after a timed-out map wait, the
+  `map_async` callback panics, and with two or more pending maps the process
+  aborts.
+- #2314 (`SEC-1a9af762e205`, CWE-1284, low): a sample set that is too long
+  triggers a wgpu validation panic in place of a typed `Err`.
+
+The `usize as u32` casts, the pool and staging readback ranges, the output
+initialisation and the error propagation of the map wait are all sound.
 
 ### device
 
@@ -448,6 +592,8 @@ Each slice appends rows only inside its own marked region.
 | SEC-e8e1dd84a447 | `src/shaders/activation.wgsl:35` (also `relu.wgsl:35`, `bias.wgsl:38`) | CWE-754 | low | open — #2308 |
 | SEC-4b2140a0cd91 | `src/analysis/gpu/shaders.rs:143` (also `device.rs:54`) | CWE-1041 | low | open — #2311 |
 <!-- section: evaluation -->
+| SEC-d3bf886bc1d3 | `src/analysis/gpu/helpful_evaluation.rs:446` (also `harmful_evaluation.rs:376`) | CWE-248 | medium | open — #2313 |
+| SEC-1a9af762e205 | `src/analysis/gpu/helpful_evaluation.rs:124` (also `helpful_evaluation.rs:110`, `harmful_evaluation.rs:217`, `:196`) | CWE-1284 | low | open — #2314 |
 <!-- section: device -->
 <!-- section: queue-core -->
 <!-- section: queue-lifecycle -->
@@ -475,6 +621,15 @@ Each slice appends rows only inside its own marked region.
 | `WORKGROUP_SIZE` or another GPU constant drifts from what the kernels or deadlines assume | `src/analysis/gpu/shaders.rs:280`, `:313`–`:327`, `:369`–`:373`; `src/analysis/gpu/device.rs:621`–`:624` | `WORKGROUP_SIZE` is pinned to every entry point by the naga test; the other constants are bounded by const asserts and `GPU_BUFFER_MAP_TIMEOUT_SECS` is derived from `GPU_QUEUE_TIMEOUT_MAX_SECS`. Only the duplicated `GPU_INIT_TIMEOUT_SECS` lacks a pin (#2311) |
 | 41 `pub use` re-exports in `gpu/mod.rs` unused through the module root (dead surface) | `src/analysis/gpu/mod.rs:54`–`:99` | Each re-export is a redundant path to an item still reached through its submodule (or used inside `gpu/`); `gpu` is not a C-ABI surface and none of them reads env or config, so none is an operator lever that silently does nothing |
 <!-- section: evaluation -->
+| Dispatch-limit overflow: more than 65,535 workgroups at helpful L366/L402 or harmful L246/L316 (CWE-190) | `src/analysis/gpu/helpful_evaluation.rs:124`, `:110`; `src/analysis/gpu/harmful_evaluation.rs:217`, `:196` | The dispatch limit (a set of 16,776,961+ samples) is never the limit that trips first. The 48-byte (helpful) and 16-byte (harmful) contribution buffers exceed the 128 MiB binding limit at 2,796,203 and 8,388,609 samples, during allocation and binding, before any dispatch. That panic is #2314 |
+| A wgpu validation error is misclassified as device loss (for example by `"internal error"`), causing a device re-initialisation loop | `src/analysis/gpu/queue/recovery.rs:60`–`:71`; `src/analysis/gpu/queue/execution.rs:97`–`:101`; `wgpu-30.0.1/src/backend/wgpu_core.rs:692`–`:694` | The validation error is a panic from wgpu's default handler, not an `Err`, so `is_device_lost_error` is never called on it. The resulting "response channel closed" / "work queue channel closed" messages match none of its patterns. There is no re-initialisation or retry, and the panic itself is #2314 |
+| `usize as u32` length truncation in helpful (L295/L349/L365/L374/L382) or harmful (L206/L245/L255/L274) (CWE-190) | `src/analysis/gpu/helpful_evaluation.rs:104`, `:110`, `:124`; `src/analysis/gpu/harmful_evaluation.rs:190`, `:196`, `:217` | A wrap needs more than 4,294,967,295 samples in one set, which is about 103 GB of `HelpfulSample`s on the host. Buffer creation or binding panics at 2,796,203 (helpful) or 8,388,609 (harmful) before any truncated value reaches a buffer or a dispatch |
+| A reused helpful pool slot returns stale bytes from a longer, earlier set (CWE-908) | `src/analysis/gpu/helpful_evaluation.rs:374`–`:377`, `:405`, `:426`, `:441`, `:461`; `src/shaders/helpful.wgsl:95`; `src/shaders/helpful_reduce.wgsl:114` | `copy_size` comes from the current set's `num_workgroups` or length. Only `[0, copy_size)` is copied, mapped and read, and the kernels write every element in that range. Stale tail bytes are never read |
+| The helpful readback copy overruns its source or staging buffer | `src/analysis/gpu/helpful_evaluation.rs:293`–`:296`, `:178` | Every buffer in a slot is sized from `max_sample_len`, which is at least any set's length. So `ceil(N/256) × 48 ≤ partial_buf_size` and `N × 48 ≤ contrib_buf_size`, and `contrib_buf_size` is also the staging size |
+| Uninitialised harmful staging buffers are read back (CWE-908) | `src/analysis/gpu/harmful_evaluation.rs:320`, `:334`, `:350`–`:356`, `:371` | Each staging buffer is created fresh at exactly the copy size and is fully overwritten by `copy_buffer_to_buffer` before `slice(..)` maps it. Staging buffers are never reused across sets or chunks |
+| The helpful `pool[slot_idx]` index goes out of range | `src/analysis/gpu/helpful_evaluation.rs:287`, `:311`, `:335` | A chunk holds at most `effective_batch_size` sets, and `pool_size = effective_batch_size.min(samples_batch.len())`. `slot_idx` counts only the non-empty sets in the chunk |
+| A map-wait timeout or map error is swallowed and returns zero stats | `src/analysis/gpu/helpful_evaluation.rs:455`–`:456`, `:462`–`:464`; `src/analysis/gpu/harmful_evaluation.rs:383`–`:384`, `:404`–`:406`; `src/analysis/gpu/device.rs:362`, `:372`, `:382` | Both modules propagate the wait's `Err` and `get_mapped_range`'s `Err` with `?`, and neither has a zero-result fallback. What goes wrong on that path is the callback panic during the drop, which is #2313 |
+| `merge_batch_results` silently inserts default stats on a count mismatch (fail-silent) | `src/analysis/gpu/helpful_evaluation.rs:405`, `:410`, `:493`, `:537`–`:540` | Each non-empty set pushes exactly one `used` entry, and each `used` entry pushes exactly one result, so the counts are equal by construction. The fallback branch is unreachable, and `debug_assert_eq!` (L523) pins it |
 <!-- section: device -->
 <!-- section: queue-core -->
 <!-- section: queue-lifecycle -->
@@ -483,8 +638,9 @@ Each slice appends rows only inside its own marked region.
 
 In progress — the shaders slice is complete: the 10 `src/shaders/*.wgsl`
 kernels (#2290: one finding, #2308) and `mod.rs`, `pipeline_builder.rs` and
-`shaders.rs` (#2291: one finding, #2311). Every other file is pending its
-slice. Each slice records its
+`shaders.rs` (#2291: one finding, #2311). The evaluation slice's helpful and
+harmful halves are complete (#2237: two findings, #2313 and #2314). Every other
+file is pending its slice. Each slice records its
 outcome in its region under `## Audit sections`.
 
 ## Issues filed
@@ -497,6 +653,12 @@ The sweep is in progress; each slice lists the issues it files here.
   `relu_reduce.wgsl` (not a security finding; shaders slice, #2290).
 - #2311 — `SEC-4b2140a0cd91` (CWE-1041, low): `GPU_INIT_TIMEOUT_SECS` defined
   twice with no equality pin (shaders slice, #2291).
+- #2313 — `SEC-d3bf886bc1d3` (CWE-248, medium): after a timed-out map wait, the
+  helpful/harmful `map_async` callback `.expect` panics, and with two or more
+  pending maps the process aborts (evaluation slice, #2237).
+- #2314 — `SEC-1a9af762e205` (CWE-1284, low): a helpful/harmful sample set that
+  is too long trips a wgpu validation error, which the default handler turns
+  into a panic that kills the GPU thread (evaluation slice, #2237).
 
 ## Verify this record
 
