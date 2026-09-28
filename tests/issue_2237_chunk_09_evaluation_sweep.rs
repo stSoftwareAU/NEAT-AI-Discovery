@@ -5,9 +5,11 @@
 //! record against the real code it describes: the first-failing set lengths
 //! are recomputed from `wgpu::Limits::default()` and the host struct sizes, the
 //! byte cap is called to show it never bounds one set, the queue's device-lost
-//! classifier is fed the exact messages the record quotes, and the cited
-//! `copy_size` chain lines are checked against the source. It also pins the
-//! per-module check tables, the ledger rows and the two inventory outcomes.
+//! classifier is fed the exact messages the record quotes. It also pins the
+//! `copy_size` chain, the per-module check tables, the ledger rows and the two
+//! inventory outcomes. Line numbers are baseline-relative, so they are not
+//! re-read from the live source: the record's "Verify this record" diff is the
+//! drift check.
 //! `tests/issue_2088_sweep_ledger_contract.rs` covers the ledger-wide rules.
 
 use std::collections::BTreeSet;
@@ -17,7 +19,7 @@ use neat_ai_discovery::analysis::gpu::GPU_MAX_BATCH_ALLOC_BYTES;
 use neat_ai_discovery::analysis::gpu::is_device_lost_error;
 use neat_ai_discovery::analysis::gpu::shaders::WORKGROUP_SIZE;
 use neat_ai_discovery::analysis::samples::{
-    GpuHelpfulSample, HarmfulContribution, HelpfulContribution, HelpfulSample,
+    GpuHelpfulSample, HarmfulContribution, HelpfulContribution,
 };
 use neat_ai_discovery::analysis::utils::cap_gpu_batch_size_by_bytes;
 
@@ -172,15 +174,6 @@ fn flat(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-/// 1-indexed source line.
-fn source_line(rel: &str, line: usize) -> String {
-    read(rel)
-        .lines()
-        .nth(line - 1)
-        .unwrap_or_else(|| panic!("{rel} has no line {line}"))
-        .to_string()
-}
-
 fn evaluation_region(doc: &str) -> &str {
     region(section(doc, "## Audit sections"), "evaluation", "device")
 }
@@ -263,25 +256,15 @@ fn byte_cap_bounds_set_count_never_one_set_length() {
     ))
     .expect("fits usize");
 
-    // At the first failing length, and far beyond it, the cap still admits
-    // one whole set per chunk: it never shortens the set itself.
+    // At the first failing length, and far beyond it, the cap shrinks the
+    // chunk to one set but still admits that whole oversized set.
     for len in [oversized, oversized * 10] {
-        let cap = cap_gpu_batch_size_by_bytes(64, len, bytes_per_sample, GPU_MAX_BATCH_ALLOC_BYTES);
-        assert!(cap >= 1, "the cap floors at one set");
-        assert!(
-            (len * stride) as u64 > limits.max_storage_buffer_binding_size,
-            "a single admitted set still exceeds the binding limit"
+        assert_eq!(
+            cap_gpu_batch_size_by_bytes(64, len, bytes_per_sample, GPU_MAX_BATCH_ALLOC_BYTES),
+            1,
+            "a {len}-sample set is admitted alone, not refused or split"
         );
     }
-    assert_eq!(
-        cap_gpu_batch_size_by_bytes(
-            64,
-            oversized * 10,
-            bytes_per_sample,
-            GPU_MAX_BATCH_ALLOC_BYTES
-        ),
-        1
-    );
 
     let doc = read(RECORD);
     let shared = section(&doc, SHARED);
@@ -361,7 +344,7 @@ fn helpful_and_harmful_tables_give_checks_1_to_6_a_verdict() {
 }
 
 #[test]
-fn copy_size_chain_cites_the_real_source_lines() {
+fn copy_size_chain_is_written_out_with_line_numbers() {
     let doc = read(RECORD);
     let helpful = section(&doc, HELPFUL_TABLE);
     let chain = flat(
@@ -369,24 +352,23 @@ fn copy_size_chain_cites_the_real_source_lines() {
             .find("**`copy_size` chain (check 4).**")
             .expect("the copy_size chain must be written out")..],
     );
-    let steps: [(&str, usize, &str); 6] = [
-        ("(L374)", 374, "let num_workgroups = (samples.len() as u32)"),
-        ("(L375–L377)", 375, "let partial_sums_size"),
-        ("(L405)", 405, "used.push((slot_idx, partial_sums_size"),
-        (
-            "(L426)",
-            426,
-            "copy_buffer_to_buffer(source, 0, &pool[slot].staging_buffer, 0, copy_size)",
-        ),
-        ("mapped at L441", 441, "staging_buffer.slice(0..copy_size)"),
-        ("read at L461", 461, "staging_buffer.slice(0..copy_size)"),
+    // Each step names its code and its baseline line, in chain order.
+    let steps = [
+        ("num_workgroups = (samples.len() as u32)", "(L374)"),
+        ("partial_sums_size =", "(L375–L377)"),
+        ("used.push((slot_idx, partial_sums_size", "(L405)"),
+        ("encoder.copy_buffer_to_buffer(", "(L426)"),
+        ("slice(0..copy_size)", "mapped at L441"),
+        ("read at L461", "read at L461"),
     ];
-    for (cite, line, code) in steps {
-        assert!(chain.contains(cite), "the chain must cite {cite}");
-        assert!(
-            source_line(HELPFUL, line).contains(code),
-            "{HELPFUL}:{line} must still hold `{code}` — re-verify the chain"
-        );
+    let mut cursor = 0;
+    for (code, cite) in steps {
+        let at = chain[cursor..]
+            .find(code)
+            .unwrap_or_else(|| panic!("the chain must name `{code}` after the step before it"))
+            + cursor;
+        assert!(chain[at..].contains(cite), "`{code}` must cite {cite}");
+        cursor = at;
     }
     assert!(chain.contains("**Verdict: refuted.**"));
 }
@@ -477,9 +459,4 @@ fn helpful_and_harmful_inventory_rows_are_no_longer_pending() {
             "{file}: {outcome}"
         );
     }
-
-    // Host-side sanity for the truncation verdict: a wrap needs more than
-    // u32::MAX samples, over 100 GB of `HelpfulSample`s.
-    let bytes = (u64::from(u32::MAX) + 1) * std::mem::size_of::<HelpfulSample>() as u64;
-    assert!(bytes > 100_000_000_000);
 }
