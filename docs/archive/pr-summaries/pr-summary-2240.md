@@ -31,6 +31,16 @@ fails against the unmodified record: 4 of its 5 tests fail until the device
 region is written. It also fails when the #2318 ledger row is deleted.
 `./quality.sh` passed.
 
+Added the regression test
+`tests/issue_2113_chunk_09c_device_sweep.rs::the_ledger_device_region_carries_a_verdict_for_sec_fe0b268a3799`,
+which reproduces the flaw (a `device` region still marked `pending — #2113`, with no SEC-fe0b268a3799 record), fails against the unfixed code and passes after the fix.
+Its companion `tests/issue_2113_chunk_09c_device_sweep.rs::every_device_finding_is_open_linked_and_named_in_the_audit_region`
+fails before the fix (with the #2318 row absent) and passes after the fix.
+This is an audit-only change, so the original trigger is the unswept `pending`
+record. That trigger is closed, and there is no trivial bypass: the contract test
+pins every call site and cited symbol to the source. Finding #2318 stays open.
+The runtime `set_var` guard itself was remediated by #1873.
+
 ```mermaid
 flowchart LR
     A[no_gpu_result<br/>device.rs:396] --> B[gpu_is_available<br/>analyzer.rs:255]
