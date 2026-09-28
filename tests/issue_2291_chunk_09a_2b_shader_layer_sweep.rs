@@ -49,9 +49,9 @@ impl Kind {
     }
 }
 
-/// `pipeline_builder::STANDARD_BINDINGS` (`pipeline_builder.rs:73`).
+/// `pipeline_builder::STANDARD_BINDINGS`.
 const STANDARD: &[Kind] = &[Kind::Read, Kind::ReadWrite, Kind::Uniform];
-/// `pipeline_builder::BIAS_BINDINGS` (`pipeline_builder.rs:86`).
+/// `pipeline_builder::BIAS_BINDINGS`.
 const BIAS: &[Kind] = &[Kind::Read, Kind::Read, Kind::ReadWrite, Kind::Uniform];
 
 /// A `build_compute_pipeline` call site the record must carry a row for.

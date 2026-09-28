@@ -74,9 +74,9 @@ the `submission.rs` bounded wait) go to **queue-core**;
 
 | Path | Lines | Outcome |
 | --- | --- | --- |
-| `src/analysis/gpu/mod.rs` | 168 | audited, no finding — 57 `pub use` re-exports: 15 used outside `gpu/` through the module root, 42 reached only through a submodule path or not at all (redundant surface, refuted; per-name table in the shaders audit section) |
+| `src/analysis/gpu/mod.rs` | 168 | audited, no finding — 56 `pub use` re-exports: 15 used outside `gpu/` through the module root, 41 reached only through a submodule path or not at all (redundant surface, refuted; per-name table in the shaders audit section) |
 | `src/analysis/gpu/pipeline_builder.rs` | 157 | audited, no finding — `binding: i as u32` (L36) assigns slots by position and every `STANDARD_BINDINGS`/`BIAS_BINDINGS` slice matches its shader's `@binding` order and access at all 8 call sites; `create_shader_module` (L26, not `_trusted`) keeps runtime bounds checks on; `min_binding_size: None` (L41) defers buffer-size validation to draw time (the size limits themselves are #2237/#2238's) |
-| `src/analysis/gpu/shaders.rs` | 392 | finding filed — #2311 (`GPU_INIT_TIMEOUT_SECS` L143 duplicates `device.rs:54` as an independent literal with no equality pin); `WORKGROUP_SIZE` pinned to all 10 kernels by the naga test (L280), the other constants bounded by const asserts |
+| `src/analysis/gpu/shaders.rs` | 392 | finding filed — #2311 (`GPU_INIT_TIMEOUT_SECS` L143 duplicates `device.rs:54` as an independent literal with no equality pin); `WORKGROUP_SIZE` pinned to the 9 embedded kernels by the naga test (L280, `matching.wgsl` is never embedded), the other constants bounded by const asserts |
 | `src/shaders/activation.wgsl` | 232 | finding filed — #2308 (`is_finite_value` at L35 is a float self-comparison fast-math may fold, so the L223 output guard can pass an overflowed Inf/NaN as `valid`); `sample_count` guard L195, no barrier, unused `epsilon` refuted |
 | `src/shaders/activation_reduce.wgsl` | 101 | audited, no finding — zero-padded load L76–L80 keeps every read in bounds and adds a neutral element; barriers L83/L94 sit under uniform control flow |
 | `src/shaders/bias.wgsl` | 303 | finding filed — #2308 (the `is_finite_value` skips at L253/L264/L273 are its only non-finite handling); `in_range` L216 guards every `bias_idx` access, barriers L244/L283 are uniform, unused `epsilon` L22 and the L228 ceil-div refuted |
@@ -365,14 +365,14 @@ there does not count.
 | `GpuTimeBudget` | L64 | unused | no reference outside `src/analysis/gpu/` |
 | `GpuCircuitBreaker` | L68 | used | tests/issue_1991_pr_summary_retention_contract.rs |
 | `GpuTripReason` | L68 | used | tests/issue_1991_pr_summary_retention_contract.rs |
-| `abandoned_gpu_thread_count` | L68 | unused | callers use the `gpu::circuit_breaker` path |
-| `check_gpu_breaker` | L68 | unused | callers use the `gpu::circuit_breaker` path |
+| `abandoned_gpu_thread_count` | L68 | unused | callers use the `gpu::breaker` path |
+| `check_gpu_breaker` | L68 | unused | callers use the `gpu::breaker` path |
 | `global_gpu_breaker` | L69 | used | tests/issue_1991_pr_summary_retention_contract.rs |
-| `gpu_breaker_trip_reason` | L69 | unused | callers use the `gpu::circuit_breaker` path |
-| `is_gpu_breaker_tripped` | L69 | unused | callers (e.g. `src/debug/process_state.rs`) use the `gpu::circuit_breaker` path |
-| `record_abandoned_gpu_thread` | L70 | unused | callers use the `gpu::circuit_breaker` path |
-| `reset_gpu_breaker` | L70 | unused | callers use the `gpu::circuit_breaker` path |
-| `trip_gpu_breaker` | L70 | unused | callers use the `gpu::circuit_breaker` path |
+| `gpu_breaker_trip_reason` | L69 | unused | callers use the `gpu::breaker` path |
+| `is_gpu_breaker_tripped` | L69 | unused | callers (e.g. `src/debug/process_state.rs`) use the `gpu::breaker` path |
+| `record_abandoned_gpu_thread` | L70 | unused | callers use the `gpu::breaker` path |
+| `reset_gpu_breaker` | L70 | unused | callers use the `gpu::breaker` path |
+| `trip_gpu_breaker` | L70 | unused | callers use the `gpu::breaker` path |
 | `DEFAULT_GPU_STALL_WINDOW_SECS` | L75 | unused | `src/config/user_facing.rs` uses the `gpu::heartbeat` path |
 | `GPU_STALL_WINDOW_ENV` | L75 | unused | `src/config/user_facing.rs` uses the `gpu::heartbeat` path |
 | `GpuHeartbeat` | L75 | unused | tests use the `gpu::heartbeat` path |
@@ -405,7 +405,7 @@ there does not count.
 | `WORKGROUP_SIZE` | L94 | unused | callers use the `gpu::shaders` path |
 | `get_batch_size_for_tier` | L99 | unused | `#[cfg(test)]`; only `tests/unit/analysis_implementation.rs` (not compiled) |
 
-15 of 57 re-exports are used through the root. The other 42 are redundant
+15 of 56 re-exports are used through the root. The other 41 are redundant
 paths to items that stay reachable through their submodule, so they add no C-ABI
 or operator surface (refuted below). Pruning them is tidy-up, not security, and
 is out of scope here.
@@ -473,7 +473,7 @@ Each slice appends rows only inside its own marked region.
 | Division by zero in a kernel | `activation.wgsl:77`/`:80`/`:150`, `bias.wgsl:80`/`:83`/`:157`, `matching.wgsl:118` | Activation-function denominators are `1 + exp(..)` or `1 + abs(x)`, never below 1 for finite input; `matching.wgsl`'s average is guarded by `error_count > 0u` (L117) and the kernel is never compiled |
 | Pipeline binding order drifts from a shader's `@binding` layout, binding the wrong buffer (CWE-125 / CWE-787) | `src/analysis/gpu/pipeline_builder.rs:36`, `:73`, `:86` | All 8 `build_compute_pipeline` call sites pass a slice whose positional order and access match the kernel's `@binding` declarations and the `create_bind_group` entries (per-row table in the shaders audit section, Issue #2291); wgpu rejects a layout that disagrees with the shader at pipeline creation |
 | `WORKGROUP_SIZE` or another GPU constant drifts from what the kernels or deadlines assume | `src/analysis/gpu/shaders.rs:280`, `:313`–`:327`, `:369`–`:373`; `src/analysis/gpu/device.rs:621`–`:624` | `WORKGROUP_SIZE` is pinned to every entry point by the naga test; the other constants are bounded by const asserts and `GPU_BUFFER_MAP_TIMEOUT_SECS` is derived from `GPU_QUEUE_TIMEOUT_MAX_SECS`. Only the duplicated `GPU_INIT_TIMEOUT_SECS` lacks a pin (#2311) |
-| 42 `pub use` re-exports in `gpu/mod.rs` unused through the module root (dead surface) | `src/analysis/gpu/mod.rs:54`–`:99` | Each re-export is a redundant path to an item still reached through its submodule (or used inside `gpu/`); `gpu` is not a C-ABI surface and none of them reads env or config, so none is an operator lever that silently does nothing |
+| 41 `pub use` re-exports in `gpu/mod.rs` unused through the module root (dead surface) | `src/analysis/gpu/mod.rs:54`–`:99` | Each re-export is a redundant path to an item still reached through its submodule (or used inside `gpu/`); `gpu` is not a C-ABI surface and none of them reads env or config, so none is an operator lever that silently does nothing |
 <!-- section: evaluation -->
 <!-- section: device -->
 <!-- section: queue-core -->
