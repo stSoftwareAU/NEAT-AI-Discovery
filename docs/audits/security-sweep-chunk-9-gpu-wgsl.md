@@ -77,16 +77,16 @@ the `submission.rs` bounded wait) go to **queue-core**;
 | `src/analysis/gpu/mod.rs` | 168 | pending — #2111 |
 | `src/analysis/gpu/pipeline_builder.rs` | 157 | pending — #2111 |
 | `src/analysis/gpu/shaders.rs` | 392 | pending — #2111 |
-| `src/shaders/activation.wgsl` | 232 | pending — #2111 |
-| `src/shaders/activation_reduce.wgsl` | 101 | pending — #2111 |
-| `src/shaders/bias.wgsl` | 303 | pending — #2111 |
-| `src/shaders/harmful.wgsl` | 64 | pending — #2111 |
-| `src/shaders/harmful_reduce.wgsl` | 92 | pending — #2111 |
-| `src/shaders/helpful.wgsl` | 96 | pending — #2111 |
-| `src/shaders/helpful_reduce.wgsl` | 116 | pending — #2111 |
-| `src/shaders/matching.wgsl` | 135 | pending — #2111 |
-| `src/shaders/relu.wgsl` | 89 | pending — #2111 |
-| `src/shaders/relu_reduce.wgsl` | 110 | pending — #2111 |
+| `src/shaders/activation.wgsl` | 232 | finding filed — #2308 (`is_finite_value` at L35 is a float self-comparison fast-math may fold, so the L223 output guard can pass an overflowed Inf/NaN as `valid`); `sample_count` guard L195, no barrier, unused `epsilon` refuted |
+| `src/shaders/activation_reduce.wgsl` | 101 | audited, no finding — zero-padded load L76–L80 keeps every read in bounds and adds a neutral element; barriers L83/L94 sit under uniform control flow |
+| `src/shaders/bias.wgsl` | 303 | finding filed — #2308 (the `is_finite_value` skips at L253/L264/L273 are its only non-finite handling); `in_range` L216 guards every `bias_idx` access, barriers L244/L283 are uniform, unused `epsilon` L22 and the L228 ceil-div refuted |
+| `src/shaders/harmful.wgsl` | 64 | audited, no finding — `length` guard L40 before any access, no barrier, `epsilon` comparisons at L50 reject NaN, no division |
+| `src/shaders/harmful_reduce.wgsl` | 92 | audited, no finding — zero-padded load L67–L71; barriers L74/L85 sit under uniform control flow |
+| `src/shaders/helpful.wgsl` | 96 | audited, no finding — `length` guard L48 before any access, no barrier, `epsilon` comparisons at L67/L74/L79 reject NaN, no division |
+| `src/shaders/helpful_reduce.wgsl` | 116 | audited, no finding — zero-padded load L91–L95; barriers L98/L109 sit under uniform control flow |
+| `src/shaders/matching.wgsl` | 135 | dead — no `include_str!` in `shaders.rs`, absent from `ALL_SHADERS`, no pipeline builds it; removal tracked by #2309, file kept |
+| `src/shaders/relu.wgsl` | 89 | finding filed — #2308 (the L63 `is_finite_value` input skip); `length` guard L45, no barrier, `epsilon` guards L73/L81, unused `threshold` refuted |
+| `src/shaders/relu_reduce.wgsl` | 110 | unused — registered as `RELU_REDUCE_SHADER` (`shaders.rs:91`) and in `ALL_SHADERS` (`shaders.rs:214`) but no `build_compute_pipeline` call builds it; kernel itself is sound (zero-padded load, barriers L92/L103 uniform); removal tracked by #2309, file kept |
 
 ### evaluation
 
@@ -195,7 +195,105 @@ that. No padding change is needed.
 **Outcome: negative result** — parity holds on all 12 structs; no ledger row
 and no issue filed for struct layout.
 
-Pending — #2111 (shader layer, #2232).
+#### Kernel bounds and arithmetic (Issue #2290)
+
+All 10 `src/shaders/*.wgsl` kernels, read in full at the baseline. Line
+numbers are unchanged at the #2289 head (`abd698d`). Every kernel declares
+`@compute @workgroup_size(256)`, matching `WORKGROUP_SIZE`
+(`src/analysis/gpu/shaders.rs`). Three guard shapes are used:
+
+- **element-wise** (`activation`, `harmful`, `helpful`, `relu`, `matching`):
+  `if idx >= uniforms.<count> { return; }` before the first buffer access;
+- **reduction** (the four `*_reduce.wgsl`): a lane past `contribution_count`
+  loads a zero struct into `shared_data` instead of reading the input, so the
+  tree reduction reads only `shared_data[local_idx + stride]` with
+  `local_idx < stride <= 128` (max index 255) and never returns early;
+- **tiled** (`bias.wgsl`): `in_range = bias_idx < uniforms.bias_count` (L216)
+  gates the per-candidate reads and writes, while every lane stays in the tile
+  loop to reach both barriers.
+
+Defence in depth: `pipeline_builder.rs:26` uses `create_shader_module`, not the
+`_trusted` variant, so wgpu's backends keep naga's `Restrict` bounds-check
+policy (`wgpu-hal-30.0.1/src/vulkan/adapter.rs:2839`,
+`src/metal/device.rs:186`), and a missed guard would clamp rather than read
+out of bounds.
+
+| Kernel (lines) | `@workgroup_size` line | Bounds guard (`file:line`) | Barrier-safe? | NaN/Inf/div-by-zero handling | Verdict |
+| --- | --- | --- | --- | --- | --- |
+| `activation.wgsl` (232) | L192 | `activation.wgsl:195` (`idx >= uniforms.sample_count`) | n/a — no barrier, so the early `return` is safe | `is_finite_value` (L35) skips non-finite input (L210) and gates `valid = 1u` on the output (L223); only divisions are in `logistic`/`swish`/`softsign` with denominators `1 + exp(..)` / `1 + abs(x)` ≥ 1; `epsilon` (L21) unread (refuted) | finding — #2308 (the self-comparison guard is foldable under fast-math) |
+| `activation_reduce.wgsl` (101) | L67 | zero-padding `activation_reduce.wgsl:76`–`:80` | yes — L83 at function scope, L94 in a constant-bound loop after the non-uniform `if` closes | sums only; the zero pad is the additive identity; `valid` sums ≤ 256 per workgroup, no u32 overflow; no division | clean |
+| `bias.wgsl` (303) | L207 | `in_range` `bias.wgsl:216` (gates L224, L247, L287); sample load `bias.wgsl:233`; `tile_end` `bias.wgsl:248` | yes — L244/L283 sit in the tile-loop body outside `if (in_range)`; the loop bound `tile_count` (L228) derives only from a uniform | `is_finite_value` (L38) skips at L253, L264, L273; the NaN pad (L239) is never read because `tile_end` stops the inner loop at the real sample count; `epsilon` (L22) unread (refuted); L228 ceil-div cannot wrap (refuted) | finding — #2308 |
+| `harmful.wgsl` (64) | L37 | `harmful.wgsl:40` (`idx >= uniforms.length`) | n/a — no barrier | `abs(..) > uniforms.epsilon` on activation and error (L50) is false for NaN, so a NaN sample contributes zeros; inputs pre-filtered finite on the host; no division | clean |
+| `harmful_reduce.wgsl` (92) | L58 | zero-padding `harmful_reduce.wgsl:67`–`:71` | yes — L74 at function scope, L85 in a constant-bound loop | sums only; flag sums ≤ 256 per workgroup; no division | clean |
+| `helpful.wgsl` (96) | L45 | `helpful.wgsl:48` (`idx >= uniforms.length`) | n/a — no barrier | `epsilon` comparisons at L67, L74 and L79 are false for NaN; inputs pre-filtered finite on the host; no division | clean |
+| `helpful_reduce.wgsl` (116) | L82 | zero-padding `helpful_reduce.wgsl:91`–`:95` | yes — L98 at function scope, L109 in a constant-bound loop | sums only; flag sums ≤ 256 per workgroup; no division | clean |
+| `matching.wgsl` (135) | L79 | `matching.wgsl:82` (`idx >= uniforms.from_count`); error reads gated by `error_idx < total_errors` (L106) | n/a — no barrier | `avg_error` division L118 guarded by `error_count > 0u` (L117); non-finite skips via `is_finite_value` (L47) | dead — never compiled into a pipeline; removal #2309 |
+| `relu.wgsl` (89) | L42 | `relu.wgsl:45` (`idx >= uniforms.length`) | n/a — no barrier | `is_finite_value` (L35) input skip at L63; `relu_positive`/`relu_negative > uniforms.epsilon` at L73/L81; no division (the host's `error_activation / activation` in `relu_evaluation.rs` is guarded by `activation > EPSILON`); `threshold` (L21) unread (refuted) | finding — #2308 |
+| `relu_reduce.wgsl` (110) | L76 | zero-padding `relu_reduce.wgsl:85`–`:89` | yes — L92 at function scope, L103 in a constant-bound loop | sums only; count sums ≤ 256 per workgroup; no division | unused — no pipeline builds it; removal #2309 |
+
+**Barrier sites.** A barrier reachable only after a thread-dependent early
+`return`, or inside a non-uniform branch, would be a finding. None is:
+
+| Barrier | Control flow reaching it | Verdict |
+| --- | --- | --- |
+| `activation_reduce.wgsl:83` | function scope; no preceding `return`; the L76 `if/else` closes before it | uniform |
+| `activation_reduce.wgsl:94` | `for` loop with constant bounds (`stride` 128 → 1); the `local_idx < stride` branch closes at L93 | uniform |
+| `harmful_reduce.wgsl:74` | function scope; no preceding `return` | uniform |
+| `harmful_reduce.wgsl:85` | constant-bound loop; the branch closes at L84 | uniform |
+| `helpful_reduce.wgsl:98` | function scope; no preceding `return` | uniform |
+| `helpful_reduce.wgsl:109` | constant-bound loop; the branch closes at L108 | uniform |
+| `relu_reduce.wgsl:92` | function scope; no preceding `return` | uniform |
+| `relu_reduce.wgsl:103` | constant-bound loop; the branch closes at L102 | uniform |
+| `bias.wgsl:244` | tile-loop body, outside `if (in_range)`; loop bound from `uniforms.sample_count` only; `main` has no `return` | uniform |
+| `bias.wgsl:283` | same loop body, after `if (in_range)` closes at L280 | uniform |
+
+These verdicts rest on reading the code, not on a tool. naga 30 does not
+enforce barrier uniformity: `test_shaders_are_valid_wgsl`
+(`src/analysis/gpu/shaders.rs`) validates with `ValidationFlags::all()`, but
+naga's `CONTROL_FLOW_UNIFORMITY` check raises `NonUniformControlFlow` only for
+expressions that carry a requirement, such as derivatives
+(`naga-30.0.1/src/valid/analyzer.rs:915`–`:927`). A barrier statement records
+`WORK_GROUP_BARRIER` (`:960`) without being checked against the enclosing
+control flow. A future barrier moved under a non-uniform branch would
+therefore pass CI, so the table above is the record.
+
+**Arithmetic decisions.**
+
+- *`uniforms.epsilon` guards* — `harmful.wgsl:50` and `relu.wgsl:73`/`:81`
+  (also `helpful.wgsl:67`/`:74`/`:79`) compare `>` against a host constant
+  `EPSILON = 1e-8` (`src/analysis/samples/mod.rs:29`). A `>` comparison is
+  false for NaN, so NaN samples fall through to the zeroed contribution.
+- *`bias.wgsl` non-finite handling* — the real mechanism is the
+  `is_finite_value` skip at L253 (input), L264 (activated output, charged the
+  baseline error) and L273 (corrected error, charged the baseline error). The
+  `epsilon` field it declares at L22 is never read (refuted below). The skips
+  share the fast-math weakness filed as #2308.
+- *`bias.wgsl:228` ceil-div* — `(sample_count + 255u) / 256u` would wrap for
+  `sample_count > u32::MAX - 255`. It cannot: the device is requested with
+  `wgpu::Limits::default()` (`src/analysis/gpu/analyzer.rs:291`, `:394`),
+  whose `max_storage_buffer_binding_size` is 128 MiB
+  (`wgpu-types-30.0.1/src/limits.rs:441`). At 8 bytes per
+  `GpuHelpfulSample` the `samples` binding holds at most 2^24 samples, and
+  `sample_count` is that buffer's own length (`bias_evaluation.rs:125`), so a
+  wrapping value never reaches a dispatch. Were it reached, `tile_count`
+  would be 0, no sample is read, and every candidate fails
+  `min_sample_count` (L292) — fail-safe, not out of bounds.
+
+**Dead shaders.** `matching.wgsl` is dead: `shaders.rs` has no
+`include_str!` for it and it is absent from `ALL_SHADERS`, so it is not even
+naga-validated. `relu_reduce.wgsl` is unused: it is registered as
+`RELU_REDUCE_SHADER` (`shaders.rs:91`) and validated through `ALL_SHADERS`
+(`shaders.rs:214`), but no `build_compute_pipeline` call builds it —
+`relu_evaluation.rs:33` builds only `RELU_SHADER` — and only `shaders.rs` and
+the #2289 layout test reference it. AGENTS.md: "Delete a never-constructed
+component unless a concrete writer can be named". No writer is named, so one
+removal follow-up covering both is filed as #2309; neither file is deleted
+here.
+
+**Outcome: one finding** — #2308 (`SEC-e8e1dd84a447`, CWE-754, low). Bounds
+guards and barrier placement are sound in all 10 kernels.
+
+Pending — 9a-2b (#2291): `mod.rs`, `pipeline_builder.rs`, `shaders.rs`.
 
 ### evaluation
 
@@ -228,6 +326,7 @@ Each slice appends rows only inside its own marked region.
 | finding-id | file:line | CWE | severity | status |
 | --- | --- | --- | --- | --- |
 <!-- section: shaders -->
+| SEC-e8e1dd84a447 | `src/shaders/activation.wgsl:35` (also `relu.wgsl:35`, `bias.wgsl:38`) | CWE-754 | low | open — #2308 |
 <!-- section: evaluation -->
 <!-- section: device -->
 <!-- section: queue-core -->
@@ -244,6 +343,14 @@ Each slice appends rows only inside its own marked region.
 | 28-byte `ActivationUniforms` invalid as a `var<uniform>` (not a multiple of 16) | `src/shaders/activation.wgsl:31`; `src/analysis/gpu/activation_evaluation.rs:156` | The 16-byte rounding applies to structs nested in, or arrays stored in, uniform space — not the top-level bound struct; naga validation passes and the host uploads exactly 28 bytes |
 | 28-byte `ActivationOutput` gives a misaligned `array<ActivationOutput>` stride | `src/shaders/activation.wgsl:29`; `src/shaders/activation_reduce.wgsl:30` | Storage/workgroup arrays have stride `roundUp(4, 28) = 28`, matching the host `size_of::<ActivationOutput>() * n` sizing |
 | A `vec3` member forcing 16-byte alignment on the WGSL side | `src/shaders/*.wgsl` struct declarations | No struct member in the 23 mirrors is a vector; `vec3<u32>` appears only as `@builtin` entry-point parameters, which carry no host layout |
+| `bias.wgsl` declares `epsilon` in `BiasUniforms` but never reads it (dead config surface) | `src/shaders/bias.wgsl:22`; `src/analysis/gpu/bias_evaluation.rs:130` | The host always writes the compile-time constant `EPSILON` (`src/analysis/samples/mod.rs:29`); no env var, config field or caller can set it, so it is not an operator lever that silently does nothing. Non-finite handling is the `is_finite_value` skips at `bias.wgsl:253`/`:264`/`:273` (their fast-math weakness is #2308). The field is layout padding pinned by `tests/issue_2289_gpu_struct_layout.rs`; dropping it would change the 32-byte `BiasUniforms` for no safety gain |
+| u32 wrap in the `bias.wgsl` tile-count ceil-div `(sample_count + TILE_SIZE - 1u) / TILE_SIZE` | `src/shaders/bias.wgsl:228`; `src/analysis/gpu/analyzer.rs:291`, `:394` | The device uses `wgpu::Limits::default()`, whose 128 MiB `max_storage_buffer_binding_size` caps the 8-byte-per-sample `samples` binding at 2^24 elements; `sample_count` is that buffer's own length (`bias_evaluation.rs:125`), far below `u32::MAX - 255`. Even if it wrapped, `tile_count = 0` reads nothing and `min_sample_count` (`bias.wgsl:292`) rejects every candidate |
+| `bias.wgsl` NaN tile padding read as a sample | `src/shaders/bias.wgsl:239`, `:248` | Padded slots sit at `shared_samples[i]` with `i >= tile_end`, and the inner loop stops at `tile_end = min(TILE_SIZE, sample_count - tile * TILE_SIZE)`, so the pad is never read; its NaN is a second guard, not the only one |
+| `workgroupBarrier()` reached under non-uniform control flow (10 sites) | `activation_reduce.wgsl:83`/`:94`, `harmful_reduce.wgsl:74`/`:85`, `helpful_reduce.wgsl:98`/`:109`, `relu_reduce.wgsl:92`/`:103`, `bias.wgsl:244`/`:283` | No kernel with a barrier returns early; each barrier is at function scope or in a loop whose bound is a constant or a uniform, after the lane-dependent `if` has closed (per-site table in the shaders audit section) |
+| Out-of-range `global_invocation_id` indexes a storage buffer | `activation.wgsl:195`, `harmful.wgsl:40`, `helpful.wgsl:48`, `relu.wgsl:45`, `bias.wgsl:216`/`:233`, `*_reduce.wgsl` zero-pad loads | Every element-wise kernel returns before its first access; reductions read the input only when `global_idx < contribution_count` and index `shared_data` at most 255; `bias.wgsl` gates `bias_candidates`/`results` on `in_range` and `samples` on `sample_load_idx < sample_count` |
+| `activation.wgsl` declares `epsilon` but never reads it | `src/shaders/activation.wgsl:21`; `src/analysis/gpu/activation_evaluation.rs:150` | Host-written constant, not an operator lever; the kernel's non-finite handling is `is_finite_value` (L210/L223, #2308) |
+| `relu.wgsl` declares `threshold` but never reads it, so the caller's threshold is dropped | `src/shaders/relu.wgsl:21`; `src/analysis/synapse/relu_evaluation.rs:88`, `:135` | `threshold` is an improvement floor applied on the host after the GPU returns (`best_improvement = threshold`), not a per-sample filter, so the kernel has no use for it |
+| Division by zero in a kernel | `activation.wgsl:77`/`:80`/`:150`, `bias.wgsl:80`/`:83`/`:157`, `matching.wgsl:118` | Activation-function denominators are `1 + exp(..)` or `1 + abs(x)`, never below 1 for finite input; `matching.wgsl`'s average is guarded by `error_count > 0u` (L117) and the kernel is never compiled |
 <!-- section: evaluation -->
 <!-- section: device -->
 <!-- section: queue-core -->
@@ -251,14 +358,18 @@ Each slice appends rows only inside its own marked region.
 
 ## Outcome
 
-In progress — no file has been swept yet. Each slice records its outcome in its
-region under `## Audit sections`.
+In progress — the 10 `src/shaders/*.wgsl` kernels are swept (#2290: one
+finding, #2308); every other file is pending its slice. Each slice records its
+outcome in its region under `## Audit sections`.
 
 ## Issues filed
 
-None yet — the sweep is in progress; each slice lists the issues it files here.
-This line is replaced by the filed issues, or by `negative-result`, when the
-sweep completes.
+The sweep is in progress; each slice lists the issues it files here.
+
+- #2308 — `SEC-e8e1dd84a447` (CWE-754, low): WGSL `is_finite_value` guards are
+  float self-comparisons fast-math may fold away (shaders slice, #2290).
+- #2309 — removal follow-up for the dead `matching.wgsl` and unused
+  `relu_reduce.wgsl` (not a security finding; shaders slice, #2290).
 
 ## Verify this record
 
