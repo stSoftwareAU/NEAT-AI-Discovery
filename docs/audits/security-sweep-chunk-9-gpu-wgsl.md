@@ -759,9 +759,9 @@ In progress — the shaders slice is complete: the 10 `src/shaders/*.wgsl`
 kernels (#2290: one finding, #2308) and `mod.rs`, `pipeline_builder.rs` and
 `shaders.rs` (#2291: one finding, #2311). The evaluation slice is complete: the helpful and
 harmful halves (#2237: two findings, #2313 and #2314) and the bias, relu and
-activation halves (#2238: no new finding; relu and activation widen #2313 and
-#2314, and the unreachable GPU bias path is #2316). Every other
-file is pending its slice. Each slice records its
+activation halves (#2238: no new finding; relu and activation
+widen #2313 and #2314, and the unreachable GPU bias path is #2316). Every
+other file is pending its slice. Each slice records its
 outcome in its region under `## Audit sections`.
 
 ## Issues filed
