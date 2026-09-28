@@ -558,5 +558,8 @@ fn a_drifted_wgsl_mirror_is_detected() {
     );
     assert_ne!(Some(layouter[handle].alignment), naga_alignment(rust.align));
     assert_eq!(members[1].offset, 16, "vec3<u32> is 16-byte aligned");
-    assert!(member_scalar(&module, members[1].ty).contains("Vector"));
+    assert!(
+        matches!(module.types[members[1].ty].inner, TypeInner::Vector { .. }),
+        "the drifted member is a vector, not a host scalar"
+    );
 }

@@ -165,10 +165,11 @@ side drifts.
 | `ActivationUniforms` | `src/analysis/samples/gpu_types.rs:153` | `activation.wgsl:16` | 28 / 4 | 28 / 4 | parity (see decision) |
 | `ReductionUniforms` | `src/analysis/samples/gpu_types.rs:166` | `helpful_reduce.wgsl:26`, `harmful_reduce.wgsl:18`, `relu_reduce.wgsl:24`, `activation_reduce.wgsl:21` | 16 / 4 | 16 / 4 | parity |
 
-WGSL paths are under `src/shaders/`. Every struct-typed `array<T>` binding
-(`samples`, `contributions`, `outputs`, `partial_sums`, `results`, and the
-`var<workgroup> shared_data` arrays) has a naga stride equal to the Rust
-`size_of::<T>()` the host multiplies by the element count.
+WGSL paths are under `src/shaders/`. Every struct-typed `array<T>` global
+(`samples`, `contributions`, `outputs`, `partial_sums`, `results`, the
+`var<workgroup> shared_data` arrays and `bias.wgsl`'s `shared_samples`) has a
+naga stride equal to the Rust `size_of::<T>()` the host multiplies by the
+element count.
 
 **Decision — the 28-byte `ActivationUniforms` and `ActivationOutput` are
 valid.** WGSL's 16-byte rule for the `uniform` address space
