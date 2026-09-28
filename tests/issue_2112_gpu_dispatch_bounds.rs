@@ -22,6 +22,8 @@ const RECORD: &str = "docs/audits/security-sweep-chunk-9-gpu-wgsl.md";
 
 const ROW_DISPATCH: &str = "refuted row `Dispatch-limit overflow at relu L167 or activation \
                             L193/L263/L568/L632 (CWE-190)`";
+const ROW_NO_BYTE_CAP: &str =
+    "evaluation region `No byte cap` paragraph (bias, relu and activation)";
 const ROW_BIAS_DISPATCH: &str = "refuted row `Dispatch-limit overflow at bias L183 (CWE-190)`";
 const ROW_NUM_STEPS: &str = "refuted row ``bias_evaluation.rs` L87 `num_steps` is unbounded``";
 const ROW_TRUNCATION: &str = "refuted row ``usize as u32` length truncation in bias \
@@ -80,11 +82,11 @@ fn per_dispatch_element_ceiling_matches_the_record() {
 fn batch_alloc_cap_matches_the_record() {
     assert_eq!(
         GPU_MAX_BATCH_ALLOC_BYTES, 268_435_456,
-        "{ROW_DISPATCH}: the record quotes GPU_MAX_BATCH_ALLOC_BYTES as 268,435,456 B"
+        "{ROW_NO_BYTE_CAP}: the record quotes GPU_MAX_BATCH_ALLOC_BYTES as 268,435,456 B"
     );
     assert!(
         record().contains("`GPU_MAX_BATCH_ALLOC_BYTES` (268,435,456 B"),
-        "{ROW_DISPATCH}: the record must quote the cap's value"
+        "{ROW_NO_BYTE_CAP}: the record must quote the cap's value"
     );
 }
 
