@@ -890,6 +890,15 @@ sweep and never justify a non-null `last_swept`.
   `tests/issue_2190_epistatic_pair_scan_deadline.rs`. The section's file rows
   stay `pending` here: the section's sweep (Issue #2109) records its outcomes
   on the `milestone/2083` branch.
+- `#2236` — fix for the `recommendation core` finding (SEC-a18ba35740ab):
+  `output_competition.rs::detect_output_competition` ran an uncancellable
+  O(outputs²) pair scan and rebuilt the second output's `obs_index` map once
+  per pair. The `scoring_specs.rs` dispatch now passes the discovery deadline
+  to `detect_output_competition_with_deadline`, which checks `deadline_passed`
+  (deadline or cancellation) per outer row, builds each output's map once, and
+  reports a `ScanTruncation` that the dispatch logs. Regression tests:
+  `tests/issue_2236_output_competition_deadline.rs`. The file row stays
+  `pending`: this is a fix, not a sweep of the `recommendation core` section.
 
 ## Verify this record
 
