@@ -3,7 +3,8 @@
 //!
 //! Each test recomputes a bound from the real constants — `WORKGROUP_SIZE`,
 //! `wgpu::Limits::default()`, `GPU_MAX_BATCH_ALLOC_BYTES`, the host struct
-//! strides and `get_bias_range` — and checks the record quotes the same value.
+//! strides and `get_bias_range` (fed through a mirror of the bias L87 formula,
+//! since the real one needs a GPU) — and checks the record quotes the same value.
 //! If any of them moves, the `## Refuted / not findings` row named in the
 //! failing message must be re-examined. No GPU adapter is needed.
 //!
@@ -53,7 +54,9 @@ fn first_failing_len(limit: u64, stride: usize) -> u64 {
     limit / stride as u64 + 1
 }
 
-/// `bias_evaluation.rs` L87: `((max_bias - min_bias) / step).ceil() as i32 + 1`.
+/// Mirror of `bias_evaluation.rs` L87: `((max_bias - min_bias) / step).ceil() as i32 + 1`.
+/// `evaluate_bias_gpu` needs an adapter, so the formula is restated here (as the
+/// issue asks) and must be kept in step with L87 by hand.
 #[allow(clippy::cast_possible_truncation)]
 fn bias_num_steps((min_bias, max_bias, step): (f32, f32, f32)) -> i32 {
     ((max_bias - min_bias) / step).ceil() as i32 + 1
