@@ -40,13 +40,28 @@ This is a CLI/build-script change with no UI, so there is no screenshot.
 
 <!-- vibe-standards-review inputs="diff+CODING-STANDARDS.md" -->
 
-This repository has no `CODING-STANDARDS.md`, so the reviewer used `CONTRIBUTING.md` and `AGENTS.md`.
+This repository has no `CODING-STANDARDS.md`, so the reviewer used `CONTRIBUTING.md` and `AGENTS.md`. This block records a fresh reviewer run over `git diff 8f5f560...HEAD`. It replaces an earlier run whose entries gave no evidence. That run's "no valid-boundary or regex-edge tests" violation was fixed by `::smallest_valid_max_attempts_is_accepted` and `::off_pattern_integers_are_rejected`, and the fresh run lists both under clean.
 
-- **violation** — Stale `:NN` citations in the section's "Clean" bullets (`docs/audits/security-sweep-chunk-16-build-scripts.md`) — reason: fixed with a line-shift note in the #2126 bullet. The bullets themselves are not #2126 entries, and the issue forbids changing other rows
-- **violation** — The heading (140) and the Files swept row (126) disagree — reason: not changed. The issue asks for the heading to read 140 lines, and the Files swept table records line counts "as at the baseline commit"
-- **violation** — No valid-boundary or regex-edge tests — reason: fixed with `::smallest_valid_max_attempts_is_accepted` and `::off_pattern_integers_are_rejected`
-- **note** — The rejected raw value is echoed in the `::error::` line — reason: not changed. The issue specifies that format, the existing `validate_name` does the same, and the value comes from the workflow's own environment
-- **clean** — Anchored `=~` allowlist before any arithmetic, `sleep` or `rustup` call; bash 3.2+ safe under `set -euo pipefail`; fails loud with exit 2; tests drive the real script through a stub (no source grepping, no wall-clock sleeps); Australian English; `ci.yml` untouched
+- **violation** — CONTRIBUTING.md "Cite Code by Symbol, Never by Line Number": the new `(:57-67)` citation in the #2126 bullet uses HEAD line numbers rather than the pinned `4f269d6` ones, and no symbol sits next to it — evidence: `docs/audits/security-sweep-chunk-16-build-scripts.md:371` — reason: stands. This retry may only amend the PR summary, so the audit record was not edited. The fix is to drop `(:57-67)` or name the guard by symbol.
+- **note** — The same section uses one line number for two commits: `NAME_PATTERN (:57)` at baseline sits a few lines below the new `:57-67` at HEAD — evidence: `docs/audits/security-sweep-chunk-16-build-scripts.md:378` — reason: not changed. The line-shift caveat at `:376-377` is the only disambiguation.
+- **note** — The shift caveat is imprecise: it names no commit for `:55`, and it leaves out the +2 shift from the widened usage text — evidence: `docs/audits/security-sweep-chunk-16-build-scripts.md:376-377` — reason: not changed, for the same reason as above.
+- **note** — The heading says 140 lines while the Files swept row says 126; the `:385` precedent uses the form "151 lines (164 after #2209)" — evidence: `docs/audits/security-sweep-chunk-16-build-scripts.md:366` — reason: not changed. The issue asks for the heading to read 140, and the Files swept table records counts at the baseline commit.
+- **note** — The findings-table row lists four of the six guard tests, leaving out `::off_pattern_integers_are_rejected` and `::smallest_valid_max_attempts_is_accepted` — evidence: `docs/audits/security-sweep-chunk-16-build-scripts.md:212` — reason: not changed. Both tests exist and pass, and the row cites the tests the issue asked for.
+- **note** — The version is unchanged at `0.74.264` — evidence: `Cargo.toml:3` — reason: CI's `version-increment` job bumps it in the PR flow.
+- **clean** — Script (`scripts/install-rust-toolchain.sh:57-67`):
+  - The guard sits straight after the reads and before `validate_name`, the `rustup` lookup, the `[[ -ge ]]` test (`:118`) and `sleep` (`:124`).
+  - It fails with `::error::` and exit 2, matching `validate_name`.
+  - The usage text at `:38-41` is updated.
+  - `bash -n` and `shellcheck` pass.
+- **clean** — Tests (`tests/issue_1891_rust_toolchain_install.rs`):
+  - They drive the real script and check exit code, stderr, the rustup log and the sentinel.
+  - The hostile test has a positive precondition (first install fails).
+  - The rejection tests use a zero-failure stub, so the empty-log assertion is not vacuous.
+  - The boundary test proves the guard does not over-reject.
+  - There are no timing assertions and no global state.
+  - `run` delegates to `run_with_env`.
+  - `rustfmt --check` passes, and all 21 tests pass.
+- **clean** — Australian English; no Mermaid; `ci.yml` untouched; no dependency changes; no over-engineering.
 
 ## Test Plan
 
