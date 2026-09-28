@@ -681,7 +681,99 @@ verdicts rest on.
 
 <!-- section: device -->
 
-Pending — #2113 (#2240–#2242).
+This slice (Issue #2240, first of #2113) re-verifies two named asks at the
+baseline: the disposition of **SEC-fe0b268a3799** (#1871: `env::set_var` in
+`GpuAnalyzer::new`'s `unsafe` block racing a concurrent `getenv`, because
+`new()` runs on the spawned GPU thread and again during device recovery), and
+whether a GPU-unavailable run can fall back to CPU without saying so. The
+per-file sweep of `analyzer.rs`, `budget.rs`, `breaker.rs` and `device.rs`
+belongs to #2241/#2242, so their `## Files swept` rows stay `pending — #2113`. The wider
+`env::set_var` sweep outside the GPU path belongs to chunk 13 (#2096). This
+slice cross-references it and does not repeat it.
+
+#### SEC-fe0b268a3799 — `setup_gpu_environment` sites (Issue #2240)
+
+Every `setup_gpu_environment` site in `src/` (`grep -rn setup_gpu_environment
+src`). None discharges an `unsafe` precondition. The three calls are safe calls
+into the guarded entry point.
+
+| Site | Kind | Thread context | Verdict |
+| --- | --- | --- | --- |
+| `src/analysis/gpu/analyzer.rs:23` | `use` import | — | no write here |
+| `src/analysis/gpu/analyzer.rs:270` | call in `check_gpu_availability` | lazy: the `gpu_is_available` `OnceLock` (`analyzer.rs:255`) on the first analysis call, and `check_gpu_available_internal` (`src/ffi_internal/gpu.rs:25`) on a host FFI thread | guarded — writes only if `/proc/self/task` counts one thread |
+| `src/analysis/gpu/analyzer.rs:352` | call in `GpuAnalyzer::new` (also reached by `new_with_batch_size`, `analyzer.rs:466`) | the spawned GPU thread (`queue/scheduling.rs:51`–`:54`) and the recovery factory (`queue/executor.rs:134`), so at least two threads are always live | guarded — always `Skipped` on these paths. This is the original SEC-fe0b268a3799 trigger, and it is now refused |
+| `src/analysis/gpu/device.rs:31` | `use` import | — | no write here |
+| `src/analysis/gpu/device.rs:442` | call in `get_adapter_info_internal` | lazy: the `supports_unified_memory` / `get_adapter_info` `OnceLock`s (`analyzer.rs:311`, `:326`) in post-processing | guarded |
+| `src/analysis/system.rs:46` | module doc line | — | no write here |
+| `src/analysis/system.rs:88` | `pub use` re-export, alongside the two `unsafe fn`s | — | re-export only; see the refuted row on the `unsafe` re-exports |
+| `src/analysis/utils/mod.rs:60` | `pub use` re-export, alongside the two `unsafe fn`s | — | re-export only |
+
+#### SEC-fe0b268a3799 — write path (Issue #2240)
+
+The `set_var` was **moved, not removed**. It now has one site,
+`platform.rs:62`, and that is the only non-test `env::set_var` in `src/`. Every
+other `set_var`/`remove_var` hit is inside a `#[cfg(test)]` module or a
+`*_tests.rs` file.
+
+| Symbol | Cited at | Role |
+| --- | --- | --- |
+| `set_env_if_unset` | `src/analysis/utils/platform.rs:52` | `unsafe fn`, and the sole `env::set_var` (L62). Its `# Safety` contract passes "no concurrent environment access" to every caller |
+| `apply_mesa_suppression` | `src/analysis/utils/platform.rs:104` | `unsafe fn`. Calls `set_env_if_unset` at L109, L111 and L113 (the `EGL_LOG_LEVEL`, `MESA_GLSL_CACHE_DISABLE` and `MESA_DEBUG` writes) |
+| `apply_xdg_runtime_dir` | `src/analysis/utils/platform.rs:287` | `unsafe fn`. Calls `set_env_if_unset` at L303, only after `prepare_runtime_dir` (L176) returns a trusted 0700 directory (#1904) |
+| `suppress_mesa_warnings_if_requested` | `src/analysis/utils/platform.rs:82` | `pub unsafe fn`, `Once`-guarded (L85–L86). The `Once` ensures a single write, not an exclusive one |
+| `ensure_xdg_runtime_dir` | `src/analysis/utils/platform.rs:147` | `pub unsafe fn`, `Once`-guarded (L150–L153) |
+| `may_mutate_environment` | `src/analysis/utils/platform.rs:345` | the guard: `thread_count == Some(1)`. An unknown count (`None`) is unsafe. Pinned by `test_may_mutate_environment_requires_single_thread` (L698) |
+| `live_thread_count` | `src/analysis/utils/platform.rs:351` | counts `/proc/self/task`. A read error at any point returns `None` |
+| `setup_gpu_environment` | `src/analysis/utils/platform.rs:405` | the only safe entry point. `NotRequired` when nothing is pending (L406–L408). Counts threads (L410) and returns `Skipped`, with a one-time `warn!` (L382), unless exactly one is live (L411–L413). Only then does it call the two `unsafe fn`s (L421–L422). Non-Linux stub at L429 |
+
+**Verdict: remediated** (by #1873, recorded in
+`docs/archive/pr-summaries/pr-summary-1873.md`). Every production path to
+`platform.rs:62` passes through `setup_gpu_environment`'s check that exactly one
+thread is live. When that check passes, no second thread can exist during the
+write, because only an existing thread can spawn one, and nothing between the
+count and the write spawns a thread. That code is `quiet_gpu`'s `env::var`
+read (`src/config/user_facing.rs:410`), `temp_dir`/`canonicalize` and the
+`DirBuilder`/`symlink_metadata` calls. The `tracing::warn!` calls in that window
+(`platform.rs:196`, `:213`, `:231`, `:241`, `:251`, `:263`) are all on refusal
+paths that return before any write. The original trigger, `GpuAnalyzer::new`
+on the spawned GPU thread or in recovery, now always sees at least two threads
+and skips the write. `tests/gpu/issue_1873_gpu_env_setup_thread_guard.rs:38`
+(`setup_gpu_environment_never_writes_while_threads_live`) and the unit test
+`test_setup_gpu_environment_skips_when_other_threads_live`
+(`platform.rs:771`) pin that at run time. **No finding.**
+
+#### CPU-fallback cross-check (Issue #2240)
+
+The crate has no CPU analysis path. A missing GPU becomes a typed, logged
+refusal at every hop below. `analysis_outcome.rs` and `ffi_internal/gpu.rs` were
+read, not changed.
+
+| Symbol | Cited at | Hop |
+| --- | --- | --- |
+| `no_gpu_result` | `src/analysis/gpu/device.rs:396` | 1 — builds `available: false` with a reason. `is_error: true` on macOS (L397–L408), `false` on Linux and other platforms (L411–L433). `check_gpu_availability` returns it at `analyzer.rs:274`, `:285` and `:301` |
+| `GpuAnalyzer::gpu_is_available` | `src/analysis/gpu/analyzer.rs:252` | 2 — caches `check_gpu_availability().available` in a `OnceLock` (L255) |
+| `DiscoveryError::GpuUnavailable` | `src/analysis/orchestration.rs:563` | 3 — `analyze_all` returns this typed `Err` before any parquet I/O (L562–L566). There are defence-in-depth copies at `src/analysis/synapse/orchestration.rs:81` and `src/analysis/neuron/mod.rs:195`. `error_kind` maps it to `GpuPermanent` (`src/ffi_types/error_classification.rs:125`) |
+| `AnalysisOutcome::gpu_unavailable` | `src/analysis/analysis_outcome.rs:130` | 4 — `analyze_parallel_internal` downcasts the `Err` (`src/ffi_internal/analysis.rs:421`–`:430`), logs a `warn!` (L425), sets `environmentallyDisabled: "gpu_unavailable"` on the `success: false` failure shape, and `errorKind` becomes `gpu_permanent` |
+| `AnalysisOutcome::is_environmentally_disabled` | `src/analysis/analysis_outcome.rs:148` | 5 — is `true` for `gpu_unavailable` (test at L238), so `record_failure_unless_disabled` (`src/analysis/target_failure_tracker.rs:192`) keeps the pass out of drought and failure accounting |
+| `classify_gpu_unavailable_reason` | `src/ffi_internal/gpu.rs:95` | 6 — the capability probe `check_gpu_available_internal` (L24) → `build_check_gpu_output` (L48, L68) classifies the reason. The default is `GpuPermanent` (L95–L103). A macOS `is_error` result returns `success: false` (L49–L61) |
+
+**Verdict: the no-GPU path is loud and typed. Operators see it** (a `warn!`,
+`success: false` and a reason string), **and the FFI caller can tell it apart
+from a result** (`errorKind: gpu_permanent`,
+`environmentallyDisabled: "gpu_unavailable"`, `gpuAvailable: false`).
+**One finding survives: #2318** (`SEC-2b0c59cc73d5`, CWE-754, low). A software
+wgpu adapter (`DeviceType::Cpu`, such as Mesa lavapipe) is not treated as
+unavailable. `request_adapter` runs with `force_fallback_adapter: false`
+(`analyzer.rs:279`, `:364`, `device.rs:448`). In `wgpu-core-30.0.1`
+(`src/instance.rs:511`–`:520`, `:596`–`:602`) that flag does not exclude a CPU
+adapter; it only ranks one last. `check_gpu_availability` then reports
+`available: true` (`analyzer.rs:296`–`:300`). The only sign of that CPU run is
+an `info!` line (`analyzer.rs:227`, `:231`) and the free-text adapter name,
+because `gpu_info_to_json` (`src/ffi_types/responses/gpu.rs:106`–`:112`) drops
+the typed `GpuDeviceType::Software`.
+
+**Outcome (#2240): one finding, #2318.** SEC-fe0b268a3799 is remediated by #1873
+and needs no new issue.
 
 ### queue-core
 
@@ -708,6 +800,8 @@ Each slice appends rows only inside its own marked region.
 | SEC-d3bf886bc1d3 | `src/analysis/gpu/helpful_evaluation.rs:446` (also `harmful_evaluation.rs:376`, `relu_evaluation.rs:185`, `activation_evaluation.rs:297`, `:666`, latent `bias_evaluation.rs:195`) | CWE-248 | medium | open — #2313 |
 | SEC-1a9af762e205 | `src/analysis/gpu/helpful_evaluation.rs:124` (also `helpful_evaluation.rs:110`, `harmful_evaluation.rs:217`, `:196`, `relu_evaluation.rs:128`, `activation_evaluation.rs:160`, `:495`) | CWE-1284 | low | open — #2314 |
 <!-- section: device -->
+| SEC-fe0b268a3799 | `src/analysis/utils/platform.rs:62` (was `analyzer.rs:354`–`:363`; guard `platform.rs:410`–`:413`) | CWE-362 | low | remediated — #1873: the only `set_var` is reached solely through `setup_gpu_environment`, which writes only while `/proc/self/task` counts one thread (`docs/archive/pr-summaries/pr-summary-1873.md`, `tests/gpu/issue_1873_gpu_env_setup_thread_guard.rs:38`) |
+| SEC-2b0c59cc73d5 | `src/analysis/gpu/analyzer.rs:296` (also `analyzer.rs:279`, `ffi_types/responses/gpu.rs:106`) | CWE-754 | low | open — #2318 |
 <!-- section: queue-core -->
 <!-- section: queue-lifecycle -->
 
@@ -751,6 +845,10 @@ Each slice appends rows only inside its own marked region.
 | A zeroed bias/relu/activation output element is read back as a real result | `src/shaders/bias.wgsl:300`; `src/shaders/relu.wgsl:64`, `:87`; `src/shaders/activation.wgsl:211`, `:230`; `src/shaders/activation_reduce.wgsl:99` | Every output is `create_buffer_init`-zeroed, and the kernels write every element in the range that is read back (Issue #2238) |
 | A bias/relu/activation map-wait timeout or map error is swallowed and returns zero stats | `src/analysis/gpu/bias_evaluation.rs:199`–`:200`; `src/analysis/gpu/relu_evaluation.rs:190`–`:191`; `src/analysis/gpu/activation_evaluation.rs:302`–`:303`, `:674`–`:675`; `src/analysis/gpu/device.rs:300`, `:320` | All three modules propagate the wait's `Err` and `get_mapped_range`'s `Err` with `?`, and none has a zero-result fallback. What goes wrong on that path is the callback panic during the drop, which is #2313 (Issue #2238) |
 <!-- section: device -->
+| GPU-unavailable run silently falls back to a CPU analysis (CPU-fallback cross-check) | `no_gpu_result` `src/analysis/gpu/device.rs:396` → `gpu_is_available` `analyzer.rs:255` → `DiscoveryError::GpuUnavailable` `src/analysis/orchestration.rs:563` → `AnalysisOutcome::gpu_unavailable` `src/analysis/analysis_outcome.rs:130` (mapped at `src/ffi_internal/analysis.rs:422`) → `is_environmentally_disabled` `analysis_outcome.rs:148`; probe: `classify_gpu_unavailable_reason` `src/ffi_internal/gpu.rs:95` | The crate has no CPU analysis path. A missing GPU becomes a typed `Err` with `errorKind: gpu_permanent`, `environmentallyDisabled: "gpu_unavailable"` and a `warn!`, or `gpuAvailable: false` from the probe. The one gap is a software wgpu adapter accepted as a GPU, which is #2318 (Issue #2240) |
+| TOCTOU: a thread spawned between the `/proc/self/task` count and the `set_var` (CWE-367) | `src/analysis/utils/platform.rs:410`, `:421`–`:422`, `:176`–`:216`, `:287`–`:304` | Only an existing thread can spawn one. Between the count and the writes the lone thread runs `env::var`, `temp_dir`, `canonicalize`, `DirBuilder` and `symlink_metadata`, and none of them spawns a thread. Every `tracing::warn!` in that window is on a refusal path that returns before a write (Issue #2240) |
+| The `pub unsafe fn` re-exports (`suppress_mesa_warnings_if_requested`, `ensure_xdg_runtime_dir`) let a caller skip the thread guard | `src/analysis/system.rs:88`; `src/analysis/utils/mod.rs:60`; `src/analysis/utils/platform.rs:82`, `:147`, `:421`–`:422` | Both are `unsafe fn`, so a Rust caller must write `unsafe` and take on the `# Safety` precondition. Neither is `extern "C"`, and the only non-test call site is inside `setup_gpu_environment` after the guard (Issue #2240) |
+| Another non-test `env::set_var` on the GPU init path races `getenv` | `src/analysis/utils/platform.rs:62` | `platform.rs:62` is the only `env::set_var` in `src/` outside a `#[cfg(test)]` module or `*_tests.rs` file. The crate-wide env-write sweep is chunk 13 (#2096) (Issue #2240) |
 <!-- section: queue-core -->
 <!-- section: queue-lifecycle -->
 
@@ -761,8 +859,10 @@ kernels (#2290: one finding, #2308) and `mod.rs`, `pipeline_builder.rs` and
 `shaders.rs` (#2291: one finding, #2311). The evaluation slice is complete: the helpful and
 harmful halves (#2237: two findings, #2313 and #2314) and the bias, relu and
 activation halves (#2238: no new finding; relu and activation
-widen #2313 and #2314, and the unreachable GPU bias path is #2316). Every
-other file is pending its slice. Each slice records its
+widen #2313 and #2314, and the unreachable GPU bias path is #2316). The device
+slice has recorded the SEC-fe0b268a3799 disposition (remediated by #1873) and
+the CPU-fallback cross-check (#2240: one finding, #2318); its per-file sweep
+is pending #2241/#2242. Every other file is pending its slice. Each slice records its
 outcome in its region under `## Audit sections`.
 
 ## Issues filed
@@ -787,6 +887,9 @@ The sweep is in progress; each slice lists the issues it files here.
 - #2316 — removal follow-up for the unreachable GPU bias grid search
   (`evaluate_bias_gpu`): every `calculate_optimal_bias` caller passes
   `analyzer: None` (not a security finding; evaluation slice, #2238).
+- #2318 — `SEC-2b0c59cc73d5` (CWE-754, low): a software (CPU) wgpu adapter
+  passes the GPU capability gate, and `gpu_info_to_json` drops its device type
+  (device slice, #2240).
 
 ## Verify this record
 
