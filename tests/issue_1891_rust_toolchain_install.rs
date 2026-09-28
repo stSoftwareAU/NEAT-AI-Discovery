@@ -378,6 +378,44 @@ fn non_integer_max_attempts_is_rejected() {
 }
 
 #[test]
+fn off_pattern_integers_are_rejected() {
+    // Regex edges: leading zero, sign and whitespace are all outside the allowlist.
+    for (variable, value) in [
+        ("RUST_TOOLCHAIN_MAX_ATTEMPTS", "03"),
+        ("RUST_TOOLCHAIN_MAX_ATTEMPTS", "-1"),
+        ("RUST_TOOLCHAIN_MAX_ATTEMPTS", " 3"),
+        ("RUST_TOOLCHAIN_RETRY_DELAY", "-1"),
+        ("RUST_TOOLCHAIN_RETRY_DELAY", "1.5"),
+    ] {
+        let sandbox = Sandbox::new(0, false);
+        let out = sandbox.run_with_env(&[], true, &[(variable, value)]);
+        assert_rejected_before_rustup(&sandbox, &out, variable);
+    }
+}
+
+#[test]
+fn smallest_valid_max_attempts_is_accepted() {
+    // `1` is the lowest value the guard admits: one attempt, then fail loud.
+    let sandbox = Sandbox::new(99, false);
+    let out = sandbox.run_with_env(&[], true, &[("RUST_TOOLCHAIN_MAX_ATTEMPTS", "1")]);
+    assert!(
+        !out.status.success(),
+        "an exhausted budget must exit non-zero"
+    );
+    assert_ne!(
+        out.status.code(),
+        Some(2),
+        "a valid value must not be rejected"
+    );
+    let attempts = sandbox
+        .log()
+        .lines()
+        .filter(|l| l.starts_with("toolchain install"))
+        .count();
+    assert_eq!(attempts, 1, "expected exactly one install attempt");
+}
+
+#[test]
 fn exports_cargo_bin_to_github_path_when_running_on_a_runner() {
     let sandbox = Sandbox::new(0, false);
     let github_path = sandbox.dir.path().join("github_path");

@@ -373,6 +373,8 @@ clean-tree ✅ line and the stray-file `exit 1` are byte-for-byte unchanged.
   (`MAX_ATTEMPTS`) or non-negative (`RETRY_DELAY`) integer with exit `2`, before
   any `rustup` call. Guarded by
   `tests/issue_1891_rust_toolchain_install.rs::hostile_max_attempts_is_rejected_and_never_executed`.
+  Other line numbers in this section are as at `4f269d6`; the guard shifted
+  every line after `:55` down by 14.
 - **Clean** — the argument path. `NAME_PATTERN` (`:57`) and `validate_name`
   (`:59-65`) allowlist every toolchain and component name before it reaches
   `rustup` (`:71`, `:82`), including the comma-separated form (`:74-85`). The
