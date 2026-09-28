@@ -105,9 +105,9 @@ fn record_field(record: &str, label: &str) -> String {
         .find(|line| line.starts_with(&prefix))
         .unwrap_or_else(|| panic!("`## Record` must carry a `{prefix}` field"));
     let value = line[prefix.len()..].trim();
-    let value = value.strip_prefix('`').map_or(value, |rest| {
-        rest.split('`').next().unwrap_or_default()
-    });
+    let value = value
+        .strip_prefix('`')
+        .map_or(value, |rest| rest.split('`').next().unwrap_or_default());
     assert!(!value.is_empty(), "`{prefix}` must not be empty");
     value.to_string()
 }
@@ -256,8 +256,7 @@ fn both_finding_tables_carry_the_section_markers_in_order() {
         assert_markers_in_order(section(&doc, heading), heading);
     }
     assert!(
-        section(&doc, "## Ledger")
-            .contains("| finding-id | file:line | CWE | severity | status |"),
+        section(&doc, "## Ledger").contains("| finding-id | file:line | CWE | severity | status |"),
         "`## Ledger` must carry the `finding-id | file:line | CWE | severity | status` header"
     );
 }
