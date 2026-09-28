@@ -204,7 +204,10 @@ fn table_rows(body: &str) -> Vec<Vec<String>> {
             in_table = true; // header row
             continue;
         }
-        if cells.iter().all(|c| c.chars().all(|ch| ch == '-' || ch == ':')) {
+        if cells
+            .iter()
+            .all(|c| c.chars().all(|ch| ch == '-' || ch == ':'))
+        {
             continue;
         }
         rows.push(cells);
@@ -347,7 +350,13 @@ fn binding_table_matches_every_call_site_shader_and_slice() {
 
         // Real code: the shader the call builds declares exactly the slice.
         let declared = shader_bindings(site.wgsl, site.source);
-        let expected: Vec<(u32, Kind)> = site.kinds.iter().copied().zip(0..).map(|(k, i)| (i, k)).collect();
+        let expected: Vec<(u32, Kind)> = site
+            .kinds
+            .iter()
+            .copied()
+            .zip(0..)
+            .map(|(k, i)| (i, k))
+            .collect();
         assert_eq!(
             declared, expected,
             "{}: {} bindings must match {}",
@@ -538,7 +547,23 @@ fn module_surface_gives_every_pub_use_a_verdict() {
 fn ledger_shaders_region_carries_the_slice_finding() {
     let doc = read(RECORD);
     let ledger = region(section(&doc, "## Ledger"), "shaders", "evaluation");
-    let rows = table_rows(&format!("| h |\n{ledger}"));
+    // Region rows carry no header of their own: every data row starts `| SEC-`.
+    let rows: Vec<Vec<String>> = ledger
+        .lines()
+        .map(str::trim)
+        .filter(|line| line.starts_with("| SEC-"))
+        .map(|line| {
+            line.trim_matches('|')
+                .split('|')
+                .map(|c| c.trim().to_string())
+                .collect()
+        })
+        .collect();
+    assert!(
+        !rows.is_empty(),
+        "the shaders ledger region must carry rows"
+    );
+    let mut ids = BTreeSet::new();
     let mut cwe_1041 = Vec::new();
     for row in &rows {
         let id = &row[0];
@@ -552,6 +577,7 @@ fn ledger_shaders_region_carries_the_slice_finding() {
                     .all(|c| c.is_ascii_digit() || ('a'..='f').contains(&c)),
             "ledger id must be SEC- + 12 lowercase hex: {id}"
         );
+        assert!(ids.insert(id.clone()), "ledger ids must be unique: {id}");
         let status = row.last().expect("status cell");
         assert!(
             !issue_refs(status).is_empty(),
