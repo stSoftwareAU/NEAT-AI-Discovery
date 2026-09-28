@@ -49,6 +49,23 @@ This is a documentation and audit change with no UI.
 All 7 tests failed against the pre-change record and pass now. `./quality.sh`
 passed.
 
+Added the regression test
+`tests/issue_2237_chunk_09_evaluation_sweep.rs::helpful_and_harmful_inventory_rows_are_no_longer_pending`,
+which reproduces this issue's flaw: both files' `## Files swept` rows still read
+`pending`, with no check verdicts. It fails against the unfixed record and
+passes after the fix. The companion regression test
+`tests/issue_2237_chunk_09_evaluation_sweep.rs::helpful_and_harmful_tables_give_checks_1_to_6_a_verdict`
+also fails against the unfixed record and passes after the fix.
+
+The original trigger for this issue is closed, and there is no trivial bypass.
+That trigger is `helpful_evaluation.rs` and `harmful_evaluation.rs` sitting
+unswept in the chunk-9 record. Both inventory rows now carry a final outcome,
+and every one of checks 1–6 has a finding issue or a refuted `file:line`. The
+tests read the committed record, so a row reverted to `pending` or a dropped
+verdict fails the build. This PR does not fix the two GPU flaws it found.
+The map-wait panic (#2313) and the binding-size panic (#2314) stay open and
+are closed by their own issues' fixes and failing-first tests.
+
 ```mermaid
 flowchart LR
     A["set of 2,796,203+ samples"] --> B["create_bind_group<br/>helpful_evaluation.rs:124"]
