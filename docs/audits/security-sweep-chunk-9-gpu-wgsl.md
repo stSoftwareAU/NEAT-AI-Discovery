@@ -92,11 +92,11 @@ the `submission.rs` bounded wait) go to **queue-core**;
 
 | Path | Lines | Outcome |
 | --- | --- | --- |
-| `src/analysis/gpu/activation_evaluation.rs` | 718 | pending — #2112 |
-| `src/analysis/gpu/bias_evaluation.rs` | 225 | pending — #2112 |
+| `src/analysis/gpu/activation_evaluation.rs` | 718 | finding filed — #2313 (the `map_async` callback `.expect` at L297 and L666 panics when a timed-out wait drops its receivers, and the batched path aborts when two or more configs are still mapping), #2314 (a set of 4,793,491+ samples exceeds the 128 MiB binding limit at `create_bind_group` L160 and L495, and wgpu 30 panics instead of returning `Err`); the casts at L146/L179/L224/L456/L480/L583, the staging buffers at L266/L278/L528/L540 and the map-wait propagation at L302/L674 are refuted |
+| `src/analysis/gpu/bias_evaluation.rs` | 225 | unreachable — every production caller of `calculate_optimal_bias` passes `analyzer: None`, so the `evaluate_bias_gpu` branch at `calculation.rs:286`–`:290` never runs (removal tracked by #2316, file kept); latent #2313 site at L195; `num_steps` (L87) ≤ 41 from `get_bias_range` (`specs.rs:219`), the dispatch at L183 is one workgroup, and the casts at L125/L126/L182 and the staging buffer at L164 are refuted |
 | `src/analysis/gpu/harmful_evaluation.rs` | 453 | finding filed — #2313 (the `map_async` callback `.expect` at L376 panics when a timed-out wait drops its receivers, and aborts when two or more maps are still outstanding), #2314 (a set of 8,388,609+ samples exceeds the 128 MiB binding limit at `create_bind_group` L217, and wgpu 30 panics instead of returning `Err`); the casts at L206/L245/L255/L274, the staging buffers at L320/L334 and the map-wait propagation at L383 are refuted |
 | `src/analysis/gpu/helpful_evaluation.rs` | 591 | finding filed — #2313 (the `map_async` callback `.expect` at L446 panics when a timed-out wait drops its receivers, and aborts when two or more maps are still outstanding), #2314 (a set of 2,796,203+ samples exceeds the 128 MiB binding limit at `create_bind_group` L124, and wgpu 30 panics instead of returning `Err`); the casts at L295/L349/L365/L374/L382, the `copy_size` readback chain L374→L405→L426→L441/L461 and the map-wait propagation at L455 are refuted |
-| `src/analysis/gpu/relu_evaluation.rs` | 242 | pending — #2112 |
+| `src/analysis/gpu/relu_evaluation.rs` | 242 | finding filed — #2313 (the `map_async` callback `.expect` at L185 panics when a timed-out wait drops its receiver), #2314 (a set of 3,355,444+ samples exceeds the 128 MiB binding limit at `create_bind_group` L128, and wgpu 30 panics instead of returning `Err`); the casts at L117/L166, the staging buffer at L148 and the map-wait propagation at L190 are refuted |
 
 ### device
 
@@ -420,9 +420,11 @@ the other five constants and the module surface are sound.
 
 `src/analysis/gpu/helpful_evaluation.rs` (591 lines) and
 `src/analysis/gpu/harmful_evaluation.rs` (453 lines) were read in full at the
-baseline (Issue #2237). The bias, relu and activation sub-sections are still
-pending under #2238, which cites the shared dispatch/binding-limit verdict
-below. Kernel-side tail handling is #2232's verdict, which is linked here rather
+baseline (Issue #2237). `src/analysis/gpu/bias_evaluation.rs` (225 lines),
+`src/analysis/gpu/relu_evaluation.rs` (242 lines) and
+`src/analysis/gpu/activation_evaluation.rs` (718 lines) were read in full at
+the baseline (Issue #2238), and their sub-sections cite the shared
+dispatch/binding-limit verdict below. Kernel-side tail handling is #2232's verdict, which is linked here rather
 than re-derived: the shaders region above records the zero-padded loads at
 `helpful_reduce.wgsl:91`–`:95` and `harmful_reduce.wgsl:67`–`:71`.
 
@@ -564,6 +566,117 @@ cannot go out of range: a chunk holds at most `effective_batch_size` sets
 The `usize as u32` casts, the pool and staging readback ranges, the output
 initialisation and the error propagation of the map wait are all sound.
 
+#### Dispatch and binding limits — bias, relu and activation (Issue #2238)
+
+**No byte cap.** None of the three modules calls `cap_gpu_batch_size_by_bytes`
+or reads `GPU_MAX_BATCH_ALLOC_BYTES` (268,435,456 B, `analyzer.rs:28`). Each one
+sizes every sample-indexed buffer and dispatch directly from `samples.len()`:
+`gpu_samples` at bias L97, and `gpu_samples` and the zeroed output `Vec` at
+relu L95/L100 and activation L124/L129/L434/L455. The bias results `Vec` (L102)
+is the exception: it is sized from `bias_candidates.len()`. Even if they did call it, the cap bounds only
+the number of sets per chunk, never the length of one set (shared verdict
+above). The device limits are the same `wgpu::Limits::default()` values quoted
+there.
+
+**Per-dispatch element ceiling.** `WORKGROUP_SIZE` (256) ×
+`max_compute_workgroups_per_dimension` (65,535) = 16,776,960 elements. This is
+the largest `N` whose `div_ceil(N, 256)` still dispatches. The #2238 brief
+quotes 16,777,215 (2^24 − 1), but that is not the product, and the first
+failing length stays 16,776,961 as the shared table above records.
+
+| Module | Buffer / call | Stride | Limit | First failing set length | Site (program order) |
+| --- | --- | --- | --- | --- | --- |
+| relu | contributions, bound at `@binding(1)` | 40 B `ReluContribution` | `max_storage_buffer_binding_size` | 3,355,444 | `create_bind_group` `relu_evaluation.rs:128` — first to trip |
+| relu | contributions buffer / staging buffer | 40 B | `max_buffer_size` | 6,710,887 | `create_buffer_init` L108 and `create_buffer` L148, never first: L108 is still under 256 MiB when L128 fires |
+| relu | samples, bound at `@binding(0)` | 8 B `GpuHelpfulSample` | `max_storage_buffer_binding_size` | 16,777,217 | never first, because L128 has already fired |
+| relu | `dispatch_workgroups` L167 | 256 per workgroup | `max_compute_workgroups_per_dimension` | 16,776,961 | never reached |
+| activation | outputs, bound at `@binding(1)` | 28 B `ActivationOutput` | `max_storage_buffer_binding_size` | 4,793,491 | `create_bind_group` `activation_evaluation.rs:160` (single) and `:495` (batched, per config) — first to trip |
+| activation | outputs buffer / direct staging buffer | 28 B | `max_buffer_size` | 9,586,981 | `create_buffer_init` L137/L470 and `create_buffer` L278/L540, never first: L137/L470 are still under 256 MiB when L160/L495 fire |
+| activation | samples buffer | 8 B | `max_buffer_size` | 33,554,433 | `create_buffer_init` L131/L448, never first |
+| activation | `dispatch_workgroups` L193/L568 (main), L263/L632 (reduce) | 256 per workgroup | `max_compute_workgroups_per_dimension` | 16,776,961 | never reached; the reduce passes dispatch the same `workgroups` value as the main pass |
+| bias | samples, bound at `@binding(0)` | 8 B | `max_storage_buffer_binding_size` | 16,777,217 | `create_bind_group` `bias_evaluation.rs:140` — would be first, but `evaluate_bias_gpu` is unreachable (check 2) |
+| bias | candidates / results, dispatch L183 | 4 B / 16 B, 256 per workgroup | none reachable | never | sized from `bias_candidates.len()` ≤ 41 (L182): 164 B, 656 B and one workgroup |
+
+**Queue classification.** relu and activation run on the dedicated GPU thread
+through the queue (`queue/execution.rs:157`, `:191`, `:231`), so the #2237
+verdict above applies unchanged. The binding error is a panic from
+`default_error_handler`, not an `Err`. `is_device_lost_error` is never
+consulted, and there is no re-initialisation. That verdict is cited here and not
+re-derived.
+
+**Verdict: finding — #2314** for relu and activation. #2314 is widened to name
+`relu_evaluation.rs:128` and `activation_evaluation.rs:160`/`:495` as further
+sites of the same root cause: a single set's length is never checked against
+the device limits. The dispatch-limit overflow is refuted as a separate defect
+for all three modules. For bias it is also refuted, because its dispatch is one
+workgroup.
+
+#### `bias_evaluation.rs` (Issue #2238)
+
+| Check | Verdict | Evidence |
+| --- | --- | --- |
+| 1 — dispatch / binding limits | refuted — `bias_evaluation.rs:182`–`:183`, `calculation.rs:286` | The dispatch is sized from `bias_candidates.len()` (L182), which is at most 41 (check 2), so it is one workgroup. The only length-driven limit is the 8-byte samples binding at `create_bind_group` L140 (16,777,217 samples, the #2314 pattern). The function is unreachable (check 2), and the latent site is recorded in #2316 |
+| 2 — `num_steps` (L87) | refuted — `specs.rs:219`, `calculation.rs:283`, `calculation.rs:290` | L82 rejects only `step < f32::EPSILON`. The sole caller is `calculate_optimal_bias` (`calculation.rs:290`), which passes `get_bias_range(squash)` (`calculation.rs:283`). That function returns only the constants (−10, 10, 1.0) for `BIPOLAR` and (−10, 10, 0.5) otherwise (`specs.rs:219`–`:226`), so `num_steps` is 21 or 41. FFI trace (below): no entry point supplies its own range, and none reaches the GPU branch at all. Latent risk: `evaluate_bias_gpu` is a `pub fn` on the `pub` `GpuAnalyzer` (`gpu/mod.rs:80`). A Rust caller passing, for example, (−1e30, 1e30, 1e-6) would saturate the `as i32` at `i32::MAX` and allocate about 8 GiB of `f32` candidates at L88 (CWE-770). #2316 removes the function |
+| 3 — truncations | refuted — `bias_evaluation.rs:104`; bound ≤ 41 | L125 `samples.len() as u32` runs after `create_buffer_init` L104, which exceeds `max_buffer_size` at 33,554,433 samples. A wrap needs more than 4,294,967,295. L126 and L182 `bias_candidates.len() as u32` are at most 41 |
+| 4 — uninitialised staging buffer | refuted — `bias_evaluation.rs:186`, `:190` | The staging buffer `create_buffer` L164 is created fresh per call with `size: output_size` (L163, 16 B × current `bias_candidates.len()`). `copy_buffer_to_buffer` L186 fills all `output_size` bytes, `slice(..)` L190 maps exactly those bytes, and L202–L205 reads them. Kernel side: the #2232 verdict (`in_range` guard at `bias.wgsl:216`) |
+| 5 — zeroed vs uninitialised outputs | refuted — `bias.wgsl:300` | results is `create_buffer_init` from `BiasResult::zeroed()` (L102, L116). The kernel writes `results[bias_idx]` for every `bias_idx < bias_count` (`bias.wgsl:216`, `:300`), and L183 dispatches `ceil(bias_count / 256) × 256 ≥ bias_count` invocations. An unwritten zeroed element would carry `valid_sample_count = 0` and be skipped by L212 anyway |
+| 6 — map wait | finding — #2313 (latent, L195); `Err` propagation refuted — `bias_evaluation.rs:199` | `wait_for_buffer_map(device, &receiver, GPU_BUFFER_MAP_TIMEOUT_SECS).context("Bias buffer mapping failed")?` (L199–L200) propagates every `Err`: map error `device.rs:300`, disconnect `:301` and timeout `:320` (the function starts at `:284`). `get_mapped_range()` is propagated at L202–L204. The callback `.expect` (L195) panics when that `?` drops `receiver` (L191) before `staging_buffer` (L164). There is one pending map, so this is one panic and not an abort. The caller would swallow any `Err` with `if let Ok` (`calculation.rs:290`) and fall back to the CPU search (`calculation.rs:303`), which computes a real result, not zeros. The whole path is unreachable today (#2316) |
+
+**FFI reachability trace (check 2).** `graft_trace_calls evaluate_bias_gpu`
+(depth `all`) finds exactly one direct caller, `calculate_optimal_bias`, and
+reaches the FFI through `analyze_parallel` (`src/ffi/analysis.rs:174`) →
+`analyze_parallel_internal` (`src/ffi_internal/analysis.rs:26`) → `analyze_all`
+→ the neuron and synapse activation evaluators → `calculate_optimal_bias`.
+Every one of those production call sites passes `analyzer: None`:
+`synapse/activation_evaluation.rs:274`, `:338` and `:388`,
+`synapse/activation_subset_evaluation.rs:118`, and
+`synapse/gpu_evaluation.rs:133`. So the `if let Some(gpu_analyzer) = analyzer`
+guard (`calculation.rs:286`) is never taken, and the GPU grid search never runs.
+Even if it did run, the range is chosen by `get_bias_range(squash)`
+(`calculation.rs:283`), and no FFI field carries a range. This is not a CWE-770
+finding, and the dead component is recorded in #2316.
+
+```mermaid
+flowchart LR
+    A["analyze_parallel<br/>ffi/analysis.rs:174"] --> B["analyze_all"]
+    B --> C["synapse activation evaluators<br/>5 call sites"]
+    C -->|"analyzer: None"| D["calculate_optimal_bias<br/>calculation.rs:270"]
+    D --> E{"Some(analyzer)?<br/>calculation.rs:286"}
+    E -->|"never"| F["evaluate_bias_gpu<br/>bias range from specs.rs:219"]
+    E -->|"always"| G["CPU log-spaced search<br/>calculation.rs:308"]
+```
+
+#### `relu_evaluation.rs` (Issue #2238)
+
+| Check | Verdict | Evidence |
+| --- | --- | --- |
+| 1 — dispatch / binding limits | finding — #2314 | The dispatch at L167 is never reached for an oversized set, because `create_bind_group` (`relu_evaluation.rs:128`) panics once a set reaches 3,355,444 samples (table above) |
+| 2 — `bias_evaluation.rs` `num_steps` | n/a — bias only, #2238 | This file has no step or range arithmetic |
+| 3 — truncations | refuted — `relu_evaluation.rs:108` | L117 `length` and L166 `workgroups` are the two length casts. Both run after `create_buffer_init` L108, which exceeds `max_buffer_size` at 6,710,887 samples, and L166 also runs after L128 (3,355,444). A wrap needs more than 4,294,967,295 |
+| 4 — uninitialised staging buffer | refuted — `relu_evaluation.rs:170`–`:176`, `:180` | The staging buffer `create_buffer` L148 is created fresh per call with `size: contribution_size` (L147, 40 B × the **current** `samples.len()`). `copy_buffer_to_buffer(..., contribution_size)` L170–L176 fills it completely, `slice(..)` L180 maps exactly those bytes, L193–L196 reads them, and L204 stops at `samples.len()`. Kernel side: the #2232 verdict (`relu.wgsl:45` guard) |
+| 5 — zeroed vs uninitialised outputs | refuted — `relu.wgsl:64`, `:87` | contributions is `create_buffer_init` from `ReluContribution::zeroed()` (L100, L108). The kernel writes `contributions[idx]` for every `idx < length`, on the skip path (L64) and the normal path (L87) |
+| 6 — map wait | finding — #2313 (callback panic); `Err` propagation refuted — `relu_evaluation.rs:190` | `wait_for_buffer_map(device, &receiver, budget.remaining_secs()).context(...)?` (L190–L191) propagates map error, disconnect and timeout (`device.rs:300`, `:301`, `:320`). `get_mapped_range()` is propagated at L193–L195, and no zero-result fallback exists. However, the callback `.expect` (L185) panics when that `?` drops `receiver` (L181) before `staging_buffer` (L148). That kills the GPU thread (`queue/execution.rs:157`), so the timeout never reaches the recovery path |
+
+#### `activation_evaluation.rs` (Issue #2238)
+
+| Check | Verdict | Evidence |
+| --- | --- | --- |
+| 1 — dispatch / binding limits | finding — #2314 | The dispatches at L193 and L263 (single) and L568 and L632 (batched) are never reached for an oversized set, because `create_bind_group` (`activation_evaluation.rs:160`, `:495`) panics once a set reaches 4,793,491 samples (table above). The batched path also allocates one 28 B × N output buffer per config (L470), so its device footprint is configs × 28 × N, and nothing bounds it (#2314) |
+| 2 — `bias_evaluation.rs` `num_steps` | n/a — bias only, #2238 | This file has no step or range arithmetic |
+| 3 — truncations | refuted — `activation_evaluation.rs:137`, `:448`, `:470` | L146 `sample_count` runs after `create_buffer_init` L137 (9,586,981). L179 `workgroups` and L224 `contribution_count` also run after L160 (4,793,491). L456 `workgroups` runs after the samples buffer L448 (33,554,433). L480 `sample_count` runs after L470 (9,586,981). L583 `contribution_count` runs after L495 (4,793,491). A wrap needs more than 4,294,967,295 |
+| 4 — uninitialised staging buffers | refuted — `activation_evaluation.rs:273`, `:285`, `:636`–`:642`, `:649` | Every staging buffer is created fresh per call (single) or per config (batched) and is never reused. The reduced path (L266, L528) uses `size: partial_sums_size` = 28 B × `workgroups` (L210–L211, L516–L517), and `workgroups` comes from the **current** `samples.len()` (L179, L456). It is filled by `copy_buffer_to_buffer` with the same size at L273, or L636–L642 using the identical L595–L596 formula. The direct path (L278, L540) uses `size: output_size` (L277, L539), filled at L285 and L649 (L646). `slice(..)` at L292, L661 and L680 maps exactly the copied bytes. Kernel side: the #2232 zero-pad verdict (`activation_reduce.wgsl:76`–`:80`) |
+| 5 — zeroed vs uninitialised outputs | refuted — `activation.wgsl:211`, `:230`, `activation_reduce.wgsl:99` | The outputs (L137, L470) and partial sums (L215, L520) are `create_buffer_init` from `ActivationOutput::zeroed()` (L129, L213, L455, L518). The kernel writes `outputs[idx]` for every `idx < sample_count` (L211 skip path, L230). The reduce kernel writes `partial_sums[group_id.x]` for each of the `workgroups` groups dispatched at L263/L632, and that is the partial-sums length. The reduction host loops (L315, L691) sum without a `valid` check. That is sound, because an invalid output is written with `output_sq = error_output = 0` (`activation.wgsl:200`–`:203`) |
+| 6 — map wait | finding — #2313 (callback panic); `Err` propagation refuted — `activation_evaluation.rs:302`, `:674` | `wait_for_buffer_map(...).context(...)?` (L302–L303) and `wait_for_buffer_maps_batch(...).context(...)?` (L674–L675) propagate map error, disconnect and timeout (`device.rs:300`/`:301`/`:320`, `:361`/`:372`/`:382`). `get_mapped_range()` is propagated at L305–L307 and L681–L683. However, the single path's callback `.expect` (L297) panics when `?` drops `receiver` (L293) before `staging_buffer` (L199). The batched path's (L666) panics when `?` drops `receivers` (L658) before `staging_buffers` (L460), and with two or more configs still mapping, the second panic during unwind aborts the process |
+
+**Outcome (#2238): no new security finding.** relu and activation are further
+sites of #2313 and #2314, and both issues are widened to name them. The bias
+GPU grid search is unreachable, and its removal is tracked by #2316 (not a
+security finding). Its `num_steps` is bounded to 41 today. The `usize as u32`
+casts, the staging readback ranges, the output initialisation and the error
+propagation of the map wait are all sound. The CPU-only pin test
+`tests/issue_2112_gpu_dispatch_bounds.rs` recomputes each numeric bound these
+verdicts rest on.
+
 ### device
 
 <!-- section: device -->
@@ -592,8 +705,8 @@ Each slice appends rows only inside its own marked region.
 | SEC-e8e1dd84a447 | `src/shaders/activation.wgsl:35` (also `relu.wgsl:35`, `bias.wgsl:38`) | CWE-754 | low | open — #2308 |
 | SEC-4b2140a0cd91 | `src/analysis/gpu/shaders.rs:143` (also `device.rs:54`) | CWE-1041 | low | open — #2311 |
 <!-- section: evaluation -->
-| SEC-d3bf886bc1d3 | `src/analysis/gpu/helpful_evaluation.rs:446` (also `harmful_evaluation.rs:376`) | CWE-248 | medium | open — #2313 |
-| SEC-1a9af762e205 | `src/analysis/gpu/helpful_evaluation.rs:124` (also `helpful_evaluation.rs:110`, `harmful_evaluation.rs:217`, `:196`) | CWE-1284 | low | open — #2314 |
+| SEC-d3bf886bc1d3 | `src/analysis/gpu/helpful_evaluation.rs:446` (also `harmful_evaluation.rs:376`, `relu_evaluation.rs:185`, `activation_evaluation.rs:297`, `:666`, latent `bias_evaluation.rs:195`) | CWE-248 | medium | open — #2313 |
+| SEC-1a9af762e205 | `src/analysis/gpu/helpful_evaluation.rs:124` (also `helpful_evaluation.rs:110`, `harmful_evaluation.rs:217`, `:196`, `relu_evaluation.rs:128`, `activation_evaluation.rs:160`, `:495`) | CWE-1284 | low | open — #2314 |
 <!-- section: device -->
 <!-- section: queue-core -->
 <!-- section: queue-lifecycle -->
@@ -630,6 +743,13 @@ Each slice appends rows only inside its own marked region.
 | The helpful `pool[slot_idx]` index goes out of range | `src/analysis/gpu/helpful_evaluation.rs:287`, `:311`, `:335` | A chunk holds at most `effective_batch_size` sets, and `pool_size = effective_batch_size.min(samples_batch.len())`. `slot_idx` counts only the non-empty sets in the chunk |
 | A map-wait timeout or map error is swallowed and returns zero stats | `src/analysis/gpu/helpful_evaluation.rs:455`–`:456`, `:462`–`:464`; `src/analysis/gpu/harmful_evaluation.rs:383`–`:384`, `:404`–`:406`; `src/analysis/gpu/device.rs:362`, `:372`, `:382` | Both modules propagate the wait's `Err` and `get_mapped_range`'s `Err` with `?`, and neither has a zero-result fallback. What goes wrong on that path is the callback panic during the drop, which is #2313 |
 | `merge_batch_results` silently inserts default stats on a count mismatch (fail-silent) | `src/analysis/gpu/helpful_evaluation.rs:405`, `:410`, `:493`, `:537`–`:540` | Each non-empty set pushes exactly one `used` entry, and each `used` entry pushes exactly one result, so the counts are equal by construction. The fallback branch is unreachable, and `debug_assert_eq!` (L523) pins it |
+| Dispatch-limit overflow at relu L167 or activation L193/L263/L568/L632 (CWE-190) | `src/analysis/gpu/relu_evaluation.rs:128`; `src/analysis/gpu/activation_evaluation.rs:160`, `:495` | The per-dispatch ceiling is 256 × 65,535 = 16,776,960 elements. The 40-byte `ReluContribution` and 28-byte `ActivationOutput` bindings exceed the 128 MiB limit first, at 3,355,444 and 4,793,491 samples. That panic is #2314 (Issue #2238) |
+| Dispatch-limit overflow at bias L183 (CWE-190) | `src/analysis/gpu/bias_evaluation.rs:182`–`:183`; `src/analysis/activation/specs.rs:219` | The bias dispatch is sized from `bias_candidates.len()`, which is at most 41, so it is always one workgroup (Issue #2238) |
+| `bias_evaluation.rs` L87 `num_steps` is unbounded, so a huge candidate `Vec` or dispatch is possible (CWE-770) | `src/analysis/activation/specs.rs:219`; `src/analysis/scoring/weights/calculation.rs:283`, `:286`, `:290` | The sole caller passes `get_bias_range(squash)`, whose constants give 21 or 41 steps. No FFI entry point supplies a range, and every production caller passes `analyzer: None`, so the GPU branch never runs. The `pub fn` stays a latent risk for Rust callers, and #2316 removes it (Issue #2238) |
+| `usize as u32` length truncation in bias (L125/L126/L182), relu (L117/L166) or activation (L146/L179/L224/L456/L480/L583) (CWE-190) | `src/analysis/gpu/bias_evaluation.rs:104`; `src/analysis/gpu/relu_evaluation.rs:108`; `src/analysis/gpu/activation_evaluation.rs:137`, `:448`, `:470` | Each sample-length cast runs after a buffer that exceeds `max_buffer_size` at 33,554,433 samples or fewer. A wrap needs more than 4,294,967,295. The bias-candidate casts are at most 41 (Issue #2238) |
+| Uninitialised bias/relu/activation staging buffers are read back (CWE-908) | `src/analysis/gpu/bias_evaluation.rs:186`, `:190`; `src/analysis/gpu/relu_evaluation.rs:170`–`:176`, `:180`; `src/analysis/gpu/activation_evaluation.rs:273`, `:285`, `:636`–`:642`, `:649` | Each staging buffer is created fresh at exactly the copy size, from the current `samples.len()` or `bias_candidates.len()`. It is fully overwritten by `copy_buffer_to_buffer` before `slice(..)` maps it, and it is never reused (Issue #2238) |
+| A zeroed bias/relu/activation output element is read back as a real result | `src/shaders/bias.wgsl:300`; `src/shaders/relu.wgsl:64`, `:87`; `src/shaders/activation.wgsl:211`, `:230`; `src/shaders/activation_reduce.wgsl:99` | Every output is `create_buffer_init`-zeroed, and the kernels write every element in the range that is read back (Issue #2238) |
+| A bias/relu/activation map-wait timeout or map error is swallowed and returns zero stats | `src/analysis/gpu/bias_evaluation.rs:199`–`:200`; `src/analysis/gpu/relu_evaluation.rs:190`–`:191`; `src/analysis/gpu/activation_evaluation.rs:302`–`:303`, `:674`–`:675`; `src/analysis/gpu/device.rs:300`, `:320` | All three modules propagate the wait's `Err` and `get_mapped_range`'s `Err` with `?`, and none has a zero-result fallback. What goes wrong on that path is the callback panic during the drop, which is #2313 (Issue #2238) |
 <!-- section: device -->
 <!-- section: queue-core -->
 <!-- section: queue-lifecycle -->
@@ -638,9 +758,11 @@ Each slice appends rows only inside its own marked region.
 
 In progress — the shaders slice is complete: the 10 `src/shaders/*.wgsl`
 kernels (#2290: one finding, #2308) and `mod.rs`, `pipeline_builder.rs` and
-`shaders.rs` (#2291: one finding, #2311). The evaluation slice's helpful and
-harmful halves are complete (#2237: two findings, #2313 and #2314). Every other
-file is pending its slice. Each slice records its
+`shaders.rs` (#2291: one finding, #2311). The evaluation slice is complete: the helpful and
+harmful halves (#2237: two findings, #2313 and #2314) and the bias, relu and
+activation halves (#2238: no new finding; relu and activation
+widen #2313 and #2314, and the unreachable GPU bias path is #2316). Every
+other file is pending its slice. Each slice records its
 outcome in its region under `## Audit sections`.
 
 ## Issues filed
@@ -655,10 +777,16 @@ The sweep is in progress; each slice lists the issues it files here.
   twice with no equality pin (shaders slice, #2291).
 - #2313 — `SEC-d3bf886bc1d3` (CWE-248, medium): after a timed-out map wait, the
   helpful/harmful `map_async` callback `.expect` panics, and with two or more
-  pending maps the process aborts (evaluation slice, #2237).
+  pending maps the process aborts (evaluation slice, #2237). Confirmed by
+  #2238 at the relu and activation sites (the batched activation path is an
+  abort case), and at the unreachable bias site.
 - #2314 — `SEC-1a9af762e205` (CWE-1284, low): a helpful/harmful sample set that
   is too long trips a wgpu validation error, which the default handler turns
-  into a panic that kills the GPU thread (evaluation slice, #2237).
+  into a panic that kills the GPU thread (evaluation slice, #2237). Widened by
+  #2238 to the relu and activation sites.
+- #2316 — removal follow-up for the unreachable GPU bias grid search
+  (`evaluate_bias_gpu`): every `calculate_optimal_bias` caller passes
+  `analyzer: None` (not a security finding; evaluation slice, #2238).
 
 ## Verify this record
 

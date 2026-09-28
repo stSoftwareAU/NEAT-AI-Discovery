@@ -299,7 +299,7 @@ fn queue_classification_verdict_matches_is_device_lost_error() {
         );
     }
     // #2313: the map-wait timeout text *is* device loss, which the callback
-    // panic pre-empts.
+    // panic preempts.
     assert!(is_device_lost_error(&anyhow::anyhow!(
         "GPU batch buffer mapping timed out after 0.0s. The GPU driver may be unresponsive."
     )));
