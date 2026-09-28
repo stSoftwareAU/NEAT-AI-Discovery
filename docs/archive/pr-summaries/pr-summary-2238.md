@@ -51,6 +51,56 @@ contract tests. All of them pass with no GPU adapter:
 issue_2088_sweep_ledger_contract --test issue_2237_chunk_09_evaluation_sweep
 --test issue_2288_chunk_09_ledger_scaffold` gives 25 passed.
 
+### Regression test linkage
+
+This PR changes no `src/` code. The flaw it closes is an unverified audit
+verdict: before this PR, nothing recorded or pinned the bias, relu and
+activation bounds. Added `tests/issue_2112_gpu_dispatch_bounds.rs`, which
+reproduces that gap. It fails against the unfixed tree and passes after the
+fix:
+
+- **Unfixed tree.** With `docs/audits/security-sweep-chunk-9-gpu-wgsl.md`
+  restored from the base commit `66fb4ae`, all 5 tests fail (0 passed,
+  5 failed). The record-quote assertions panic because the base record has no
+  bias, relu or activation verdicts:
+  - `per_dispatch_element_ceiling_matches_the_record` (line 76)
+  - `batch_alloc_cap_matches_the_record` (line 90)
+  - `binding_limit_trips_before_the_dispatch_limit_for_relu_and_activation`
+    (line 124)
+  - `bias_num_steps_is_at_most_41_for_every_bias_range` (line 170)
+  - `every_length_cast_follows_a_buffer_that_fails_far_below_u32_max`
+    (line 213)
+- **This branch.** All 5 tests pass.
+
+The tests also fail if a bound drifts later: for example, a wider
+`get_bias_range`, a different `WORKGROUP_SIZE` or wgpu limit, or a changed
+struct stride.
+
+### Original trigger closed
+
+The original trigger was the `num_steps` value at `bias_evaluation.rs` L87,
+which took an unbounded bias range. That concern is closed, and no trivial
+bypass exists:
+
+- The only caller, `calculate_optimal_bias` (`calculation.rs:290`), passes
+  `get_bias_range` (`specs.rs:219`). That function returns constants for every
+  name, including unknown and empty names, so `num_steps` is at most 41.
+  `bias_num_steps_is_at_most_41_for_every_bias_range` asserts this over every
+  `ACTIVATION_SPECS` name and the fallback names.
+- No FFI entry point accepts a caller-supplied bias range, so an attacker
+  cannot choose the range.
+- Every production caller passes `analyzer: None`, so the GPU path does not
+  run at all. #2316 removes that path.
+
+The other refuted triggers (dispatch overflow and `usize as u32` truncation)
+are also closed. On each of those paths, a wgpu buffer or binding limit fails
+before the arithmetic can overflow or wrap, and the pin test asserts each of
+those limits.
+
+The two live findings are not fixed here. They are tracked and linked from
+the ledger: #2313 (the map-wait `.expect` panic) and #2314 (the binding-limit
+panic). Those issues carry their own failing-first tests.
+
 ## Acceptance Criteria
 
 <!-- vibe-spec-review inputs="diff+issue-body" -->
