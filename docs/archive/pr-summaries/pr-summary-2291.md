@@ -52,6 +52,55 @@ record against the real code:
 - The remaining tests check the Ledger row, the Refuted rows, the inventory
   outcomes, and that no `Pending — 9a-2b` line is left.
 
+### Regression tests (fail before, pass after)
+
+Each test below is declared in this branch's diff. Each one was run against
+the unfixed record: the chunk 9 audit doc as it stood at `149e5d6`, the commit
+before this slice, where the three `shaders` inventory rows read
+`pending — #2111`. Each one failed there and passes on this branch (7/7):
+
+- Added `tests/issue_2291_chunk_09a_2b_shader_layer_sweep.rs::shaders_inventory_rows_record_an_outcome_and_reason`.
+  It reproduces the unswept slice: the `mod.rs` / `pipeline_builder.rs` /
+  `shaders.rs` rows read `pending`. It fails against the unfixed record and
+  passes after the fix.
+- Added `tests/issue_2291_chunk_09a_2b_shader_layer_sweep.rs::binding_table_matches_every_call_site_shader_and_slice`.
+  It fails against the unfixed record, which has no binding-order table, and
+  passes after the fix.
+- Added `tests/issue_2291_chunk_09a_2b_shader_layer_sweep.rs::constants_table_values_match_the_compiled_constants`.
+  It reproduces the unrecorded `GPU_INIT_TIMEOUT_SECS` duplicate. It fails
+  against the unfixed record and passes after the fix.
+- Added `tests/issue_2291_chunk_09a_2b_shader_layer_sweep.rs::module_surface_gives_every_pub_use_a_verdict`.
+  It fails against the unfixed record and passes after the fix.
+- Added `tests/issue_2291_chunk_09a_2b_shader_layer_sweep.rs::ledger_shaders_region_carries_the_slice_finding`.
+  It fails against the unfixed record, where the Ledger has no CWE-1041 row,
+  and passes after the fix.
+- Added `tests/issue_2291_chunk_09a_2b_shader_layer_sweep.rs::refuted_shaders_region_covers_bindings_constants_and_surface`.
+  It fails against the unfixed record, where the `Pending — 9a-2b` placeholder
+  is still present, and passes after the fix.
+- Added `tests/issue_2291_chunk_09a_2b_shader_layer_sweep.rs::workgroup_size_matches_every_wgsl_file`.
+  This is a guard, not a regression test. It checks code, not the record, so
+  it passes both before and after.
+
+**Original trigger closed, no trivial bypass.** The trigger was a `shaders`
+slice left as `pending` in the security record. Its binding order, constants
+and module surface were unaudited, and the duplicate `GPU_INIT_TIMEOUT_SECS`
+had no finding.
+
+Each part is now recorded. Each record is also pinned to live artefacts:
+
+- the WGSL, parsed by naga;
+- the compiled `shaders` / `device` constants;
+- the `pub use` set parsed from `gpu/mod.rs`.
+
+A reordered `STANDARD_BINDINGS` / `BIAS_BINDINGS` slice fails the contract
+test. So does a changed `@binding`, a changed constant value, or an added or
+removed re-export. Restoring a `pending` row also fails it. None of these can
+leave the record silently false. There is no equivalent bypass because every
+path is compared against the parsed source, not a hand-kept list.
+
+This PR records the duplicate constant but does not fix it. That code change
+is tracked as #2311 and linked from the Ledger.
+
 The existing tests that parse the same record still pass:
 `issue_2088_sweep_ledger_contract` (9/9), `issue_2288_chunk_09_ledger_scaffold`
 (4/4) and `issue_2289_gpu_struct_layout` (5/5).
