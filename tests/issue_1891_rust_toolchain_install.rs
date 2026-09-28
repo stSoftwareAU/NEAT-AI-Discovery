@@ -84,6 +84,12 @@ exit 0
     /// Run the script with the stub on `PATH`. `on_path` false omits the stub
     /// directory so `rustup` cannot be found at all.
     fn run(&self, args: &[&str], on_path: bool) -> Output {
+        self.run_with_env(args, on_path, &[])
+    }
+
+    /// As [`Sandbox::run`], with `overrides` applied after the default
+    /// retry environment so a test can replace either value (Issue #2277).
+    fn run_with_env(&self, args: &[&str], on_path: bool, overrides: &[(&str, &str)]) -> Output {
         let mut path = String::new();
         if on_path {
             path.push_str(&self.dir.path().join("bin").display().to_string());
@@ -91,16 +97,19 @@ exit 0
         }
         path.push_str("/usr/bin:/bin");
 
-        Command::new("bash")
+        let mut command = Command::new("bash");
+        command
             .arg(script_path())
             .args(args)
             .env_clear()
             .env("PATH", path)
             .env("HOME", self.dir.path().join("home"))
             .env("RUST_TOOLCHAIN_RETRY_DELAY", "0")
-            .env("RUST_TOOLCHAIN_MAX_ATTEMPTS", "3")
-            .output()
-            .expect("run install-rust-toolchain.sh")
+            .env("RUST_TOOLCHAIN_MAX_ATTEMPTS", "3");
+        for (key, value) in overrides {
+            command.env(key, value);
+        }
+        command.output().expect("run install-rust-toolchain.sh")
     }
 }
 
@@ -303,6 +312,69 @@ fn rejects_toolchain_and_component_names_that_are_not_plain_identifiers() {
             sandbox.log()
         );
     }
+}
+
+/// Assert the script refused `variable` with exit 2 and never reached `rustup`.
+fn assert_rejected_before_rustup(sandbox: &Sandbox, out: &Output, variable: &str) {
+    let stderr = stderr_of(out);
+    assert_eq!(
+        out.status.code(),
+        Some(2),
+        "an invalid {variable} must exit 2, stderr: {stderr}"
+    );
+    assert!(
+        stderr.contains(&format!(
+            "::error::install-rust-toolchain.sh: invalid {variable}"
+        )),
+        "error must name {variable}, got: {stderr}"
+    );
+    assert!(
+        sandbox.log().is_empty(),
+        "rustup must not be invoked for an invalid {variable}, log:\n{}",
+        sandbox.log()
+    );
+}
+
+#[test]
+fn hostile_max_attempts_is_rejected_and_never_executed() {
+    // Issue #2277: `[[ a -ge b ]]` evaluates operands arithmetically, and an
+    // array subscript runs command substitution — so this value used to create
+    // the sentinel once the first install failed. The subscript sits on `HOME`,
+    // which is always set: on an unset name `set -u` aborts before the
+    // substitution runs, which would hide the injection from this test.
+    let sandbox = Sandbox::new(1, false);
+    let sentinel = sandbox.dir.path().join("pwned");
+    let hostile = format!("HOME[$(: > {})]", sentinel.display());
+    assert!(!sentinel.exists(), "sentinel must not exist before the run");
+
+    let out = sandbox.run_with_env(&[], true, &[("RUST_TOOLCHAIN_MAX_ATTEMPTS", &hostile)]);
+
+    assert_rejected_before_rustup(&sandbox, &out, "RUST_TOOLCHAIN_MAX_ATTEMPTS");
+    assert!(
+        !sentinel.exists(),
+        "the RUST_TOOLCHAIN_MAX_ATTEMPTS payload must never be executed"
+    );
+}
+
+#[test]
+fn non_integer_retry_delay_is_rejected() {
+    let sandbox = Sandbox::new(0, false);
+    let out = sandbox.run_with_env(&[], true, &[("RUST_TOOLCHAIN_RETRY_DELAY", "abc")]);
+    assert_rejected_before_rustup(&sandbox, &out, "RUST_TOOLCHAIN_RETRY_DELAY");
+}
+
+#[test]
+fn zero_max_attempts_is_rejected() {
+    let sandbox = Sandbox::new(0, false);
+    let out = sandbox.run_with_env(&[], true, &[("RUST_TOOLCHAIN_MAX_ATTEMPTS", "0")]);
+    assert_rejected_before_rustup(&sandbox, &out, "RUST_TOOLCHAIN_MAX_ATTEMPTS");
+}
+
+#[test]
+fn non_integer_max_attempts_is_rejected() {
+    let sandbox = Sandbox::new(0, false);
+    let out = sandbox.run_with_env(&[], true, &[("RUST_TOOLCHAIN_MAX_ATTEMPTS", "abc")]);
+    assert_rejected_before_rustup(&sandbox, &out, "RUST_TOOLCHAIN_MAX_ATTEMPTS");
 }
 
 #[test]
