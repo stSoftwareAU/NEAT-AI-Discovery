@@ -74,9 +74,9 @@ the `submission.rs` bounded wait) go to **queue-core**;
 
 | Path | Lines | Outcome |
 | --- | --- | --- |
-| `src/analysis/gpu/mod.rs` | 168 | pending — #2111 |
-| `src/analysis/gpu/pipeline_builder.rs` | 157 | pending — #2111 |
-| `src/analysis/gpu/shaders.rs` | 392 | pending — #2111 |
+| `src/analysis/gpu/mod.rs` | 168 | audited, no finding — 56 `pub use` re-exports: 15 used outside `gpu/` through the module root, 41 reached only through a submodule path or not at all (redundant surface, refuted; per-name table in the shaders audit section) |
+| `src/analysis/gpu/pipeline_builder.rs` | 157 | audited, no finding — `binding: i as u32` (L36) assigns slots by position and every `STANDARD_BINDINGS`/`BIAS_BINDINGS` slice matches its shader's `@binding` order and access at all 8 call sites; `create_shader_module` (L26, not `_trusted`) keeps runtime bounds checks on; `min_binding_size: None` (L41) defers buffer-size validation to draw time (the size limits themselves are #2237/#2238's) |
+| `src/analysis/gpu/shaders.rs` | 392 | finding filed — #2311 (`GPU_INIT_TIMEOUT_SECS` L143 duplicates `device.rs:54` as an independent literal with no equality pin); `WORKGROUP_SIZE` pinned to the 9 embedded kernels by the naga test (L280, `matching.wgsl` is never embedded), the other constants bounded by const asserts |
 | `src/shaders/activation.wgsl` | 232 | finding filed — #2308 (`is_finite_value` at L35 is a float self-comparison fast-math may fold, so the L223 output guard can pass an overflowed Inf/NaN as `valid`); `sample_count` guard L195, no barrier, unused `epsilon` refuted |
 | `src/shaders/activation_reduce.wgsl` | 101 | audited, no finding — zero-padded load L76–L80 keeps every read in bounds and adds a neutral element; barriers L83/L94 sit under uniform control flow |
 | `src/shaders/bias.wgsl` | 303 | finding filed — #2308 (the `is_finite_value` skips at L253/L264/L273 are its only non-finite handling); `in_range` L216 guards every `bias_idx` access, barriers L244/L283 are uniform, unused `epsilon` L22 and the L228 ceil-div refuted |
@@ -294,7 +294,125 @@ here.
 **Outcome: one finding** — #2308 (`SEC-e8e1dd84a447`, CWE-754, low). Bounds
 guards and barrier placement are sound in all 10 kernels.
 
-Pending — 9a-2b (#2291): `mod.rs`, `pipeline_builder.rs`, `shaders.rs`.
+#### Pipeline binding order
+
+Issue #2291.
+
+`build_compute_pipeline` (`pipeline_builder.rs:18`) builds one bind group
+layout from the caller's `BufferBindingSpec` slice, assigning each entry
+`binding: i as u32` (L36) — slot order is the slice order. `STANDARD_BINDINGS`
+(L73) is `[storage read, storage read_write, uniform]`; `BIAS_BINDINGS` (L86) is
+`[storage read, storage read, storage read_write, uniform]`. Each row checks the
+slice against the kernel's `@binding` declarations and against the
+`create_bind_group` entries that feed that pipeline's layout.
+
+| Call site | Shader | Bindings slice | Shader `@binding` (index, type, access) | Matching `create_bind_group` entries | Verdict |
+| --- | --- | --- | --- | --- | --- |
+| `bias_evaluation.rs:30` | `bias.wgsl` | `BIAS_BINDINGS` (L35) | `@binding(0)` storage read (L27), `@binding(1)` storage read (L29), `@binding(2)` storage read_write (L31), `@binding(3)` uniform (L33) | `bias_evaluation.rs:140` — 0 `sample_buffer`, 1 `bias_buffer`, 2 `results_buffer`, 3 `uniform_buffer` | match |
+| `activation_evaluation.rs:35` | `activation.wgsl` | `STANDARD_BINDINGS` (L40) | `@binding(0)` storage read (L26), `@binding(1)` storage read_write (L28), `@binding(2)` uniform (L30) | `activation_evaluation.rs:160` and `:495` — 0 `sample_buffer`, 1 `outputs_buffer`, 2 `uniform_buffer` | match |
+| `activation_evaluation.rs:53` | `activation_reduce.wgsl` | `STANDARD_BINDINGS` (L58) | `@binding(0)` storage read (L29), `@binding(1)` storage read_write (L32), `@binding(2)` uniform (L35) | `activation_evaluation.rs:236` and `:603` — 0 outputs, 1 `partial_sums_buffer`, 2 `reduction_uniform_buffer` | match |
+| `harmful_evaluation.rs:38` | `harmful.wgsl` | `STANDARD_BINDINGS` (L43) | `@binding(0)` storage read (L20), `@binding(1)` storage read_write (L22), `@binding(2)` uniform (L24) | `harmful_evaluation.rs:217` — 0 `sample_buffer`, 1 `contributions_buffer`, 2 `uniform_buffer` | match |
+| `harmful_evaluation.rs:56` | `harmful_reduce.wgsl` | `STANDARD_BINDINGS` (L61) | `@binding(0)` storage read (L26), `@binding(1)` storage read_write (L29), `@binding(2)` uniform (L32) | `harmful_evaluation.rs:288` — 0 `contributions_buffer`, 1 `partial_sums_buffer`, 2 `reduction_uniform_buffer` | match |
+| `helpful_evaluation.rs:36` | `helpful.wgsl` | `STANDARD_BINDINGS` (L41) | `@binding(0)` storage read (L28), `@binding(1)` storage read_write (L30), `@binding(2)` uniform (L32) | `helpful_evaluation.rs:124` — 0 `sample_buffer`, 1 `contributions_buffer`, 2 `uniform_buffer` | match |
+| `helpful_evaluation.rs:54` | `helpful_reduce.wgsl` | `STANDARD_BINDINGS` (L59) | `@binding(0)` storage read (L34), `@binding(1)` storage read_write (L37), `@binding(2)` uniform (L40) | `helpful_evaluation.rs:157` — 0 `contributions_buffer`, 1 `partial_sums_buffer`, 2 `reduction_uniform_buffer` | match |
+| `relu_evaluation.rs:33` | `relu.wgsl` | `STANDARD_BINDINGS` (L38) | `@binding(0)` storage read (L26), `@binding(1)` storage read_write (L28), `@binding(2)` uniform (L30) | `relu_evaluation.rs:128` — 0 `sample_buffer`, 1 `contributions_buffer`, 2 `uniform_buffer` | match |
+
+All call sites are in `src/analysis/gpu/`. Every kernel uses `@group(0)` and
+entry point `main`, matching the single layout and the `entry_point:
+Some("main")` the builder passes. wgpu validates the layout against the shader
+module when the pipeline is created, so a drifted slice would fail pipeline
+creation rather than bind the wrong buffer. `min_binding_size: None` (L41)
+leaves buffer-size checks to draw time. Those size limits belong to issues #2237
+and #2238 and are not repeated here.
+
+#### GPU constants
+
+| Constant | Defined at | Value | Checked against | Verdict |
+| --- | --- | --- | --- | --- |
+| `WORKGROUP_SIZE` | `shaders.rs:122` | `256` | naga test `test_compute_entry_points_declare_workgroup_size` (`shaders.rs:280`) asserts `[WORKGROUP_SIZE, 1, 1]` for every entry point in `ALL_SHADERS`; the 10 `@workgroup_size(256)` kernels agree (`tests/issue_2291_chunk_09a_2b_shader_layer_sweep.rs`); const asserts L313–L316 (64..=1024, power of two) | pinned — refuted |
+| `GPU_REDUCTION_THRESHOLD` | `shaders.rs:195` | `10_000` | const asserts `shaders.rs:369` (`>= 256`, one workgroup) and `:373` (`<= 100_000`) | bounded — refuted |
+| `GPU_SHUTDOWN_TIMEOUT_SECS` | `shaders.rs:156` | `10` | const asserts `shaders.rs:326`–`:327` (5..=30) | bounded — refuted |
+| `GPU_BUFFER_MAP_TIMEOUT_MARGIN_SECS` | `device.rs:44` | `5` | const assert `device.rs:621` (`> 0`) | bounded — refuted |
+| `GPU_BUFFER_MAP_TIMEOUT_SECS` | `device.rs:49`–`:50` | `295` (`GPU_QUEUE_TIMEOUT_MAX_SECS` 300 at `utils/deadline.rs:46`, minus the 5 s margin) | derived, not a literal; const asserts `device.rs:622` (`> 0`) and `:624` (`< GPU_QUEUE_TIMEOUT_MAX_SECS`) | derived and bounded — refuted |
+| `GPU_INIT_TIMEOUT_SECS` | `shaders.rs:143` and `device.rs:54` (two independent literals) | `30` | `shaders.rs:324`–`:325` bound only the shaders copy (5..=60); `device.rs:623`, `mod.rs:134` and `mod.rs:162` assert each copy `> 0`; nothing asserts the two are equal. The live init waits (`analyzer.rs:433`, `queue/scheduling.rs:80`) read the shaders copy; the device copy is re-exported at the module root (`mod.rs:54`) | finding — #2311 (`SEC-4b2140a0cd91`, CWE-1041, low) |
+
+The issue body cites `shaders.rs:324`–`:325` as `WORKGROUP_SIZE` asserts; they
+are the `GPU_INIT_TIMEOUT_SECS` bounds. The `WORKGROUP_SIZE` asserts are
+L313–L316.
+
+#### Module surface
+
+"Used" means a file outside `src/analysis/gpu/` names the re-export through
+the `analysis::gpu` root. `tests/unit/` is not compiled (no `main.rs`), so a use
+there does not count.
+
+| Re-export | mod.rs line | Verdict | Evidence |
+| --- | --- | --- | --- |
+| `GPU_BUFFER_MAP_TIMEOUT_MARGIN_SECS` | L54 | unused | no reference outside `src/analysis/gpu/` |
+| `GPU_BUFFER_MAP_TIMEOUT_SECS` | L54 | unused | no reference outside `src/analysis/gpu/` |
+| `GPU_INIT_TIMEOUT_SECS` | L54 | unused | device copy; no reference outside `src/analysis/gpu/` (the #2311 duplicate) |
+| `GpuAvailabilityResult` | L55 | used | src/ffi_internal/gpu.rs |
+| `GpuPerformanceTier` | L55 | unused | only `tests/unit/analysis_implementation.rs` (not compiled); `src/analysis/system.rs` reaches the tier API through `gpu::device` |
+| `create_wgpu_instance_safely` | L55 | unused | reached through `gpu::device` only |
+| `detect_gpu_tier` | L55 | unused | only `tests/unit/analysis_implementation.rs` (not compiled); `src/analysis/system.rs` uses the `gpu::device` path |
+| `detect_unified_memory` | L56 | unused | `src/analysis/system.rs` uses the `gpu::device` path |
+| `get_adapter_info_internal` | L56 | unused | no reference outside `src/analysis/gpu/` |
+| `no_gpu_result` | L56 | unused | no reference outside `src/analysis/gpu/` |
+| `poll_device_until_idle` | L56 | unused | no reference outside `src/analysis/gpu/` |
+| `wait_for_buffer_map` | L57 | unused | no reference outside `src/analysis/gpu/` |
+| `wait_for_buffer_maps_batch` | L57 | unused | no reference outside `src/analysis/gpu/` |
+| `GPU_QUEUE_TIMEOUT_MAX_SECS` | L61 | unused | callers use `analysis::utils` directly |
+| `GpuTimeBudget` | L64 | unused | no reference outside `src/analysis/gpu/` |
+| `GpuCircuitBreaker` | L68 | used | tests/issue_1991_pr_summary_retention_contract.rs |
+| `GpuTripReason` | L68 | used | tests/issue_1991_pr_summary_retention_contract.rs |
+| `abandoned_gpu_thread_count` | L68 | unused | callers use the `gpu::breaker` path |
+| `check_gpu_breaker` | L68 | unused | callers use the `gpu::breaker` path |
+| `global_gpu_breaker` | L69 | used | tests/issue_1991_pr_summary_retention_contract.rs |
+| `gpu_breaker_trip_reason` | L69 | unused | callers use the `gpu::breaker` path |
+| `is_gpu_breaker_tripped` | L69 | unused | callers (e.g. `src/debug/process_state.rs`) use the `gpu::breaker` path |
+| `record_abandoned_gpu_thread` | L70 | unused | callers use the `gpu::breaker` path |
+| `reset_gpu_breaker` | L70 | unused | callers use the `gpu::breaker` path |
+| `trip_gpu_breaker` | L70 | unused | callers use the `gpu::breaker` path |
+| `DEFAULT_GPU_STALL_WINDOW_SECS` | L75 | unused | `src/config/user_facing.rs` uses the `gpu::heartbeat` path |
+| `GPU_STALL_WINDOW_ENV` | L75 | unused | `src/config/user_facing.rs` uses the `gpu::heartbeat` path |
+| `GpuHeartbeat` | L75 | unused | tests use the `gpu::heartbeat` path |
+| `HeartbeatWatch` | L75 | unused | no reference outside `src/analysis/gpu/` |
+| `MAX_GPU_STALL_WINDOW_SECS` | L76 | unused | `src/config/user_facing.rs` uses the `gpu::heartbeat` path |
+| `MIN_GPU_STALL_WINDOW_SECS` | L76 | unused | `src/config/user_facing.rs` uses the `gpu::heartbeat` path |
+| `global_gpu_heartbeat` | L76 | unused | callers use the `gpu::heartbeat` path |
+| `GPU_MAX_BATCH_ALLOC_BYTES` | L80 | unused | only `tests/unit/analysis_implementation.rs` (not compiled) |
+| `GpuAnalyzer` | L80 | used | src/analysis/synapse/orchestration.rs |
+| `GpuEvaluator` | L80 | used | src/analysis/synapse/gpu_evaluation.rs |
+| `GpuWorkQueue` | L83 | used | src/analysis/neuron/mod.rs |
+| `DEFAULT_BACKOFF_INITIAL_MS` | L85 | used | tests/gpu/issue_647_gpu_device_lost_recovery.rs |
+| `DEFAULT_BACKOFF_MAX_MS` | L85 | used | tests/gpu/issue_647_gpu_device_lost_recovery.rs |
+| `DEFAULT_GPU_RETRY_LIMIT` | L85 | used | tests/gpu/issue_647_gpu_device_lost_recovery.rs |
+| `GPU_RETRY_LIMIT_ENV` | L86 | used | tests/gpu/issue_647_gpu_device_lost_recovery.rs |
+| `MINIMUM_GPU_BATCH_SIZE` | L86 | used | tests/gpu/issue_1083_gpu_batch_size_reduction.rs |
+| `backoff_delay_ms` | L86 | used | tests/gpu/issue_647_gpu_device_lost_recovery.rs |
+| `get_gpu_retry_limit` | L86 | unused | no reference outside `src/analysis/gpu/` |
+| `is_device_lost_error` | L87 | used | tests/gpu/issue_647_gpu_device_lost_recovery.rs |
+| `is_memory_exhaustion_error` | L87 | used | tests/gpu/issue_1083_gpu_batch_size_reduction.rs |
+| `ACTIVATION_REDUCE_SHADER` | L92 | unused | tests use the `gpu::shaders` path |
+| `ACTIVATION_SHADER` | L92 | unused | tests use the `gpu::shaders` path |
+| `BIAS_SHADER` | L92 | unused | tests use the `gpu::shaders` path |
+| `SHADER_GPU_INIT_TIMEOUT_SECS` | L93 | unused | alias of the shaders copy; only the `mod.rs:162` self-assert names it |
+| `GPU_SHUTDOWN_TIMEOUT_SECS` | L93 | unused | `queue/scheduling.rs` imports the `gpu::shaders` path |
+| `HARMFUL_SHADER` | L94 | unused | tests use the `gpu::shaders` path |
+| `HELPFUL_SHADER` | L94 | unused | tests use the `gpu::shaders` path |
+| `MIN_NEURON_SAMPLE_COUNT` | L94 | unused | callers use `analysis::constants` |
+| `RELU_SHADER` | L94 | unused | tests use the `gpu::shaders` path |
+| `WORKGROUP_SIZE` | L94 | unused | callers use the `gpu::shaders` path |
+| `get_batch_size_for_tier` | L99 | unused | `#[cfg(test)]`; only `tests/unit/analysis_implementation.rs` (not compiled) |
+
+15 of 56 re-exports are used through the root. The other 41 are redundant
+paths to items that stay reachable through their submodule, so they add no C-ABI
+or operator surface (refuted below). Pruning them is tidy-up, not security, and
+is out of scope here.
+
+**Outcome (#2291): one finding** — #2311 (`SEC-4b2140a0cd91`, CWE-1041, low):
+`GPU_INIT_TIMEOUT_SECS` is defined twice with no equality pin. Binding order,
+the other five constants and the module surface are sound.
 
 ### evaluation
 
@@ -328,6 +446,7 @@ Each slice appends rows only inside its own marked region.
 | --- | --- | --- | --- | --- |
 <!-- section: shaders -->
 | SEC-e8e1dd84a447 | `src/shaders/activation.wgsl:35` (also `relu.wgsl:35`, `bias.wgsl:38`) | CWE-754 | low | open — #2308 |
+| SEC-4b2140a0cd91 | `src/analysis/gpu/shaders.rs:143` (also `device.rs:54`) | CWE-1041 | low | open — #2311 |
 <!-- section: evaluation -->
 <!-- section: device -->
 <!-- section: queue-core -->
@@ -352,6 +471,9 @@ Each slice appends rows only inside its own marked region.
 | `activation.wgsl` declares `epsilon` but never reads it | `src/shaders/activation.wgsl:21`; `src/analysis/gpu/activation_evaluation.rs:150` | Host-written constant, not an operator lever; the kernel's non-finite handling is `is_finite_value` (L210/L223, #2308) |
 | `relu.wgsl` declares `threshold` but never reads it, so the caller's threshold is dropped | `src/shaders/relu.wgsl:21`; `src/analysis/synapse/relu_evaluation.rs:88`, `:135` | `threshold` is an improvement floor applied on the host after the GPU returns (`best_improvement = threshold`), not a per-sample filter, so the kernel has no use for it |
 | Division by zero in a kernel | `activation.wgsl:77`/`:80`/`:150`, `bias.wgsl:80`/`:83`/`:157`, `matching.wgsl:118` | Activation-function denominators are `1 + exp(..)` or `1 + abs(x)`, never below 1 for finite input; `matching.wgsl`'s average is guarded by `error_count > 0u` (L117) and the kernel is never compiled |
+| Pipeline binding order drifts from a shader's `@binding` layout, binding the wrong buffer (CWE-125 / CWE-787) | `src/analysis/gpu/pipeline_builder.rs:36`, `:73`, `:86` | All 8 `build_compute_pipeline` call sites pass a slice whose positional order and access match the kernel's `@binding` declarations and the `create_bind_group` entries (per-row table in the shaders audit section, Issue #2291); wgpu rejects a layout that disagrees with the shader at pipeline creation |
+| `WORKGROUP_SIZE` or another GPU constant drifts from what the kernels or deadlines assume | `src/analysis/gpu/shaders.rs:280`, `:313`–`:327`, `:369`–`:373`; `src/analysis/gpu/device.rs:621`–`:624` | `WORKGROUP_SIZE` is pinned to every entry point by the naga test; the other constants are bounded by const asserts and `GPU_BUFFER_MAP_TIMEOUT_SECS` is derived from `GPU_QUEUE_TIMEOUT_MAX_SECS`. Only the duplicated `GPU_INIT_TIMEOUT_SECS` lacks a pin (#2311) |
+| 41 `pub use` re-exports in `gpu/mod.rs` unused through the module root (dead surface) | `src/analysis/gpu/mod.rs:54`–`:99` | Each re-export is a redundant path to an item still reached through its submodule (or used inside `gpu/`); `gpu` is not a C-ABI surface and none of them reads env or config, so none is an operator lever that silently does nothing |
 <!-- section: evaluation -->
 <!-- section: device -->
 <!-- section: queue-core -->
@@ -359,8 +481,10 @@ Each slice appends rows only inside its own marked region.
 
 ## Outcome
 
-In progress — the 10 `src/shaders/*.wgsl` kernels are swept (#2290: one
-finding, #2308); every other file is pending its slice. Each slice records its
+In progress — the shaders slice is complete: the 10 `src/shaders/*.wgsl`
+kernels (#2290: one finding, #2308) and `mod.rs`, `pipeline_builder.rs` and
+`shaders.rs` (#2291: one finding, #2311). Every other file is pending its
+slice. Each slice records its
 outcome in its region under `## Audit sections`.
 
 ## Issues filed
@@ -371,6 +495,8 @@ The sweep is in progress; each slice lists the issues it files here.
   float self-comparisons fast-math may fold away (shaders slice, #2290).
 - #2309 — removal follow-up for the dead `matching.wgsl` and unused
   `relu_reduce.wgsl` (not a security finding; shaders slice, #2290).
+- #2311 — `SEC-4b2140a0cd91` (CWE-1041, low): `GPU_INIT_TIMEOUT_SECS` defined
+  twice with no equality pin (shaders slice, #2291).
 
 ## Verify this record
 
