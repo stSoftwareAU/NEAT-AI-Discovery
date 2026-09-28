@@ -137,6 +137,64 @@ Each slice writes its audit prose only between its own marker and the next.
 
 <!-- section: shaders -->
 
+#### Host ↔ WGSL struct parity (Issue #2289)
+
+The 12 `#[repr(C)] bytemuck::Pod` structs in
+`src/analysis/samples/gpu_types.rs` against every WGSL struct that mirrors them
+(23 declarations across 9 shaders; `matching.wgsl` is out of scope here and
+is covered by #2232). Field order, scalar types and per-field offsets were
+compared member by member; the WGSL size/alignment column is naga 30's `Layouter` output, the
+same layout wgpu validates against. No struct uses a `vec3` (or any vector or
+nested struct) — every member is a 4-byte `f32`/`u32`, so every WGSL struct
+aligns to 4 and its size is `4 × members`, exactly as `repr(C)` lays it out.
+Pinned by `tests/issue_2289_gpu_struct_layout.rs`, which fails CI if either
+side drifts.
+
+| Struct | Rust file:line | WGSL file:line | Rust size/align | WGSL size/align | Verdict |
+| --- | --- | --- | --- | --- | --- |
+| `GpuHelpfulSample` | `src/analysis/samples/gpu_types.rs:13` | `helpful.wgsl:1`, `relu.wgsl:1`, `activation.wgsl:1`, `bias.wgsl:4` (`HelpfulSample`); `harmful.wgsl:1` (`HarmfulSample`) | 8 / 4 | 8 / 4 | parity |
+| `HelpfulContribution` | `src/analysis/samples/gpu_types.rs:30` | `helpful.wgsl:6`, `helpful_reduce.wgsl:11` | 48 / 4 | 48 / 4 | parity |
+| `HelpfulUniforms` | `src/analysis/samples/gpu_types.rs:48` | `helpful.wgsl:21` | 16 / 4 | 16 / 4 | parity |
+| `HarmfulContribution` | `src/analysis/samples/gpu_types.rs:58` | `harmful.wgsl:6`, `harmful_reduce.wgsl:11` | 16 / 4 | 16 / 4 | parity |
+| `HarmfulUniforms` | `src/analysis/samples/gpu_types.rs:68` | `harmful.wgsl:13` | 16 / 4 | 16 / 4 | parity |
+| `ReluContribution` | `src/analysis/samples/gpu_types.rs:78` | `relu.wgsl:6`, `relu_reduce.wgsl:11` | 40 / 4 | 40 / 4 | parity |
+| `ReluUniforms` | `src/analysis/samples/gpu_types.rs:94` | `relu.wgsl:19` | 16 / 4 | 16 / 4 | parity |
+| `BiasResult` | `src/analysis/samples/gpu_types.rs:104` | `bias.wgsl:9` | 16 / 4 | 16 / 4 | parity |
+| `BiasUniforms` | `src/analysis/samples/gpu_types.rs:126` | `bias.wgsl:16` | 32 / 4 | 32 / 4 | parity |
+| `ActivationOutput` | `src/analysis/samples/gpu_types.rs:140` | `activation.wgsl:6`, `activation_reduce.wgsl:11` | 28 / 4 | 28 / 4 | parity (see decision) |
+| `ActivationUniforms` | `src/analysis/samples/gpu_types.rs:153` | `activation.wgsl:16` | 28 / 4 | 28 / 4 | parity (see decision) |
+| `ReductionUniforms` | `src/analysis/samples/gpu_types.rs:166` | `helpful_reduce.wgsl:26`, `harmful_reduce.wgsl:18`, `relu_reduce.wgsl:24`, `activation_reduce.wgsl:21` | 16 / 4 | 16 / 4 | parity |
+
+WGSL paths are under `src/shaders/`. Every struct-typed `array<T>` global
+(`samples`, `contributions`, `outputs`, `partial_sums`, `results`, the
+`var<workgroup> shared_data` arrays and `bias.wgsl`'s `shared_samples`) has a
+naga stride equal to the Rust `size_of::<T>()` the host multiplies by the
+element count.
+
+**Decision — the 28-byte `ActivationUniforms` and `ActivationOutput` are
+valid.** WGSL's 16-byte rule for the `uniform` address space
+(`RequiredAlignOf(S, uniform) = roundUp(16, AlignOf(S))`, and the uniform
+array-stride rule) constrains a struct *nested* inside a uniform buffer and an
+array *element* stored there; it does not round up the top-level struct a
+`var<uniform>` binds. `activation.wgsl:31` binds `ActivationUniforms` directly
+(`var<uniform> uniforms: ActivationUniforms`), and the host uploads exactly
+`bytemuck::bytes_of(&uniforms)` — 28 bytes — at
+`src/analysis/gpu/activation_evaluation.rs:156` and `:490`, with
+`min_binding_size: None` (`src/analysis/gpu/pipeline_builder.rs:41`), so wgpu
+checks the 28-byte buffer against naga's 28-byte span. `ActivationOutput` is
+only ever an element of `storage`/`workgroup` arrays
+(`activation.wgsl:29`, `activation_reduce.wgsl:30`, `:33`, `:39`), where the
+stride is `roundUp(AlignOf(T), SizeOf(T)) = roundUp(4, 28) = 28`; the host
+sizes those buffers as `size_of::<ActivationOutput>() * n`
+(`activation_evaluation.rs:211`, `:277`, `:517`, `:539`, `:596`, `:646`).
+naga's validator (`ValidationFlags::all()`) accepts both shaders — it would
+report `Disalignment::ArrayStride` or `MemberOffsetAfterStruct` if either rule
+were broken — and `uniform_bindings_accept_28_byte_activation_uniforms` pins
+that. No padding change is needed.
+
+**Outcome: negative result** — parity holds on all 12 structs; no ledger row
+and no issue filed for struct layout.
+
 Pending — #2111 (shader layer, #2232).
 
 ### evaluation
@@ -182,6 +240,10 @@ Each slice appends rows only inside its own marked region.
 | Candidate | Refuting file:line | Why it is not a finding |
 | --- | --- | --- |
 <!-- section: shaders -->
+| Host/shader layout mismatch in any of the 12 `Pod` structs (CWE-125 / CWE-787) | `src/analysis/samples/gpu_types.rs:13`–`:172`; `tests/issue_2289_gpu_struct_layout.rs` | Every WGSL mirror has the same member names, order, scalar types, offsets, size and alignment as its Rust struct, per naga's `Layouter` (Issue #2289) |
+| 28-byte `ActivationUniforms` invalid as a `var<uniform>` (not a multiple of 16) | `src/shaders/activation.wgsl:31`; `src/analysis/gpu/activation_evaluation.rs:156` | The 16-byte rounding applies to structs nested in, or arrays stored in, uniform space — not the top-level bound struct; naga validation passes and the host uploads exactly 28 bytes |
+| 28-byte `ActivationOutput` gives a misaligned `array<ActivationOutput>` stride | `src/shaders/activation.wgsl:29`; `src/shaders/activation_reduce.wgsl:30` | Storage/workgroup arrays have stride `roundUp(4, 28) = 28`, matching the host `size_of::<ActivationOutput>() * n` sizing |
+| A `vec3` member forcing 16-byte alignment on the WGSL side | `src/shaders/*.wgsl` struct declarations | No struct member in the 23 mirrors is a vector; `vec3<u32>` appears only as `@builtin` entry-point parameters, which carry no host layout |
 <!-- section: evaluation -->
 <!-- section: device -->
 <!-- section: queue-core -->
