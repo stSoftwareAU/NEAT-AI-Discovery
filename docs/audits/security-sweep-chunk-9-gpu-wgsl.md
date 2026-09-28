@@ -724,7 +724,7 @@ other `set_var`/`remove_var` hit is inside a `#[cfg(test)]` module or a
 | `ensure_xdg_runtime_dir` | `src/analysis/utils/platform.rs:147` | `pub unsafe fn`, `Once`-guarded (L150–L153) |
 | `may_mutate_environment` | `src/analysis/utils/platform.rs:345` | the guard: `thread_count == Some(1)`. An unknown count (`None`) is unsafe. Pinned by `test_may_mutate_environment_requires_single_thread` (L698) |
 | `live_thread_count` | `src/analysis/utils/platform.rs:351` | counts `/proc/self/task`. A read error at any point returns `None` |
-| `setup_gpu_environment` | `src/analysis/utils/platform.rs:405` | the only safe entry point. `NotRequired` when nothing is pending (L406–L408). Counts threads (L410) and returns `Skipped`, with a one-time `warn!` (L377), unless exactly one is live (L411–L413). Only then does it call the two `unsafe fn`s (L421–L422). Non-Linux stub at L429 |
+| `setup_gpu_environment` | `src/analysis/utils/platform.rs:405` | the only safe entry point. `NotRequired` when nothing is pending (L406–L408). Counts threads (L410) and returns `Skipped`, with a one-time `warn!` (L382), unless exactly one is live (L411–L413). Only then does it call the two `unsafe fn`s (L421–L422). Non-Linux stub at L429 |
 
 **Verdict: remediated** (by #1873, recorded in
 `docs/archive/pr-summaries/pr-summary-1873.md`). Every production path to

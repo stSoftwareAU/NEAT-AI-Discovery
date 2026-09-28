@@ -64,6 +64,9 @@ const CROSS_CHECK_SYMBOLS: [&str; 3] = [
     "classify_gpu_unavailable_reason",
 ];
 
+/// The findings the device slice filed; the record states "one finding, #2318".
+const SURVIVING_FINDINGS: [&str; 1] = ["SEC-2b0c59cc73d5"];
+
 const WRITE_PATH_TABLE: &str = "#### SEC-fe0b268a3799 — write path (Issue #2240)";
 const CALL_SITE_TABLE: &str = "#### SEC-fe0b268a3799 — `setup_gpu_environment` sites (Issue #2240)";
 const CROSS_CHECK_TABLE: &str = "#### CPU-fallback cross-check (Issue #2240)";
@@ -337,8 +340,15 @@ fn the_cpu_fallback_cross_check_row_names_every_hop() {
 fn every_device_finding_is_open_linked_and_named_in_the_audit_region() {
     let doc = read(RECORD);
     let audit = device_region(section(&doc, "## Audit sections"));
+    let issues_filed = section(&doc, "## Issues filed");
     let rows = prefixed_rows(device_region(section(&doc, "## Ledger")), "| SEC-");
-    for row in rows.iter().filter(|row| row[0] != DISPOSED) {
+    let findings: Vec<&Vec<String>> = rows.iter().filter(|row| row[0] != DISPOSED).collect();
+    let filed: Vec<&str> = findings.iter().map(|row| row[0].as_str()).collect();
+    assert_eq!(
+        filed, SURVIVING_FINDINGS,
+        "the device ledger region must carry exactly the findings this slice filed"
+    );
+    for row in findings {
         let hex = row[0].strip_prefix("SEC-").expect("SEC- id");
         assert!(
             hex.len() == 12
@@ -359,6 +369,11 @@ fn every_device_finding_is_open_linked_and_named_in_the_audit_region() {
             assert!(
                 audit.contains(&format!("#{n}")),
                 "{}: finding #{n} must be named in the device audit region",
+                row[0]
+            );
+            assert!(
+                issues_filed.contains(&format!("- #{n} — `{}`", row[0])),
+                "{}: finding #{n} must be listed under `## Issues filed`",
                 row[0]
             );
         }
