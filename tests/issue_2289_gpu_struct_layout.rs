@@ -173,8 +173,11 @@ fn reduction_uniforms() -> RustLayout {
     })
 }
 
-/// Every host struct and each `(shader, WGSL struct name)` that mirrors it.
-fn parity_map() -> Vec<(RustLayout, Vec<(&'static str, &'static str, &'static str)>)> {
+/// One WGSL mirror: `(shader file, shader source, WGSL struct name)`.
+type Mirror = (&'static str, &'static str, &'static str);
+
+/// Every host struct and each WGSL struct that mirrors it.
+fn parity_map() -> Vec<(RustLayout, Vec<Mirror>)> {
     vec![
         (
             gpu_helpful_sample(),
@@ -289,6 +292,11 @@ fn parse_and_validate(file: &str, source: &str) -> (Module, Layouter) {
         .update(module.to_ctx())
         .unwrap_or_else(|e| panic!("{file}: naga could not lay out its types: {e}"));
     (module, layouter)
+}
+
+/// A Rust `align_of` value as a naga [`Alignment`]; `None` if it is not a power of two.
+fn naga_alignment(align: usize) -> Option<Alignment> {
+    u32::try_from(align).ok().and_then(Alignment::new)
 }
 
 /// WGSL scalar name for a member type; anything else (a `vec3`, a nested struct) is named as such.
@@ -421,7 +429,7 @@ fn every_wgsl_mirror_matches_its_rust_struct_layout() {
             );
             assert_eq!(
                 Some(layout.alignment),
-                Alignment::new(rust.align as u32),
+                naga_alignment(rust.align),
                 "{at}: naga alignment vs align_of"
             );
 
@@ -548,10 +556,7 @@ fn a_drifted_wgsl_mirror_is_detected() {
         layouter[handle].size as usize, rust.size,
         "vec3 pads the struct to 32 bytes"
     );
-    assert_ne!(
-        Some(layouter[handle].alignment),
-        Alignment::new(rust.align as u32)
-    );
+    assert_ne!(Some(layouter[handle].alignment), naga_alignment(rust.align));
     assert_eq!(members[1].offset, 16, "vec3<u32> is 16-byte aligned");
     assert!(member_scalar(&module, members[1].ty).contains("Vector"));
 }
