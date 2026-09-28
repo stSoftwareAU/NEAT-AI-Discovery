@@ -82,19 +82,23 @@ fn assert_every_source_in_exactly_one_group(
     assert_eq!(seen.len(), expected_sources, "grouping dropped sources");
 }
 
+/// Fastest of several readings, each timing a batch of groupings so a single
+/// reading spans far more than timer resolution and scheduler jitter.
 fn min_grouping_time(sources: &[(&OrderedNeuron, Arc<Vec<DiscoverRecord>>)]) -> Duration {
     const RUNS: usize = 5;
+    const BATCH: usize = 20;
 
     (0..RUNS)
         .map(|_| {
             let start = Instant::now();
-            let groups = group_sources_by_locality(sources, &None);
-            let elapsed = start.elapsed();
-            assert!(
-                !groups.is_empty(),
-                "grouping must always emit at least one group"
-            );
-            elapsed
+            for _ in 0..BATCH {
+                let groups = group_sources_by_locality(sources, &None);
+                assert!(
+                    !groups.is_empty(),
+                    "grouping must always emit at least one group"
+                );
+            }
+            start.elapsed()
         })
         .min()
         .expect("RUNS is non-zero")
@@ -139,7 +143,7 @@ fn expired_deadline_stops_locality_scan_without_dropping_sources() {
 #[test]
 fn locality_grouping_cost_does_not_grow_quadratically() {
     let small = MAX_SOURCES_FOR_LOCALITY_SCAN + 1;
-    let large = small * 2;
+    let large = small * 4;
 
     // Fixtures are built once, outside the timed region, and the smaller run
     // reuses a prefix of the larger so both time exactly the same kind of work.
@@ -151,10 +155,12 @@ fn locality_grouping_cost_does_not_grow_quadratically() {
     let t_large = min_grouping_time(&large_sources);
 
     // Two readings of the same work, never a reading against a wall-clock
-    // constant: doubling the input may double the cost (linear) but must not
-    // quadruple it (quadratic). The bound sits midway between the two.
+    // constant: quadrupling the input may quadruple the cost (linear) but must
+    // not multiply it sixteenfold (quadratic). The bound sits at the geometric
+    // midpoint, leaving 2x headroom for allocator and scheduler noise, which a
+    // 2x size step with a 3x bound did not (it flaked under coverage in CI).
     assert!(
-        t_large <= t_small * 3,
+        t_large <= t_small * 8,
         "locality grouping cost grew faster than linearly: {t_small:?} at {small} sources against {t_large:?} at {large} sources"
     );
 }
