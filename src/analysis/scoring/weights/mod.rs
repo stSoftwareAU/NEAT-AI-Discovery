@@ -346,7 +346,7 @@ mod tests {
     #[test]
     fn test_optimal_bias_returns_zero_for_empty_samples() {
         let samples: Vec<HelpfulSample> = vec![];
-        let bias = calculate_optimal_bias(&samples, 1.0, 0.05, |x| x, "IDENTITY", None, None);
+        let bias = calculate_optimal_bias(&samples, 1.0, 0.05, |x| x, "IDENTITY", None);
         assert!(
             bias.abs() < EPSILON,
             "Empty samples should return bias=0, got {bias}"
@@ -370,7 +370,7 @@ mod tests {
                 target_activation: None,
             },
         ];
-        let bias = calculate_optimal_bias(&samples, 1.0, 0.05, |x| x, "IDENTITY", None, None);
+        let bias = calculate_optimal_bias(&samples, 1.0, 0.05, |x| x, "IDENTITY", None);
         assert!(
             bias.abs() < EPSILON,
             "Zero baseline error should return bias=0, got {bias}"
@@ -393,7 +393,7 @@ mod tests {
             .collect();
 
         let tanh_fn = |x: f32| x.tanh();
-        let bias = calculate_optimal_bias(&samples, 1.0, 0.05, tanh_fn, "TANH", None, None);
+        let bias = calculate_optimal_bias(&samples, 1.0, 0.05, tanh_fn, "TANH", None);
 
         // Should find some bias value (exact value depends on grid search)
         assert!(bias.is_finite(), "Bias should be finite");
@@ -415,7 +415,7 @@ mod tests {
             .collect();
 
         let relu_fn = |x: f32| x.max(0.0);
-        let bias = calculate_optimal_bias(&samples, 1.0, 0.05, relu_fn, "ReLU", None, None);
+        let bias = calculate_optimal_bias(&samples, 1.0, 0.05, relu_fn, "ReLU", None);
 
         assert!(bias.is_finite(), "Bias should be finite");
     }

@@ -14,9 +14,8 @@ mod thresholds;
 
 // Re-export all public items for backward compatibility
 pub use gpu_types::{
-    ActivationOutput, ActivationUniforms, BiasResult, BiasUniforms, GpuHelpfulSample,
-    HarmfulContribution, HarmfulUniforms, HelpfulContribution, HelpfulUniforms, ReductionUniforms,
-    ReluContribution, ReluUniforms,
+    ActivationOutput, ActivationUniforms, GpuHelpfulSample, HarmfulContribution, HarmfulUniforms,
+    HelpfulContribution, HelpfulUniforms, ReductionUniforms, ReluContribution, ReluUniforms,
 };
 pub use statistics::{HarmfulStats, HelpfulStats, NeuronStats, ReluOrientation, ReluStats};
 pub use thresholds::{
@@ -93,14 +92,6 @@ mod tests {
         let gpu_sample: GpuHelpfulSample = sample.into();
         assert_eq!(gpu_sample.activation, 1.5);
         assert_eq!(gpu_sample.avg_error, -0.3);
-    }
-
-    #[test]
-    fn test_bias_result_zeroed() {
-        let result = BiasResult::zeroed();
-        assert_eq!(result.bias_value, 0.0);
-        assert_eq!(result.error_reduction, 0.0);
-        assert_eq!(result.valid_sample_count, 0);
     }
 
     #[test]
@@ -320,17 +311,6 @@ mod tests {
             threshold: 0.0,
             epsilon: 0.0,
             pad0: 0.0,
-        });
-        let _ = bytemuck::bytes_of(&BiasResult::zeroed());
-        let _ = bytemuck::bytes_of(&BiasUniforms {
-            sample_count: 0,
-            bias_count: 0,
-            incoming_weight: 0.0,
-            outgoing_weight: 0.0,
-            activation_type: 0,
-            epsilon: 0.0,
-            min_sample_count: 0,
-            pad0: 0,
         });
         let _ = bytemuck::bytes_of(&ActivationOutput {
             output: 0.0,
