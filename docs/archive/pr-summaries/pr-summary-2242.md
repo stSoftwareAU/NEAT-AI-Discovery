@@ -69,6 +69,34 @@ This change adds docs and tests only; there is no UI.
 
 ### Regression tests (fail before, pass after)
 
+These three tests are new in this branch. Each one fails against the record
+as it stood before the fix and passes after it:
+
+- Added
+  `tests/issue_2113_chunk_09c_device_sweep.rs::no_device_files_swept_row_is_still_pending`.
+  It reproduces the gap: before the fix, all four device Files swept rows read
+  `pending — #2113`, so the test failed. With the rows flipped, it passes.
+- Added
+  `tests/issue_2113_chunk_09c_device_sweep.rs::the_device_region_carries_the_2242_subsections_and_outcome`.
+  Before the fix, the init-timeout, limits and device-loss subsections and the
+  `**Outcome (#2242):` line were missing, so `section` panicked. They now
+  exist, and the test passes.
+- Added
+  `tests/issue_2113_chunk_09c_device_sweep.rs::every_2242_cited_symbol_still_exists`.
+  Before the fix, none of the three `Symbol | Cited at` tables existed, so the
+  `must carry symbol rows` assertion failed. Every row now resolves to an
+  in-range line that still defines its symbol, and the test passes.
+
+**The original trigger is closed, with no trivial bypass.** The trigger was an
+unrecorded device sweep: the rows read `pending — #2113`, and there was no
+verdict on the `block_on` deadlines, limits or device loss. Each row must now
+open with `audited, no finding` or `finding filed — #N`. The row set must equal
+the four swept files in order, so a row cannot be dropped or renamed to dodge
+the check. Every cited symbol is re-resolved against the source on each run,
+so a verdict cannot outlive the code it describes. The one real flaw, the
+unbounded probe `block_on` (`SEC-d6747980489b`), is tracked as #2332 and
+pinned in `SURVIVING_FINDINGS`.
+
 REGRESSION_PLACEHOLDER
 
 ## Acceptance Criteria
