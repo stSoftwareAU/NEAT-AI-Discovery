@@ -45,6 +45,7 @@ pub mod inflight;
 pub(crate) mod pipeline_builder;
 pub mod queue;
 pub mod relu_evaluation;
+pub mod sample_limits;
 pub mod shaders;
 
 // Re-export device module contents for backwards compatibility

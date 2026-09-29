@@ -23,7 +23,7 @@ use crate::analysis::samples::{
     ReductionUniforms,
 };
 
-use super::analyzer::GpuAnalyzer;
+use super::analyzer::{GPU_MAX_BATCH_ALLOC_BYTES, GpuAnalyzer};
 
 // =============================================================================
 // Pipeline Builder
@@ -122,6 +122,12 @@ impl GpuAnalyzer {
             .activation_pipeline
             .as_ref()
             .context("GPU activation pipeline not initialised")?;
+
+        // Issue #2314: reject an oversized sample set before it reaches wgpu allocation.
+        crate::analysis::gpu::sample_limits::check_activation_set_fits(
+            samples.len(),
+            &device.limits(),
+        )?;
 
         let gpu_samples: Vec<GpuHelpfulSample> = samples
             .iter()
@@ -424,6 +430,26 @@ impl GpuAnalyzer {
             .activation_pipeline
             .as_ref()
             .context("GPU activation pipeline not initialised")?;
+
+        // Issue #2314: reject an oversized sample set before it reaches wgpu allocation.
+        crate::analysis::gpu::sample_limits::check_activation_set_fits(
+            samples.len(),
+            &device.limits(),
+        )?;
+
+        // Issue #2314: this loop allocates one ActivationOutput buffer per config, so bound the
+        // total footprint across all configs rather than just the per-config allocation.
+        let per_config = samples.len() * std::mem::size_of::<ActivationOutput>();
+        let max_configs = (GPU_MAX_BATCH_ALLOC_BYTES / per_config.max(1)).max(1);
+        if activation_configs.len() > max_configs {
+            let mut all_results = Vec::with_capacity(activation_configs.len());
+            for chunk in activation_configs.chunks(max_configs) {
+                all_results.extend(
+                    self.evaluate_activations_batched_gpu_with_budget(samples, chunk, budget)?,
+                );
+            }
+            return Ok(all_results);
+        }
 
         // Issue #567: Check if we should use GPU reduction
         let use_reduction = samples.len() >= GPU_REDUCTION_THRESHOLD;
