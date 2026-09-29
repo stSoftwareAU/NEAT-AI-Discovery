@@ -230,18 +230,28 @@ impl RequestEvaluator for FakeGpuEvaluator {
 
     fn evaluate_helpful_batch(
         &self,
-        _samples_batch: &[&[HelpfulSample]],
+        samples_batch: &[&[HelpfulSample]],
         budget: GpuTimeBudget,
     ) -> Result<Vec<HelpfulStats>> {
-        self.respond(budget, vec![HelpfulStats::default()])
+        // One all-zero result per sample set, same shape as the real evaluator
+        // (Issue #2243).
+        self.respond(budget, vec![HelpfulStats::default(); samples_batch.len()])
     }
 
     fn evaluate_harmful_batch(
         &self,
-        _samples_batch: &[(&[HelpfulSample], f32)],
+        samples_batch: &[(&[HelpfulSample], f32)],
         budget: GpuTimeBudget,
     ) -> Result<Vec<HarmfulStats>> {
-        self.respond(budget, Vec::new())
+        // One all-zero result per sample set, same shape as the real evaluator
+        // (Issue #2243). `HarmfulStats` is `Default` but not `Clone`.
+        self.respond(
+            budget,
+            samples_batch
+                .iter()
+                .map(|_| HarmfulStats::default())
+                .collect(),
+        )
     }
 
     fn evaluate_relu(
@@ -274,10 +284,12 @@ impl RequestEvaluator for FakeGpuEvaluator {
     fn evaluate_activations_batched(
         &self,
         _samples: &[HelpfulSample],
-        _activation_configs: &[(u32, f32, f32)],
+        activation_configs: &[(u32, f32, f32)],
         budget: GpuTimeBudget,
     ) -> Result<Vec<(f32, f32, f32, u32)>> {
-        self.respond(budget, Vec::new())
+        // One all-zero result per config, same shape as the real evaluator
+        // (Issue #2243).
+        self.respond(budget, vec![(0.0, 0.0, 0.0, 0); activation_configs.len()])
     }
 }
 

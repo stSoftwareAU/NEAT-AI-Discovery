@@ -115,8 +115,8 @@ the `submission.rs` bounded wait) go to **queue-core**;
 | Path | Lines | Outcome |
 | --- | --- | --- |
 | `src/analysis/gpu/queue/mod.rs` | 423 | pending — #2114 |
-| `src/analysis/gpu/queue/submission.rs` | 1048 | pending — #2114 |
-| `src/analysis/gpu/queue/execution.rs` | 928 | pending — #2114 |
+| `src/analysis/gpu/queue/submission.rs` | 1048 | finding filed — #2339 (`send_timeout` at L216/L281/L340/L405/L465/L540 waits the whole batch timeout with no heartbeat or breaker check, and `await_gpu_response` then restarts the same timeout at L102); all seven empty-input short-circuits (L187/L258/L321/L382/L445/L515/L519) run after `breaker.check()?`, and the three that return zero statistics (L382/L445/L519) are indistinguishable from an all-zero answer but unreachable from production callers (refuted); no `unwrap`/`expect`/`.lock()` before the `#[cfg(test)]` module at L571 |
+| `src/analysis/gpu/queue/execution.rs` | 928 | audited, no finding — `execute_request` (L67–L254) returns `Err` only for `is_device_lost_error` (L98–L102, L133–L137, L165–L169, L205–L209, L239–L243) and otherwise sends exactly once (L104/L139/L171/L211/L245); every `run_work_loop` device-lost branch sends or finds the caller gone (L406, L477, L513, L436–L445); the byte cap is applied inside the evaluators, not here; no `unwrap`/`expect`/`.lock()` before the `#[cfg(test)]` module at L612 |
 | `src/analysis/gpu/queue/executor.rs` | 137 | pending — #2114 |
 | `src/analysis/gpu/queue/scheduling.rs` | 171 | pending — #2114 |
 | `src/analysis/gpu/queue/fake_evaluator.rs` | 308 | pending — #2114 |
