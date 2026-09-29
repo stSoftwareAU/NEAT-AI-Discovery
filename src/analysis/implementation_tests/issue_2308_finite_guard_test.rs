@@ -31,7 +31,7 @@ fn edge_inputs() -> Vec<f32> {
     vec![
         0.0,
         -0.0,
-        f32::from_bits(1),          // smallest subnormal
+        f32::from_bits(1),            // smallest subnormal
         -f32::from_bits(0x007f_ffff), // largest negative subnormal
         f32::MIN_POSITIVE,
         1.0,
@@ -92,7 +92,12 @@ fn wgsl_is_finite_value_is_an_integer_exponent_test() {
                     use naga::BinaryOperator as B;
                     let is_comparison = matches!(
                         op,
-                        B::Equal | B::NotEqual | B::Less | B::LessEqual | B::Greater | B::GreaterEqual
+                        B::Equal
+                            | B::NotEqual
+                            | B::Less
+                            | B::LessEqual
+                            | B::Greater
+                            | B::GreaterEqual
                     );
                     assert!(
                         !(is_comparison && is_float(left)),
@@ -102,7 +107,10 @@ fn wgsl_is_finite_value_is_an_integer_exponent_test() {
                 _ => {}
             }
         }
-        assert!(has_bitcast, "{name}: {GUARD} must bitcast its argument to u32");
+        assert!(
+            has_bitcast,
+            "{name}: {GUARD} must bitcast its argument to u32"
+        );
 
         // The exponent mask, read from the shader itself, must classify every
         // edge input exactly as `f32::is_finite` does.
@@ -143,12 +151,18 @@ fn activation_shader_drops_overflowing_sample() {
         .evaluate_activation_gpu(&samples, 6, 1.0, 1.0e20)
         .expect("activation evaluation should succeed");
 
-    assert!(sum_sq.is_finite(), "overflowing sample leaked into sum_sq: {sum_sq}");
+    assert!(
+        sum_sq.is_finite(),
+        "overflowing sample leaked into sum_sq: {sum_sq}"
+    );
     assert!(
         sum_err_act.is_finite(),
         "overflowing sample leaked into sum_error_activation: {sum_err_act}"
     );
-    assert!((sum_sq - 1.0).abs() < 1.0e-3, "sum_sq {sum_sq} should be the finite sample's 1.0");
+    assert!(
+        (sum_sq - 1.0).abs() < 1.0e-3,
+        "sum_sq {sum_sq} should be the finite sample's 1.0"
+    );
     assert!(
         (sum_err_act - 1.0).abs() < 1.0e-3,
         "sum_error_activation {sum_err_act} should be the finite sample's 1.0"

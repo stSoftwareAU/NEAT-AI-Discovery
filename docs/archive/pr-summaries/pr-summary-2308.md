@@ -35,7 +35,7 @@ flowchart LR
 ## Evidence
 
 Regression test:
-`src/analysis/implementation_tests/finite_guard_tests.rs::wgsl_is_finite_value_is_an_integer_exponent_test`
+`src/analysis/implementation_tests/issue_2308_finite_guard_test.rs::wgsl_is_finite_value_is_an_integer_exponent_test`
 
 - It parses and validates every embedded shader with naga.
 - It locates each `is_finite_value` function in the IR.
@@ -58,7 +58,7 @@ The original trigger is closed with no trivial bypass:
 - The test also fails if a live shader drops the guard.
 
 GPU test:
-`src/analysis/implementation_tests/finite_guard_tests.rs::activation_shader_drops_overflowing_sample`
+`src/analysis/implementation_tests/issue_2308_finite_guard_test.rs::activation_shader_drops_overflowing_sample`
 
 - It feeds an identity activation with scale `1e20`, so one sample overflows to
   `+Inf`.
@@ -69,7 +69,7 @@ GPU test:
 
 ## Test Plan
 
-- [x] `cargo test --lib finite_guard` — 2 passed, with the GPU test skipped for
+- [x] `cargo test --lib issue_2308_finite_guard` — 2 passed, with the GPU test skipped for
       lack of a GPU.
 - [x] Reverted only the shader edits, re-ran: the naga test failed as expected.
 - [x] `./quality.sh < /dev/null`
