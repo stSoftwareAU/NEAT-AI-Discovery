@@ -860,6 +860,88 @@ reaches them only as an `Err`.
 device, queue, layout, pipeline or reduce field, and every delegation forwards
 to one of them. The empty-input `Ok` short-circuits are benign.
 
+#### Init timeout — every `pollster::block_on` site (Issue #2242)
+
+`GPU_INIT_TIMEOUT_SECS` (`src/analysis/gpu/device.rs:54`) is not a deadline on
+any `block_on` itself. It bounds the warm-up poll and the caller's wait for
+`GpuAnalyzer::new()`, and nothing else.
+
+| Site | Cited at | Bounded by | Verdict |
+|---|---|---|---|
+| Probe `request_adapter` | `src/analysis/gpu/analyzer.rs:276` | Nothing. It runs on the caller's thread inside `check_gpu_availability`, behind the `OnceLock` at `analyzer.rs:255` | **Finding, #2332** |
+| Probe `request_device` | `src/analysis/gpu/analyzer.rs:288` | Nothing, as above | **Finding, #2332** |
+| Adapter-info `request_adapter` | `src/analysis/gpu/device.rs:445` | Nothing. `get_adapter_info_internal` runs on the caller's thread | **Finding, #2332** |
+| `new()` `request_adapter` / `request_device` | `src/analysis/gpu/analyzer.rs:361`, `:391` | They run on the GPU thread (`src/analysis/gpu/queue/scheduling.rs:54`). The caller waits with `recv_timeout(GPU_INIT_TIMEOUT_SECS)` at `scheduling.rs:80`–`:81`, and on timeout it calls `breaker.trip(GpuTripReason::InitTimeout)` (`:89`) and returns `Err(gpu_wedged_error(…))` (`:92`) | Refuted |
+| Recovery re-init | `src/analysis/gpu/queue/execution.rs:466` → `src/analysis/gpu/queue/executor.rs:133`–`:134` | It runs on the GPU thread while the caller waits in `wait_for_gpu_response` (`src/analysis/gpu/queue/submission.rs:112`) | Refuted |
+| Warm-up poll | `src/analysis/gpu/analyzer.rs:431`–`:435` | `poll_device_until_idle(…, GPU_INIT_TIMEOUT_SECS, …)` returns `Err` at the deadline | Refuted |
+
+#### Limits — `Limits::default()` (Issue #2242)
+
+`required_limits: wgpu::Limits::default()` at `src/analysis/gpu/analyzer.rs:291`
+(probe) and `:394` (`new()`) asks for the WebGPU baseline, which every adapter
+meets, so the request never fails on limits. A dispatch or binding that exceeds
+those limits raises a wgpu validation error. The per-kernel size checks are
+tracked in #2237 and #2238, and an uncaptured validation error panics loudly (#2314).
+Refuted, no new finding.
+
+#### Device loss (Issue #2242)
+
+There is no `set_device_lost_callback` and no `on_uncaptured_error` anywhere in
+`src/`. A lost device still surfaces as an `Err`: `poll_device_until_idle`
+returns the poll error at `src/analysis/gpu/device.rs:266`, and the map waits
+return a timeout `Err` at `device.rs:318`–`:323` and `:380`–`:385`.
+`is_device_lost_error` (`src/analysis/gpu/queue/recovery.rs:56`–`:72`)
+classifies those errors by string matching, which is #2115. An uncaptured
+validation error panics through wgpu's default handler, which is #2314. Refuted,
+no new finding.
+
+#### `device.rs` paths (Issue #2242)
+
+| Symbol | Cited at | Failure outcome |
+|---|---|---|
+| `create_wgpu_instance_safely` | `src/analysis/gpu/device.rs:178`–`:243` | `catch_unwind` at `:195`–`:200`, `None` on panic at `:240`. Every caller turns `None` into a result: `analyzer.rs:273`–`:275` (`no_gpu_result`), `analyzer.rs:355`–`:360` (`Err`), `device.rs:444` (`?` → `None`) |
+| `poll_device_until_idle` | `src/analysis/gpu/device.rs:254`–`:277` | `Ok` only once the queue is empty (`:259`–`:264`). `Err` on a poll error (`:266`) and at the deadline (`:268`–`:273`) |
+| `wait_for_buffer_map` | `src/analysis/gpu/device.rs:284`–`:326` | `Err` on a map error (`:300`), on a dropped sender (`:301`–`:303`) and at the deadline (`:318`–`:323`) |
+| `wait_for_buffer_maps_batch` | `src/analysis/gpu/device.rs:333`–`:388` | `Ok` for an empty batch (`:338`–`:340`). `Err` on a dropped sender (`:361`–`:363`), on a map error (`:372`) and at the deadline (`:380`–`:385`). The `.expect` at `:370` cannot fire because of the `all(is_some)` guard at `:367` |
+| `GPU_BUFFER_MAP_TIMEOUT_SECS` | `src/analysis/gpu/device.rs:49`–`:50` | Derived from the queue maximum minus a margin. The const asserts in `test_buffer_timeout_constants` (`:620`–`:623`) keep it positive and below the queue timeout |
+| `no_gpu_result` | `src/analysis/gpu/device.rs:396`–`:433` | Always `available: false` with a reason. `is_error` is `true` on macOS (`:406`) and `false` elsewhere (`:420`, `:430`) |
+| `get_adapter_info_internal` | `src/analysis/gpu/device.rs:438`–`:454` | `None` means no adapter info, and its callers log and continue. The unbounded `block_on` at `:445` is part of #2332 |
+
+#### `budget.rs` (Issue #2242)
+
+The file reads no environment variables.
+
+| Symbol | Cited at | Failure outcome |
+|---|---|---|
+| `unbounded` | `src/analysis/gpu/budget.rs:44` | `deadline: None`. It is never expired, and `remaining` falls back to `GPU_BUFFER_MAP_TIMEOUT_SECS`, so a wait is still capped |
+| `from_caller_timeout` | `src/analysis/gpu/budget.rs:54` | Sets a deadline ahead of the caller's timeout |
+| `remaining` | `src/analysis/gpu/budget.rs:86` | Saturates at zero |
+| `capped` | `src/analysis/gpu/budget.rs:98` | `wait.min(remaining())` |
+| `is_expired` | `src/analysis/gpu/budget.rs:104` | Only bounded budgets expire |
+| `check` | `src/analysis/gpu/budget.rs:111`–`:119` | Returns a stage-labelled `Err` once expired. Pinned by `exhausted_budget_fails_loudly` (`:209`–`:226`) |
+
+#### `breaker.rs` (Issue #2242)
+
+The file reads no environment thresholds. The shared `parse_env` silent default
+(`src/config/helpers.rs:36`–`:38`) is #2122.
+
+| Symbol | Cited at | Failure outcome |
+|---|---|---|
+| `GpuTripReason` | `src/analysis/gpu/breaker.rs:46`–`:59` | A typed reason carried into every error and skip |
+| `trip` | `src/analysis/gpu/breaker.rs:149`–`:172` | A one-way latch. The first trip logs `warn!` |
+| `check` | `src/analysis/gpu/breaker.rs:187`–`:198` | `Err` through `error` (`:231`–`:233`) once tripped |
+| `warn_analyses_skipped` | `src/analysis/gpu/breaker.rs:211`–`:227` | Logs `warn!` for each skipped analysis |
+| `gpu_wedged_error` | `src/analysis/gpu/breaker.rs:262`–`:267` | Typed `DiscoveryError::GpuWedged`. Pinned by `a_suppressed_call_returns_a_typed_wedged_error` (`:397`–`:406`) |
+| `GLOBAL_GPU_BREAKER` | `src/analysis/gpu/breaker.rs:270` | Process-wide, reached through `global_gpu_breaker` (`:277`) and `check_gpu_breaker` (`:314`) |
+| `gpu_wedged_skip_reason` | `src/analysis/gpu/breaker.rs:324`–`:329` | `Some(reason)` once tripped |
+| `reset_gpu_breaker` | `src/analysis/gpu/breaker.rs:332` | Explicit reset. There is no automatic re-arm |
+
+**Outcome (#2242): one finding, #2332** (`SEC-d6747980489b`, CWE-1088, low).
+The capability probe (`analyzer.rs:276`, `:288`) and
+`get_adapter_info_internal` (`device.rs:445`) block with no deadline, before
+the init timeout is armed. Every other `device.rs`, `budget.rs` and `breaker.rs`
+path fails loudly with a typed outcome.
+
 ### queue-core
 
 <!-- section: queue-core -->
@@ -887,6 +969,7 @@ Each slice appends rows only inside its own marked region.
 <!-- section: device -->
 | SEC-fe0b268a3799 | `src/analysis/utils/platform.rs:62` (was `analyzer.rs:354`–`:363`; guard `platform.rs:410`–`:413`) | CWE-362 | low | remediated — #1873: the only `set_var` is reached solely through `setup_gpu_environment`, which writes only while `/proc/self/task` counts one thread (`docs/archive/pr-summaries/pr-summary-1873.md`, `tests/gpu/issue_1873_gpu_env_setup_thread_guard.rs:38`) |
 | SEC-2b0c59cc73d5 | `src/analysis/gpu/analyzer.rs:296` (also `analyzer.rs:279`, `ffi_types/responses/gpu.rs:106`) | CWE-754 | low | open — #2318 |
+| SEC-d6747980489b | `src/analysis/gpu/analyzer.rs:276` (also `analyzer.rs:288`, `device.rs:445`) | CWE-1088 | low | open — #2332 |
 <!-- section: queue-core -->
 <!-- section: queue-lifecycle -->
 
@@ -935,6 +1018,12 @@ Each slice appends rows only inside its own marked region.
 | The `pub unsafe fn` re-exports (`suppress_mesa_warnings_if_requested`, `ensure_xdg_runtime_dir`) let a caller skip the thread guard | `src/analysis/system.rs:88`; `src/analysis/utils/mod.rs:60`; `src/analysis/utils/platform.rs:82`, `:147`, `:421`–`:422` | Both are `unsafe fn`, so a Rust caller must write `unsafe` and take on the `# Safety` precondition. Neither is `extern "C"`, and the only non-test call site is inside `setup_gpu_environment` after the guard (Issue #2240) |
 | Another non-test `env::set_var` on the GPU init path races `getenv` | `src/analysis/utils/platform.rs:62` | `platform.rs:62` is the only `env::set_var` in `src/` outside a `#[cfg(test)]` module or `*_tests.rs` file. The crate-wide env-write sweep is chunk 13 (#2096) (Issue #2240) |
 | An entry point returns `Ok` with a `None` device, queue, layout, pipeline or reduce field | `src/analysis/gpu/relu_evaluation.rs:81`; `src/analysis/gpu/activation_evaluation.rs:110`, `:416`; `src/analysis/gpu/bias_evaluation.rs:67`; `src/analysis/gpu/harmful_evaluation.rs:103`; `src/analysis/gpu/helpful_evaluation.rs:232` | Every field is read through `.context("…")?` before any GPU work, and the only `Ok` before those checks is an empty-input short-circuit that returns a zero-count or empty result (Issue #2241) |
+| `GpuAnalyzer::new()` blocks on `request_adapter`/`request_device` with no deadline | `src/analysis/gpu/analyzer.rs:361`, `:391`; `src/analysis/gpu/queue/scheduling.rs:80`–`:92` | It runs on the GPU thread. The caller's `recv_timeout(GPU_INIT_TIMEOUT_SECS)` trips the breaker and returns the typed `gpu_wedged_error` (Issue #2242) |
+| `Limits::default()` under-requests adapter limits | `src/analysis/gpu/analyzer.rs:291`, `:394` | The WebGPU baseline never fails the request. An oversized dispatch or binding is a validation error covered by #2237/#2238, and it panics loudly (#2314) (Issue #2242) |
+| No device-lost callback and no `on_uncaptured_error` | `src/analysis/gpu/device.rs:266`, `:318`–`:323`, `:380`–`:385`; `src/analysis/gpu/queue/recovery.rs:56`–`:72` | A lost device surfaces as a poll or timeout `Err`. The string classification is #2115, and the uncaptured-error panic is #2314 (Issue #2242) |
+| The batch map wait discards the `device.poll` result | `src/analysis/gpu/device.rs:378` | A lost device never completes its callbacks, so the loop still returns `Err` at the deadline (`:380`–`:385`) (Issue #2242) |
+| The single map wait swallows an empty-queue stall | `src/analysis/gpu/device.rs:309`–`:316` | The block is a no-op hint, and the loop still returns `Err` at the deadline (`:318`–`:323`) (Issue #2242) |
+| `budget.rs`/`breaker.rs` silently default a bad environment threshold | `src/analysis/gpu/budget.rs`; `src/analysis/gpu/breaker.rs`; `src/config/helpers.rs:36`–`:38` | Neither file reads the environment. The shared `parse_env` silent default is #2122 (Issue #2242) |
 <!-- section: queue-core -->
 <!-- section: queue-lifecycle -->
 
@@ -948,9 +1037,10 @@ activation halves (#2238: no new finding; relu and activation
 widen #2313 and #2314, and the unreachable GPU bias path is #2316). The device
 slice has recorded the SEC-fe0b268a3799 disposition (remediated by #1873) and
 the CPU-fallback cross-check (#2240: one finding, #2318) and the entry-point
-`None → Err` sweep (#2241: no finding). Its remaining per-file sweep is
-pending #2242. Every other file is pending its slice. Each slice records its
-outcome in its region under `## Audit sections`.
+`None → Err` sweep (#2241: no finding) and the per-file sweep of `analyzer.rs`,
+`budget.rs`, `breaker.rs` and `device.rs` (#2242: one finding, #2332).
+Every other file is pending its slice. Each slice records its outcome in its
+region under `## Audit sections`.
 
 ## Issues filed
 
@@ -978,6 +1068,10 @@ The sweep is in progress; each slice lists the issues it files here.
 - #2318 — `SEC-2b0c59cc73d5` (CWE-754, low): a software (CPU) wgpu adapter
   passes the GPU capability gate, and `gpu_info_to_json` drops its device type
   (device slice, #2240).
+- #2332 — `SEC-d6747980489b` (CWE-1088, low): the GPU capability probe blocks
+  on `request_adapter`/`request_device` with no deadline, before the init
+  timeout is armed, and a hung driver wedges every caller of the `OnceLock`
+  (device slice, #2242).
 
 ## Verify this record
 
