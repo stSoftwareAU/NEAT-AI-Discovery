@@ -17,12 +17,17 @@
 //!
 //! The second half of the file is the other kind of check the record needs. The
 //! sweep's verdicts rest on *behaviours*, not on prose, and a verdict backed
-//! only by a paragraph rots silently. Three of these tests pin the reachability
-//! the findings rest on — including one that drives the FFI boundary itself, so
-//! "reachable from finite records" is asserted where the gate actually lives —
-//! and three pin the `clean` verdicts. When #2181 is fixed the two `fan_in.rs`
-//! reachability tests must fail, which is the signal that this section's rows
-//! need re-sweeping rather than merely re-reading.
+//! only by a paragraph rots silently. #2181 was the canary: this file used to
+//! carry two tests asserting the fan-in NaN-ranking defect was *still*
+//! reachable, with a note that their failure was the signal to re-sweep this
+//! section rather than merely re-read it. #2181 was fixed (Issue #2303/#2304,
+//! PR #2331, commit `87ebeba`) and those two tests fired exactly as designed;
+//! they are now `a_finite_record_set_no_longer_drives_the_fan_in_correlation_to_nan`
+//! and `fan_in_candidates_no_longer_depend_on_the_order_the_caller_lists_neurons_in`,
+//! pinning the fixed behaviour instead. The remaining tests pin the reachability
+//! the other findings rest on — including one that drives the FFI boundary
+//! itself, so "reachable from finite records" is asserted where the gate
+//! actually lives — and the `clean` verdicts.
 
 use std::path::PathBuf;
 
@@ -433,19 +438,26 @@ fn neuron(uuid: &str, neuron_type: &str) -> NeuronJson {
     }
 }
 
-/// #2181, first half: a NaN correlation is reachable from records every FFI
-/// finitude gate accepts, and `fan_in.rs`'s threshold filter keeps it.
+/// #2181, first half: a correlation-overflowing activation swing is reachable
+/// from records every FFI finitude gate accepts.
 ///
-/// `pearson_correlation`'s `denom < f32::EPSILON` guard is a skip-on-comparison
-/// test a NaN loses, and `f32::clamp` propagates a NaN, so an activation swing
-/// that overflows the `f32` covariance accumulator leaves the function as a
-/// NaN. Issues #2134 / #2135 reject `Infinity` and `NaN` **on the wire**; they
-/// do not reject a finite magnitude that overflows later.
+/// `pearson_correlation`'s `denom < f32::EPSILON` guard used to be a
+/// skip-on-comparison test a NaN loses, with `f32::clamp` then propagating the
+/// NaN, so an activation swing that overflowed the `f32` covariance
+/// accumulator used to leave the function at NaN. Issues #2134 / #2135 reject
+/// `Infinity` and `NaN` **on the wire**; they do not reject a finite magnitude
+/// that overflows later — which is exactly why this crafted swing still has to
+/// stay finite at the boundary.
 ///
-/// When #2181 is fixed this test must fail — that is the signal the
-/// `fan_in.rs` row needs re-sweeping rather than merely re-reading.
+/// **Since fixed (Issue #2304, PR #2328, merged into this branch via PR
+/// #2331, commit `87ebeba`):** `pearson_correlation` now returns `0.0` for a
+/// non-finite result instead of letting the NaN escape. This test keeps the
+/// same crafted trigger as a regression guard — it produced a NaN against the
+/// unfixed code and now proves the function launders it to `0.0` instead. See
+/// `docs/audits/security-sweep-chunk-08b-synapse-scoring-recommendation.md`
+/// § "recommendation core" for the `fan_in.rs` row this re-sweeps.
 #[test]
-fn a_finite_record_set_still_drives_the_fan_in_correlation_to_nan() {
+fn a_finite_record_set_no_longer_drives_the_fan_in_correlation_to_nan() {
     let activations: Vec<f32> = (0..30_u32)
         .map(|i| if i.is_multiple_of(2) { 2.0e30 } else { -2.0e30 })
         .collect();
@@ -462,21 +474,19 @@ fn a_finite_record_set_still_drives_the_fan_in_correlation_to_nan() {
     );
 
     let corr = pearson_correlation(&activations, &errors);
-    assert!(
-        corr.is_nan(),
-        "the f32 covariance accumulator must still overflow to a NaN correlation, got {corr}"
+    assert_eq!(
+        corr, 0.0,
+        "the overflowed f32 covariance accumulator must now be laundered to 0.0, not a NaN, got \
+         {corr}"
     );
 
     // The filter `detect_fan_in_candidates` applies to this value, spelled the
-    // way the production code spells it. A NaN loses the `<`, so the input is
-    // kept and its NaN key reaches the non-total comparator.
+    // way the production code spells it. `0.0` loses the threshold test
+    // cleanly — no comparator sees a NaN.
     const INPUT_ERROR_CORRELATION_THRESHOLD: f32 = 0.3;
     assert!(
-        corr.abs()
-            .partial_cmp(&INPUT_ERROR_CORRELATION_THRESHOLD)
-            .is_none(),
-        "the threshold filter must still fail open on a NaN correlation — a fail-closed filter \
-         would close #2181 at the source"
+        corr.abs() < INPUT_ERROR_CORRELATION_THRESHOLD,
+        "the threshold filter must drop the laundered 0.0 correlation, a fail-closed outcome"
     );
 }
 
@@ -513,17 +523,26 @@ fn the_ffi_boundary_still_accepts_the_magnitudes_both_findings_are_triggered_wit
     );
 }
 
-/// #2181, second half: the resulting order is *unspecified*, and the caller
-/// picks it. The same records in two neuron orderings must not produce
-/// different candidate sets — today they do.
+/// #2181, second half: the resulting order used to be *unspecified*, and the
+/// caller's ordering picked it. The same records in two neuron orderings must
+/// no longer produce different candidate sets.
 ///
-/// Listing the poisoned inputs after the honest ones returns every genuine
-/// candidate; listing them first returns none, because a comparator that
-/// reports `Equal` for every NaN-vs-finite pair gives `sort_by` no total order
-/// to preserve and `truncate(MAX_INPUTS_PER_TARGET)` then keeps whatever
-/// survived.
+/// Before the fix, listing the poisoned inputs after the honest ones returned
+/// every genuine candidate, while listing them first returned none — a
+/// comparator that reported `Equal` for every NaN-vs-finite pair gave
+/// `sort_by` no total order to preserve, and `truncate(MAX_INPUTS_PER_TARGET)`
+/// then kept whatever survived.
+///
+/// **Since fixed (Issue #2303, PR #2323, merged into this branch via PR
+/// #2331, commit `87ebeba`):** `detect_fan_in_candidates`'s per-target
+/// ranking now runs through `rank_input_scores`, which drops every non-finite
+/// or sub-threshold correlation with a `retain` before a `total_cmp` sort
+/// tie-broken on the input UUID — a genuine total order the input list order
+/// cannot perturb. This test keeps the same crafted trigger as a regression
+/// guard — the two orderings disagreed against the unfixed code and now prove
+/// they agree.
 #[test]
-fn fan_in_candidates_still_depend_on_the_order_the_caller_lists_neurons_in() {
+fn fan_in_candidates_no_longer_depend_on_the_order_the_caller_lists_neurons_in() {
     const SAMPLES: u32 = 60;
     const HONEST_INPUTS: usize = 15;
     const POISON_INPUTS: usize = 20;
@@ -613,19 +632,19 @@ fn fan_in_candidates_still_depend_on_the_order_the_caller_lists_neurons_in() {
         !honest_first.is_empty(),
         "the honest inputs must still produce fan-in candidates, or the trigger proves nothing"
     );
-    assert_ne!(
+    assert_eq!(
         honest_first.len(),
         poison_first.len(),
-        "#2181 says the two orderings still disagree ({} vs {}) — if they now agree, the \
-         comparator has been made total and the `fan_in.rs` row must be re-swept to `clean`",
+        "#2181 is fixed, so the two orderings must now agree ({} vs {}) — a mismatch means the \
+         comparator has regressed and the `fan_in.rs` row needs re-sweeping",
         honest_first.len(),
         poison_first.len()
     );
     assert!(
-        poison_first.is_empty(),
-        "listing the NaN-correlation inputs first must still empty the \
-         MAX_INPUTS_PER_TARGET window, got {} candidates",
-        poison_first.len()
+        !poison_first.is_empty(),
+        "listing the overflow-correlation inputs first must no longer empty the \
+         MAX_INPUTS_PER_TARGET window — the retain in rank_input_scores drops them before the \
+         sort ever runs, so the honest candidates still come through"
     );
 }
 

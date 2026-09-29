@@ -60,12 +60,6 @@ pub const RELU_SHADER: &str = include_str!("../../shaders/relu.wgsl");
 /// for add-neuron candidates. Supports orientation and scale parameters.
 pub const ACTIVATION_SHADER: &str = include_str!("../../shaders/activation.wgsl");
 
-/// Bias optimisation shader.
-///
-/// Evaluates multiple bias candidate values in parallel to find the optimal
-/// bias for a new neuron. Uses GPU-accelerated error computation.
-pub const BIAS_SHADER: &str = include_str!("../../shaders/bias.wgsl");
-
 /// Helpful contribution reduction shader (Issue #218).
 ///
 /// Performs parallel tree reduction within workgroups to aggregate `HelpfulContribution`
@@ -130,8 +124,8 @@ pub const WORKGROUP_SIZE: u32 = 256;
 /// - Maximum: 60 (too long delays error detection)
 /// - Default: 30 (reasonable for most systems)
 ///
-/// Note: This constant is also available from `gpu/device.rs` for backwards
-/// compatibility. Both locations reference the same value.
+/// This is the single definition (Issue #2311). `gpu/device.rs` re-exports
+/// this item for backwards compatibility rather than defining its own copy.
 pub const GPU_INIT_TIMEOUT_SECS: u64 = 30;
 
 /// Timeout in seconds for graceful GPU thread shutdown.
@@ -200,7 +194,6 @@ mod tests {
         ("harmful", HARMFUL_SHADER),
         ("relu", RELU_SHADER),
         ("activation", ACTIVATION_SHADER),
-        ("bias", BIAS_SHADER),
         ("helpful_reduce", HELPFUL_REDUCE_SHADER),
         ("harmful_reduce", HARMFUL_REDUCE_SHADER),
         ("activation_reduce", ACTIVATION_REDUCE_SHADER),
@@ -244,10 +237,6 @@ mod tests {
         assert!(
             ACTIVATION_SHADER.contains("@compute"),
             "ACTIVATION_SHADER should contain @compute decorator"
-        );
-        assert!(
-            BIAS_SHADER.contains("@compute"),
-            "BIAS_SHADER should contain @compute decorator"
         );
         assert!(
             HELPFUL_REDUCE_SHADER.contains("@compute"),

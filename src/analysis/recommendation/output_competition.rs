@@ -26,6 +26,11 @@
 //!    activations exceed `CO_ACTIVATION_THRESHOLD` (they are "co-firing").
 //! 3. The pair has no existing synapse between them — we never duplicate.
 //!
+//! The pair scan is O(outputs²). It checks the analysis deadline (and host
+//! cancellation) at the top of every outer row and reports an early return
+//! through [`BoundedScan::truncation`] (Issue #2236); each output's
+//! `obs_index → activation` map is built once, not once per pair.
+//!
 //! When all checks pass, an [`OutputCompetitionCandidate`] is emitted with
 //! a small negative `recommended_weight` (`LATERAL_INHIBITION_WEIGHT`).
 //! `output_competition_to_coordinated_candidates` packages each candidate
@@ -35,9 +40,12 @@
 #![allow(clippy::cast_precision_loss)] // Intentional numeric casts for neural-network statistics (Issue #873).
 
 use std::collections::{HashMap, HashSet};
+use std::time::SystemTime;
 
 use crate::analysis::constants::MIN_DISCOVERY_SAMPLE_COUNT;
+use crate::analysis::recommendation::epistatic::{BoundedScan, ScanTruncation};
 use crate::analysis::task_descriptor::{TargetTopology, TaskDescriptor};
+use crate::analysis::utils::deadline_passed;
 use crate::types::DiscoverRecord;
 use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson, CreatureJson};
 
@@ -96,6 +104,9 @@ pub fn role_aware_topology(descriptor: &TaskDescriptor) -> bool {
 /// Returns an empty vector for any other descriptor (regression guard for
 /// `OTHER` / `Unknown` / `Independent` / `Margin`).
 ///
+/// Honours host cancellation but has no deadline; production dispatch uses
+/// [`detect_output_competition_with_deadline`].
+///
 /// # Arguments
 /// * `creature` — the creature whose output neurons are inspected.
 /// * `neuron_records` — recorded `(uuid, records)` pairs. Only output-neuron
@@ -108,8 +119,29 @@ pub fn detect_output_competition(
     neuron_records: &[(String, impl AsRef<[DiscoverRecord]>)],
     descriptor: &TaskDescriptor,
 ) -> Vec<OutputCompetitionCandidate> {
+    detect_output_competition_with_deadline(creature, neuron_records, descriptor, &None).candidates
+}
+
+/// Deadline-bounded output-competition detection (Issue #2236).
+///
+/// The O(outputs²) pair scan checks `deadline_passed` (which also reports
+/// host cancellation, Issue #1047) at the top of every outer row and returns
+/// the candidates found so far. An early return is reported through
+/// [`BoundedScan::truncation`] so a partial scan is never presented as
+/// complete.
+#[must_use]
+pub fn detect_output_competition_with_deadline(
+    creature: &CreatureJson,
+    neuron_records: &[(String, impl AsRef<[DiscoverRecord]>)],
+    descriptor: &TaskDescriptor,
+    deadline: &Option<SystemTime>,
+) -> BoundedScan<OutputCompetitionCandidate> {
+    let mut scan = BoundedScan {
+        candidates: Vec::new(),
+        truncation: None,
+    };
     if !role_aware_topology(descriptor) {
-        return Vec::new();
+        return scan;
     }
 
     // Collect output neurons in their `creature.neurons[]` order so that
@@ -122,7 +154,7 @@ pub fn detect_output_competition(
         .collect();
 
     if output_neurons.len() < 2 {
-        return Vec::new();
+        return scan;
     }
 
     // Existing synapse set — we never propose a duplicate.
@@ -138,9 +170,23 @@ pub fn detect_output_competition(
         .map(|(uuid, records)| (uuid.as_str(), records.as_ref()))
         .collect();
 
-    let mut candidates = Vec::new();
+    // Issue #2236: one `obs_index → activation` map per output, built once
+    // rather than once per pair.
+    let by_idx: HashMap<&str, HashMap<u32, f32>> = output_neurons
+        .iter()
+        .filter_map(|uuid| {
+            records_map
+                .get(uuid)
+                .map(|r| (*uuid, activation_by_index(r)))
+        })
+        .collect();
 
     for i in 0..output_neurons.len() {
+        // Issue #2236: one check per outer row bounds the overrun to O(n) pairs.
+        if deadline_passed(deadline) {
+            scan.truncation = Some(ScanTruncation::DeadlinePassed);
+            break;
+        }
         for j in (i + 1)..output_neurons.len() {
             let a = output_neurons[i];
             let b = output_neurons[j];
@@ -149,12 +195,11 @@ pub fn detect_output_competition(
                 continue;
             }
 
-            let (Some(a_records), Some(b_records)) = (records_map.get(a), records_map.get(b))
-            else {
+            let (Some(a_records), Some(b_by_idx)) = (records_map.get(a), by_idx.get(b)) else {
                 continue;
             };
 
-            let Some((co_activation_score, sample_count)) = co_activation(a_records, b_records)
+            let Some((co_activation_score, sample_count)) = co_activation(a_records, b_by_idx)
             else {
                 continue;
             };
@@ -163,7 +208,7 @@ pub fn detect_output_competition(
                 continue;
             }
 
-            candidates.push(OutputCompetitionCandidate {
+            scan.candidates.push(OutputCompetitionCandidate {
                 from_output_uuid: a.to_string(),
                 to_output_uuid: b.to_string(),
                 recommended_weight: LATERAL_INHIBITION_WEIGHT,
@@ -179,8 +224,17 @@ pub fn detect_output_competition(
         }
     }
 
-    candidates.sort_by(|a, b| b.estimated_improvement.total_cmp(&a.estimated_improvement));
-    candidates
+    scan.candidates
+        .sort_by(|a, b| b.estimated_improvement.total_cmp(&a.estimated_improvement));
+    scan
+}
+
+/// Index one output's records by `obs_index` (last record wins on a repeat).
+fn activation_by_index(records: &[DiscoverRecord]) -> HashMap<u32, f32> {
+    records
+        .iter()
+        .map(|r| (r.obs_index, r.activation))
+        .collect()
 }
 
 /// Compute a co-activation score between two output neurons' records.
@@ -193,15 +247,13 @@ pub fn detect_output_competition(
 ///   outputs.
 ///
 /// Returns `None` when no aligned co-activated samples exist.
+///
+/// `b_by_idx` is the second output's [`activation_by_index`] map, built once
+/// per output by the caller (Issue #2236).
 fn co_activation(
     a_records: &[DiscoverRecord],
-    b_records: &[DiscoverRecord],
+    b_by_idx: &HashMap<u32, f32>,
 ) -> Option<(f32, usize)> {
-    let b_by_idx: HashMap<u32, f32> = b_records
-        .iter()
-        .map(|r| (r.obs_index, r.activation))
-        .collect();
-
     let mut count = 0_usize;
     let mut sum_min = 0.0_f32;
 
@@ -318,14 +370,14 @@ mod tests {
     fn co_activation_returns_none_for_disjoint_records() {
         let a: Vec<_> = (0..30).map(|i| rec("a", i, 0.9)).collect();
         let b: Vec<_> = (0..30).map(|i| rec("b", i, 0.1)).collect();
-        assert!(co_activation(&a, &b).is_none());
+        assert!(co_activation(&a, &activation_by_index(&b)).is_none());
     }
 
     #[test]
     fn co_activation_counts_only_aligned_pairs_above_threshold() {
         let a: Vec<_> = (0..30).map(|i| rec("a", i, 0.8)).collect();
         let b: Vec<_> = (0..30).map(|i| rec("b", i, 0.9)).collect();
-        let (score, count) = co_activation(&a, &b).expect("co-activated");
+        let (score, count) = co_activation(&a, &activation_by_index(&b)).expect("co-activated");
         assert_eq!(count, 30);
         assert!((score - 0.8).abs() < 1e-5);
     }

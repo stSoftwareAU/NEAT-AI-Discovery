@@ -16,7 +16,7 @@
 //!
 //! The second slice (Issue #2241) adds the `GpuAnalyzer` `None → Err` record:
 //!
-//! * the entry-point table carries all eleven entry points, in order, each
+//! * the entry-point table carries all ten entry points, in order, each
 //!   citing its device, queue, layout, pipeline and (where it has one) reduce
 //!   check as `path.rs:line` plus the `.context("…")` string, and every string
 //!   still guards that entry point's body in that order;
@@ -128,14 +128,16 @@ const SWEEP_SYMBOLS: [(&str, &str); 5] = [
 ];
 
 /// Every public `GpuAnalyzer` evaluation entry point, in record order.
-const ENTRY_POINTS: [&str; 11] = [
+/// `evaluate_bias_gpu` was removed with the unreachable GPU bias path
+/// (Issue #2316); the record's row for it described the code at this
+/// sweep's pinned baseline, before that removal.
+const ENTRY_POINTS: [&str; 10] = [
     "evaluate_relu_gpu",
     "evaluate_relu_gpu_with_budget",
     "evaluate_activation_gpu",
     "evaluate_activation_gpu_with_budget",
     "evaluate_activations_batched_gpu",
     "evaluate_activations_batched_gpu_with_budget",
-    "evaluate_bias_gpu",
     "evaluate_harmful_batch",
     "evaluate_harmful_batch_with_budget",
     "evaluate_helpful_batch",
@@ -586,7 +588,7 @@ fn every_entry_point_cites_its_none_to_err_checks_in_order() {
         cited.extend(reduce);
 
         // The unbudgeted wrappers delegate, so their checks live in `_with_budget`.
-        let checker = if entry.ends_with("_with_budget") || entry == "evaluate_bias_gpu" {
+        let checker = if entry.ends_with("_with_budget") {
             entry.to_string()
         } else {
             format!("{entry}_with_budget")
@@ -659,7 +661,7 @@ fn every_delegation_row_still_delegates_to_an_entry_point() {
 #[test]
 fn every_empty_input_short_circuit_carries_a_benign_verdict() {
     let rows = audit_table(SHORT_CIRCUIT_TABLE);
-    assert_eq!(rows.len(), 7, "one row per empty-input `Ok` short-circuit");
+    assert_eq!(rows.len(), 6, "one row per empty-input `Ok` short-circuit");
     for row in &rows {
         assert_eq!(
             row.len(),

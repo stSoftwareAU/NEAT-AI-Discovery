@@ -28,8 +28,6 @@ pub(super) fn all_none_analyzer() -> GpuAnalyzer {
         relu_pipeline: None,
         activation_layout: None,
         activation_pipeline: None,
-        bias_layout: None,
-        bias_pipeline: None,
         helpful_reduce_layout: None,
         helpful_reduce_pipeline: None,
         harmful_reduce_layout: None,
@@ -96,10 +94,6 @@ fn every_inherent_entry_point_errs_when_the_device_is_none() {
     assert_device_err(
         "evaluate_activations_batched_gpu_with_budget",
         gpu.evaluate_activations_batched_gpu_with_budget(&s, &CONFIGS, budget()),
-    );
-    assert_device_err(
-        "evaluate_bias_gpu",
-        gpu.evaluate_bias_gpu(&s, 1.0, 1.0, 0, (-1.0, 1.0, 0.5)),
     );
     assert_device_err(
         "evaluate_harmful_batch",

@@ -105,6 +105,17 @@ pub(crate) fn group_sources_by_locality<'a>(
     sources: &[(&'a OrderedNeuron, Arc<Vec<DiscoverRecord>>)],
     deadline: &Option<SystemTime>,
 ) -> Vec<SampleLocalityGroup<'a>> {
+    group_sources_by_locality_observed(sources, deadline, || {})
+}
+
+/// [`group_sources_by_locality`] with `on_comparison` called once per pairwise
+/// overlap comparison — the scan's unit of work — so a test can assert on how
+/// the work grows without timing it (Issue #2296).
+fn group_sources_by_locality_observed<'a>(
+    sources: &[(&'a OrderedNeuron, Arc<Vec<DiscoverRecord>>)],
+    deadline: &Option<SystemTime>,
+    mut on_comparison: impl FnMut(),
+) -> Vec<SampleLocalityGroup<'a>> {
     // Too few sources to benefit from grouping, or too many to scan safely.
     if sources.len() < MIN_GROUP_SIZE_FOR_LOCALITY || sources.len() > MAX_SOURCES_FOR_LOCALITY_SCAN
     {
@@ -160,6 +171,7 @@ pub(crate) fn group_sources_by_locality<'a>(
                 continue;
             }
 
+            on_comparison();
             let other_indices = &source_indices[j];
             let overlap = compute_obs_index_overlap(my_indices, other_indices);
 
