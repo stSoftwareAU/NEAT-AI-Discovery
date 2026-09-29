@@ -11,7 +11,7 @@ use std::sync::mpsc;
 use wgpu::util::DeviceExt;
 
 use crate::analysis::gpu::budget::GpuTimeBudget;
-use crate::analysis::gpu::device::wait_for_buffer_map;
+use crate::analysis::gpu::device::{map_result_forwarder, wait_for_buffer_map};
 use crate::analysis::gpu::pipeline_builder::{STANDARD_BINDINGS, build_compute_pipeline};
 use crate::analysis::gpu::shaders::{RELU_SHADER, WORKGROUP_SIZE};
 use crate::analysis::samples::{
@@ -179,11 +179,7 @@ impl GpuAnalyzer {
 
         let buffer_slice = staging_buffer.slice(..);
         let (sender, receiver) = mpsc::channel();
-        buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
-            sender
-                .send(result)
-                .expect("Failed to send map_async result");
-        });
+        buffer_slice.map_async(wgpu::MapMode::Read, map_result_forwarder(sender));
 
         // Event-driven wait: poll non-blocking, check callback channel
         // Issue #1928: bounded by the budget remaining for this request.

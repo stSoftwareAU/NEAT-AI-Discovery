@@ -12,7 +12,9 @@ use std::time::Duration;
 use wgpu::util::DeviceExt;
 
 use crate::analysis::gpu::budget::GpuTimeBudget;
-use crate::analysis::gpu::device::{poll_device_until_idle, wait_for_buffer_maps_batch};
+use crate::analysis::gpu::device::{
+    map_result_forwarder, poll_device_until_idle, wait_for_buffer_maps_batch,
+};
 use crate::analysis::gpu::heartbeat::beat_sub_batch_submitted;
 use crate::analysis::gpu::pipeline_builder::{STANDARD_BINDINGS, build_compute_pipeline};
 use crate::analysis::gpu::shaders::{
@@ -370,11 +372,7 @@ impl GpuAnalyzer {
             for staging_buffer in &batch_staging_buffers {
                 let buffer_slice = staging_buffer.slice(..);
                 let (sender, receiver) = mpsc::channel();
-                buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
-                    sender
-                        .send(result)
-                        .expect("Failed to send map_async result");
-                });
+                buffer_slice.map_async(wgpu::MapMode::Read, map_result_forwarder(sender));
                 map_receivers.push(receiver);
             }
 

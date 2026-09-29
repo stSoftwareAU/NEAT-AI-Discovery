@@ -9,7 +9,9 @@ use anyhow::{Context, Result};
 use std::sync::mpsc;
 use wgpu::util::DeviceExt;
 
-use crate::analysis::gpu::device::{GPU_BUFFER_MAP_TIMEOUT_SECS, wait_for_buffer_map};
+use crate::analysis::gpu::device::{
+    GPU_BUFFER_MAP_TIMEOUT_SECS, map_result_forwarder, wait_for_buffer_map,
+};
 use crate::analysis::gpu::pipeline_builder::{BIAS_BINDINGS, build_compute_pipeline};
 use crate::analysis::gpu::shaders::{BIAS_SHADER, MIN_NEURON_SAMPLE_COUNT, WORKGROUP_SIZE};
 use crate::analysis::samples::{
@@ -189,11 +191,7 @@ impl GpuAnalyzer {
 
         let buffer_slice = staging_buffer.slice(..);
         let (sender, receiver) = mpsc::channel();
-        buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
-            sender
-                .send(result)
-                .expect("Failed to send map_async result");
-        });
+        buffer_slice.map_async(wgpu::MapMode::Read, map_result_forwarder(sender));
 
         // Event-driven wait: poll non-blocking, check callback channel
         wait_for_buffer_map(device, &receiver, GPU_BUFFER_MAP_TIMEOUT_SECS)
