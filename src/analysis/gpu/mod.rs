@@ -15,7 +15,6 @@
 //! ├── harmful_evaluation.rs     <- Harmful synapse GPU evaluation (Issue #520)
 //! ├── relu_evaluation.rs        <- ReLU activation GPU evaluation (Issue #520)
 //! ├── activation_evaluation.rs  <- Activation function GPU evaluation (Issue #520)
-//! ├── bias_evaluation.rs        <- Bias GPU evaluation (Issue #520)
 //! ├── budget.rs                 <- Per-request GPU time budget (Issue #1928)
 //! ├── breaker.rs                <- Process-wide GPU circuit breaker (Issue #1930)
 //! ├── pipeline_builder.rs      <- Shared compute pipeline builder (Issue #978)
@@ -36,7 +35,6 @@
 
 pub mod activation_evaluation;
 pub mod analyzer;
-pub mod bias_evaluation;
 pub mod breaker;
 pub mod budget;
 pub mod device;
@@ -89,7 +87,7 @@ pub use queue::recovery::{
 
 // Re-export shader module contents (Issue #277)
 pub use shaders::{
-    ACTIVATION_REDUCE_SHADER, ACTIVATION_SHADER, BIAS_SHADER,
+    ACTIVATION_REDUCE_SHADER, ACTIVATION_SHADER,
     GPU_INIT_TIMEOUT_SECS as SHADER_GPU_INIT_TIMEOUT_SECS, GPU_SHUTDOWN_TIMEOUT_SECS,
     HARMFUL_SHADER, HELPFUL_SHADER, MIN_NEURON_SAMPLE_COUNT, RELU_SHADER, WORKGROUP_SIZE,
 };
@@ -153,7 +151,6 @@ mod tests {
         assert!(HARMFUL_SHADER.contains("@compute"));
         assert!(RELU_SHADER.contains("@compute"));
         assert!(ACTIVATION_SHADER.contains("@compute"));
-        assert!(BIAS_SHADER.contains("@compute"));
 
         // Verify workgroup size matches shaders
         assert_eq!(WORKGROUP_SIZE, 256);

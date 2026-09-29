@@ -4,7 +4,7 @@
 //! - CPU activation function implementations for candidate evaluation
 //! - Activation candidate specifications (`ACTIVATION_SPECS`)
 //! - GPU ID mapping for activation functions
-//! - Bias range helpers for different activation types
+//! - Bias value helpers for different activation types
 //! - Predicates for activation function classification
 //! - Target simulation functions for saturation-aware scoring
 //!
@@ -153,19 +153,6 @@ mod tests {
         assert_eq!(activation_name_to_gpu_id("ReLU6"), 18);
         // Unknown defaults to IDENTITY
         assert_eq!(activation_name_to_gpu_id("UNKNOWN"), 6);
-    }
-
-    #[test]
-    fn test_get_bias_range() {
-        let (min, max, step) = get_bias_range("BIPOLAR");
-        assert_eq!(min, -10.0);
-        assert_eq!(max, 10.0);
-        assert_eq!(step, 1.0);
-
-        let (min, max, step) = get_bias_range("TANH");
-        assert_eq!(min, -10.0);
-        assert_eq!(max, 10.0);
-        assert_eq!(step, 0.5);
     }
 
     #[test]

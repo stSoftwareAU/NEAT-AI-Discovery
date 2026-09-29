@@ -82,22 +82,6 @@ pub(crate) const STANDARD_BINDINGS: [BufferBindingSpec; 3] = [
     },
 ];
 
-/// Bias-specific 4-binding layout: two storage read-only, one storage read-write, one uniform.
-pub(crate) const BIAS_BINDINGS: [BufferBindingSpec; 4] = [
-    BufferBindingSpec {
-        ty: wgpu::BufferBindingType::Storage { read_only: true },
-    },
-    BufferBindingSpec {
-        ty: wgpu::BufferBindingType::Storage { read_only: true },
-    },
-    BufferBindingSpec {
-        ty: wgpu::BufferBindingType::Storage { read_only: false },
-    },
-    BufferBindingSpec {
-        ty: wgpu::BufferBindingType::Uniform,
-    },
-];
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -105,11 +89,6 @@ mod tests {
     #[test]
     fn test_standard_bindings_has_correct_count() {
         assert_eq!(STANDARD_BINDINGS.len(), 3);
-    }
-
-    #[test]
-    fn test_bias_bindings_has_correct_count() {
-        assert_eq!(BIAS_BINDINGS.len(), 4);
     }
 
     #[test]
@@ -127,30 +106,6 @@ mod tests {
         // Binding 2: uniform
         assert!(matches!(
             STANDARD_BINDINGS[2].ty,
-            wgpu::BufferBindingType::Uniform
-        ));
-    }
-
-    #[test]
-    fn test_bias_bindings_types() {
-        // Binding 0: storage read-only (samples)
-        assert!(matches!(
-            BIAS_BINDINGS[0].ty,
-            wgpu::BufferBindingType::Storage { read_only: true }
-        ));
-        // Binding 1: storage read-only (bias candidates)
-        assert!(matches!(
-            BIAS_BINDINGS[1].ty,
-            wgpu::BufferBindingType::Storage { read_only: true }
-        ));
-        // Binding 2: storage read-write (results)
-        assert!(matches!(
-            BIAS_BINDINGS[2].ty,
-            wgpu::BufferBindingType::Storage { read_only: false }
-        ));
-        // Binding 3: uniform
-        assert!(matches!(
-            BIAS_BINDINGS[3].ty,
             wgpu::BufferBindingType::Uniform
         ));
     }

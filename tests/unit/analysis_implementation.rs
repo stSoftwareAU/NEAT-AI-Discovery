@@ -520,7 +520,6 @@ Pages speculative:                        12345.
             outgoing_weight,
             identity_activation,
             "IDENTITY",
-            None,
             Some("HARD_TANH"),
         );
         assert!(
@@ -535,7 +534,6 @@ Pages speculative:                        12345.
             outgoing_weight,
             identity_activation,
             "IDENTITY",
-            None,
             Some("cLiPpEd"),
         );
         assert!(
