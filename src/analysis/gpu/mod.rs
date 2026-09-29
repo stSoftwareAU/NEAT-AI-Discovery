@@ -51,8 +51,8 @@ pub mod shaders;
 pub use device::{
     GPU_BUFFER_MAP_TIMEOUT_MARGIN_SECS, GPU_BUFFER_MAP_TIMEOUT_SECS, GPU_INIT_TIMEOUT_SECS,
     GpuAvailabilityResult, GpuPerformanceTier, create_wgpu_instance_safely, detect_gpu_tier,
-    detect_unified_memory, get_adapter_info_internal, no_gpu_result, poll_device_until_idle,
-    wait_for_buffer_map, wait_for_buffer_maps_batch,
+    detect_unified_memory, get_adapter_info_internal, map_result_forwarder, no_gpu_result,
+    poll_device_until_idle, wait_for_buffer_map, wait_for_buffer_maps_batch,
 };
 
 // Re-export GPU_QUEUE_TIMEOUT_MAX_SECS from device (which gets it from utils)

@@ -276,6 +276,22 @@ pub fn poll_device_until_idle(device: &wgpu::Device, timeout: Duration, label: &
     }
 }
 
+/// Build the `map_async` completion callback that forwards the mapping result
+/// to the waiter's channel.
+///
+/// Issue #2313: infallible by design. When a wait times out or fails, the
+/// receivers drop before the staging buffers, and wgpu then fires each pending
+/// callback inline with `MapAborted`. A panic here would unwind inside wgpu's
+/// buffer drop — a second panic that aborts the host process.
+pub fn map_result_forwarder(
+    sender: std::sync::mpsc::Sender<Result<(), wgpu::BufferAsyncError>>,
+) -> impl FnOnce(Result<(), wgpu::BufferAsyncError>) + Send + 'static {
+    move |result| {
+        // A dropped receiver means the waiter has already returned.
+        let _ = sender.send(result);
+    }
+}
+
 /// Wait for a GPU buffer mapping to complete.
 ///
 /// We avoid `Maintain::Wait` because that can block forever on some machines if
