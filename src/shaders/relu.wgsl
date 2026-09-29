@@ -30,13 +30,10 @@ var<storage, read_write> contributions: array<ReluContribution>;
 @group(0) @binding(2)
 var<uniform> uniforms: ReluUniforms;
 
-const MAX_F32: f32 = 3.402823466e+38;
-
+// An all-ones exponent marks Inf or NaN. An integer test, because fast-math
+// may fold a float self-comparison (`v != v`) away (Issue #2308).
 fn is_finite_value(value: f32) -> bool {
-    if (value != value) {
-        return false;
-    }
-    return abs(value) <= MAX_F32;
+    return (bitcast<u32>(value) & 0x7f800000u) != 0x7f800000u;
 }
 
 @compute @workgroup_size(256)
