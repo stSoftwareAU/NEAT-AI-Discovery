@@ -31,6 +31,8 @@ Results:
 This is a backend, audit and test change with no UI. Evidence is test output:
 
 - `cargo test --lib --all-features analysis::gpu::queue`: 81 passed. This includes the 7 new `empty_vs_zero_tests` and the existing `wedge_tests` and `stale_skip_tests`, which use the updated fake.
+- Regression test: added `tests/issue_2243_chunk_09d_queue_core_sweep_test.rs::no_queue_core_submission_or_execution_row_is_still_pending`, which reproduces the audit gap. It fails against the unfixed record, where both rows read `pending — #2114`, and passes after the fix. `tests/issue_2243_chunk_09d_queue_core_sweep_test.rs::the_queue_core_region_carries_the_2243_subsections_and_outcome` and `tests/issue_2243_chunk_09d_queue_core_sweep_test.rs::the_send_timeout_finding_is_open_and_linked_to_2339` also fail against the unfixed record and pass after it. `tests/issue_2243_chunk_09d_queue_core_sweep_test.rs::every_zero_short_circuit_caller_guards_on_min_neuron_sample_count` fails if any production caller's `MIN_NEURON_SAMPLE_COUNT` guard is removed; this was checked by dropping the two guards in `relu_evaluation.rs`. `cargo test --all-features --test issue_2243_chunk_09d_queue_core_sweep_test` gives 4 passed; against the milestone-base record it gives 3 failed.
+- **The original trigger is closed, with no trivial bypass.** The trigger is an empty-input short-circuit whose zero statistics a caller could mistake for a measured all-zero answer. The four distinguishable sites return one result per set or config, so length separates them. Each of the three indistinguishable sites is reached only through `GpuEvaluator::evaluate_relu`, `evaluate_activation` or `evaluate_activations_batched`. Every production caller of those, in all of `src/` outside `src/analysis/gpu/`, compares against `MIN_NEURON_SAMPLE_COUNT` before its first call, so no production path submits an empty sample set. `every_zero_short_circuit_caller_guards_on_min_neuron_sample_count` scans all of `src/` rather than a fixed list, so a new unguarded caller fails the test. Every short-circuit also runs after `breaker.check()?`, so a tripped breaker never reports a clean zero. The send-phase timeout (#2339) is filed, not fixed, in this slice.
 - The ledger contract tests pass: `issue_2088_sweep_ledger_contract`, `issue_2288_chunk_09_ledger_scaffold`, `issue_2113_chunk_09c_device_sweep`, `issue_2237_chunk_09_evaluation_sweep` and `issue_2291_chunk_09a_2b_shader_layer_sweep` (39 passed).
 - `cargo clippy --lib --tests --all-features -- -D warnings` is clean. `markdownlint-cli2` reports 0 issues on the record.
 - `./quality.sh` was run once after the final change (result in the Test Plan).
@@ -72,6 +74,12 @@ flowchart LR
   - four assert that case (a) and case (b) are distinguishable;
   - three pin the current identical output, citing the refuted rows;
   - each uses `FakeGpuProbe::calls()` to prove case (a) never reached the device.
+- The in-crate tests are `src/analysis/gpu/queue/empty_vs_zero_tests.rs::submit_helpful_batch_empty_vs_zero_are_distinguishable`, `::evaluate_helpful_batch_empty_vs_zero_are_distinguishable`, `::evaluate_harmful_batch_empty_vs_zero_are_distinguishable`, `::evaluate_relu_gpu_empty_vs_zero_are_pinned_equal`, `::evaluate_activation_gpu_empty_vs_zero_are_pinned_equal`, `::evaluate_activations_batched_gpu_empty_configs_vs_one_config_are_distinguishable` and `::evaluate_activations_batched_gpu_empty_samples_vs_zero_are_pinned_equal`.
+- Added `tests/issue_2243_chunk_09d_queue_core_sweep_test.rs`, with 4 tests that pin the queue-core record and the caller guards:
+  - `tests/issue_2243_chunk_09d_queue_core_sweep_test.rs::no_queue_core_submission_or_execution_row_is_still_pending`
+  - `tests/issue_2243_chunk_09d_queue_core_sweep_test.rs::the_queue_core_region_carries_the_2243_subsections_and_outcome`
+  - `tests/issue_2243_chunk_09d_queue_core_sweep_test.rs::the_send_timeout_finding_is_open_and_linked_to_2339`
+  - `tests/issue_2243_chunk_09d_queue_core_sweep_test.rs::every_zero_short_circuit_caller_guards_on_min_neuron_sample_count`
 - Modified `src/analysis/gpu/queue/fake_evaluator.rs` to return per-set and per-config all-zero answers. The existing `wedge_tests` and `stale_skip_tests` still pass.
 - Registered the module in `src/analysis/gpu/queue/mod.rs`.
 - `./quality.sh < /dev/null`: see the result recorded below.
