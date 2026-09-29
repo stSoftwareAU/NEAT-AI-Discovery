@@ -150,11 +150,13 @@ fn production_capacity_sites(rel: &str) -> Vec<(String, String)> {
         if trimmed.starts_with("//") {
             continue;
         }
-        if trimmed.contains("fn ") {
-            if let Some(after) = trimmed.split("fn ").nth(1) {
-                let end = after.find(['(', '<']).unwrap_or(after.len());
-                current_fn = after[..end].trim().to_string();
-            }
+        if let Some(after) = trimmed
+            .contains("fn ")
+            .then(|| trimmed.split("fn ").nth(1))
+            .flatten()
+        {
+            let end = after.find(['(', '<']).unwrap_or(after.len());
+            current_fn = after[..end].trim().to_string();
         }
 
         let is_capacity = line.contains("with_capacity(") || is_vec_repeat(line);
@@ -335,9 +337,7 @@ fn every_issue_linked_from_a_shared_row_appears_under_issues_filed() {
     let doc = read(RECORD);
 
     let mut issue_refs: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-    for text in [shared_region(&doc)] {
-        collect_issue_refs(text, &mut issue_refs);
-    }
+    collect_issue_refs(shared_region(&doc), &mut issue_refs);
     let capacity_region = section(&doc, "## Capacity and traversal table");
     let shared_rows_text: String = shared_capacity_rows(&doc)
         .iter()
