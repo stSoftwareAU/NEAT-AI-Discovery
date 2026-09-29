@@ -115,7 +115,6 @@ pub(crate) fn evaluate_activation_for_subset<G: GpuEvaluator>(
                     outgoing_weight,
                     spec.activation,
                     spec.name,
-                    None,
                     params.target_squash,
                 );
                 (outgoing_weight, optimal_bias)

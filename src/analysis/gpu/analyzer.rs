@@ -3,7 +3,7 @@
 //!
 //! Per-evaluation pipeline builders and batch methods are in sibling modules
 //! (Issue #520): `helpful_evaluation`, `harmful_evaluation`, `relu_evaluation`,
-//! `activation_evaluation`, `bias_evaluation`.
+//! `activation_evaluation`.
 
 #![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use anyhow::Result;
@@ -46,8 +46,6 @@ pub struct GpuAnalyzer {
     pub(super) relu_pipeline: Option<wgpu::ComputePipeline>,
     pub(super) activation_layout: Option<wgpu::BindGroupLayout>,
     pub(super) activation_pipeline: Option<wgpu::ComputePipeline>,
-    pub(super) bias_layout: Option<wgpu::BindGroupLayout>,
-    pub(super) bias_pipeline: Option<wgpu::ComputePipeline>,
     /// Reduction pipeline for `HelpfulContribution` aggregation (Issue #218)
     pub(super) helpful_reduce_layout: Option<wgpu::BindGroupLayout>,
     pub(super) helpful_reduce_pipeline: Option<wgpu::ComputePipeline>,
@@ -413,7 +411,6 @@ impl GpuAnalyzer {
         let (relu_layout, relu_pipeline) = Self::build_relu_pipeline(&device, "relu-pipeline");
         let (activation_layout, activation_pipeline) =
             Self::build_activation_pipeline(&device, "activation-pipeline");
-        let (bias_layout, bias_pipeline) = Self::build_bias_pipeline(&device, "bias-pipeline");
         // Issue #218: Build reduction pipelines for GPU-side aggregation
         let (helpful_reduce_layout, helpful_reduce_pipeline) =
             Self::build_helpful_reduce_pipeline(&device, "helpful-reduce-pipeline");
@@ -445,8 +442,6 @@ impl GpuAnalyzer {
             relu_pipeline: Some(relu_pipeline),
             activation_layout: Some(activation_layout),
             activation_pipeline: Some(activation_pipeline),
-            bias_layout: Some(bias_layout),
-            bias_pipeline: Some(bias_pipeline),
             helpful_reduce_layout: Some(helpful_reduce_layout),
             helpful_reduce_pipeline: Some(helpful_reduce_pipeline),
             harmful_reduce_layout: Some(harmful_reduce_layout),

@@ -271,7 +271,6 @@ pub(crate) fn evaluate_activation_candidate<G: GpuEvaluator>(
                             clamped_weight,
                             spec.activation,
                             spec.name,
-                            None,
                             params.target_squash,
                         );
 
@@ -335,7 +334,6 @@ pub(crate) fn evaluate_activation_candidate<G: GpuEvaluator>(
                             clamped_weight,
                             spec.activation,
                             spec.name,
-                            None,
                             params.target_squash,
                         );
 
@@ -385,7 +383,6 @@ pub(crate) fn evaluate_activation_candidate<G: GpuEvaluator>(
                     base_weight,
                     spec.activation,
                     spec.name,
-                    None,
                     params.target_squash,
                 );
 
