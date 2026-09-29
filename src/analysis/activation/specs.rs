@@ -176,7 +176,7 @@ pub const ACTIVATION_SPECS: [ActivationCandidateSpec; 15] = [
 /// Maps activation function names to GPU shader IDs.
 ///
 /// These IDs must match the activation function implementations in the GPU shaders
-/// (activation.wgsl and bias.wgsl).
+/// (activation.wgsl).
 pub fn activation_name_to_gpu_id(name: &str) -> u32 {
     match name {
         "GELU" => 0,
@@ -200,29 +200,6 @@ pub fn activation_name_to_gpu_id(name: &str) -> u32 {
         "ArcTan" => 17,
         "ReLU6" => 18,
         _ => 6, // Default to IDENTITY
-    }
-}
-
-// ============================================================================
-// Bias Range Helpers
-// ============================================================================
-
-/// Get activation-function-specific bias range (min, max, step).
-///
-/// This is used by the GPU bias search for compatibility.
-/// Extended ranges to work with large incoming weights (up to 200).
-///
-/// Different activation functions benefit from different bias ranges:
-/// - ReLU/ELU: Large negative bias for high-threshold neurons
-/// - TANH/LOGISTIC: Wide symmetric range to shift operating point
-/// - IDENTITY: Widest range as pure offset (scales with large weights)
-pub fn get_bias_range(squash: &str) -> (f32, f32, f32) {
-    match squash {
-        // Sensible default ranges (Dec 2025):
-        // We intentionally avoid very large bias grids (e.g. ±25, ±50) because they
-        // frequently yield brittle candidates that fail full rescoring.
-        "BIPOLAR" => (-10.0, 10.0, 1.0),
-        _ => (-10.0, 10.0, 0.5), // Generous default (but still bounded)
     }
 }
 

@@ -13,7 +13,7 @@ use super::common::*;
 #[test]
 fn test_bias_calculation_tanh() {
     let samples = create_test_samples();
-    let bias = calculate_optimal_bias(&samples, 1.0, -0.5, tanh_activation, "TANH", None, None);
+    let bias = calculate_optimal_bias(&samples, 1.0, -0.5, tanh_activation, "TANH", None);
 
     // Bias should be in expanded TANH range
     assert!(
@@ -27,7 +27,7 @@ fn test_bias_calculation_tanh() {
 fn test_bias_calculation_relu() {
     let samples = create_test_samples();
     let relu_fn = |x: f32| x.max(0.0);
-    let bias = calculate_optimal_bias(&samples, 1.0, 0.5, relu_fn, "ReLU", None, None);
+    let bias = calculate_optimal_bias(&samples, 1.0, 0.5, relu_fn, "ReLU", None);
 
     // ReLU can now use negative bias for threshold shifting (expanded range)
     assert!(bias >= -1.0, "Bias for ReLU should be >= -1.0, got {bias}");
@@ -58,7 +58,6 @@ fn test_bias_improves_error_reduction() {
         outgoing,
         identity_activation,
         "IDENTITY",
-        None,
         None,
     );
 
@@ -102,7 +101,7 @@ fn test_bias_within_reasonable_range() {
     ];
 
     for (name, activation_fn, min_expected, max_expected) in test_cases {
-        let bias = calculate_optimal_bias(&samples, 1.0, 1.0, activation_fn, name, None, None);
+        let bias = calculate_optimal_bias(&samples, 1.0, 1.0, activation_fn, name, None);
         assert!(
             bias >= min_expected && bias <= max_expected,
             "Bias for {name} should be in range [{min_expected}, {max_expected}], got {bias}"
@@ -114,7 +113,7 @@ fn test_bias_within_reasonable_range() {
 #[test]
 fn test_bias_calculation_empty_samples() {
     let samples: Vec<HelpfulSample> = vec![];
-    let bias = calculate_optimal_bias(&samples, 1.0, 0.5, tanh_activation, "TANH", None, None);
+    let bias = calculate_optimal_bias(&samples, 1.0, 0.5, tanh_activation, "TANH", None);
 
     // Should return 0.0 for empty samples
     assert_eq!(bias, 0.0, "Empty samples should return bias of 0.0");
@@ -157,7 +156,7 @@ fn test_bias_calculation_insufficient_samples() {
         },
     ];
 
-    let bias = calculate_optimal_bias(&samples, 1.0, 0.5, tanh_activation, "TANH", None, None);
+    let bias = calculate_optimal_bias(&samples, 1.0, 0.5, tanh_activation, "TANH", None);
 
     // Should still return a valid bias in range
     assert!(
@@ -174,7 +173,7 @@ fn test_bias_calculation_with_non_finite_values() {
     samples[1].activation = f32::NAN;
     samples[2].avg_error = f32::INFINITY;
 
-    let bias = calculate_optimal_bias(&samples, 1.0, 0.5, tanh_activation, "TANH", None, None);
+    let bias = calculate_optimal_bias(&samples, 1.0, 0.5, tanh_activation, "TANH", None);
 
     // Should handle non-finite values gracefully and return a finite bias
     assert!(
