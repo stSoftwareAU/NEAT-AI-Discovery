@@ -7,9 +7,10 @@
 //! assert `pending`: the sub-issues flip those outcomes. Finalisation (#2154)
 //! `git mv`s the file to the top level in the commit that fills the `"8a"`
 //! index entry, and must delete or retarget
+//! `the_record_is_staged_under_in_progress`,
 //! `no_top_level_chunk_08a_record_exists` and
-//! `the_chunk_8a_index_entry_is_still_all_null` in that same commit — both
-//! assert facts that finalisation flips.
+//! `the_chunk_8a_index_entry_is_still_all_null` in that same commit — all
+//! three assert facts that finalisation flips.
 
 use std::path::PathBuf;
 
