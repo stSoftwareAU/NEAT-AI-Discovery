@@ -14,9 +14,8 @@ mod thresholds;
 
 // Re-export all public items for backward compatibility
 pub use gpu_types::{
-    ActivationOutput, ActivationUniforms, GpuHelpfulSample,
-    HarmfulContribution, HarmfulUniforms, HelpfulContribution, HelpfulUniforms, ReductionUniforms,
-    ReluContribution, ReluUniforms,
+    ActivationOutput, ActivationUniforms, GpuHelpfulSample, HarmfulContribution, HarmfulUniforms,
+    HelpfulContribution, HelpfulUniforms, ReductionUniforms, ReluContribution, ReluUniforms,
 };
 pub use statistics::{HarmfulStats, HelpfulStats, NeuronStats, ReluOrientation, ReluStats};
 pub use thresholds::{
