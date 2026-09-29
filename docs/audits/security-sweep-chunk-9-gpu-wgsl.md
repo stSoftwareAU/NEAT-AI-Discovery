@@ -115,8 +115,8 @@ the `submission.rs` bounded wait) go to **queue-core**;
 | Path | Lines | Outcome |
 | --- | --- | --- |
 | `src/analysis/gpu/queue/mod.rs` | 423 | pending — #2114 |
-| `src/analysis/gpu/queue/submission.rs` | 1048 | pending — #2114 |
-| `src/analysis/gpu/queue/execution.rs` | 928 | pending — #2114 |
+| `src/analysis/gpu/queue/submission.rs` | 1048 | finding filed — #2339 (`send_timeout` at L216/L281/L340/L405/L465/L540 waits the whole batch timeout with no heartbeat or breaker check, and `await_gpu_response` then restarts the same timeout at L102); all seven empty-input short-circuits (L187/L258/L321/L382/L445/L515/L519) run after `breaker.check()?`, and the three that return zero statistics (L382/L445/L519) are indistinguishable from an all-zero answer but unreachable from production callers (refuted); no `unwrap`/`expect`/`.lock()` before the `#[cfg(test)]` module at L571 |
+| `src/analysis/gpu/queue/execution.rs` | 928 | audited, no finding — `execute_request` (L67–L254) returns `Err` only for `is_device_lost_error` (L98–L102, L133–L137, L165–L169, L205–L209, L239–L243) and otherwise sends exactly once (L104/L139/L171/L211/L245); every `run_work_loop` device-lost branch sends or finds the caller gone (L406, L477, L513, L436–L445); the byte cap is applied inside the evaluators, not here; no `unwrap`/`expect`/`.lock()` before the `#[cfg(test)]` module at L612 |
 | `src/analysis/gpu/queue/executor.rs` | 137 | pending — #2114 |
 | `src/analysis/gpu/queue/scheduling.rs` | 171 | pending — #2114 |
 | `src/analysis/gpu/queue/fake_evaluator.rs` | 308 | pending — #2114 |
@@ -946,7 +946,91 @@ path fails loudly with a typed outcome.
 
 <!-- section: queue-core -->
 
-Pending — #2114 (#2243, #2244).
+This slice (Issue #2243, first of #2114) sweeps `queue/submission.rs` and `queue/execution.rs` at the baseline. Both files are unchanged between the baseline and the time of writing. Checks: 1 empty vs zero, 2 caller-side waiting and `execute_request` error routing, 3 batch byte cap, 4 `send_timeout` → `queue_full_error`, 5 `unwrap`/`expect`/`.lock()` in production code. Thread-loop lifecycle, device-lost string classification and wedge behaviour are #2115's (queue-lifecycle slices #2245/#2246) and are cross-referenced, not re-audited.
+
+#### `src/analysis/gpu/queue/submission.rs` (Issue #2243)
+
+**Check 1 — empty vs zero.** One row per empty-input early return. `empty_vs_zero_tests.rs` (`src/analysis/gpu/queue/empty_vs_zero_tests.rs`) drives each site through the production work loop with `FakeGpuEvaluator` and pins the verdict.
+
+| Function | file:line | Returns | `breaker.check()?` first | Distinguishable from all-zero result | Callers (for `no`) |
+| --- | --- | --- | --- | --- | --- |
+| `submit_helpful_batch` (L178) | `src/analysis/gpu/queue/submission.rs:187` | a pre-resolved `GpuFuture` whose `collect` yields `Ok(Vec::new())` (L189–L199) | yes, L185 | **yes** — one `HelpfulStats` per sample set, so an empty answer has length 0 and any non-empty request has length ≥ 1 | — |
+| `evaluate_helpful_batch` (L250) | `src/analysis/gpu/queue/submission.rs:258` | `Ok(Vec::new())` | yes, L256 | **yes** — per-set length, as above | — |
+| `evaluate_harmful_batch` (L313) | `src/analysis/gpu/queue/submission.rs:321` | `Ok(Vec::new())` | yes, L319 | **yes** — one `HarmfulStats` per set | — |
+| `evaluate_relu_gpu` (L373) | `src/analysis/gpu/queue/submission.rs:382` | `Ok((ReluStats::new(Positive), ReluStats::new(Negative), 0.0))` (L383–L387) | yes, L380 | **no** — identical to a GPU answer in which no sample fed either orientation and the baseline error is zero | unreachable: the only caller, `evaluate_relu_candidates_split` (`src/analysis/synapse/relu_evaluation.rs:42`, via `GpuEvaluator::evaluate_relu` at `execution.rs:585`–`:591`), submits only when the error-split subset holds `MIN_NEURON_SAMPLE_COUNT` samples (`relu_evaluation.rs:81`, `:128`); a zero answer is rejected by `ReluStats::evaluate` (`src/analysis/samples/statistics.rs:300`), so both yield no candidate |
+| `evaluate_activation_gpu` (L434) | `src/analysis/gpu/queue/submission.rs:445` | `Ok((0.0, 0.0, 0.0, 0))` | yes, L443 | **no** — the fourth element is `improved_count`, which the GPU path always returns as `0` (`src/analysis/gpu/activation_evaluation.rs:355`), so no field separates "no samples" from "all sums zero" | unreachable: `evaluate_activation_candidate` (`src/analysis/synapse/activation_evaluation.rs:48`) and `evaluate_activation_for_subset` (`src/analysis/synapse/activation_subset_evaluation.rs:48`) return `Ok(None)` below `MIN_NEURON_SAMPLE_COUNT` before submitting |
+| `evaluate_activations_batched_gpu` (L505) | `src/analysis/gpu/queue/submission.rs:515` | `Ok(Vec::new())` for empty `activation_configs` | yes, L512 | **yes** — one tuple per config, so only an empty config list gives length 0 | — |
+| `evaluate_activations_batched_gpu` (L505) | `src/analysis/gpu/queue/submission.rs:519` | `Ok(vec![(0.0, 0.0, 0.0, 0); n])` for empty `samples` (L521) | yes, L512 | **no** — same shape and values as an all-zero GPU answer for `n` configs | unreachable: the only caller, `evaluate_all_activation_specs_batched` (`src/analysis/synapse/gpu_evaluation.rs:41`), returns `Ok(Vec::new())` below `MIN_NEURON_SAMPLE_COUNT` (L50) and at zero baseline error (L60) before submitting |
+
+**Verdict (check 1): no finding.** Every short-circuit runs after `breaker.check()?`, so a tripped breaker never reports a clean zero (pinned by `tripped_breaker_suppresses_the_empty_input_fast_paths`, `submission.rs:811`). The three `no` sites return zero-count statistics that no production caller can reach, and an all-zero answer yields no candidate either way (refuted rows below). The #2241 table reads the trailing `0` of `(0.0, 0.0, 0.0, 0)` as a sample count. It is `improved_count`, which the GPU path never fills. That verdict still stands, but for the caller-guard reason recorded here.
+
+**Check 2 — caller-side waiting.**
+
+- `wait_for_gpu_response` (L96–L127) fixes one deadline at L102 and polls at `min(poll_interval, remaining)` (L112). It ends at the absolute timeout (`TimedOut`, L107–L110), at the stall window (`Stalled`, L115–L120), or at once on a dropped sender (`Disconnected`, L122–L124).
+- `resolve_gpu_wait` (L131–L148) turns both wedge verdicts into typed errors that trip the breaker (`heartbeat_stall_error` L140, `batch_timeout_error` L142). A disconnect becomes a plain `Err` (L143–L146) without a trip. After a GPU-thread exit the next `send_timeout` fails at once with `"GPU work queue channel closed"` (L230), so no later caller waits.
+- `await_gpu_response` (L156–L170) registers the in-flight entry (#1934) and uses the global heartbeat and `gpu_stall_window()`.
+- `GpuTimeBudget::from_caller_timeout` (#1928) is built before the send (L207/L270/L330/L395/L454/L529). The worker deadline is therefore anchored earlier than the caller's await deadline and expires first (`src/analysis/gpu/budget.rs:54`).
+- `caller_liveness_pair` (#1929) guards live exactly as long as the caller waits: `_caller_guard` for the blocking entry points, and the `GpuFuture` field until `collect` (`mod.rs:100`–`:114` at the baseline) or drop.
+- `calculate_gpu_batch_timeout` (`src/analysis/utils/deadline.rs:381`–`:405`) gives half the remaining deadline, clamped to 60–300 s, or 300 s with no deadline.
+- **Verdict:** once the request is queued, a GPU thread that drops or never answers cannot hold the caller past `timeout`, and a silent one releases it within the stall window. **But the send phase is outside that bound — finding #2339 (`SEC-1124ca631044`).** `send_timeout(…, timeout)` (L216/L281/L340/L405/L465/L540) waits the full 60–300 s on a full queue. It checks neither heartbeat nor breaker, and the breaker check at L185/L256/L319/L380/L443/L512 has already run. The await then restarts the same `timeout` at L102. So a submitter blocked behind a wedged GPU sits out the whole batch timeout instead of the stall window, and any submitter can wait up to `2 × timeout`.
+
+**Check 3 — batch byte cap (deep trace; also owns the `executor.rs` factory).**
+
+- `GPU_MAX_BATCH_ALLOC_BYTES` (`src/analysis/gpu/analyzer.rs:28`, 256 MiB) is read only by `helpful_evaluation.rs:262`–`:267` and `harmful_evaluation.rs:137`–`:142`. It goes through `cap_gpu_batch_size_by_bytes` (`src/analysis/utils/memory.rs:633`–`:650`), which returns `min(batch_size, 256 MiB / (max_sample_len × bytes_per_sample)).max(1)`. That is a **count of sample sets per chunk**, not a per-set length limit.
+- `GpuAnalyzer::batch_size` (`analyzer.rs:472`) is set in `new()` from `get_adjusted_batch_size` (`analyzer.rs:163`). The `NEAT_AI_DISCOVERY_GPU_BATCH_SIZE` override is filtered to 64..=4096 (`src/config/user_facing.rs:39`). `new_with_batch_size` (`analyzer.rs:465`–`:469`) sets the size unfiltered.
+- The submission path carries no size at all. `execute_request` hands the evaluator the sample slices and `*budget` unchanged (`execution.rs:90`, `:125`, `:157`, `:191`–`:197`, `:230`–`:231`), and the evaluator caps against its own `batch_size`. The loop reads `RequestEvaluator::batch_size` (`src/analysis/gpu/queue/executor.rs:63`) only on the device-lost path (`execution.rs:396`).
+- The factory `create(batch_size_override)` (`executor.rs:131`–`:136`):
+  - On memory exhaustion the loop halves `batch_size()` (`execution.rs:396`–`:416`). Below `MINIMUM_GPU_BATCH_SIZE` = 64 (`src/analysis/gpu/queue/recovery.rs:14`) it sends an `Err` and moves on (L399–L414). Otherwise it passes `Some(halved)` to `new_with_batch_size`.
+  - A non-OOM recovery passes `None`, so `GpuAnalyzer::new()` restores the auto-detected size. An earlier OOM reduction therefore does not survive a later non-OOM recovery. This is not a safety gap, because the byte cap is recomputed on every call.
+  - Halving cannot shrink a single oversized set, because the count is already clamped to 1. The retry fails again, and after `retry_limit` attempts the caller gets an `Err` (L513).
+- `evaluate_relu_gpu`, `evaluate_activation_gpu` and `evaluate_activations_batched_gpu` each submit one sample set, so the count cap does not apply and no byte cap exists. The batched path allocates an output buffer and a staging buffer per config (`activation_evaluation.rs:466`–`:470`, `:528`, `:540`) with no aggregate cap. The config count is bounded by the static spec expansion (`src/analysis/activation/specs.rs:481`–`:497`).
+- **Verdict: not every path from the queue to a GPU allocation is byte-capped, and a single sample set larger than the cap bypasses it** (`memory.rs:649`, `.max(1)`).
+  - At the baseline, a set past the 128 MiB binding limit trips a wgpu validation error, and wgpu's default handler turns it into a **panic** on the GPU thread (#2314). It is not an allocation abort: `Cargo.toml` keeps the default unwind strategy.
+  - The unwind drops the request's `response_tx`, so the caller gets an **`Err`** (`"GPU response channel closed unexpectedly"`, `submission.rs:122`–`:124` → `:143`–`:146`) rather than a hang.
+  - No new finding. #2314 owns it, and PR #2337 (merged to `Develop` after the baseline, not yet on this milestone branch) returns that `Err` before wgpu is reached.
+
+**Check 4 — `send_timeout` → `queue_full_error`.**
+
+- A full queue returns the typed `GpuWedged` error from `queue_full_error` (L28–L34), which trips the breaker with `BatchTimeout`, at L227/L292/L351/L417/L479/L552.
+- A closed channel returns `"GPU work queue channel closed"` at once (L230/L295/L354/L420/L482/L555).
+- **Verdict: `Err`, but not promptly.** The full-queue `Err` arrives only after the whole 60–300 s timeout, with no stall-window or breaker short cut. This is finding #2339.
+
+**Check 5 — `unwrap`/`expect`/`.lock()`.** None in production code (L1–L570). Every occurrence is in the `#[cfg(test)]` module at L571. Confirmed.
+
+#### `src/analysis/gpu/queue/execution.rs` (Issue #2243)
+
+**Check 2 — `execute_request` (L67–L254) error routing.**
+
+- **Returned as `Err` to the loop (recovery):** only an evaluator `Err` that `is_device_lost_error` accepts (`recovery.rs:56`–`:72`), at L98–L102 (helpful), L133–L137 (harmful), L165–L169 (ReLU), L205–L209 (activation) and L239–L243 (batched activation). It is re-wrapped as `anyhow!("{e:#}")`.
+- **Sent to the caller:** every other result, success or evaluation error, via `response_tx.send(result)` at L104/L139/L171/L211/L245. Examples of evaluation errors: an exhausted budget (`budget.rs:113`), a `None` device field, a map error.
+- **The loop's own sends:**
+  - an expired-budget stale skip sends an `Err` (`skip_stale_request`, L261–L275, via L352–L355);
+  - OOM at the minimum batch size sends an `Err` and moves on (L406–L414);
+  - a recovered retry sends from inside `execute_request` (L477);
+  - exhausted recovery sends an `Err` (L507–L520). This includes `NEAT_AI_DISCOVERY_GPU_RETRY_LIMIT=0`, where the retry loop body never runs.
+- **A dropped receiver:** the send fails only once the caller has returned. That happens after its own timeout or stall verdict, which already tripped the breaker (`submission.rs:139`–`:142`), or after it dropped an uncollected `GpuFuture`. Only the caller side trips the breaker (`submission.rs:29`, `:47`, `:62`, and `scheduling.rs:89`), so the `trace!` loses nothing the caller or the breaker needed.
+- **Verdict: no branch neither sends nor returns while a caller waits.**
+  - The only arm that does neither is `Shutdown` (L249–L251). It has no caller and is intercepted at L334 before `execute_request`.
+  - Recovery gives up without sending only when `has_live_receiver` is false (L436–L445), which means the caller guard has dropped and nobody is waiting.
+  - An evaluator panic (#2313/#2314) unwinds the GPU thread and drops the sender, so the caller sees `Disconnected` at `submission.rs:122`.
+- Cross-reference #2115 (queue-lifecycle slices #2245/#2246):
+  - The budget-capped map-wait timeouts say `"The GPU driver may be unresponsive"` (`src/analysis/gpu/device.rs:269`, `:319`, `:381`). That text matches `is_device_lost_error` (`recovery.rs:71`), so a budget expiry during a map is routed to device re-initialisation rather than straight to the caller.
+  - The caller still gets an `Err` or its own timeout verdict. The classification is #2115's to judge.
+
+**Check 3 — how batch size and byte cap reach the evaluators.**
+
+- `execute_request` passes no size. Each evaluator applies `cap_gpu_batch_size_by_bytes` to its own `batch_size` (see the `submission.rs` check 3 trace).
+- The loop changes that size only through the factory on the OOM path (L396–L416, L466).
+
+**Check 1 — N/A.** `execute_request` has no empty-input short-circuit. Empty requests never reach it, because `submission.rs` answers them before enqueueing.
+
+**Check 4 — N/A for queue-full; no blocking send.** The worker never sends on the work queue. Each response channel is `bounded(1)`, and the worker sends at most once per request: the device-lost arm returns before its send, and the recovery path sends once. So a response `send` never blocks the GPU thread.
+
+**Check 5 — confirmed.** No `unwrap`/`expect`/`.lock()` before the `#[cfg(test)]` module at L612. The `as u64` casts at L95/L130/L162/L202/L236 (microseconds) and L378 (milliseconds) feed metrics and log fields only (refuted below).
+
+**Outcome (#2243): one finding, #2339** (`SEC-1124ca631044`, CWE-400, low). A submission blocked in `send_timeout` ignores the stall window and the breaker, and its await restarts the timeout. Everything else in `submission.rs` and `execution.rs` fails loudly with a typed or descriptive `Err`.
+
+`mod.rs`, `executor.rs` and `scheduling.rs` are pending — #2244.
 
 ### queue-lifecycle
 
@@ -971,6 +1055,7 @@ Each slice appends rows only inside its own marked region.
 | SEC-2b0c59cc73d5 | `src/analysis/gpu/analyzer.rs:296` (also `analyzer.rs:279`, `ffi_types/responses/gpu.rs:106`) | CWE-754 | low | open — #2318 |
 | SEC-d6747980489b | `src/analysis/gpu/analyzer.rs:276` (also `analyzer.rs:288`, `device.rs:445`) | CWE-1088 | low | open — #2332 |
 <!-- section: queue-core -->
+| SEC-1124ca631044 | `src/analysis/gpu/queue/submission.rs:216` (also `:281`, `:340`, `:405`, `:465`, `:540`; await restart `:102`) | CWE-400 | low | open — #2339 |
 <!-- section: queue-lifecycle -->
 
 ## Refuted / not findings
@@ -1025,6 +1110,18 @@ Each slice appends rows only inside its own marked region.
 | The single map wait swallows an empty-queue stall | `src/analysis/gpu/device.rs:309`–`:316` | The block is a no-op hint, and the loop still returns `Err` at the deadline (`:318`–`:323`) (Issue #2242) |
 | `budget.rs`/`breaker.rs` silently default a bad environment threshold | `src/analysis/gpu/budget.rs`; `src/analysis/gpu/breaker.rs`; `src/config/helpers.rs:36`–`:38` | Neither file reads the environment. The shared `parse_env` silent default is #2122 (Issue #2242) |
 <!-- section: queue-core -->
+| `evaluate_relu_gpu`'s empty-input short-circuit (`submission.rs:382`) reports zero statistics a caller mistakes for a measured result | `src/analysis/synapse/relu_evaluation.rs:81`, `:128`; `src/analysis/samples/statistics.rs:300` | The only production caller submits only with `MIN_NEURON_SAMPLE_COUNT` or more samples, so the short-circuit is unreachable. An all-zero answer is rejected by `ReluStats::evaluate`, so both answers yield no candidate. Pinned as indistinguishable by `empty_vs_zero_tests.rs` (Issue #2243) |
+| `evaluate_activation_gpu`'s `(0.0, 0.0, 0.0, 0)` short-circuit (`submission.rs:445`) is indistinguishable from an all-zero answer | `src/analysis/synapse/activation_evaluation.rs:48`; `src/analysis/synapse/activation_subset_evaluation.rs:48`; `src/analysis/gpu/activation_evaluation.rs:355` | Both callers return `Ok(None)` below `MIN_NEURON_SAMPLE_COUNT` before submitting. The trailing `0` is `improved_count`, which the GPU path always returns as `0`, not a sample count. Pinned by `empty_vs_zero_tests.rs` (Issue #2243) |
+| `evaluate_activations_batched_gpu`'s empty-`samples` short-circuit (`submission.rs:519`) returns `n` zero tuples | `src/analysis/synapse/gpu_evaluation.rs:50`, `:60` | The only caller returns before submitting below `MIN_NEURON_SAMPLE_COUNT` or at zero baseline error. Pinned by `empty_vs_zero_tests.rs` (Issue #2243) |
+| A caller waits past its budget when the GPU thread drops the response sender or never answers | `src/analysis/gpu/queue/submission.rs:107`–`:110`, `:115`–`:120`, `:122`–`:124`, `:143`–`:146` | Once the request is queued, the await ends at the absolute deadline or the stall window (both trip the breaker), or at once on a dropped sender. The send-phase overrun is #2339 (Issue #2243) |
+| The worker's time budget outlives the caller's wait | `src/analysis/gpu/queue/submission.rs:207`; `src/analysis/gpu/budget.rs:54` | `from_caller_timeout` runs before the send (also L270/L330/L395/L454/L529). The worker deadline is anchored earlier than the await deadline and expires a margin before it (Issue #2243) |
+| An `execute_request` branch neither sends nor returns, leaving the caller waiting until timeout | `src/analysis/gpu/queue/execution.rs:104`, `:139`, `:171`, `:211`, `:245`, `:249`–`:251`, `:334` | Each work arm sends once or returns a device-lost `Err`. `Shutdown` has no caller and is intercepted before `execute_request` (Issue #2243) |
+| A device-lost `Err` in `run_work_loop` leaves the caller waiting | `src/analysis/gpu/queue/execution.rs:406`–`:414`, `:436`–`:445`, `:477`, `:507`–`:520` | OOM at the minimum size, a recovered retry and exhausted recovery (including a retry limit of 0) all send. Recovery abandons without a send only once the caller guard has dropped (Issue #2243) |
+| The `trace!`-only send failure loses a result the caller or breaker needed | `src/analysis/gpu/queue/execution.rs:104`–`:106`; `src/analysis/gpu/queue/submission.rs:139`–`:142` | The send fails only after the caller has returned, and the breaker is tripped only on the caller side (`queue_full_error`, `batch_timeout_error`, `heartbeat_stall_error`, `scheduling.rs:89`) (Issue #2243) |
+| `execute_request` flattens a typed error with `anyhow!("{e:#}")` (`execution.rs:101`) | `src/analysis/gpu/device.rs:266`, `:269`, `:300`, `:319`, `:381`; `src/analysis/gpu/budget.rs:113` | Worker-side evaluator errors are plain `anyhow!` strings. The typed `gpu_wedged_error` is built only on the caller side (`submission.rs:30`, `:48`, `:63`) (Issue #2243) |
+| The GPU thread blocks sending on a full response channel | `src/analysis/gpu/queue/submission.rs:202`; `src/analysis/gpu/queue/execution.rs:98`–`:104` | Each response channel is `bounded(1)`, and the worker sends at most once per request, so the send never blocks (Issue #2243) |
+| A single sample set larger than `GPU_MAX_BATCH_ALLOC_BYTES` bypasses the byte cap and aborts the process | `src/analysis/utils/memory.rs:648`–`:649`; `src/analysis/gpu/queue/submission.rs:122`–`:124`, `:143`–`:146` | The cap bounds sets per chunk, clamped to 1, so an oversized set is submitted alone. At the baseline the wgpu validation panic (#2314) unwinds the GPU thread and the caller gets an `Err`, not an abort. PR #2337 on `Develop` returns that `Err` before wgpu (Issue #2243) |
+| `as u64` truncation of elapsed time at `execution.rs:95`/`:130`/`:162`/`:202`/`:236`/`:378` (CWE-197) | `src/analysis/gpu/queue/execution.rs:95`, `:378` | Microseconds or milliseconds truncate only after about 584,000 years. The values feed metrics counters and a log field, not control flow (Issue #2243) |
 <!-- section: queue-lifecycle -->
 
 ## Outcome
@@ -1039,8 +1136,9 @@ slice has recorded the SEC-fe0b268a3799 disposition (remediated by #1873) and
 the CPU-fallback cross-check (#2240: one finding, #2318) and the entry-point
 `None → Err` sweep (#2241: no finding) and the per-file sweep of `analyzer.rs`,
 `budget.rs`, `breaker.rs` and `device.rs` (#2242: one finding, #2332).
-Every other file is pending its slice. Each slice records its outcome in its
-region under `## Audit sections`.
+The queue-core slice has swept `submission.rs` and `execution.rs` (#2243: one
+finding, #2339). Every other file is pending its slice. Each slice records its
+outcome in its region under `## Audit sections`.
 
 ## Issues filed
 
@@ -1072,6 +1170,10 @@ The sweep is in progress; each slice lists the issues it files here.
   on `request_adapter`/`request_device` with no deadline, before the init
   timeout is armed, and a hung driver wedges every caller of the `OnceLock`
   (device slice, #2242).
+- #2339 — `SEC-1124ca631044` (CWE-400, low): a GPU work submission blocked in
+  `send_timeout` waits the whole batch timeout with no stall-window or breaker
+  check, and its response wait then restarts the same timeout (queue-core
+  slice, #2243).
 
 ## Verify this record
 
