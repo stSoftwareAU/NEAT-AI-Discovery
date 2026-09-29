@@ -16,6 +16,7 @@
 //!
 //! The fix: Added all 8 new activation functions to both GPU shaders
 //! (activation.wgsl and bias.wgsl) with correct implementations.
+//! `bias.wgsl` has since been removed as unreachable (Issue #2316).
 
 #![allow(clippy::cast_precision_loss, clippy::cast_sign_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use neat_ai_discovery::analysis::{GpuAnalyzer, analyze_neurons};
