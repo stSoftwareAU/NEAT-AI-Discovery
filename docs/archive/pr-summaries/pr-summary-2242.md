@@ -103,35 +103,50 @@ REGRESSION_PLACEHOLDER
 
 <!-- vibe-spec-review inputs="diff+issue-body" -->
 
-- Each verdict is recorded with a file:line citation.
-  reviewer: met. reason: about 60 citations were spot-checked against the
-  source with no mismatch. The one wording nit (the const-assert span) is
-  fixed.
-- Init timeout: every `block_on` site.
-  reviewer: met. reason: all six sites have a verdict. The probe sites are
-  #2332, and the rest are refuted with evidence.
-- Limits, cross-referenced to #2237 and #2238.
-  reviewer: met. reason: refuted, with the cross-references and #2314.
-- Device loss, cross-referenced to #2115.
-  reviewer: met. reason: refuted, with an explanation of why a lost device
-  still ends in an `Err`.
-- The `device.rs` paths, `budget.rs` and `breaker.rs`.
-  reviewer: met. reason: each has a symbol table, and #2122 is cited for
-  `parse_env`.
-- All four Files swept rows flipped, refuted candidates moved.
-  reviewer: met. reason: four rows flipped and six refuted rows added.
-- Contract test: no row pending, the three rows exist, the symbols exist.
-  reviewer: met. reason: three new tests. The symbol test now also resolves
-  every table row, which the standards review asked for.
-- Findings filed and linked.
-  reviewer: met. reason: #2332 is in house format and is linked from the
-  ledger, the audit region and `## Issues filed`.
-- No production code or `ci.yml` changes.
-  reviewer: met. reason: only the audit doc, the test and this summary are
-  touched.
-- Status-paragraph and `## Outcome` updates.
-  reviewer: unrequested. reason: in scope. They keep the record from saying
-  the rows "stay pending".
+- **met** — Ledger records verdicts for init timeout, requested limits, device
+  loss, every listed device.rs function, budget.rs and breaker.rs, each with
+  file:line — evidence:
+  `docs/audits/security-sweep-chunk-9-gpu-wgsl.md` sections
+  `#### Init timeout — every pollster::block_on site (Issue #2242)`,
+  `#### Limits — Limits::default() (Issue #2242)`,
+  `#### Device loss (Issue #2242)`, `` #### `device.rs` paths ``,
+  `` #### `budget.rs` `` and `` #### `breaker.rs` `` — reviewer: met — reason:
+  about 80 cited lines checked against the source with no mismatch, and
+  #2237/#2238, #2115 and #2122 are cross-referenced.
+- **met** — All four `## Files swept` rows are flipped, and none reads
+  `pending — #2113` — evidence:
+  `tests/issue_2113_chunk_09c_device_sweep.rs::no_device_files_swept_row_is_still_pending`
+  and `docs/audits/security-sweep-chunk-9-gpu-wgsl.md` `## Files swept` →
+  `### device` — reviewer: met — reason: `analyzer.rs` and `device.rs` read
+  `finding filed — #2332`, `budget.rs` and `breaker.rs` read
+  `audited, no finding`, and six refuted rows were added.
+- **met** — The contract test covers the flipped rows and the cited symbols,
+  and passes under `./quality.sh` — evidence:
+  `tests/issue_2113_chunk_09c_device_sweep.rs::no_device_files_swept_row_is_still_pending`,
+  `tests/issue_2113_chunk_09c_device_sweep.rs::the_device_region_carries_the_2242_subsections_and_outcome`,
+  `tests/issue_2113_chunk_09c_device_sweep.rs::every_2242_cited_symbol_still_exists`
+  — reviewer: met — reason: 12 of 12 pass standalone, and `quality.sh:60`
+  runs `cargo test --lib --tests`. The reviewer noted that a full
+  `./quality.sh` pass had not yet been observed, and that `pollster::block_on`
+  is pinned only in `analyzer.rs`, not at `device.rs:445`.
+- **met** — Surviving findings are filed and linked, or "no finding" is stated
+  explicitly per file — evidence:
+  `tests/issue_2113_chunk_09c_device_sweep.rs::every_device_finding_is_open_linked_and_named_in_the_audit_region`
+  (`SURVIVING_FINDINGS` includes `SEC-d6747980489b`), plus
+  `docs/audits/security-sweep-chunk-9-gpu-wgsl.md` `## Issues filed` —
+  reviewer: met — reason: #2332 is open, in house format and labelled, and
+  `budget.rs` and `breaker.rs` state "no finding".
+- **met** — No production code changes and no change to
+  `.github/workflows/ci.yml` — evidence:
+  `git diff --name-only origin/milestone/2083-security-scan-overflow-8-chunks-not-reached...HEAD`
+  lists only `docs/archive/pr-summaries/pr-summary-2242.md`,
+  `docs/audits/security-sweep-chunk-9-gpu-wgsl.md` and
+  `tests/issue_2113_chunk_09c_device_sweep.rs` — reviewer: met
+- **unrequested** — Status-paragraph and `## Outcome` updates in
+  `docs/audits/security-sweep-chunk-9-gpu-wgsl.md` — reviewer: unrequested —
+  reason: without them the record would still say the rows "stay pending".
+- **unrequested** — `docs/archive/pr-summaries/pr-summary-2242.md` —
+  reviewer: unrequested — reason: the repo's standard PR-summary artefact.
 
 ## Standards Review
 
@@ -141,27 +156,36 @@ This repo has no `CODING-STANDARDS.md`, so the independent reviewer judged the
 diff against `CONTRIBUTING.md`, the canonical coding conventions, and
 `AGENTS.md`.
 
-- **violation** (minor) — DRY / test gap — evidence:
+- **violation** (low–medium) — Cite code by symbol, never by line number
+  (Issue #1942) — evidence: `docs/audits/security-sweep-chunk-9-gpu-wgsl.md`
+  `## Files swept` `### device` rows and the #2242 tables — reason: stands. The
+  issue asks for file:line evidence. The chunk-9 Methodology pins line numbers
+  to baseline `a7c3f65`, and the #2240/#2241 slices use the same style. Most
+  rows also name the symbol. `assert_in_range` checks only that the line is in
+  range, so drift would not be caught.
+- **violation** (low) — doc accuracy / single source of truth — evidence:
+  `docs/audits/security-sweep-chunk-9-gpu-wgsl.md`
+  `#### Init timeout — every pollster::block_on site (Issue #2242)` and
   `tests/issue_2113_chunk_09c_device_sweep.rs` `SWEEP_SYMBOLS` — reason:
-  fixed. `every_2242_cited_symbol_still_exists` now runs the existing
-  `symbol_rows` + `defines` + `assert_in_range` helpers over the three #2242
-  tables. The five hand-listed pins remain because the issue names them.
-- **violation** (nit) — Cite code by symbol, never by line number (Issue
-  #1942) — evidence: the #2242 additions to
-  `docs/audits/security-sweep-chunk-9-gpu-wgsl.md` — reason: stands. The issue
-  asks for file:line evidence, and the record's methodology and test parsers
-  are built on `path.rs:line`. Moving the whole record to symbol citations is
-  a separate change.
-- **violation** (nit) — DRY — evidence: the Files swept outcome cells repeat
-  line spans — reason: stands. The neighbouring #2240 and #2241 rows use the
-  same shape.
-- **violation** (nit) — the `## Outcome` paragraph was not re-wrapped —
-  evidence: `docs/audits/security-sweep-chunk-9-gpu-wgsl.md` `## Outcome` —
-  reason: fixed.
-- **clean** — Australian English (`analyzer` and `GpuAnalyzer` are proper
-  names), no Mermaid blocks in the record diff, scope limited to the device
-  regions, and concise comments. The contract checks on source text are the
-  symbol-existence use that `CONTRIBUTING.md` allows.
+  stands. `GPU_INIT_TIMEOUT_SECS` is cited at `device.rs:54`, but the
+  warm-up and caller wait import the duplicate `shaders.rs:135`. The issue
+  names the `device.rs` copy, and both are 30, so no verdict changes. The
+  duplicate is tracked in #2311.
+- **violation** (low) — An assertion that holds either way is not coverage
+  (Issue #1799) — evidence:
+  `tests/issue_2113_chunk_09c_device_sweep.rs::every_2242_cited_symbol_still_exists`
+  — reason: stands. The `pollster::block_on` pin passes while any
+  `analyzer.rs` site survives, and `device.rs:445` is not pinned by symbol.
+  The finding itself is pinned through `SURVIVING_FINDINGS`.
+- **violation** (nit) — KISS — evidence:
+  `tests/issue_2113_chunk_09c_device_sweep.rs::no_device_files_swept_row_is_still_pending`
+  — reason: stands. The `pending — #2113` assert is redundant with the
+  `starts_with` assert that follows it, which is harmless.
+- **clean** — Australian English, the Mermaid `;` rule (no Mermaid blocks
+  added to the record), no `ci.yml` change, the cited lines spot-checked
+  against HEAD, #2332 markers, edits confined to the device slice regions,
+  and tests in `tests/` with no timing. markdownlint, codespell, fmt, clippy
+  and the 12 tests are all clean.
 
 ## Test Plan
 
