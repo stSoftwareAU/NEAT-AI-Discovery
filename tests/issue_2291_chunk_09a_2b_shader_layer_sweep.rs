@@ -470,8 +470,9 @@ fn workgroup_size_matches_every_wgsl_file() {
         }
     }
     assert_eq!(
-        seen, 10,
-        "the record's constants table checks 10 `@workgroup_size` lines"
+        seen, 8,
+        "the record's constants table checks 8 `@workgroup_size` lines (10 at the baseline; \
+         #2309 deleted matching.wgsl and relu_reduce.wgsl)"
     );
 }
 

@@ -13,7 +13,7 @@ use naga::proc::{Alignment, Layouter};
 use naga::{Module, ScalarKind, TypeInner};
 use neat_ai_discovery::analysis::gpu::shaders::{
     ACTIVATION_REDUCE_SHADER, ACTIVATION_SHADER, BIAS_SHADER, HARMFUL_REDUCE_SHADER,
-    HARMFUL_SHADER, HELPFUL_REDUCE_SHADER, HELPFUL_SHADER, RELU_REDUCE_SHADER, RELU_SHADER,
+    HARMFUL_SHADER, HELPFUL_REDUCE_SHADER, HELPFUL_SHADER, RELU_SHADER,
 };
 use neat_ai_discovery::analysis::samples::{
     ActivationOutput, ActivationUniforms, BiasResult, BiasUniforms, GpuHelpfulSample,
@@ -221,10 +221,7 @@ fn parity_map() -> Vec<(RustLayout, Vec<Mirror>)> {
         ),
         (
             relu_contribution(),
-            vec![
-                ("relu.wgsl", RELU_SHADER, "ReluContribution"),
-                ("relu_reduce.wgsl", RELU_REDUCE_SHADER, "ReluContribution"),
-            ],
+            vec![("relu.wgsl", RELU_SHADER, "ReluContribution")],
         ),
         (
             relu_uniforms(),
@@ -266,7 +263,6 @@ fn parity_map() -> Vec<(RustLayout, Vec<Mirror>)> {
                     HARMFUL_REDUCE_SHADER,
                     "ReductionUniforms",
                 ),
-                ("relu_reduce.wgsl", RELU_REDUCE_SHADER, "ReductionUniforms"),
                 (
                     "activation_reduce.wgsl",
                     ACTIVATION_REDUCE_SHADER,
@@ -455,8 +451,8 @@ fn every_wgsl_mirror_matches_its_rust_struct_layout() {
             mirrors_checked += 1;
         }
     }
-    // 12 structs across 23 shader declarations — guards against a silently shrunk map.
-    assert_eq!(mirrors_checked, 23);
+    // 12 structs across 21 shader declarations — guards against a silently shrunk map.
+    assert_eq!(mirrors_checked, 21);
 }
 
 #[test]
@@ -480,7 +476,6 @@ fn host_shared_array_strides_equal_rust_size() {
         ("bias.wgsl", BIAS_SHADER),
         ("helpful_reduce.wgsl", HELPFUL_REDUCE_SHADER),
         ("harmful_reduce.wgsl", HARMFUL_REDUCE_SHADER),
-        ("relu_reduce.wgsl", RELU_REDUCE_SHADER),
         ("activation_reduce.wgsl", ACTIVATION_REDUCE_SHADER),
     ];
     let mut struct_arrays = 0usize;

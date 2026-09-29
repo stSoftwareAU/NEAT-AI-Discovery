@@ -82,14 +82,6 @@ pub const HELPFUL_REDUCE_SHADER: &str = include_str!("../../shaders/helpful_redu
 /// For 100K samples: 1.6MB → 6.3KB transfer
 pub const HARMFUL_REDUCE_SHADER: &str = include_str!("../../shaders/harmful_reduce.wgsl");
 
-/// `ReLU` contribution reduction shader (Issue #567).
-///
-/// Performs parallel tree reduction within workgroups to aggregate `ReluContribution`
-/// data on the GPU. This reduces GPU→CPU data transfer by ~255× for large sample counts.
-///
-/// For 100K samples: 4.0MB → 15.6KB transfer
-pub const RELU_REDUCE_SHADER: &str = include_str!("../../shaders/relu_reduce.wgsl");
-
 /// Activation output reduction shader (Issue #567).
 ///
 /// Performs parallel tree reduction within workgroups to aggregate `ActivationOutput`
@@ -211,7 +203,6 @@ mod tests {
         ("bias", BIAS_SHADER),
         ("helpful_reduce", HELPFUL_REDUCE_SHADER),
         ("harmful_reduce", HARMFUL_REDUCE_SHADER),
-        ("relu_reduce", RELU_REDUCE_SHADER),
         ("activation_reduce", ACTIVATION_REDUCE_SHADER),
     ];
 
@@ -265,10 +256,6 @@ mod tests {
         assert!(
             HARMFUL_REDUCE_SHADER.contains("@compute"),
             "HARMFUL_REDUCE_SHADER should contain @compute decorator"
-        );
-        assert!(
-            RELU_REDUCE_SHADER.contains("@compute"),
-            "RELU_REDUCE_SHADER should contain @compute decorator"
         );
         assert!(
             ACTIVATION_REDUCE_SHADER.contains("@compute"),
