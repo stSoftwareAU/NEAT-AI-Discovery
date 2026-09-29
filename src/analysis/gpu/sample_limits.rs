@@ -38,7 +38,7 @@ pub fn check_sample_set_fits(
         };
         let bytes_u64 = bytes as u64;
 
-        if bytes_u64 > limits.max_storage_buffer_binding_size as u64 {
+        if bytes_u64 > limits.max_storage_buffer_binding_size {
             bail!(
                 "{path}: binding '{binding_name}' needs {bytes_u64} bytes for sample_count={sample_count}, \
                  exceeding max_storage_buffer_binding_size ({})",
