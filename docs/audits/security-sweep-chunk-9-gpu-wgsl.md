@@ -775,6 +775,88 @@ the typed `GpuDeviceType::Software`.
 **Outcome (#2240): one finding, #2318.** SEC-fe0b268a3799 is remediated by #1873
 and needs no new issue.
 
+#### Entry-point None → Err sites (Issue #2241)
+
+Every `GpuAnalyzer` entry point reads each `Option` field as
+`self.X.as_ref().context("…")?` before it touches the GPU, in the order device,
+queue, layout, pipeline, then the reduce stage. A `None` field is therefore an
+`Err` naming the missing field, never an `Ok`. The unbudgeted wrappers hold no
+check of their own: they delegate to their `_with_budget` twin (next table), so
+their row cites the twin's checks. The activation reduce checks run only when
+`use_reduction` holds (`samples.len() >= GPU_REDUCTION_THRESHOLD`), and on the
+direct path the reduce fields are never read. The harmful and helpful reduce
+checks are unconditional.
+
+| Entry point | Defined at | device | queue | layout | pipeline | reduce stage |
+| --- | --- | --- | --- | --- | --- | --- |
+| `evaluate_relu_gpu` | `src/analysis/gpu/relu_evaluation.rs:53` | `src/analysis/gpu/relu_evaluation.rs:81` "GPU device unavailable for ReLU analysis" | `src/analysis/gpu/relu_evaluation.rs:85` "GPU queue not initialised for ReLU analysis" | `src/analysis/gpu/relu_evaluation.rs:89` "GPU ReLU layout not initialised" | `src/analysis/gpu/relu_evaluation.rs:93` "GPU ReLU pipeline not initialised" | — |
+| `evaluate_relu_gpu_with_budget` | `src/analysis/gpu/relu_evaluation.rs:63` | `src/analysis/gpu/relu_evaluation.rs:81` "GPU device unavailable for ReLU analysis" | `src/analysis/gpu/relu_evaluation.rs:85` "GPU queue not initialised for ReLU analysis" | `src/analysis/gpu/relu_evaluation.rs:89` "GPU ReLU layout not initialised" | `src/analysis/gpu/relu_evaluation.rs:93` "GPU ReLU pipeline not initialised" | — |
+| `evaluate_activation_gpu` | `src/analysis/gpu/activation_evaluation.rs:75` | `src/analysis/gpu/activation_evaluation.rs:110` "GPU device unavailable for activation analysis" | `src/analysis/gpu/activation_evaluation.rs:114` "GPU queue not initialised for activation analysis" | `src/analysis/gpu/activation_evaluation.rs:118` "GPU activation layout not initialised" | `src/analysis/gpu/activation_evaluation.rs:122` "GPU activation pipeline not initialised" | `src/analysis/gpu/activation_evaluation.rs:203` "GPU activation reduce layout not initialised" / `src/analysis/gpu/activation_evaluation.rs:207` "GPU activation reduce pipeline not initialised" |
+| `evaluate_activation_gpu_with_budget` | `src/analysis/gpu/activation_evaluation.rs:93` | `src/analysis/gpu/activation_evaluation.rs:110` "GPU device unavailable for activation analysis" | `src/analysis/gpu/activation_evaluation.rs:114` "GPU queue not initialised for activation analysis" | `src/analysis/gpu/activation_evaluation.rs:118` "GPU activation layout not initialised" | `src/analysis/gpu/activation_evaluation.rs:122` "GPU activation pipeline not initialised" | `src/analysis/gpu/activation_evaluation.rs:203` "GPU activation reduce layout not initialised" / `src/analysis/gpu/activation_evaluation.rs:207` "GPU activation reduce pipeline not initialised" |
+| `evaluate_activations_batched_gpu` | `src/analysis/gpu/activation_evaluation.rs:382` | `src/analysis/gpu/activation_evaluation.rs:416` "GPU device unavailable for activation analysis" | `src/analysis/gpu/activation_evaluation.rs:420` "GPU queue not initialised for batched activation analysis" | `src/analysis/gpu/activation_evaluation.rs:424` "GPU activation layout not initialised" | `src/analysis/gpu/activation_evaluation.rs:428` "GPU activation pipeline not initialised" | `src/analysis/gpu/activation_evaluation.rs:576` "GPU activation reduce layout not initialised" / `src/analysis/gpu/activation_evaluation.rs:580` "GPU activation reduce pipeline not initialised" |
+| `evaluate_activations_batched_gpu_with_budget` | `src/analysis/gpu/activation_evaluation.rs:396` | `src/analysis/gpu/activation_evaluation.rs:416` "GPU device unavailable for activation analysis" | `src/analysis/gpu/activation_evaluation.rs:420` "GPU queue not initialised for batched activation analysis" | `src/analysis/gpu/activation_evaluation.rs:424` "GPU activation layout not initialised" | `src/analysis/gpu/activation_evaluation.rs:428` "GPU activation pipeline not initialised" | `src/analysis/gpu/activation_evaluation.rs:576` "GPU activation reduce layout not initialised" / `src/analysis/gpu/activation_evaluation.rs:580` "GPU activation reduce pipeline not initialised" |
+| `evaluate_bias_gpu` | `src/analysis/gpu/bias_evaluation.rs:48` | `src/analysis/gpu/bias_evaluation.rs:67` "GPU device unavailable for bias analysis" | `src/analysis/gpu/bias_evaluation.rs:71` "GPU queue not initialised for bias analysis" | `src/analysis/gpu/bias_evaluation.rs:75` "GPU bias layout not initialised" | `src/analysis/gpu/bias_evaluation.rs:79` "GPU bias pipeline not initialised" | — |
+| `evaluate_harmful_batch` | `src/analysis/gpu/harmful_evaluation.rs:80` | `src/analysis/gpu/harmful_evaluation.rs:103` "GPU device unavailable for batched harmful analysis" | `src/analysis/gpu/harmful_evaluation.rs:107` "GPU queue not initialised for batched harmful analysis" | `src/analysis/gpu/harmful_evaluation.rs:111` "GPU layout not initialised for batched harmful analysis" | `src/analysis/gpu/harmful_evaluation.rs:115` "GPU pipeline not initialised for batched harmful analysis" | `src/analysis/gpu/harmful_evaluation.rs:120` "GPU harmful reduce layout not initialised" / `src/analysis/gpu/harmful_evaluation.rs:124` "GPU harmful reduce pipeline not initialised" |
+| `evaluate_harmful_batch_with_budget` | `src/analysis/gpu/harmful_evaluation.rs:90` | `src/analysis/gpu/harmful_evaluation.rs:103` "GPU device unavailable for batched harmful analysis" | `src/analysis/gpu/harmful_evaluation.rs:107` "GPU queue not initialised for batched harmful analysis" | `src/analysis/gpu/harmful_evaluation.rs:111` "GPU layout not initialised for batched harmful analysis" | `src/analysis/gpu/harmful_evaluation.rs:115` "GPU pipeline not initialised for batched harmful analysis" | `src/analysis/gpu/harmful_evaluation.rs:120` "GPU harmful reduce layout not initialised" / `src/analysis/gpu/harmful_evaluation.rs:124` "GPU harmful reduce pipeline not initialised" |
+| `evaluate_helpful_batch` | `src/analysis/gpu/helpful_evaluation.rs:206` | `src/analysis/gpu/helpful_evaluation.rs:232` "GPU device unavailable for batched helpful analysis" | `src/analysis/gpu/helpful_evaluation.rs:236` "GPU queue not initialised for batched helpful analysis" | `src/analysis/gpu/helpful_evaluation.rs:240` "GPU layout not initialised for batched helpful analysis" | `src/analysis/gpu/helpful_evaluation.rs:244` "GPU pipeline not initialised for batched helpful analysis" | `src/analysis/gpu/helpful_evaluation.rs:249` "GPU helpful reduce layout not initialised" / `src/analysis/gpu/helpful_evaluation.rs:253` "GPU helpful reduce pipeline not initialised" |
+| `evaluate_helpful_batch_with_budget` | `src/analysis/gpu/helpful_evaluation.rs:219` | `src/analysis/gpu/helpful_evaluation.rs:232` "GPU device unavailable for batched helpful analysis" | `src/analysis/gpu/helpful_evaluation.rs:236` "GPU queue not initialised for batched helpful analysis" | `src/analysis/gpu/helpful_evaluation.rs:240` "GPU layout not initialised for batched helpful analysis" | `src/analysis/gpu/helpful_evaluation.rs:244` "GPU pipeline not initialised for batched helpful analysis" | `src/analysis/gpu/helpful_evaluation.rs:249` "GPU helpful reduce layout not initialised" / `src/analysis/gpu/helpful_evaluation.rs:253` "GPU helpful reduce pipeline not initialised" |
+
+Only the device check is reachable without a GPU: a `wgpu::Device` cannot be
+built in a test, so `src/analysis/gpu/none_field_tests.rs` and
+`src/analysis/gpu/queue/none_field_tests.rs` drive every entry point and
+delegation on an all-`None` analyser and assert an `Err` carrying
+"GPU device unavailable". The queue, layout, pipeline and reduce checks are
+pinned by `tests/issue_2113_chunk_09c_device_sweep.rs`, which asserts each cited
+`.context("…")` string still guards its entry point in the cited order.
+`FakeGpuEvaluator` replaces `GpuAnalyzer` wholesale, so it cannot prove this
+property.
+
+#### Entry-point delegations (Issue #2241)
+
+| Caller | Delegates to | Cited at |
+| --- | --- | --- |
+| `GpuAnalyzer::evaluate_relu_gpu` | `evaluate_relu_gpu_with_budget` | `src/analysis/gpu/relu_evaluation.rs:58` |
+| `GpuAnalyzer::evaluate_activation_gpu` | `evaluate_activation_gpu_with_budget` | `src/analysis/gpu/activation_evaluation.rs:82` |
+| `GpuAnalyzer::evaluate_activations_batched_gpu` | `evaluate_activations_batched_gpu_with_budget` | `src/analysis/gpu/activation_evaluation.rs:387` |
+| `GpuAnalyzer::evaluate_harmful_batch` | `evaluate_harmful_batch_with_budget` | `src/analysis/gpu/harmful_evaluation.rs:84` |
+| `GpuAnalyzer::evaluate_helpful_batch` | `evaluate_helpful_batch_with_budget` | `src/analysis/gpu/helpful_evaluation.rs:210` |
+| `GpuEvaluator::evaluate_relu` | `evaluate_relu_gpu` | `src/analysis/gpu/analyzer.rs:104` |
+| `GpuEvaluator::evaluate_activation` | `evaluate_activation_gpu` | `src/analysis/gpu/analyzer.rs:114` |
+| `GpuEvaluator::evaluate_activations_batched` | `evaluate_activations_batched_gpu` | `src/analysis/gpu/analyzer.rs:122` |
+| `RequestEvaluator::evaluate_helpful_batch` | `evaluate_helpful_batch_with_budget` | `src/analysis/gpu/queue/executor.rs:72` |
+| `RequestEvaluator::evaluate_harmful_batch` | `evaluate_harmful_batch_with_budget` | `src/analysis/gpu/queue/executor.rs:80` |
+| `RequestEvaluator::evaluate_relu` | `evaluate_relu_gpu_with_budget` | `src/analysis/gpu/queue/executor.rs:89` |
+| `RequestEvaluator::evaluate_activation` | `evaluate_activation_gpu_with_budget` | `src/analysis/gpu/queue/executor.rs:100` |
+| `RequestEvaluator::evaluate_activations_batched` | `evaluate_activations_batched_gpu_with_budget` | `src/analysis/gpu/queue/executor.rs:115` |
+
+Every trait method and inherent wrapper forwards to an entry point in the table
+above and adds no `Ok` path of its own. The inherent wrappers pass
+`GpuTimeBudget::unbounded()`, and `RequestEvaluator` passes the per-request budget.
+
+#### Empty-input Ok short-circuits (Issue #2241)
+
+| Entry point | Guard | Cited at | Returns | Verdict |
+| --- | --- | --- | --- | --- |
+| `evaluate_relu_gpu_with_budget` | `samples.is_empty()` | `src/analysis/gpu/relu_evaluation.rs:69` | `Ok((ReluStats::new(Positive), ReluStats::new(Negative), 0.0))` | benign: zero-count stats are the true answer for no samples, and the caller reads `count` before any mean |
+| `evaluate_activation_gpu_with_budget` | `samples.is_empty()` | `src/analysis/gpu/activation_evaluation.rs:102` | `Ok((0.0, 0.0, 0.0, 0))` | benign: the trailing `0` is the sample count, so no caller can mistake it for a measured result |
+| `evaluate_activations_batched_gpu_with_budget` | `activation_configs.is_empty()` | `src/analysis/gpu/activation_evaluation.rs:403` | `Ok(Vec::new())` | benign: one result per config, and there are none |
+| `evaluate_activations_batched_gpu_with_budget` | `samples.is_empty()` | `src/analysis/gpu/activation_evaluation.rs:407` | `Ok(vec![(0.0, 0.0, 0.0, 0); activation_configs.len()])` | benign: one zero-count tuple per config, same shape as the single-config path |
+| `evaluate_bias_gpu` | `samples.is_empty()` | `src/analysis/gpu/bias_evaluation.rs:57` | `Ok(0.0)` | benign: a zero bias delta proposes no change, and the GPU bias path is unreachable in production (#2316) |
+| `evaluate_harmful_batch_with_budget` | `samples_batch.is_empty()` | `src/analysis/gpu/harmful_evaluation.rs:95` | `Ok(Vec::new())` | benign: one result per candidate, and there are none |
+| `evaluate_helpful_batch_with_budget` | `samples_batch.is_empty()` | `src/analysis/gpu/helpful_evaluation.rs:224` | `Ok(Vec::new())` | benign: one result per candidate, and there are none |
+
+Each short-circuit sits before the `None` checks, so an empty input answers `Ok`
+even on an all-`None` analyser. That is sound: no GPU work is needed to answer
+for zero samples or zero candidates, and every value is a zero-count or empty
+result. `evaluate_bias_gpu` has two more guards, `step < f32::EPSILON`
+(`bias_evaluation.rs:82`, Issue #805) and an empty `bias_candidates`
+(`bias_evaluation.rs:92`). Both sit after the `None` checks, so a `None` field
+reaches them only as an `Err`.
+
+**Outcome (#2241): no finding.** Every entry point returns `Err` for a `None`
+device, queue, layout, pipeline or reduce field, and every delegation forwards
+to one of them. The empty-input `Ok` short-circuits are benign.
+
 ### queue-core
 
 <!-- section: queue-core -->
@@ -849,6 +931,7 @@ Each slice appends rows only inside its own marked region.
 | TOCTOU: a thread spawned between the `/proc/self/task` count and the `set_var` (CWE-367) | `src/analysis/utils/platform.rs:410`, `:421`–`:422`, `:176`–`:216`, `:287`–`:304` | Only an existing thread can spawn one. Between the count and the writes the lone thread runs `env::var`, `temp_dir`, `canonicalize`, `DirBuilder` and `symlink_metadata`, and none of them spawns a thread. Every `tracing::warn!` in that window is on a refusal path that returns before a write (Issue #2240) |
 | The `pub unsafe fn` re-exports (`suppress_mesa_warnings_if_requested`, `ensure_xdg_runtime_dir`) let a caller skip the thread guard | `src/analysis/system.rs:88`; `src/analysis/utils/mod.rs:60`; `src/analysis/utils/platform.rs:82`, `:147`, `:421`–`:422` | Both are `unsafe fn`, so a Rust caller must write `unsafe` and take on the `# Safety` precondition. Neither is `extern "C"`, and the only non-test call site is inside `setup_gpu_environment` after the guard (Issue #2240) |
 | Another non-test `env::set_var` on the GPU init path races `getenv` | `src/analysis/utils/platform.rs:62` | `platform.rs:62` is the only `env::set_var` in `src/` outside a `#[cfg(test)]` module or `*_tests.rs` file. The crate-wide env-write sweep is chunk 13 (#2096) (Issue #2240) |
+| An entry point returns `Ok` with a `None` device, queue, layout, pipeline or reduce field | `src/analysis/gpu/relu_evaluation.rs:81`; `src/analysis/gpu/activation_evaluation.rs:110`, `:416`; `src/analysis/gpu/bias_evaluation.rs:67`; `src/analysis/gpu/harmful_evaluation.rs:103`; `src/analysis/gpu/helpful_evaluation.rs:232` | Every field is read through `.context("…")?` before any GPU work, and the only `Ok` before those checks is an empty-input short-circuit that returns a zero-count or empty result (Issue #2241) |
 <!-- section: queue-core -->
 <!-- section: queue-lifecycle -->
 
@@ -861,8 +944,8 @@ harmful halves (#2237: two findings, #2313 and #2314) and the bias, relu and
 activation halves (#2238: no new finding; relu and activation
 widen #2313 and #2314, and the unreachable GPU bias path is #2316). The device
 slice has recorded the SEC-fe0b268a3799 disposition (remediated by #1873) and
-the CPU-fallback cross-check (#2240: one finding, #2318); its per-file sweep
-is pending #2241/#2242. Every other file is pending its slice. Each slice records its
+the CPU-fallback cross-check (#2240: one finding, #2318) and the entry-point
+`None → Err` sweep (#2241: no finding). Its remaining per-file sweep is pending #2242. Every other file is pending its slice. Each slice records its
 outcome in its region under `## Audit sections`.
 
 ## Issues filed

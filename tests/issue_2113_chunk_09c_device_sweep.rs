@@ -14,6 +14,20 @@
 //!   the file they cite, so the record fails loudly when the code moves;
 //! * every finding the device region files is open and linked to its issue.
 //!
+//! The second slice (Issue #2241) adds the `GpuAnalyzer` `None → Err` record:
+//!
+//! * the entry-point table carries all eleven entry points, in order, each
+//!   citing its device, queue, layout, pipeline and (where it has one) reduce
+//!   check as `path.rs:line` plus the `.context("…")` string, and every string
+//!   still guards that entry point's body in that order;
+//! * every delegation row still delegates to the entry point it names;
+//! * every empty-input `Ok` short-circuit carries a `benign` verdict;
+//! * the device audit region states "Outcome (#2241): no finding".
+//!
+//! Only the device check is reachable without a GPU, so this string check is
+//! what pins the queue, layout, pipeline and reduce checks; the device check is
+//! also exercised by `src/analysis/gpu/none_field_tests.rs`.
+//!
 //! Line numbers are baseline-relative, so only their range is checked here;
 //! the runtime guard itself stays pinned by
 //! `test_may_mutate_environment_requires_single_thread` and
@@ -70,6 +84,32 @@ const SURVIVING_FINDINGS: [&str; 1] = ["SEC-2b0c59cc73d5"];
 const WRITE_PATH_TABLE: &str = "#### SEC-fe0b268a3799 — write path (Issue #2240)";
 const CALL_SITE_TABLE: &str = "#### SEC-fe0b268a3799 — `setup_gpu_environment` sites (Issue #2240)";
 const CROSS_CHECK_TABLE: &str = "#### CPU-fallback cross-check (Issue #2240)";
+const ENTRY_POINT_TABLE: &str = "#### Entry-point None → Err sites (Issue #2241)";
+const DELEGATION_TABLE: &str = "#### Entry-point delegations (Issue #2241)";
+const SHORT_CIRCUIT_TABLE: &str = "#### Empty-input Ok short-circuits (Issue #2241)";
+
+/// Every public `GpuAnalyzer` evaluation entry point, in record order.
+const ENTRY_POINTS: [&str; 11] = [
+    "evaluate_relu_gpu",
+    "evaluate_relu_gpu_with_budget",
+    "evaluate_activation_gpu",
+    "evaluate_activation_gpu_with_budget",
+    "evaluate_activations_batched_gpu",
+    "evaluate_activations_batched_gpu_with_budget",
+    "evaluate_bias_gpu",
+    "evaluate_harmful_batch",
+    "evaluate_harmful_batch_with_budget",
+    "evaluate_helpful_batch",
+    "evaluate_helpful_batch_with_budget",
+];
+
+/// The phrase each check column's `.context("…")` string must carry.
+const CHECK_PHRASES: [&str; 4] = [
+    "GPU device unavailable",
+    "GPU queue not initialised",
+    "layout",
+    "pipeline",
+];
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -170,13 +210,87 @@ fn prefixed_rows(body: &str, prefix: &str) -> Vec<Vec<String>> {
 
 /// The first `` `path.rs:line` `` citation in a cell, split into its parts.
 fn first_citation(cell: &str) -> Option<(String, usize)> {
-    cell.split('`').skip(1).step_by(2).find_map(|token| {
-        let (path, line) = token.rsplit_once(':')?;
-        if !path.ends_with(".rs") {
-            return None;
-        }
-        Some((path.to_string(), line.parse().ok()?))
-    })
+    citations(cell).into_iter().next()
+}
+
+/// Every `` `path.rs:line` `` citation in a cell, in order.
+fn citations(cell: &str) -> Vec<(String, usize)> {
+    cell.split('`')
+        .skip(1)
+        .step_by(2)
+        .filter_map(|token| {
+            let (path, line) = token.rsplit_once(':')?;
+            if !path.ends_with(".rs") {
+                return None;
+            }
+            Some((path.to_string(), line.parse().ok()?))
+        })
+        .collect()
+}
+
+/// Every `"…"` string in a cell, in order.
+fn quoted(cell: &str) -> Vec<String> {
+    cell.split('"')
+        .skip(1)
+        .step_by(2)
+        .map(str::to_string)
+        .collect()
+}
+
+/// `(path, line, string)` for every citation/string pair in a check cell.
+fn checks(entry: &str, cell: &str) -> Vec<(String, usize, String)> {
+    let cites = citations(cell);
+    let strings = quoted(cell);
+    assert_eq!(
+        cites.len(),
+        strings.len(),
+        "{entry}: every cited check must quote its `.context` string: {cell}"
+    );
+    cites
+        .into_iter()
+        .zip(strings)
+        .map(|((path, line), text)| (path, line, text))
+        .collect()
+}
+
+/// The body of each `fn name(` in `source`, up to the next item at the same
+/// indent or the end of the `impl` block.
+fn fn_bodies<'a>(source: &'a str, name: &str) -> Vec<&'a str> {
+    let needle = format!("fn {name}(");
+    source
+        .match_indices(&needle)
+        .map(|(start, _)| {
+            let rest = &source[start + needle.len()..];
+            let end = [
+                "\n    pub fn ",
+                "\n    fn ",
+                "\n    pub(super) fn ",
+                "\n    pub(crate) fn ",
+                "\n}",
+            ]
+            .iter()
+            .filter_map(|t| rest.find(t))
+            .min()
+            .unwrap_or(rest.len());
+            &rest[..end]
+        })
+        .collect()
+}
+
+/// The device audit region's rows under one `####` table heading.
+fn audit_table(heading: &str) -> Vec<Vec<String>> {
+    let doc = read(RECORD);
+    let region = device_region(section(&doc, "## Audit sections")).to_string();
+    table_rows(section(&region, heading))
+}
+
+fn assert_in_range(label: &str, path: &str, line: usize) -> String {
+    let source = read(path);
+    assert!(
+        line >= 1 && line <= source.lines().count(),
+        "{label} cites {path}:{line}, past the end of the file"
+    );
+    source
 }
 
 /// Every `#N` issue reference in a cell.
@@ -203,9 +317,7 @@ fn defines(source: &str, symbol: &str) -> bool {
 /// `(symbol, cited path, cited line)` for every row of a `Symbol | Cited at`
 /// table in the device audit region.
 fn symbol_rows(heading: &str) -> Vec<(String, String, usize)> {
-    let doc = read(RECORD);
-    let region = device_region(section(&doc, "## Audit sections")).to_string();
-    table_rows(section(&region, heading))
+    audit_table(heading)
         .into_iter()
         .map(|row| {
             let symbol = row[0]
@@ -378,4 +490,166 @@ fn every_device_finding_is_open_linked_and_named_in_the_audit_region() {
             );
         }
     }
+}
+
+#[test]
+fn every_entry_point_cites_its_none_to_err_checks_in_order() {
+    let rows = audit_table(ENTRY_POINT_TABLE);
+    let names: Vec<&str> = rows.iter().map(|row| row[0].trim_matches('`')).collect();
+    assert_eq!(
+        names, ENTRY_POINTS,
+        "the entry-point table must carry one row per entry point, in order"
+    );
+    for row in &rows {
+        let entry = row[0].trim_matches('`');
+        assert_eq!(
+            row.len(),
+            7,
+            "{entry}: entry point | defined at | device | queue | layout | pipeline | reduce"
+        );
+        let (def_path, def_line) = first_citation(&row[1])
+            .unwrap_or_else(|| panic!("{entry} must cite its definition as `path.rs:line`"));
+        let source = assert_in_range(entry, &def_path, def_line);
+        assert!(
+            defines(&source, entry),
+            "`{entry}` is no longer defined in {def_path}"
+        );
+
+        let mut cited = Vec::new();
+        for (column, phrase) in CHECK_PHRASES.iter().enumerate() {
+            let pairs = checks(entry, &row[column + 2]);
+            assert_eq!(
+                pairs.len(),
+                1,
+                "{entry}: the {phrase} column cites exactly one check"
+            );
+            assert!(
+                pairs[0].2.contains(phrase),
+                "{entry}: the {phrase} column quotes {:?}",
+                pairs[0].2
+            );
+            cited.extend(pairs);
+        }
+        let reduce = checks(entry, &row[6]);
+        if !reduce.is_empty() {
+            assert_eq!(reduce.len(), 2, "{entry}: reduce cites layout / pipeline");
+            assert!(reduce[0].2.contains("reduce layout"), "{entry}: {reduce:?}");
+            assert!(
+                reduce[1].2.contains("reduce pipeline"),
+                "{entry}: {reduce:?}"
+            );
+        } else {
+            assert_eq!(
+                row[6], "—",
+                "{entry}: an entry point with no reduce stage reads —"
+            );
+        }
+        cited.extend(reduce);
+
+        // The unbudgeted wrappers delegate, so their checks live in `_with_budget`.
+        let checker = if entry.ends_with("_with_budget") || entry == "evaluate_bias_gpu" {
+            entry.to_string()
+        } else {
+            format!("{entry}_with_budget")
+        };
+        let bodies = fn_bodies(&source, &checker);
+        assert_eq!(bodies.len(), 1, "{def_path} must define `{checker}` once");
+        let mut cursor = 0;
+        let mut last_line = 0;
+        for (path, line, text) in &cited {
+            assert_eq!(
+                path, &def_path,
+                "{entry}: checks live beside the definition"
+            );
+            assert_in_range(entry, path, *line);
+            assert!(
+                *line > last_line,
+                "{entry}: cited lines must run device < queue < layout < pipeline < reduce"
+            );
+            last_line = *line;
+            let context = format!(".context(\"{text}\")");
+            let at = bodies[0][cursor..].find(&context).unwrap_or_else(|| {
+                panic!(
+                    "`{checker}` in {path} no longer guards with {context} after the previous check"
+                )
+            });
+            cursor += at + context.len();
+        }
+    }
+}
+
+#[test]
+fn every_delegation_row_still_delegates_to_an_entry_point() {
+    let rows = audit_table(DELEGATION_TABLE);
+    assert_eq!(
+        rows.len(),
+        13,
+        "5 inherent wrappers + 3 GpuEvaluator + 5 RequestEvaluator delegations"
+    );
+    for row in &rows {
+        assert_eq!(row.len(), 3, "caller | delegates to | cited at: {row:?}");
+        let caller = row[0]
+            .trim_matches('`')
+            .rsplit("::")
+            .next()
+            .unwrap_or_default();
+        let delegate = row[1].trim_matches('`');
+        assert!(
+            ENTRY_POINTS.contains(&delegate),
+            "{caller} must delegate to an entry point, not `{delegate}`"
+        );
+        let (path, line) =
+            first_citation(&row[2]).unwrap_or_else(|| panic!("{caller} must cite `path.rs:line`"));
+        let source = assert_in_range(caller, &path, line);
+        let call = format!("self.{delegate}(");
+        assert!(
+            fn_bodies(&source, caller)
+                .iter()
+                .any(|body| body.contains(&call)),
+            "`{caller}` in {path} no longer calls `{call}` — the delegation record is stale"
+        );
+    }
+    for trait_name in ["GpuEvaluator::", "RequestEvaluator::"] {
+        assert!(
+            rows.iter().any(|row| row[0].contains(trait_name)),
+            "the delegation table must cover `{trait_name}`"
+        );
+    }
+}
+
+#[test]
+fn every_empty_input_short_circuit_carries_a_benign_verdict() {
+    let rows = audit_table(SHORT_CIRCUIT_TABLE);
+    assert_eq!(rows.len(), 7, "one row per empty-input `Ok` short-circuit");
+    for row in &rows {
+        assert_eq!(
+            row.len(),
+            5,
+            "entry point | guard | cited at | returns | verdict: {row:?}"
+        );
+        let entry = row[0].trim_matches('`');
+        assert!(
+            ENTRY_POINTS.contains(&entry),
+            "`{entry}` is not an entry point"
+        );
+        let (path, line) =
+            first_citation(&row[2]).unwrap_or_else(|| panic!("{entry} must cite `path.rs:line`"));
+        let source = assert_in_range(entry, &path, line);
+        assert!(defines(&source, entry), "`{entry}` is no longer in {path}");
+        assert!(
+            row[4].starts_with("benign") || row[4].starts_with("finding"),
+            "{entry}: verdict must open with `benign` or `finding`: {}",
+            row[4]
+        );
+    }
+}
+
+#[test]
+fn the_device_region_states_the_2241_outcome() {
+    let doc = read(RECORD);
+    let audit = device_region(section(&doc, "## Audit sections"));
+    assert!(
+        audit.contains("**Outcome (#2241): no finding.**"),
+        "the device audit region must state the #2241 outcome explicitly"
+    );
 }
