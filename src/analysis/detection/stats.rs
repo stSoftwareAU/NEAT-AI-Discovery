@@ -35,7 +35,8 @@ pub fn compute_variance(values: &[f32]) -> f32 {
 /// Uses the minimum of the two slice lengths when they differ.
 /// Returns `0.0` for inputs with fewer than 2 elements or zero variance.
 /// Result is always clamped to `[-1.0, 1.0]` to guard against
-/// floating-point overshoot.
+/// floating-point overshoot, and is never non-finite: an `f32` covariance or
+/// variance overflow from finite inputs returns `0.0` (Issue #2304).
 pub fn pearson_correlation(x: &[f32], y: &[f32]) -> f32 {
     let n = x.len().min(y.len());
     if n < 2 {
@@ -59,11 +60,16 @@ pub fn pearson_correlation(x: &[f32], y: &[f32]) -> f32 {
     }
 
     let denom = (var_x * var_y).sqrt();
-    if denom < f32::EPSILON {
+    // A NaN would pass straight through `f32::clamp` (Issue #2304).
+    if !denom.is_finite() || denom < f32::EPSILON {
+        return 0.0;
+    }
+    let corr = cov / denom;
+    if !corr.is_finite() {
         return 0.0;
     }
 
-    (cov / denom).clamp(-1.0, 1.0)
+    corr.clamp(-1.0, 1.0)
 }
 
 /// Compute Pearson correlation between two `HelpfulSample` slices using f64 precision.
