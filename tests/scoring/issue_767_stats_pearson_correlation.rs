@@ -47,6 +47,25 @@ fn pearson_correlation_too_few_returns_zero() {
     assert_eq!(pearson_correlation(&[], &[]), 0.0);
 }
 
+/// Issue #2304: finite `±2e30` activations overflow the `f32` covariance and
+/// variance accumulators; the result must be `0.0`, never a NaN.
+#[test]
+fn pearson_correlation_f32_overflow_returns_zero() {
+    let x: Vec<f32> = (0..30_u32)
+        .map(|i| if i.is_multiple_of(2) { 2.0e30 } else { -2.0e30 })
+        .collect();
+    let y: Vec<f32> = (0..30_u32)
+        .map(|i| if i.is_multiple_of(3) { 1.0e10 } else { -5.0e9 })
+        .collect();
+    assert!(
+        x.iter().chain(&y).all(|v| v.is_finite()),
+        "the trigger must use only finite inputs"
+    );
+
+    let r = pearson_correlation(&x, &y);
+    assert_eq!(r, 0.0, "an overflowed correlation must be 0.0, got {r}");
+}
+
 // ── pearson_correlation_samples (HelpfulSample, f64) ─────────────────────
 
 #[test]
