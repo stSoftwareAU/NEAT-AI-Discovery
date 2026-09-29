@@ -92,6 +92,9 @@ impl GpuAnalyzer {
             .as_ref()
             .context("GPU ReLU pipeline not initialised")?;
 
+        // Issue #2314: reject an oversized sample set before it reaches wgpu allocation.
+        crate::analysis::gpu::sample_limits::check_relu_set_fits(samples.len(), &device.limits())?;
+
         let gpu_samples: Vec<GpuHelpfulSample> = samples
             .iter()
             .copied()
