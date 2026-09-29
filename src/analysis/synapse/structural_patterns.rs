@@ -69,6 +69,30 @@ pub(crate) fn detect_noisy_vs_trusted(
     neuron_squash_map: &HashMap<&str, &str>,
     deadline: &Option<SystemTime>,
 ) -> Option<CoordinatedStructuralCandidateJson> {
+    detect_noisy_vs_trusted_observed(
+        target_uuid,
+        synapses_by_target,
+        cache,
+        target_map,
+        neuron_squash_map,
+        deadline,
+        || {},
+    )
+}
+
+/// [`detect_noisy_vs_trusted`] with `on_pair` called once per pair of incoming
+/// inputs considered by the pairwise scan — the scan's unit of work — so a
+/// test can assert on how the work grows without timing it (Issue #2320).
+#[allow(clippy::too_many_arguments)]
+fn detect_noisy_vs_trusted_observed(
+    target_uuid: &str,
+    synapses_by_target: &[&SynapseJson],
+    cache: &RecordCache,
+    target_map: &TargetMap,
+    neuron_squash_map: &HashMap<&str, &str>,
+    deadline: &Option<SystemTime>,
+    mut on_pair: impl FnMut(),
+) -> Option<CoordinatedStructuralCandidateJson> {
     fn activation_mean_and_variance(records: &[DiscoverRecord]) -> Option<(f32, f32)> {
         let mut n = 0.0f32;
         let mut sum = 0.0f32;
@@ -150,6 +174,8 @@ pub(crate) fn detect_noisy_vs_trusted(
 
     'pairs: for i in 0..incoming_inputs.len() {
         for j in (i + 1)..incoming_inputs.len() {
+            on_pair();
+
             let a = &incoming_inputs[i];
             let b = &incoming_inputs[j];
 
@@ -291,6 +317,19 @@ pub(crate) fn detect_collapsible_hidden_neurons(
     cache: &RecordCache,
     deadline: &Option<SystemTime>,
 ) -> CollapseDetectionOutcome {
+    detect_collapsible_hidden_neurons_observed(input, cache, deadline, || {})
+}
+
+/// [`detect_collapsible_hidden_neurons`] with `on_shared_map_build` called once
+/// per shared `a`/`b` activation map actually built — the scan's unit of work
+/// this memoisation is meant to bound — so a test can assert on how the work
+/// grows without timing it (Issue #2320).
+fn detect_collapsible_hidden_neurons_observed(
+    input: &crate::AnalyzeSynapsesInput,
+    cache: &RecordCache,
+    deadline: &Option<SystemTime>,
+    mut on_shared_map_build: impl FnMut(),
+) -> CollapseDetectionOutcome {
     let mut results = Vec::new();
     let mut bypass_weight_below_floor_drops: u32 = 0;
     let bypass_floor = min_bypass_weight_for_collapse();
@@ -372,12 +411,14 @@ pub(crate) fn detect_collapsible_hidden_neurons(
                 continue;
             };
             a_maps.insert(a, build_act_map(a_records.as_ref()));
+            on_shared_map_build();
         }
         if !b_target_maps.contains_key(b) {
             let Ok(b_records) = cache.get(b) else {
                 continue;
             };
             b_target_maps.insert(b, TargetMap::from_records(b_records.as_ref()));
+            on_shared_map_build();
         }
         let Ok(h_records) = cache.get(h) else {
             continue;
