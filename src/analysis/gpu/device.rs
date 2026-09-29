@@ -49,9 +49,9 @@ pub const GPU_BUFFER_MAP_TIMEOUT_MARGIN_SECS: u64 = 5;
 pub const GPU_BUFFER_MAP_TIMEOUT_SECS: u64 =
     GPU_QUEUE_TIMEOUT_MAX_SECS - GPU_BUFFER_MAP_TIMEOUT_MARGIN_SECS;
 
-/// Timeout for GPU thread initialisation (in seconds).
-/// GPU device creation should be fast; if it takes longer, something is wrong.
-pub const GPU_INIT_TIMEOUT_SECS: u64 = 30;
+/// Timeout for GPU thread initialisation (in seconds), re-exported from
+/// `shaders.rs` — the single source of truth (Issue #2311).
+pub use super::shaders::GPU_INIT_TIMEOUT_SECS;
 
 // =============================================================================
 // GPU Performance Tier

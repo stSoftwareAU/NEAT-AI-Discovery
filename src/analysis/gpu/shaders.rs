@@ -132,8 +132,8 @@ pub const WORKGROUP_SIZE: u32 = 256;
 /// - Maximum: 60 (too long delays error detection)
 /// - Default: 30 (reasonable for most systems)
 ///
-/// Note: This constant is also available from `gpu/device.rs` for backwards
-/// compatibility. Both locations reference the same value.
+/// This is the single definition (Issue #2311). `gpu/device.rs` re-exports
+/// this item for backwards compatibility rather than defining its own copy.
 pub const GPU_INIT_TIMEOUT_SECS: u64 = 30;
 
 /// Timeout in seconds for graceful GPU thread shutdown.
