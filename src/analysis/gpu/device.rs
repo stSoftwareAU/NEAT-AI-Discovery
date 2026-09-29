@@ -87,6 +87,9 @@ pub struct GpuAvailabilityResult {
     pub reason: Option<String>,
     /// Whether this is an error condition (true on macOS when GPU unavailable).
     pub is_error: bool,
+    /// Adapter classification when a device was created; `None` when no GPU
+    /// is available (Issue #2318).
+    pub device_type: Option<crate::analysis::shared::GpuDeviceType>,
 }
 
 // =============================================================================
@@ -420,6 +423,7 @@ pub fn no_gpu_result(reason: &str) -> GpuAvailabilityResult {
                  This may indicate a system configuration issue."
             )),
             is_error: true,
+            device_type: None,
         }
     }
 
@@ -434,6 +438,7 @@ pub fn no_gpu_result(reason: &str) -> GpuAvailabilityResult {
                  without proper permissions to access /dev/dri devices."
             )),
             is_error: false,
+            device_type: None,
         }
     }
 
@@ -444,6 +449,7 @@ pub fn no_gpu_result(reason: &str) -> GpuAvailabilityResult {
             available: false,
             reason: Some(format!("{reason}. Discovery disabled on this platform.")),
             is_error: false,
+            device_type: None,
         }
     }
 }
@@ -515,6 +521,7 @@ mod tests {
             available: true,
             reason: None,
             is_error: false,
+            device_type: None,
         };
         assert!(result.available);
         assert!(result.reason.is_none());
@@ -524,6 +531,7 @@ mod tests {
             available: false,
             reason: Some("No GPU found".to_string()),
             is_error: true,
+            device_type: None,
         };
         assert!(!result_unavailable.available);
         assert_eq!(result_unavailable.reason.as_deref(), Some("No GPU found"));

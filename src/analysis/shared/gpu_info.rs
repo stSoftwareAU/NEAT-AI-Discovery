@@ -32,7 +32,8 @@ pub struct GpuAdapterInfo {
 }
 
 /// GPU device type classification.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
 pub enum GpuDeviceType {
     /// Discrete GPU (separate VRAM, e.g., NVIDIA/AMD cards).
     Discrete,
@@ -44,6 +45,19 @@ pub enum GpuDeviceType {
     Virtual,
     /// Other/unknown device type.
     Other,
+}
+
+impl GpuDeviceType {
+    /// Whether this device type is a software/CPU rasteriser (e.g. Mesa
+    /// lavapipe/llvmpipe), rather than real GPU hardware.
+    ///
+    /// Issue #2318: wgpu's `force_fallback_adapter: false` only ranks a
+    /// software adapter last during selection, it never excludes one — on a
+    /// headless box with no real GPU, `request_adapter` can still hand back
+    /// a CPU adapter that passes the capability gate.
+    pub fn is_software(self) -> bool {
+        matches!(self, Self::Software)
+    }
 }
 
 impl From<wgpu::DeviceType> for GpuDeviceType {
@@ -120,5 +134,31 @@ impl ZeroCopyBufferConfig {
     /// Check if enabled with hardware detection.
     pub fn enabled_with_hardware(&self, has_unified_memory: bool) -> bool {
         self.force_enabled.unwrap_or(has_unified_memory)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cpu_device_type_is_software() {
+        assert!(GpuDeviceType::from(wgpu::DeviceType::Cpu).is_software());
+    }
+
+    #[test]
+    fn non_cpu_device_types_are_not_software() {
+        assert!(!GpuDeviceType::from(wgpu::DeviceType::DiscreteGpu).is_software());
+        assert!(!GpuDeviceType::from(wgpu::DeviceType::IntegratedGpu).is_software());
+        assert!(!GpuDeviceType::from(wgpu::DeviceType::VirtualGpu).is_software());
+        assert!(!GpuDeviceType::from(wgpu::DeviceType::Other).is_software());
+    }
+
+    #[test]
+    fn software_serialises_lowercase() {
+        assert_eq!(
+            serde_json::to_value(GpuDeviceType::Software).unwrap(),
+            serde_json::json!("software")
+        );
     }
 }
