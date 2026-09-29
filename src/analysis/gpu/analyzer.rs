@@ -150,6 +150,7 @@ fn check_minimum_system_requirements() -> Option<GpuAvailabilityResult> {
             available: false,
             reason: Some(reason),
             is_error,
+            device_type: None,
         });
     }
 
@@ -235,6 +236,13 @@ fn log_gpu_info_once(
             "GPU device initialised"
         );
 
+        if adapter_info.device_type == wgpu::DeviceType::Cpu {
+            tracing::warn!(
+                gpu_name = %adapter_info.name,
+                "Only a software (CPU) wgpu adapter is available — discovery runs on a CPU rasteriser and is far slower than a real GPU; check checkGpuAvailable's softwareAdapter field (Issue #2318)"
+            );
+        }
+
         // Provide tuning hints at debug level
         tracing::debug!(
             "GPU tuning: set NEAT_AI_DISCOVERY_GPU_BATCH_SIZE=N to override (64-4096) — \
@@ -283,6 +291,9 @@ impl GpuAnalyzer {
             Err(_) => return no_gpu_result("No GPU adapter found"),
         };
 
+        let device_type: crate::analysis::shared::GpuDeviceType =
+            adapter.get_info().device_type.into();
+
         let device_result = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: Some("NEAT-AI Discovery GPU probe device"),
             required_features: wgpu::Features::empty(),
@@ -295,6 +306,7 @@ impl GpuAnalyzer {
                 available: true,
                 reason: None,
                 is_error: false,
+                device_type: Some(device_type),
             },
             Err(e) => no_gpu_result(&format!("GPU device creation failed: {e}")),
         }

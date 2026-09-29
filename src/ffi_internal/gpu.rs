@@ -44,7 +44,9 @@ pub fn check_gpu_available_internal() -> Result<String> {
 ///   caller can tell a permanent "discovery-unsupported-on-host" skip from a
 ///   transient error worth retrying.
 /// - **GPU available**: `success = true`, `gpuAvailable = true`, no error
-///   classification.
+///   classification, and the detected `device_type`/`software_adapter`
+///   classification so callers can flag a software (CPU) rasteriser
+///   (Issue #2318).
 pub(crate) fn build_check_gpu_output(result: GpuAvailabilityResult) -> CheckGpuOutput {
     if result.is_error {
         // On macOS, missing GPU is an error (Metal should always work).
@@ -59,6 +61,8 @@ pub(crate) fn build_check_gpu_output(result: GpuAvailabilityResult) -> CheckGpuO
             error: Some(typed.to_string()),
             error_kind: Some(kind),
             retryable: Some(kind.is_retryable()),
+            device_type: None,
+            software_adapter: None,
         }
     } else if !result.available {
         // GPU-less host (common on headless Linux servers). The probe itself
@@ -73,6 +77,8 @@ pub(crate) fn build_check_gpu_output(result: GpuAvailabilityResult) -> CheckGpuO
             error: None,
             error_kind: Some(kind),
             retryable: Some(kind.is_retryable()),
+            device_type: None,
+            software_adapter: None,
         }
     } else {
         let (error_kind, retryable) = no_error_fields();
@@ -83,6 +89,10 @@ pub(crate) fn build_check_gpu_output(result: GpuAvailabilityResult) -> CheckGpuO
             error: None,
             error_kind,
             retryable,
+            device_type: result.device_type,
+            software_adapter: result
+                .device_type
+                .map(analysis::shared::GpuDeviceType::is_software),
         }
     }
 }
@@ -132,6 +142,7 @@ mod tests {
             available: false,
             reason: Some("No GPU adapter found. Discovery disabled on this machine.".to_string()),
             is_error: false,
+            device_type: None,
         };
 
         let output = build_check_gpu_output(result);
@@ -161,6 +172,7 @@ mod tests {
             available: false,
             reason: Some("GPU device creation failed: device was lost".to_string()),
             is_error: false,
+            device_type: None,
         };
 
         let output = build_check_gpu_output(result);
@@ -178,6 +190,7 @@ mod tests {
             available: false,
             reason: Some("Metal should always be available".to_string()),
             is_error: true,
+            device_type: None,
         };
 
         let output = build_check_gpu_output(result);
@@ -200,6 +213,7 @@ mod tests {
             available: true,
             reason: None,
             is_error: false,
+            device_type: Some(analysis::shared::GpuDeviceType::Discrete),
         };
 
         let output = build_check_gpu_output(result);
@@ -209,6 +223,7 @@ mod tests {
         assert!(output.error_kind.is_none());
         assert!(output.retryable.is_none());
         assert!(output.error.is_none());
+        assert_eq!(output.software_adapter, Some(false));
     }
 
     /// A missing reason still produces a permanent (non-retryable) verdict so
@@ -219,11 +234,46 @@ mod tests {
             available: false,
             reason: None,
             is_error: false,
+            device_type: None,
         };
 
         let output = build_check_gpu_output(result);
 
         assert_eq!(output.error_kind, Some(DiscoveryErrorKind::GpuPermanent));
         assert_eq!(output.retryable, Some(false));
+    }
+
+    /// A software (CPU) adapter classification must survive into the FFI
+    /// verdict as `deviceType: "software"` / `softwareAdapter: true`, and a
+    /// real GPU classifies as `softwareAdapter: false` (Issue #2318).
+    #[test]
+    fn software_adapter_verdict_is_classified() {
+        let software_result = GpuAvailabilityResult {
+            available: true,
+            reason: None,
+            is_error: false,
+            device_type: Some(analysis::shared::GpuDeviceType::Software),
+        };
+
+        let output = build_check_gpu_output(software_result);
+
+        assert_eq!(output.software_adapter, Some(true));
+        assert_eq!(
+            output.device_type,
+            Some(analysis::shared::GpuDeviceType::Software)
+        );
+        let value = serde_json::to_value(&output).unwrap();
+        assert_eq!(value["softwareAdapter"], serde_json::json!(true));
+        assert_eq!(value["deviceType"], serde_json::json!("software"));
+
+        let discrete_result = GpuAvailabilityResult {
+            available: true,
+            reason: None,
+            is_error: false,
+            device_type: Some(analysis::shared::GpuDeviceType::Discrete),
+        };
+
+        let discrete_output = build_check_gpu_output(discrete_result);
+        assert_eq!(discrete_output.software_adapter, Some(false));
     }
 }

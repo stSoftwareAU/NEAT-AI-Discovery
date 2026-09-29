@@ -443,12 +443,16 @@ suitable GPU, controllers must disable discovery entirely.
   ```json
   {
     "success": true,
-    "gpuAvailable": true
+    "gpuAvailable": true,
+    "deviceType": "discrete",
+    "softwareAdapter": false
   }
   ```
 
   `reason` is `skip_serializing_if = "Option::is_none"`, so on the success
-  path the key is **absent** — never `null`.
+  path the key is **absent** — never `null`. `deviceType` and `softwareAdapter`
+  are likewise present only when `gpuAvailable` is `true` — both keys are
+  absent (not `null`) when it is `false`.
 
   When GPU is unavailable (Issue #1419):
 
@@ -478,6 +482,14 @@ suitable GPU, controllers must disable discovery entirely.
     (device lost, creation failure). Retrying may succeed.
   - `"errorKind": "memory_exhausted"`, `"retryable": true` — minimum system
     memory was not met; retry after freeing resources.
+- **Software adapter (Issue #2318)**: a CPU rasteriser such as Mesa
+  lavapipe/llvmpipe still passes the capability gate and reports
+  `"gpuAvailable": true`, but with `"softwareAdapter": true` and
+  `"deviceType": "software"`. Discovery on it runs far slower than on a real
+  GPU, so controllers that require actual GPU hardware should gate on
+  `softwareAdapter` rather than assuming `gpuAvailable: true` means a discrete
+  or integrated GPU was found. The same `deviceType` classification also
+  appears as `gpuInfo.deviceType` on analysis responses.
 
 ### 🌏 Platform-specific GPU behaviour
 

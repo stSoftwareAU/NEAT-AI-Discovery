@@ -70,6 +70,8 @@ fn omitted_optional_response_fields_are_absent_not_null() {
         error: None,
         error_kind: None,
         retryable: None,
+        device_type: None,
+        software_adapter: None,
     };
     let wire = serde_json::to_value(&gpu).expect("CheckGpuOutput must serialise");
     assert!(

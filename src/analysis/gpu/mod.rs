@@ -125,6 +125,7 @@ mod tests {
             available: false,
             reason: None,
             is_error: false,
+            device_type: None,
         };
 
         // Verify constants are accessible using const assertions
