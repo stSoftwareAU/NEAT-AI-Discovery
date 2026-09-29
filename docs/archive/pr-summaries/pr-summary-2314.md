@@ -44,20 +44,27 @@ flowchart LR
 
 **Regression tests:**
 
-- `src/analysis/gpu/sample_limits.rs::helpful_set_at_binding_limit_boundary` uses the
-  default limits. It asserts that helpful N = 2,796,202 is accepted and N = 2,796,203 is
-  refused with an error naming `max_storage_buffer_binding_size`, which is the
-  failing-first test the issue asks for. The test fails against the unfixed code, where no
-  guard exists (the helpful path panics inside wgpu at that length), and passes after the
-  fix.
-- `tests/gpu/issue_2314_oversized_sample_set_test.rs::oversized_helpful_set_returns_err_and_gpu_survives`
-  drives the real GPU path with 2,796,203 samples. It asserts `Err` rather than a panic,
-  then asserts that a 1,024-sample batch on the same analyser still succeeds, which proves
-  the GPU thread survived. This test fails against the unfixed code: the validation panic
-  kills the GPU thread, so no `Err` comes back and the follow-up batch fails with "channel
-  closed". It passes after the fix.
-- `tests/gpu/issue_2314_oversized_sample_set_test.rs::oversized_harmful_set_returns_err_and_gpu_survives`
-  runs the same scenario for harmful with 8,388,609 samples.
+- Added `tests/gpu/issue_2314_oversized_sample_set_test.rs::oversized_helpful_set_returns_err_and_gpu_survives`
+  which reproduces the flaw, fails against the unfixed code and passes after the fix. It
+  calls only the pre-existing public API (`GpuAnalyzer::evaluate_helpful_batch`), so it
+  compiles unchanged against the base branch. It submits one set of 2,796,203 helpful
+  samples, which needs 134,217,744 bytes for the contributions binding, above the default
+  128 MiB `max_storage_buffer_binding_size`. It asserts `Err` naming that limit, then
+  asserts that a 1,024-sample batch on the same analyser still succeeds. Against the
+  unfixed code, wgpu's uncaptured validation error panics and kills the GPU thread, so no
+  `Err` naming the limit comes back and the follow-up batch fails with "channel closed".
+  After the fix, the guard returns the typed `Err` before any allocation and the
+  follow-up batch succeeds.
+- Added `tests/gpu/issue_2314_oversized_sample_set_test.rs::oversized_harmful_set_returns_err_and_gpu_survives`
+  which reproduces the flaw on the harmful path (`GpuAnalyzer::evaluate_harmful_batch`,
+  8,388,609 samples at 16 bytes each), fails against the unfixed code and passes after
+  the fix, for the same reason.
+- Added `src/analysis/gpu/sample_limits.rs::helpful_set_at_binding_limit_boundary`, a
+  pure unit test of the new guard that needs no GPU. Using the default limits, it asserts
+  that helpful N = 2,796,202 is accepted and N = 2,796,203 is refused with an error
+  naming `max_storage_buffer_binding_size`. It pins the exact boundary the integration
+  tests rely on. It targets the new module, so against the unfixed code it fails to
+  compile rather than failing an assertion.
 
 This container has no GPU adapter, so the two `tests/gpu` tests take their documented
 skip path here. The pure-limit unit tests do not need a GPU and run everywhere.
