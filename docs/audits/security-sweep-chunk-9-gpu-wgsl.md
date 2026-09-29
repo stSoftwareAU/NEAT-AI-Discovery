@@ -76,7 +76,7 @@ the `submission.rs` bounded wait) go to **queue-core**;
 | --- | --- | --- |
 | `src/analysis/gpu/mod.rs` | 168 | audited, no finding — 56 `pub use` re-exports: 15 used outside `gpu/` through the module root, 41 reached only through a submodule path or not at all (redundant surface, refuted; per-name table in the shaders audit section) |
 | `src/analysis/gpu/pipeline_builder.rs` | 157 | audited, no finding — `binding: i as u32` (L36) assigns slots by position and every `STANDARD_BINDINGS`/`BIAS_BINDINGS` slice matches its shader's `@binding` order and access at all 8 call sites; `create_shader_module` (L26, not `_trusted`) keeps runtime bounds checks on; `min_binding_size: None` (L41) defers buffer-size validation to draw time (the size limits themselves are #2237/#2238's) |
-| `src/analysis/gpu/shaders.rs` | 392 | finding filed — #2311 (`GPU_INIT_TIMEOUT_SECS` L143 duplicates `device.rs:54` as an independent literal with no equality pin); `WORKGROUP_SIZE` pinned to the 9 embedded kernels by the naga test (L280, `matching.wgsl` is never embedded), the other constants bounded by const asserts |
+| `src/analysis/gpu/shaders.rs` | 392 | finding filed — #2311 (`GPU_INIT_TIMEOUT_SECS` L143 duplicates `device.rs:54` as an independent literal with no equality pin); `WORKGROUP_SIZE` pinned to the 8 embedded kernels by the naga test (L280 at the baseline; `RELU_REDUCE_SHADER` and its `ALL_SHADERS` entry since removed by #2309), the other constants bounded by const asserts |
 | `src/shaders/activation.wgsl` | 232 | finding filed — #2308 (`is_finite_value` at L35 is a float self-comparison fast-math may fold, so the L223 output guard can pass an overflowed Inf/NaN as `valid`); `sample_count` guard L195, no barrier, unused `epsilon` refuted |
 | `src/shaders/activation_reduce.wgsl` | 101 | audited, no finding — zero-padded load L76–L80 keeps every read in bounds and adds a neutral element; barriers L83/L94 sit under uniform control flow |
 | `src/shaders/bias.wgsl` | 303 | finding filed — #2308 (the `is_finite_value` skips at L253/L264/L273 are its only non-finite handling); `in_range` L216 guards every `bias_idx` access, barriers L244/L283 are uniform, unused `epsilon` L22 and the L228 ceil-div refuted |
@@ -84,9 +84,9 @@ the `submission.rs` bounded wait) go to **queue-core**;
 | `src/shaders/harmful_reduce.wgsl` | 92 | audited, no finding — zero-padded load L67–L71; barriers L74/L85 sit under uniform control flow |
 | `src/shaders/helpful.wgsl` | 96 | audited, no finding — `length` guard L48 before any access, no barrier, `epsilon` comparisons at L67/L74/L79 reject NaN, no division |
 | `src/shaders/helpful_reduce.wgsl` | 116 | audited, no finding — zero-padded load L91–L95; barriers L98/L109 sit under uniform control flow |
-| `src/shaders/matching.wgsl` | 135 | dead — no `include_str!` in `shaders.rs`, absent from `ALL_SHADERS`, no pipeline builds it; removal tracked by #2309, file kept |
+| `src/shaders/matching.wgsl` | 135 | dead — no `include_str!` in `shaders.rs`, absent from `ALL_SHADERS`, no pipeline builds it; deleted by #2309 |
 | `src/shaders/relu.wgsl` | 89 | finding filed — #2308 (the L63 `is_finite_value` input skip); `length` guard L45, no barrier, `epsilon` guards L73/L81, unused `threshold` refuted |
-| `src/shaders/relu_reduce.wgsl` | 110 | unused — registered as `RELU_REDUCE_SHADER` (`shaders.rs:91`) and in `ALL_SHADERS` (`shaders.rs:214`) but no `build_compute_pipeline` call builds it; kernel itself is sound (zero-padded load, barriers L92/L103 uniform); removal tracked by #2309, file kept |
+| `src/shaders/relu_reduce.wgsl` | 110 | unused — registered as `RELU_REDUCE_SHADER` (`shaders.rs:91`) and in `ALL_SHADERS` (`shaders.rs:214`) but no `build_compute_pipeline` call builds it; kernel itself is sound (zero-padded load, barriers L92/L103 uniform); deleted by #2309 with `RELU_REDUCE_SHADER` and its `ALL_SHADERS` entry |
 
 ### evaluation
 
@@ -141,8 +141,8 @@ Each slice writes its audit prose only between its own marker and the next.
 
 The 12 `#[repr(C)] bytemuck::Pod` structs in
 `src/analysis/samples/gpu_types.rs` against every WGSL struct that mirrors them
-(23 declarations across 9 shaders; `matching.wgsl` is out of scope here and
-is covered by #2232). Field order, scalar types and per-field offsets were
+(21 declarations across 8 shaders; `matching.wgsl` and `relu_reduce.wgsl` were
+deleted by #2309). Field order, scalar types and per-field offsets were
 compared member by member; the WGSL size/alignment column is naga 30's `Layouter` output, the
 same layout wgpu validates against. No struct uses a `vec3` (or any vector or
 nested struct) — every member is a 4-byte `f32`/`u32`, so every WGSL struct
@@ -157,13 +157,13 @@ side drifts.
 | `HelpfulUniforms` | `src/analysis/samples/gpu_types.rs:48` | `helpful.wgsl:21` | 16 / 4 | 16 / 4 | parity |
 | `HarmfulContribution` | `src/analysis/samples/gpu_types.rs:58` | `harmful.wgsl:6`, `harmful_reduce.wgsl:11` | 16 / 4 | 16 / 4 | parity |
 | `HarmfulUniforms` | `src/analysis/samples/gpu_types.rs:68` | `harmful.wgsl:13` | 16 / 4 | 16 / 4 | parity |
-| `ReluContribution` | `src/analysis/samples/gpu_types.rs:78` | `relu.wgsl:6`, `relu_reduce.wgsl:11` | 40 / 4 | 40 / 4 | parity |
+| `ReluContribution` | `src/analysis/samples/gpu_types.rs:78` | `relu.wgsl:6` | 40 / 4 | 40 / 4 | parity |
 | `ReluUniforms` | `src/analysis/samples/gpu_types.rs:94` | `relu.wgsl:19` | 16 / 4 | 16 / 4 | parity |
 | `BiasResult` | `src/analysis/samples/gpu_types.rs:104` | `bias.wgsl:9` | 16 / 4 | 16 / 4 | parity |
 | `BiasUniforms` | `src/analysis/samples/gpu_types.rs:126` | `bias.wgsl:16` | 32 / 4 | 32 / 4 | parity |
 | `ActivationOutput` | `src/analysis/samples/gpu_types.rs:140` | `activation.wgsl:6`, `activation_reduce.wgsl:11` | 28 / 4 | 28 / 4 | parity (see decision) |
 | `ActivationUniforms` | `src/analysis/samples/gpu_types.rs:153` | `activation.wgsl:16` | 28 / 4 | 28 / 4 | parity (see decision) |
-| `ReductionUniforms` | `src/analysis/samples/gpu_types.rs:166` | `helpful_reduce.wgsl:26`, `harmful_reduce.wgsl:18`, `relu_reduce.wgsl:24`, `activation_reduce.wgsl:21` | 16 / 4 | 16 / 4 | parity |
+| `ReductionUniforms` | `src/analysis/samples/gpu_types.rs:166` | `helpful_reduce.wgsl:26`, `harmful_reduce.wgsl:18`, `activation_reduce.wgsl:21` | 16 / 4 | 16 / 4 | parity |
 
 WGSL paths are under `src/shaders/`. Every struct-typed `array<T>` global
 (`samples`, `contributions`, `outputs`, `partial_sums`, `results`, the
@@ -228,9 +228,9 @@ would clamp or read zero rather than read out of bounds.
 | `harmful_reduce.wgsl` (92) | L58 | zero-padding `harmful_reduce.wgsl:67`–`:71` | yes — L74 at function scope, L85 in a constant-bound loop | sums only; flag sums ≤ 256 per workgroup; no division | clean |
 | `helpful.wgsl` (96) | L45 | `helpful.wgsl:48` (`idx >= uniforms.length`) | n/a — no barrier | `epsilon` comparisons at L67, L74 and L79 are false for NaN; inputs pre-filtered finite on the host; no division | clean |
 | `helpful_reduce.wgsl` (116) | L82 | zero-padding `helpful_reduce.wgsl:91`–`:95` | yes — L98 at function scope, L109 in a constant-bound loop | sums only; flag sums ≤ 256 per workgroup; no division | clean |
-| `matching.wgsl` (135) | L79 | `matching.wgsl:82` (`idx >= uniforms.from_count`); error reads gated by `error_idx < total_errors` (L106) | n/a — no barrier | `avg_error` division L118 guarded by `error_count > 0u` (L117); non-finite skips via `is_finite_value` (L47) | dead — never compiled into a pipeline; removal #2309 |
+| `matching.wgsl` (135) | L79 | `matching.wgsl:82` (`idx >= uniforms.from_count`); error reads gated by `error_idx < total_errors` (L106) | n/a — no barrier | `avg_error` division L118 guarded by `error_count > 0u` (L117); non-finite skips via `is_finite_value` (L47) | dead — never compiled into a pipeline; deleted by #2309 |
 | `relu.wgsl` (89) | L42 | `relu.wgsl:45` (`idx >= uniforms.length`) | n/a — no barrier | `is_finite_value` (L35) input skip at L63; `relu_positive`/`relu_negative > uniforms.epsilon` at L73/L81; no division (the host's `error_activation / activation` in `relu_evaluation.rs` is guarded by `activation > EPSILON`); `threshold` (L21) unread (refuted) | finding — #2308 |
-| `relu_reduce.wgsl` (110) | L76 | zero-padding `relu_reduce.wgsl:85`–`:89` | yes — L92 at function scope, L103 in a constant-bound loop | sums only; count sums ≤ 256 per workgroup; no division | unused — no pipeline builds it; removal #2309 |
+| `relu_reduce.wgsl` (110) | L76 | zero-padding `relu_reduce.wgsl:85`–`:89` | yes — L92 at function scope, L103 in a constant-bound loop | sums only; count sums ≤ 256 per workgroup; no division | unused — no pipeline builds it; deleted by #2309 |
 
 **Barrier sites.** A barrier reachable only after a thread-dependent early
 `return`, or inside a non-uniform branch, would be a finding. None is:
@@ -288,8 +288,8 @@ naga-validated. `relu_reduce.wgsl` is unused: it is registered as
 `relu_evaluation.rs:33` builds only `RELU_SHADER` — and only `shaders.rs` and
 the #2289 layout test reference it. AGENTS.md: "Delete a never-constructed
 component unless a concrete writer can be named". No writer is named, so one
-removal follow-up covering both is filed as #2309; neither file is deleted
-here.
+removal follow-up covering both was filed as #2309, which has since deleted
+both files, `RELU_REDUCE_SHADER` and its `ALL_SHADERS` entry.
 
 **Outcome: one finding** — #2308 (`SEC-e8e1dd84a447`, CWE-754, low). Bounds
 guards and barrier placement are sound in all 10 kernels.
@@ -872,7 +872,8 @@ The sweep is in progress; each slice lists the issues it files here.
 - #2308 — `SEC-e8e1dd84a447` (CWE-754, low): WGSL `is_finite_value` guards are
   float self-comparisons fast-math may fold away (shaders slice, #2290).
 - #2309 — removal follow-up for the dead `matching.wgsl` and unused
-  `relu_reduce.wgsl` (not a security finding; shaders slice, #2290).
+  `relu_reduce.wgsl` (not a security finding; shaders slice, #2290); both
+  files deleted.
 - #2311 — `SEC-4b2140a0cd91` (CWE-1041, low): `GPU_INIT_TIMEOUT_SECS` defined
   twice with no equality pin (shaders slice, #2291).
 - #2313 — `SEC-d3bf886bc1d3` (CWE-248, medium): after a timed-out map wait, the
