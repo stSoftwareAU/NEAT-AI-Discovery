@@ -10,7 +10,9 @@ use std::sync::mpsc;
 use std::time::Duration;
 
 use crate::analysis::gpu::budget::GpuTimeBudget;
-use crate::analysis::gpu::device::{poll_device_until_idle, wait_for_buffer_maps_batch};
+use crate::analysis::gpu::device::{
+    map_result_forwarder, poll_device_until_idle, wait_for_buffer_maps_batch,
+};
 use crate::analysis::gpu::heartbeat::beat_sub_batch_submitted;
 use crate::analysis::gpu::pipeline_builder::{STANDARD_BINDINGS, build_compute_pipeline};
 use crate::analysis::gpu::shaders::{
@@ -257,6 +259,11 @@ impl GpuAnalyzer {
         let mut all_results = Vec::with_capacity(samples_batch.len());
 
         let max_sample_len = samples_batch.iter().map(|s| s.len()).max().unwrap_or(0);
+        // Issue #2314: reject an oversized sample set before it reaches wgpu allocation.
+        crate::analysis::gpu::sample_limits::check_helpful_set_fits(
+            max_sample_len,
+            &device.limits(),
+        )?;
         let bytes_per_sample = std::mem::size_of::<GpuHelpfulSample>()
             + (2 * std::mem::size_of::<HelpfulContribution>());
         let effective_batch_size = cap_gpu_batch_size_by_bytes(
@@ -440,11 +447,7 @@ impl GpuAnalyzer {
             for &(slot, copy_size, _, _) in &used {
                 let buffer_slice = pool[slot].staging_buffer.slice(0..copy_size);
                 let (sender, receiver) = mpsc::channel();
-                buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
-                    sender
-                        .send(result)
-                        .expect("Failed to send map_async result");
-                });
+                buffer_slice.map_async(wgpu::MapMode::Read, map_result_forwarder(sender));
                 map_receivers.push(receiver);
             }
 

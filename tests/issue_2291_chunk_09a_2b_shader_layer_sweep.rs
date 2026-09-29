@@ -18,9 +18,9 @@ use neat_ai_discovery::analysis::gpu::device::{
     GPU_INIT_TIMEOUT_SECS as DEVICE_GPU_INIT_TIMEOUT_SECS,
 };
 use neat_ai_discovery::analysis::gpu::shaders::{
-    ACTIVATION_REDUCE_SHADER, ACTIVATION_SHADER, BIAS_SHADER, GPU_INIT_TIMEOUT_SECS,
-    GPU_REDUCTION_THRESHOLD, GPU_SHUTDOWN_TIMEOUT_SECS, HARMFUL_REDUCE_SHADER, HARMFUL_SHADER,
-    HELPFUL_REDUCE_SHADER, HELPFUL_SHADER, RELU_SHADER, WORKGROUP_SIZE,
+    ACTIVATION_REDUCE_SHADER, ACTIVATION_SHADER, GPU_INIT_TIMEOUT_SECS, GPU_REDUCTION_THRESHOLD,
+    GPU_SHUTDOWN_TIMEOUT_SECS, HARMFUL_REDUCE_SHADER, HARMFUL_SHADER, HELPFUL_REDUCE_SHADER,
+    HELPFUL_SHADER, RELU_SHADER, WORKGROUP_SIZE,
 };
 
 const RECORD: &str = "docs/audits/security-sweep-chunk-9-gpu-wgsl.md";
@@ -51,8 +51,6 @@ impl Kind {
 
 /// `pipeline_builder::STANDARD_BINDINGS`.
 const STANDARD: &[Kind] = &[Kind::Read, Kind::ReadWrite, Kind::Uniform];
-/// `pipeline_builder::BIAS_BINDINGS`.
-const BIAS: &[Kind] = &[Kind::Read, Kind::Read, Kind::ReadWrite, Kind::Uniform];
 
 /// A `build_compute_pipeline` call site the record must carry a row for.
 struct CallSite {
@@ -63,8 +61,10 @@ struct CallSite {
     kinds: &'static [Kind],
 }
 
-/// The eight call sites named in Issue #2291.
-fn call_sites() -> [CallSite; 8] {
+/// The seven call sites named in Issue #2291. The eighth (`bias_evaluation.rs:30`,
+/// `bias.wgsl`) was removed with the unreachable GPU bias path (Issue #2316);
+/// the record's row for it describes the code at the sweep's pinned baseline.
+fn call_sites() -> [CallSite; 7] {
     let site = |at, wgsl, source, slice, kinds| CallSite {
         at,
         wgsl,
@@ -73,13 +73,6 @@ fn call_sites() -> [CallSite; 8] {
         kinds,
     };
     [
-        site(
-            "bias_evaluation.rs:30",
-            "bias.wgsl",
-            BIAS_SHADER,
-            "BIAS_BINDINGS",
-            BIAS,
-        ),
         site(
             "activation_evaluation.rs:35",
             "activation.wgsl",
@@ -470,9 +463,9 @@ fn workgroup_size_matches_every_wgsl_file() {
         }
     }
     assert_eq!(
-        seen, 8,
-        "the record's constants table checks 8 `@workgroup_size` lines (10 at the baseline; \
-         #2309 deleted matching.wgsl and relu_reduce.wgsl)"
+        seen, 7,
+        "the record's constants table checks 7 `@workgroup_size` lines (10 at the baseline; \
+         #2309 deleted matching.wgsl and relu_reduce.wgsl, #2316 deleted bias.wgsl)"
     );
 }
 

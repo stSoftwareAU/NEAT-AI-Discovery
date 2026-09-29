@@ -49,9 +49,9 @@ pub const GPU_BUFFER_MAP_TIMEOUT_MARGIN_SECS: u64 = 5;
 pub const GPU_BUFFER_MAP_TIMEOUT_SECS: u64 =
     GPU_QUEUE_TIMEOUT_MAX_SECS - GPU_BUFFER_MAP_TIMEOUT_MARGIN_SECS;
 
-/// Timeout for GPU thread initialisation (in seconds).
-/// GPU device creation should be fast; if it takes longer, something is wrong.
-pub const GPU_INIT_TIMEOUT_SECS: u64 = 30;
+/// Timeout for GPU thread initialisation (in seconds), re-exported from
+/// `shaders.rs` — the single source of truth (Issue #2311).
+pub use super::shaders::GPU_INIT_TIMEOUT_SECS;
 
 // =============================================================================
 // GPU Performance Tier
@@ -87,6 +87,9 @@ pub struct GpuAvailabilityResult {
     pub reason: Option<String>,
     /// Whether this is an error condition (true on macOS when GPU unavailable).
     pub is_error: bool,
+    /// Adapter classification when a device was created; `None` when no GPU
+    /// is available (Issue #2318).
+    pub device_type: Option<crate::analysis::shared::GpuDeviceType>,
 }
 
 // =============================================================================
@@ -276,6 +279,22 @@ pub fn poll_device_until_idle(device: &wgpu::Device, timeout: Duration, label: &
     }
 }
 
+/// Build the `map_async` completion callback that forwards the mapping result
+/// to the waiter's channel.
+///
+/// Issue #2313: infallible by design. When a wait times out or fails, the
+/// receivers drop before the staging buffers, and wgpu then fires each pending
+/// callback inline with `MapAborted`. A panic here would unwind inside wgpu's
+/// buffer drop — a second panic that aborts the host process.
+pub fn map_result_forwarder(
+    sender: std::sync::mpsc::Sender<Result<(), wgpu::BufferAsyncError>>,
+) -> impl FnOnce(Result<(), wgpu::BufferAsyncError>) + Send + 'static {
+    move |result| {
+        // A dropped receiver means the waiter has already returned.
+        let _ = sender.send(result);
+    }
+}
+
 /// Wait for a GPU buffer mapping to complete.
 ///
 /// We avoid `Maintain::Wait` because that can block forever on some machines if
@@ -404,6 +423,7 @@ pub fn no_gpu_result(reason: &str) -> GpuAvailabilityResult {
                  This may indicate a system configuration issue."
             )),
             is_error: true,
+            device_type: None,
         }
     }
 
@@ -418,6 +438,7 @@ pub fn no_gpu_result(reason: &str) -> GpuAvailabilityResult {
                  without proper permissions to access /dev/dri devices."
             )),
             is_error: false,
+            device_type: None,
         }
     }
 
@@ -428,6 +449,7 @@ pub fn no_gpu_result(reason: &str) -> GpuAvailabilityResult {
             available: false,
             reason: Some(format!("{reason}. Discovery disabled on this platform.")),
             is_error: false,
+            device_type: None,
         }
     }
 }
@@ -499,6 +521,7 @@ mod tests {
             available: true,
             reason: None,
             is_error: false,
+            device_type: None,
         };
         assert!(result.available);
         assert!(result.reason.is_none());
@@ -508,6 +531,7 @@ mod tests {
             available: false,
             reason: Some("No GPU found".to_string()),
             is_error: true,
+            device_type: None,
         };
         assert!(!result_unavailable.available);
         assert_eq!(result_unavailable.reason.as_deref(), Some("No GPU found"));

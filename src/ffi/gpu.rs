@@ -25,6 +25,8 @@ pub extern "C" fn check_gpu_available() -> *mut std::ffi::c_char {
                     error: Some(err_msg),
                     error_kind,
                     retryable,
+                    device_type: None,
+                    software_adapter: None,
                 };
                 return to_ffi_json(&output);
             }

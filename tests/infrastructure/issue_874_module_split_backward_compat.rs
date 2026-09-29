@@ -155,6 +155,8 @@ fn response_types_accessible() {
         error: None,
         error_kind: None,
         retryable: None,
+        device_type: None,
+        software_adapter: None,
     };
 
     let _output = GetVersionOutput {

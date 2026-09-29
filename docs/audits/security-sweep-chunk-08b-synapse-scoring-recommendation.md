@@ -134,7 +134,7 @@ one sub-issue's file list.
 | `src/analysis/synapse/results.rs` | 115 | clean — assembly only; it moves merged vectors into the result and reads the metadata atomics after the rayon join has completed |
 | `src/analysis/synapse/metadata.rs` | 99 | clean — `Relaxed` atomics written inside the parallel section and read only after the join; `fetch_min` / `fetch_max` are read-modify-write, so no worker's update can be lost |
 | `src/analysis/synapse/tests.rs` | 495 | clean — `#[cfg(test)]` only, so no untrusted-input reachability; every fixture is built from compile-time literals and small loop indices |
-| `src/analysis/synapse/issue_2161_locality_cancellation_test.rs` | 160 | clean — `#[cfg(test)]` only (declared behind `#[cfg(test)] #[path = …]` in `candidate_generation.rs`), so no untrusted-input reachability; sources are built from loop indices with the one cast guarded by `u32::try_from`, and the timing assertion compares two readings of the same work rather than a wall-clock constant |
+| `src/analysis/synapse/issue_2161_locality_cancellation_test.rs` | 165 | clean — `#[cfg(test)]` only (declared behind `#[cfg(test)] #[path = …]` in `candidate_generation.rs`), so no untrusted-input reachability; sources are built from loop indices with the one cast guarded by `u32::try_from`, and the growth assertion counts pairwise overlap comparisons directly (Issue #2296) rather than timing them, so it cannot flake under load |
 
 ### synapse post-processing
 
@@ -190,7 +190,7 @@ one sub-issue's file list.
 | --- | --- | --- |
 | `src/analysis/recommendation/mod.rs` | 14 | clean — nine `pub mod` declarations and a doc comment; no executable code, so nothing to allocate, compare or divide |
 | `src/analysis/recommendation/activation_recommendation.rs` | 927 | clean — every suitability score starts as a compile-time literal, and the one input-derived multiplier (`apply_gradient_flow_penalty`'s `(1.0 - negative_fraction * 0.5).max(0.3)`) is bounded to `[0.3, 1.0]` by a clamp on both ends, so the ranked value cannot leave the constant space however hostile the records; the two ranking defects found here were out of class, filed as #2184 and **since fixed** (PR #2187, commit `3d1b24f`, merged into this branch) |
-| `src/analysis/recommendation/fan_in.rs` | 608 | findings filed — #2181 (the two `partial_cmp(…).unwrap_or(Equal)` sorts are not total orders and the `corr.abs() < THRESHOLD` filter fails open, so a NaN correlation reachable from finite records empties the `MAX_INPUTS_PER_TARGET` window), #2182 (`compute_least_squares_improvement`'s `f32` `original_sse` and `compute_two_input_regression`'s `improvement as f32` narrowing both yield `+inf` from finite records, and all four `evaluate_fan_in_pair` gates are fail-open for it, so a crafted pair ranks first on an honest correlation — **since fixed**, PR #2199, commit `6984029`, merged into this branch) and #2183 (the target × input scan consults no deadline) |
+| `src/analysis/recommendation/fan_in.rs` | 608 | findings filed — #2181 (the two `partial_cmp(…).unwrap_or(Equal)` sorts are not total orders and the `corr.abs() < THRESHOLD` filter fails open, so a NaN correlation reachable from finite records empties the `MAX_INPUTS_PER_TARGET` window — **since fixed**, PR #2331, commit `87ebeba`, merged into this branch: `pearson_correlation` (#2304, PR #2328) now returns `0.0` for a non-finite result instead of propagating a NaN, and `detect_fan_in_candidates` (#2303, PR #2323) extracted `rank_input_scores`, which drops every non-finite or sub-threshold correlation before a `total_cmp` sort tie-broken on the input UUID — both sorts are total and the input order no longer matters), #2182 (`compute_least_squares_improvement`'s `f32` `original_sse` and `compute_two_input_regression`'s `improvement as f32` narrowing both yield `+inf` from finite records, and all four `evaluate_fan_in_pair` gates are fail-open for it, so a crafted pair ranks first on an honest correlation — **since fixed**, PR #2199, commit `6984029`, merged into this branch) and #2183 (the target × input scan consults no deadline) |
 | `src/analysis/recommendation/gradient_discovery.rs` | 330 | findings filed — #2182 (`mean_gradient.abs() * effective_delta.abs()` overflows to `+inf` from finite operands and the descending `total_cmp` ranks it first; the `!mean_gradient.is_finite()` guard closes only the NaN half) and #2183 |
 | `src/analysis/recommendation/multi_hop.rs` | 497 | findings filed — #2182 (two paths to rank 1: `compute_mean_abs_error` sums the target's **whole** error map in `f32`, so `+inf` is reachable on observation indices the gating correlation never sees; and `find_three_hop_extensions` spells its correlation filter `<`, the fail-open direction, so a NaN `combined_corr` reaches the same descending `total_cmp` and sorts **above** `+inf`) and #2183. Only the two-hop filter at `detect_multi_hop_candidates` is fail-closed — the two filters in this file point in opposite directions |
 | `src/analysis/recommendation/output_bias_drift.rs` | 389 | finding filed — #2182: `sum_error / n` overflows to `+inf`, the `mean_error.abs() < MIN` noise gate is fail-open, the descending `total_cmp` ranks it first and the emitted `SetBias` carries a non-finite bias |
@@ -360,8 +360,8 @@ value comes from and what happens when it is `NaN`.
 | `weights/normalisation.rs::compute_range_aware_sums` | `(sample.activation - sv).abs() <= sentinel_tolerance` | sample activations and the detected sentinel values from `detect_observation_ranges` | the sample is already `is_finite`-filtered when this test runs; a NaN sentinel value would lose the `<=`, so the sample is **kept** rather than excluded, which only widens the fit set and never fabricates a weight | bounded — the verdict is delegated to `calculate_optimal_outgoing_weight`, which rejects a non-finite result whatever the sums contain |
 | `weights/calculation.rs::compute_outgoing_weight` and `::calculate_optimal_identity_outgoing_and_bias` | `incoming_weight.abs() > 1.0`, then `ratio = incoming_weight.abs() / (clamped.abs() + EPSILON) < min_ratio` | the candidate's incoming weight against the clamped outgoing weight | the `+ EPSILON` makes the divisor strictly positive, so the ratio is finite whenever the numerator is; a NaN `incoming_weight` would lose the `> 1.0` and skip the reliability gate entirely, passing the candidate | bounded — `incoming_weight` is either the literal `1.0` (every synapse call site) or a creature synapse weight, which Issue #2132 has already proved finite |
 <!-- section: recommendation core -->
-| `fan_in.rs::detect_fan_in_candidates` | `corr.abs() < INPUT_ERROR_CORRELATION_THRESHOLD`, then `sort_by` on descending `partial_cmp(…).unwrap_or(Equal)` over `corr.abs()`, then `truncate(MAX_INPUTS_PER_TARGET)` | `detection/stats.rs::pearson_correlation` over the input's activations and the target's first errors | a NaN loses the `<` and is **kept**, then compares `Equal` to every finite key while the finite keys order among themselves — not a total order, so `sort_by` may panic and otherwise leaves the order unspecified, which is what the `truncate(15)` then acts on | **unbounded — #2181.** A NaN correlation is reachable from finite records: an activation swing near `±2e30` overflows the `f32` covariance accumulator, `pearson_correlation`'s `denom < f32::EPSILON` guard loses to the resulting NaN and `f32::clamp` propagates it |
-| `fan_in.rs::detect_fan_in_candidates` | `sort_by` on descending `partial_cmp(…).unwrap_or(Equal)` over `estimated_improvement`, then `truncate(MAX_FAN_IN_CANDIDATES)` | `evaluate_fan_in_pair`'s scaled two-input regression improvement | no **NaN** can reach it — `compute_two_input_regression` ends in `(ee - residual_sse).max(0.0)` and `f64::max` returns the non-NaN operand, so a NaN improvement is laundered to `0.0` and dropped by `scaled_improvement <= 0.0` — but `+inf` reached it untouched, and descending `partial_cmp` put `+inf` first | **since fixed — #2182** (PR #2199, commit `6984029`, merged into this branch). The NaN half was closed by that laundering accident; the `+inf` half is now closed too, at `evaluate_fan_in_pair`'s finitude gate below. #2181 additionally asks for `total_cmp` here, and remains open |
+| `fan_in.rs::detect_fan_in_candidates` (per-target ranking) | `rank_input_scores`: `retain` drops any `corr` failing `is_finite() && corr.abs() >= INPUT_ERROR_CORRELATION_THRESHOLD`, then `sort_by` on descending `total_cmp` over `corr.abs()` tie-broken on the input UUID, then `truncate(MAX_INPUTS_PER_TARGET)` | `detection/stats.rs::pearson_correlation` over the input's activations and the target's first errors | the `retain` runs before the sort, so no non-finite key ever reaches the comparator, and `total_cmp` with the UUID tie-break gives `sort_by` a genuine total order — the result no longer depends on the order the caller lists neurons in | **since fixed — #2181** (PR #2331, commit `87ebeba`, merged into this branch, via #2303/PR #2323). Regression-pinned by `tests/issue_2181_fan_in_non_finite_correlation_ranking.rs` and, at the `pearson_correlation` boundary itself, by `tests/issue_2108_chunk_08b_recommendation_core_sweep.rs::a_finite_record_set_no_longer_drives_the_fan_in_correlation_to_nan` |
+| `fan_in.rs::detect_fan_in_candidates` (candidate ranking) | `sort_by` on descending `total_cmp` over `estimated_improvement`, tie-broken on `(target_uuid, input_uuids)`, then `truncate(MAX_FAN_IN_CANDIDATES)` | `evaluate_fan_in_pair`'s scaled two-input regression improvement | no **NaN** can reach it — `compute_two_input_regression` ends in `(ee - residual_sse).max(0.0)` and `f64::max` returns the non-NaN operand, so a NaN improvement is laundered to `0.0` and dropped by `scaled_improvement <= 0.0` — and `+inf` is now rejected outright by `evaluate_fan_in_pair`'s finitude gate below, so no non-finite key ever reaches this sort either | **since fixed — #2182 and #2181** (PR #2199, commit `6984029`; PR #2331, commit `87ebeba`; both merged into this branch). The `+inf` half closed at `evaluate_fan_in_pair`'s finitude gate; the tie-break the row used to lack (#2181's `total_cmp` ask) is now `(target_uuid, input_uuids)` |
 | `fan_in.rs::evaluate_fan_in_pair` | `mutual_corr.abs() > MAX_INPUT_MUTUAL_CORRELATION`, `best_individual <= 0.0`, `combined_improvement < best_individual * MIN_COMBINED_BENEFIT_RATIO`, `scaled_improvement <= 0.0`, and now `!scaled_improvement.is_finite()` | the pairwise Pearson and the two least-squares improvements | every one of the first four is a skip-on-comparison filter a NaN loses, so a NaN falls **through** each — but `best_individual` is a `.max(0.0)` of two laundered improvements, so a NaN pair always fails `best_individual <= 0.0` and returns `None`. `+inf` used to pass every one of those four gates | **since fixed — #2182** (PR #2199, commit `6984029`, merged into this branch). `evaluate_fan_in_pair` now rejects a non-finite `scaled_improvement` outright, before the sign/ratio gates that used to wave it through |
 | `fan_in.rs::compute_least_squares_improvement` / `::compute_two_input_regression` | `sum_act_sq < 1e-10`, `det.abs() < 1e-12`, then `(original_sse - residual_sse).max(0.0)` and `(ee - residual_sse).max(0.0)` | least-squares sums over the shared samples, accumulated in `f32` and `f64` respectively | a NaN sum loses the `<` and falls through to the division, but both functions end in `.max(0.0)`, which returns the non-NaN operand. Neither tests for an **infinity** at its own site: `original_sse` is an **`f32`** accumulator of `e * e` — sixty errors near `1e19` overflow it while the residual stays small, so `(inf - finite).max(0.0)` is `+inf`, not `0.0`; and `compute_two_input_regression` accumulates in `f64` and then narrows with `improvement as f32`, a saturating cast that yields `+inf` above `f32::MAX` | **since fixed — #2182** (PR #2199, commit `6984029`, merged into this branch). These two producers still emit `+inf`, but the caller (`evaluate_fan_in_pair`, row above) now rejects it before ranking. `det.abs() < 1e-12` remains fail-open for NaN and fail-closed for a singular system, which is the safe direction |
 | `output_bias_drift.rs::detect_output_bias_drift` | `mean_error.abs() < MIN_MEAN_ERROR_MAGNITUDE`, `majority_fraction < MIN_MAJORITY_SIGN_FRACTION`, then `sort_by` on descending `total_cmp` over `estimated_improvement` | `sum_error / n` over the per-record first error | `+inf` **wins** the noise gate (`inf < 0.01` is false), `consistency` is at least `0.2` by the majority gate, so `estimated_improvement` is `+inf`; IEEE-754 totalOrder puts `+inf` above every finite gain, so it heads the list | **unbounded — #2182.** `sum_error` is an `f32` accumulator: twenty finite errors of `1e38` overflow it, so no non-finite value has to cross the FFI boundary. `recommended_bias_delta = -mean_error` then emits a `-inf` bias in the `SetBias` payload |
@@ -976,56 +976,69 @@ that gets there.
 | `output_bias_drift.rs::detect_output_bias_drift` | **yes — #2182** | 30 records whose first error is a finite `1e38` overflow the `f32` `sum_error`; `mean_error` is `+inf`, the `mean_error.abs() < MIN_MEAN_ERROR_MAGNITUDE` noise gate is fail-open for it, and `+inf` heads the descending `total_cmp`. Measured: rank 0 with `estimated_improvement = inf` against an honest competitor at `0.045` |
 | `multi_hop.rs::detect_multi_hop_candidates` | **yes, by two paths — #2182** | (a) 30 observations shared with the source give a healthy finite correlation; 30 further target-only observations at `1e38` drive `compute_mean_abs_error` to `+inf`, which the `estimated_improvement <= 0.0` gate passes. Measured: rank 0 with `estimated_improvement = inf`. (b) `find_three_hop_extensions` filters on `source_intermediate_corr.abs() < CORRELATION_THRESHOLD` — the **fail-open** direction — so a NaN correlation between a source and an intermediate is kept, `combined_corr` is NaN, and the NaN improvement enters the same descending `total_cmp`, where totalOrder puts a positive NaN **above** `+inf`. That path outranks (a) |
 | `gradient_discovery.rs::detect_gradient_candidates` | **yes — #2182** | a finite synapse weight of `1e38` makes `\|effective_delta\|` ≈ `1e38`, which multiplies with a `3e37` `mean_gradient` to `+inf` **after** the `!mean_gradient.is_finite()` gate. Measured: rank 0 with `estimated_improvement = inf` |
-| `fan_in.rs::detect_fan_in_candidates` | (a) **no longer — #2182, since fixed**; (b) **yes — #2181, still open** | (a) **rank 1 — #2182, since fixed (PR #2199, commit `6984029`, merged into this branch).** Sixty records whose activations sit at `3.3e8 ± 1e3` and whose target error is `3.03e10 ×` that activation overflow the **`f32`** `original_sse` in `compute_least_squares_improvement` while the residual stays ~0, so `(inf - finite).max(0.0)` is `+inf`; `compute_two_input_regression` reaches the same value by narrowing an `f64` `improvement as f32`. All four `evaluate_fan_in_pair` gates used to be fail-open for it — `inf <= 0.0` is false and `inf < inf * 1.05` is false — so the pair was emitted and headed the descending sort, on **honest finite correlations of `1.00` and `0.58`**, independent of #2181's NaN filter. `evaluate_fan_in_pair` now also rejects a non-finite `scaled_improvement` outright, so the pair is dropped instead — pinned by `tests/issue_2108_chunk_08b_recommendation_core_sweep.rs::a_finite_record_set_no_longer_ranks_a_fan_in_candidate_at_infinity`. The spread must stay narrow: `pearson_correlation` is mean-centred, so it survives the error overflow, but a wider spread overflows its `var_x * var_y` and the `denom < f32::EPSILON` guard returns `0.0`, which the `< 0.3` filter then drops. (b) **suppression — #2181, still open.** 20 inputs whose activations swing `±2e30` each score `NaN`, are kept by the fail-open `corr.abs() < 0.3` filter, and compare `Equal` to every finite key under `partial_cmp(…).unwrap_or(Equal)`. Measured: 25 genuine candidates with the poisoned neurons listed after the honest ones, **0** with them listed first — the order is unspecified and the caller picks it |
+| `fan_in.rs::detect_fan_in_candidates` | (a) **no longer — #2182, since fixed**; (b) **no longer — #2181, since fixed** | (a) **rank 1 — #2182, since fixed (PR #2199, commit `6984029`, merged into this branch).** Sixty records whose activations sit at `3.3e8 ± 1e3` and whose target error is `3.03e10 ×` that activation overflow the **`f32`** `original_sse` in `compute_least_squares_improvement` while the residual stays ~0, so `(inf - finite).max(0.0)` is `+inf`; `compute_two_input_regression` reaches the same value by narrowing an `f64` `improvement as f32`. All four `evaluate_fan_in_pair` gates used to be fail-open for it — `inf <= 0.0` is false and `inf < inf * 1.05` is false — so the pair was emitted and headed the descending sort, on **honest finite correlations of `1.00` and `0.58`**, independent of #2181's NaN filter. `evaluate_fan_in_pair` now also rejects a non-finite `scaled_improvement` outright, so the pair is dropped instead — pinned by `tests/issue_2108_chunk_08b_recommendation_core_sweep.rs::a_finite_record_set_no_longer_ranks_a_fan_in_candidate_at_infinity`. The spread must stay narrow: `pearson_correlation` is mean-centred, so it survives the error overflow, but a wider spread overflows its `var_x * var_y` and the `denom < f32::EPSILON` guard returns `0.0`, which the `< 0.3` filter then drops. (b) **suppression — #2181, since fixed (PR #2331, commit `87ebeba`, merged into this branch).** 20 inputs whose activations swing `±2e30` each used to score `NaN`, be kept by the fail-open `corr.abs() < 0.3` filter, and compare `Equal` to every finite key under `partial_cmp(…).unwrap_or(Equal)`. `pearson_correlation` (#2304) now returns `0.0` for that overflow, and `rank_input_scores` (#2303) additionally drops any surviving non-finite score before a `total_cmp` sort — so both orderings now agree: 25 genuine candidates whichever end the poisoned neurons are listed at, pinned by `tests/issue_2108_chunk_08b_recommendation_core_sweep.rs::fan_in_candidates_no_longer_depend_on_the_order_the_caller_lists_neurons_in` and `tests/issue_2181_fan_in_non_finite_correlation_ranking.rs` |
 | `sample_weighted.rs::detect_high_error_neurons` | no | every per-record error is laundered through `is_finite` to `0.0` before anything is compared, an overflowed weight total renormalises to zero, and `.min(10.0)` / `.min(0.1)` cap the ranked value at `0.1` |
 | `activation_recommendation.rs::recommend_activation_function` | no | the score space is compile-time literals. One penalty is input-derived — `apply_gradient_flow_penalty` scales `RELU` and `RELU6` by `(1.0 - negative_fraction * 0.5).max(0.3)` — but `negative_fraction` is `.clamp(0.0, 1.0)`d at source and the `.max(0.3)` floors the product, so the multiplier lives in `[0.3, 1.0]`: a crafted record can lower a score, never raise one and never make one non-finite |
 | `output_competition.rs::detect_output_competition` | no — re-verdicted by Issue #2210 | dispatched since PR #2188. The `sum_min` accumulator has the #2182 `+inf` shape (never NaN: every term is `min(a, b) > 0.5`), but `co_activation` returns `None` on a non-finite score and `estimated_improvement` is clamped to `[0, COMPETITION_GAIN_SCALE]`, so no key can head the descending `total_cmp`. The O(outputs²) pair scan is uncancellable, filed as **#2236** |
 
 **The `fan_in.rs` comparators — the issue body's primary question, answered
-yes.** Both sorts use `partial_cmp(…).unwrap_or(std::cmp::Ordering::Equal)`,
-the only non-total comparators in the chunk, and reachability was **not**
-disproved for the first of them:
+yes at the time, since fixed for both sorts (#2181, PR #2331, commit
+`87ebeba`, merged into this branch).** Both sorts used to call
+`partial_cmp(…).unwrap_or(std::cmp::Ordering::Equal)`, the only non-total
+comparators in the chunk; both now call `total_cmp`, and the per-target sort
+is additionally preceded by a `retain` that drops every non-finite or
+sub-threshold correlation before the comparator ever sees it:
 
-- `detection/stats.rs::pearson_correlation` has no finitude gate, and its
-  `denom < f32::EPSILON` guard is fail-open — a NaN loses the `<`, and
-  `f32::clamp` then propagates the NaN out of the function. An activation
+- `detection/stats.rs::pearson_correlation` used to have no finitude gate, and
+  its `denom < f32::EPSILON` guard was fail-open — a NaN lost the `<`, and
+  `f32::clamp` then propagated the NaN out of the function. An activation
   swing near `±2e30` overflows the `f32` covariance accumulator, so both `cov`
   and `var_x * var_y` are `+inf` and `inf / inf` is NaN. **Every input value
   is finite**, so the FFI gates of Issues #2134 / #2135
   (`ffi_types/mod.rs::deserialise_activation`,
   `ffi_types/mod.rs::deserialise_finite_errors`) do not apply: they reject
   `Infinity` and `NaN` on the wire, not a magnitude that overflows later.
-- `detect_fan_in_candidates` filters with `corr.abs() < THRESHOLD`, a
-  skip-on-comparison test a NaN loses, so the NaN correlation is **kept**.
-  `multi_hop.rs` asks the same question of
+  **Since fixed (#2304, PR #2328):** the function now returns `0.0` for any
+  non-finite `denom` or `corr`, so the overflow above yields `0.0`, not NaN.
+- `detect_fan_in_candidates`'s per-target ranking used to filter with
+  `corr.abs() < THRESHOLD`, a skip-on-comparison test a NaN loses, so the NaN
+  correlation was **kept**. It now calls the extracted `rank_input_scores`
+  helper, whose `retain(|(_, corr, _)| corr.is_finite() && corr.abs() >= …)`
+  drops a non-finite correlation outright — a `0.0` correlation from the
+  `pearson_correlation` fix above fails that same threshold and is dropped too
+  (#2303, PR #2323). `multi_hop.rs` asks the same question of
   `detection/stats.rs::pearson_correlation_hashmaps` — which is the same
   arithmetic over the shared observation indices, and equally capable of
-  returning NaN — and answers it **both ways in the same file**:
+  returning NaN — and still answers it **both ways in the same file**, unlike
+  `fan_in.rs`'s now-consistent fail-closed filter:
   `detect_multi_hop_candidates` spells the filter `corr.abs() >= THRESHOLD`,
   which a NaN loses the other way and is therefore dropped, while
   `find_three_hop_extensions` spells it
-  `source_intermediate_corr.abs() < THRESHOLD`, which is `fan_in.rs`'s
+  `source_intermediate_corr.abs() < THRESHOLD`, which is `fan_in.rs`'s old
   fail-open direction exactly. A NaN source-to-intermediate correlation
   survives that second filter, makes `combined_corr` NaN, wins the
   `estimated_improvement <= 0.0` gate, and enters the same descending
   `total_cmp` as every two-hop candidate — where totalOrder ranks a positive
-  NaN **above** `+inf`. That is the second half of #2182 for this file, and it
-  is a sharper path than the `+inf` one: three detectors differ from each other
-  only in the direction of one comparison, and two of the three get it wrong.
-- The comparator then reports `Equal` for every NaN-vs-finite pair while the
-  finite pairs order among themselves. That is not transitive, so it is not a
-  total order; `slice::sort_by` documents that as "may panic", and where it
-  does not panic the order is unspecified — which is exactly what the
-  `truncate(MAX_INPUTS_PER_TARGET)` on the next line acts on.
+  NaN **above** `+inf`. That remains the second half of #2182 for `multi_hop.rs`
+  — a different file from `fan_in.rs`, and outside this fix's scope.
+- The comparator used to report `Equal` for every NaN-vs-finite pair while the
+  finite pairs ordered among themselves. That was not transitive, so it was
+  not a total order; `slice::sort_by` documents that as "may panic", and where
+  it did not panic the order was unspecified — which is what the
+  `truncate(MAX_INPUTS_PER_TARGET)` on the next line then acted on. `corr`
+  cannot be non-finite past the `retain` above, so `total_cmp` now sees only
+  finite `|corr|` values and the UUID tie-break makes the remaining ties
+  deterministic.
 
-The second comparator, on `estimated_improvement`, cannot see a NaN today —
-but only because `fan_in.rs::compute_two_input_regression` and
+The second comparator, on `estimated_improvement`, could not see a NaN even
+before this fix — only because `fan_in.rs::compute_two_input_regression` and
 `fan_in.rs::compute_least_squares_improvement` both end in `.max(0.0)`, which
-returns the non-NaN operand. That is a laundering accident, not a guard, and
-`fan_in.rs::evaluate_fan_in_pair`'s four gates are every one fail-open for
-NaN; the pair survives them all and is dropped only by
-`best_individual <= 0.0`, which the same laundering guarantees. #2181 asks for
-`total_cmp` at both sites.
+returns the non-NaN operand. That was a laundering accident, not a guard, and
+`fan_in.rs::evaluate_fan_in_pair`'s four gates were every one fail-open for
+NaN; the pair survived them all and was dropped only by
+`best_individual <= 0.0`, which the same laundering guaranteed. #2181 also
+asked for `total_cmp` at both sites; both now use it, tie-broken on
+`(target_uuid, input_uuids)`.
 
 **The `+inf` half of that comparator was open, and it was #2182 — this
 sweep's first pass got this wrong; since fixed by PR #2199 (commit
@@ -1383,13 +1396,17 @@ other chunk 8b audit sub-issues.
   flipping `add_synapse_gating.rs`'s success-rate gate. Filed by the
   `synapse post-processing` sweep (Issue #2105).
 - `#2181` (`security`, `lang:rust`, `severity:medium`, `confidence:high`) —
-  `fan_in.rs::detect_fan_in_candidates` ranks its per-target inputs with a
-  `partial_cmp(…).unwrap_or(Equal)` comparator that is not a total order,
-  while the `corr.abs() < THRESHOLD` filter above it fails open, so a NaN
-  correlation reachable from finite records empties the
-  `MAX_INPUTS_PER_TARGET` window and suppresses every genuine fan-in
+  `fan_in.rs::detect_fan_in_candidates` ranked its per-target inputs with a
+  `partial_cmp(…).unwrap_or(Equal)` comparator that was not a total order,
+  while the `corr.abs() < THRESHOLD` filter above it failed open, so a NaN
+  correlation reachable from finite records emptied the
+  `MAX_INPUTS_PER_TARGET` window and suppressed every genuine fan-in
   recommendation for that target. Filed by the `recommendation core` sweep
-  (Issue #2108).
+  (Issue #2108). **Since fixed** (#2303/#2304, PR #2331, commit `87ebeba`,
+  merged into this branch): `pearson_correlation` returns `0.0` instead of NaN
+  for the overflow, and the extracted `rank_input_scores` helper drops every
+  non-finite or sub-threshold correlation before a total-order `total_cmp`
+  sort.
 - `#2182` (`security`, `lang:rust`, `severity:medium`, `confidence:high`) —
   the descending sorts in `output_bias_drift.rs`, `multi_hop.rs`,
   `gradient_discovery.rs` **and `fan_in.rs`** rank a `+inf`
@@ -1479,6 +1496,15 @@ sweep and never justify a non-null `last_swept`.
   Regression tests:
   `tests/issue_2190_epistatic_pair_scan_deadline.rs`. The section's file rows
   carry the outcomes its sweep (Issue #2109) recorded.
+- `#2236` — fix for the `recommendation core` finding (SEC-a18ba35740ab):
+  `output_competition.rs::detect_output_competition` ran an uncancellable
+  O(outputs²) pair scan and rebuilt the second output's `obs_index` map once
+  per pair. The `scoring_specs.rs` dispatch now passes the discovery deadline
+  to `detect_output_competition_with_deadline`, which checks `deadline_passed`
+  (deadline or cancellation) per outer row, builds each output's map once, and
+  reports a `ScanTruncation` that the dispatch logs. Regression tests:
+  `tests/issue_2236_output_competition_deadline.rs`. The file row stays
+  `pending`: this is a fix, not a sweep of the `recommendation core` section.
 
 ## Verify this record
 

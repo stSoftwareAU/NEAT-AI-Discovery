@@ -18,6 +18,9 @@ use crate::ffi_types::DiscoveryErrorKind;
 pub struct GpuAdapterInfoJson {
     /// Human-readable name of the GPU (e.g., "Apple M4 Pro").
     pub name: String,
+    /// Adapter classification, serialised as `deviceType` — e.g. "software"
+    /// for a CPU rasteriser such as Mesa lavapipe/llvmpipe (Issue #2318).
+    pub device_type: crate::analysis::shared::GpuDeviceType,
     /// Whether the GPU has unified memory architecture.
     pub unified_memory: bool,
     /// Whether zero-copy buffer sharing is currently enabled.
@@ -96,6 +99,14 @@ pub struct CheckGpuOutput {
     /// Whether this error is typically worth retrying (Issue #651).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub retryable: Option<bool>,
+    /// Adapter classification; present only when `gpuAvailable` is true
+    /// (Issue #2318).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub device_type: Option<analysis::shared::GpuDeviceType>,
+    /// Whether the detected adapter is a software/CPU rasteriser; present
+    /// only when `gpuAvailable` is true (Issue #2318).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub software_adapter: Option<bool>,
 }
 
 // ============================================================================
@@ -106,6 +117,7 @@ pub struct CheckGpuOutput {
 pub(crate) fn gpu_info_to_json(info: &analysis::shared::GpuAdapterInfo) -> GpuAdapterInfoJson {
     GpuAdapterInfoJson {
         name: info.name.clone(),
+        device_type: info.device_type,
         unified_memory: info.has_unified_memory,
         zero_copy_enabled: info.zero_copy_enabled,
     }
@@ -138,5 +150,24 @@ pub(crate) fn timing_to_json(timing: &analysis::shared::AnalysisTiming) -> Analy
             sample_building_ms: timing.cpu.sample_building_ms,
             result_processing_ms: timing.cpu.result_processing_ms,
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn software_adapter_serialises_device_type_lowercase() {
+        let info = analysis::shared::GpuAdapterInfo {
+            name: "Mesa llvmpipe".to_string(),
+            device_type: analysis::shared::GpuDeviceType::Software,
+            has_unified_memory: false,
+            zero_copy_enabled: false,
+        };
+
+        let json = gpu_info_to_json(&info);
+        let value = serde_json::to_value(&json).unwrap();
+        assert_eq!(value["deviceType"], serde_json::json!("software"));
     }
 }

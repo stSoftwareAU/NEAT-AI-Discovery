@@ -66,7 +66,12 @@ Line counts as at the baseline commit (`git show <baseline>:<path> | wc -l`):
 `src/shaders/matching.wgsl` (135 lines, dead) and `src/shaders/relu_reduce.wgsl`
 (110 lines, unused) were swept at the baseline and have since been deleted
 by #2309, so they carry no inventory row below; their audit rows remain in the
-shaders audit section.
+shaders audit section. `src/shaders/bias.wgsl` (303 lines) and
+`src/analysis/gpu/bias_evaluation.rs` (225 lines) were swept at the baseline —
+the former unreachable, the latter dead — and have since been deleted along
+with the rest of the unreachable GPU bias path by Issue #2316, so neither
+carries an inventory row below; their audit rows remain in the shaders and
+evaluation audit sections.
 
 Three files are not named in the #2288 owner list and are assigned to the
 group of the module they test or support: `queue/fake_evaluator.rs` (the
@@ -84,7 +89,6 @@ the `submission.rs` bounded wait) go to **queue-core**;
 | `src/analysis/gpu/shaders.rs` | 392 | finding filed — #2311 (`GPU_INIT_TIMEOUT_SECS` L143 duplicates `device.rs:54` as an independent literal with no equality pin); `WORKGROUP_SIZE` pinned to the 8 embedded kernels by the naga test (L280 at the baseline; `RELU_REDUCE_SHADER` and its `ALL_SHADERS` entry since removed by #2309), the other constants bounded by const asserts |
 | `src/shaders/activation.wgsl` | 232 | finding filed — #2308 (`is_finite_value` at L35 is a float self-comparison fast-math may fold, so the L223 output guard can pass an overflowed Inf/NaN as `valid`); `sample_count` guard L195, no barrier, unused `epsilon` refuted |
 | `src/shaders/activation_reduce.wgsl` | 101 | audited, no finding — zero-padded load L76–L80 keeps every read in bounds and adds a neutral element; barriers L83/L94 sit under uniform control flow |
-| `src/shaders/bias.wgsl` | 303 | finding filed — #2308 (the `is_finite_value` skips at L253/L264/L273 are its only non-finite handling); `in_range` L216 guards every `bias_idx` access, barriers L244/L283 are uniform, unused `epsilon` L22 and the L228 ceil-div refuted |
 | `src/shaders/harmful.wgsl` | 64 | audited, no finding — `length` guard L40 before any access, no barrier, `epsilon` comparisons at L50 reject NaN, no division |
 | `src/shaders/harmful_reduce.wgsl` | 92 | audited, no finding — zero-padded load L67–L71; barriers L74/L85 sit under uniform control flow |
 | `src/shaders/helpful.wgsl` | 96 | audited, no finding — `length` guard L48 before any access, no barrier, `epsilon` comparisons at L67/L74/L79 reject NaN, no division |
@@ -96,7 +100,6 @@ the `submission.rs` bounded wait) go to **queue-core**;
 | Path | Lines | Outcome |
 | --- | --- | --- |
 | `src/analysis/gpu/activation_evaluation.rs` | 718 | finding filed — #2313 (the `map_async` callback `.expect` at L297 and L666 panics when a timed-out wait drops its receivers, and the batched path aborts when two or more configs are still mapping), #2314 (a set of 4,793,491+ samples exceeds the 128 MiB binding limit at `create_bind_group` L160 and L495, and wgpu 30 panics instead of returning `Err`); the casts at L146/L179/L224/L456/L480/L583, the staging buffers at L266/L278/L528/L540 and the map-wait propagation at L302/L674 are refuted |
-| `src/analysis/gpu/bias_evaluation.rs` | 225 | unreachable — every production caller of `calculate_optimal_bias` passes `analyzer: None`, so the `evaluate_bias_gpu` branch at `calculation.rs:286`–`:290` never runs (removal tracked by #2316, file kept); latent #2313 site at L195; `num_steps` (L87) ≤ 41 from `get_bias_range` (`specs.rs:219`), the dispatch at L183 is one workgroup, and the casts at L125/L126/L182 and the staging buffer at L164 are refuted |
 | `src/analysis/gpu/harmful_evaluation.rs` | 453 | finding filed — #2313 (the `map_async` callback `.expect` at L376 panics when a timed-out wait drops its receivers, and aborts when two or more maps are still outstanding), #2314 (a set of 8,388,609+ samples exceeds the 128 MiB binding limit at `create_bind_group` L217, and wgpu 30 panics instead of returning `Err`); the casts at L206/L245/L255/L274, the staging buffers at L320/L334 and the map-wait propagation at L383 are refuted |
 | `src/analysis/gpu/helpful_evaluation.rs` | 591 | finding filed — #2313 (the `map_async` callback `.expect` at L446 panics when a timed-out wait drops its receivers, and aborts when two or more maps are still outstanding), #2314 (a set of 2,796,203+ samples exceeds the 128 MiB binding limit at `create_bind_group` L124, and wgpu 30 panics instead of returning `Err`); the casts at L295/L349/L365/L374/L382, the `copy_size` readback chain L374→L405→L426→L441/L461 and the map-wait propagation at L455 are refuted |
 | `src/analysis/gpu/relu_evaluation.rs` | 242 | finding filed — #2313 (the `map_async` callback `.expect` at L185 panics when a timed-out wait drops its receiver), #2314 (a set of 3,355,444+ samples exceeds the 128 MiB binding limit at `create_bind_group` L128, and wgpu 30 panics instead of returning `Err`); the casts at L117/L166, the staging buffer at L148 and the map-wait propagation at L190 are refuted |
@@ -360,6 +363,7 @@ there does not count.
 | `detect_gpu_tier` | L55 | unused | only `tests/unit/analysis_implementation.rs` (not compiled); `src/analysis/system.rs` uses the `gpu::device` path |
 | `detect_unified_memory` | L56 | unused | `src/analysis/system.rs` uses the `gpu::device` path |
 | `get_adapter_info_internal` | L56 | unused | no reference outside `src/analysis/gpu/` |
+| `map_result_forwarder` | L57 | used | tests/gpu/issue_2313_map_async_dropped_receiver_test.rs (added by #2334 after this sweep's baseline) |
 | `no_gpu_result` | L56 | unused | no reference outside `src/analysis/gpu/` |
 | `poll_device_until_idle` | L56 | unused | no reference outside `src/analysis/gpu/` |
 | `wait_for_buffer_map` | L57 | unused | no reference outside `src/analysis/gpu/` |
@@ -398,7 +402,6 @@ there does not count.
 | `is_memory_exhaustion_error` | L87 | used | tests/gpu/issue_1083_gpu_batch_size_reduction.rs |
 | `ACTIVATION_REDUCE_SHADER` | L92 | unused | tests use the `gpu::shaders` path |
 | `ACTIVATION_SHADER` | L92 | unused | tests use the `gpu::shaders` path |
-| `BIAS_SHADER` | L92 | unused | tests use the `gpu::shaders` path |
 | `SHADER_GPU_INIT_TIMEOUT_SECS` | L93 | unused | alias of the shaders copy; only the `mod.rs:162` self-assert names it |
 | `GPU_SHUTDOWN_TIMEOUT_SECS` | L93 | unused | `queue/scheduling.rs` imports the `gpu::shaders` path |
 | `HARMFUL_SHADER` | L94 | unused | tests use the `gpu::shaders` path |
@@ -798,11 +801,15 @@ checks are unconditional.
 | `evaluate_activation_gpu_with_budget` | `src/analysis/gpu/activation_evaluation.rs:93` | `src/analysis/gpu/activation_evaluation.rs:110` "GPU device unavailable for activation analysis" | `src/analysis/gpu/activation_evaluation.rs:114` "GPU queue not initialised for activation analysis" | `src/analysis/gpu/activation_evaluation.rs:118` "GPU activation layout not initialised" | `src/analysis/gpu/activation_evaluation.rs:122` "GPU activation pipeline not initialised" | `src/analysis/gpu/activation_evaluation.rs:203` "GPU activation reduce layout not initialised" / `src/analysis/gpu/activation_evaluation.rs:207` "GPU activation reduce pipeline not initialised" |
 | `evaluate_activations_batched_gpu` | `src/analysis/gpu/activation_evaluation.rs:382` | `src/analysis/gpu/activation_evaluation.rs:416` "GPU device unavailable for activation analysis" | `src/analysis/gpu/activation_evaluation.rs:420` "GPU queue not initialised for batched activation analysis" | `src/analysis/gpu/activation_evaluation.rs:424` "GPU activation layout not initialised" | `src/analysis/gpu/activation_evaluation.rs:428` "GPU activation pipeline not initialised" | `src/analysis/gpu/activation_evaluation.rs:576` "GPU activation reduce layout not initialised" / `src/analysis/gpu/activation_evaluation.rs:580` "GPU activation reduce pipeline not initialised" |
 | `evaluate_activations_batched_gpu_with_budget` | `src/analysis/gpu/activation_evaluation.rs:396` | `src/analysis/gpu/activation_evaluation.rs:416` "GPU device unavailable for activation analysis" | `src/analysis/gpu/activation_evaluation.rs:420` "GPU queue not initialised for batched activation analysis" | `src/analysis/gpu/activation_evaluation.rs:424` "GPU activation layout not initialised" | `src/analysis/gpu/activation_evaluation.rs:428` "GPU activation pipeline not initialised" | `src/analysis/gpu/activation_evaluation.rs:576` "GPU activation reduce layout not initialised" / `src/analysis/gpu/activation_evaluation.rs:580` "GPU activation reduce pipeline not initialised" |
-| `evaluate_bias_gpu` | `src/analysis/gpu/bias_evaluation.rs:48` | `src/analysis/gpu/bias_evaluation.rs:67` "GPU device unavailable for bias analysis" | `src/analysis/gpu/bias_evaluation.rs:71` "GPU queue not initialised for bias analysis" | `src/analysis/gpu/bias_evaluation.rs:75` "GPU bias layout not initialised" | `src/analysis/gpu/bias_evaluation.rs:79` "GPU bias pipeline not initialised" | — |
 | `evaluate_harmful_batch` | `src/analysis/gpu/harmful_evaluation.rs:80` | `src/analysis/gpu/harmful_evaluation.rs:103` "GPU device unavailable for batched harmful analysis" | `src/analysis/gpu/harmful_evaluation.rs:107` "GPU queue not initialised for batched harmful analysis" | `src/analysis/gpu/harmful_evaluation.rs:111` "GPU layout not initialised for batched harmful analysis" | `src/analysis/gpu/harmful_evaluation.rs:115` "GPU pipeline not initialised for batched harmful analysis" | `src/analysis/gpu/harmful_evaluation.rs:120` "GPU harmful reduce layout not initialised" / `src/analysis/gpu/harmful_evaluation.rs:124` "GPU harmful reduce pipeline not initialised" |
 | `evaluate_harmful_batch_with_budget` | `src/analysis/gpu/harmful_evaluation.rs:90` | `src/analysis/gpu/harmful_evaluation.rs:103` "GPU device unavailable for batched harmful analysis" | `src/analysis/gpu/harmful_evaluation.rs:107` "GPU queue not initialised for batched harmful analysis" | `src/analysis/gpu/harmful_evaluation.rs:111` "GPU layout not initialised for batched harmful analysis" | `src/analysis/gpu/harmful_evaluation.rs:115` "GPU pipeline not initialised for batched harmful analysis" | `src/analysis/gpu/harmful_evaluation.rs:120` "GPU harmful reduce layout not initialised" / `src/analysis/gpu/harmful_evaluation.rs:124` "GPU harmful reduce pipeline not initialised" |
 | `evaluate_helpful_batch` | `src/analysis/gpu/helpful_evaluation.rs:206` | `src/analysis/gpu/helpful_evaluation.rs:232` "GPU device unavailable for batched helpful analysis" | `src/analysis/gpu/helpful_evaluation.rs:236` "GPU queue not initialised for batched helpful analysis" | `src/analysis/gpu/helpful_evaluation.rs:240` "GPU layout not initialised for batched helpful analysis" | `src/analysis/gpu/helpful_evaluation.rs:244` "GPU pipeline not initialised for batched helpful analysis" | `src/analysis/gpu/helpful_evaluation.rs:249` "GPU helpful reduce layout not initialised" / `src/analysis/gpu/helpful_evaluation.rs:253` "GPU helpful reduce pipeline not initialised" |
 | `evaluate_helpful_batch_with_budget` | `src/analysis/gpu/helpful_evaluation.rs:219` | `src/analysis/gpu/helpful_evaluation.rs:232` "GPU device unavailable for batched helpful analysis" | `src/analysis/gpu/helpful_evaluation.rs:236` "GPU queue not initialised for batched helpful analysis" | `src/analysis/gpu/helpful_evaluation.rs:240` "GPU layout not initialised for batched helpful analysis" | `src/analysis/gpu/helpful_evaluation.rs:244` "GPU pipeline not initialised for batched helpful analysis" | `src/analysis/gpu/helpful_evaluation.rs:249` "GPU helpful reduce layout not initialised" / `src/analysis/gpu/helpful_evaluation.rs:253` "GPU helpful reduce pipeline not initialised" |
+
+`evaluate_bias_gpu` (`bias_evaluation.rs:48`, no reduce stage) carried the same
+shape of row at this sweep's pinned baseline; it was removed with the whole
+unreachable GPU bias path (Issue #2316), so its row is dropped rather than
+described as dead.
 
 Only the device check is reachable without a GPU: a `wgpu::Device` cannot be
 built in a test, so `src/analysis/gpu/none_field_tests.rs` and
@@ -844,17 +851,15 @@ above and adds no `Ok` path of its own. The inherent wrappers pass
 | `evaluate_activation_gpu_with_budget` | `samples.is_empty()` | `src/analysis/gpu/activation_evaluation.rs:102` | `Ok((0.0, 0.0, 0.0, 0))` | benign: the trailing `0` is the sample count, so no caller can mistake it for a measured result |
 | `evaluate_activations_batched_gpu_with_budget` | `activation_configs.is_empty()` | `src/analysis/gpu/activation_evaluation.rs:403` | `Ok(Vec::new())` | benign: one result per config, and there are none |
 | `evaluate_activations_batched_gpu_with_budget` | `samples.is_empty()` | `src/analysis/gpu/activation_evaluation.rs:407` | `Ok(vec![(0.0, 0.0, 0.0, 0); activation_configs.len()])` | benign: one zero-count tuple per config, same shape as the single-config path |
-| `evaluate_bias_gpu` | `samples.is_empty()` | `src/analysis/gpu/bias_evaluation.rs:57` | `Ok(0.0)` | benign: a zero bias delta proposes no change, and the GPU bias path is unreachable in production (#2316) |
 | `evaluate_harmful_batch_with_budget` | `samples_batch.is_empty()` | `src/analysis/gpu/harmful_evaluation.rs:95` | `Ok(Vec::new())` | benign: one result per candidate, and there are none |
 | `evaluate_helpful_batch_with_budget` | `samples_batch.is_empty()` | `src/analysis/gpu/helpful_evaluation.rs:224` | `Ok(Vec::new())` | benign: one result per candidate, and there are none |
 
 Each short-circuit sits before the `None` checks, so an empty input answers `Ok`
 even on an all-`None` analyser. That is sound: no GPU work is needed to answer
 for zero samples or zero candidates, and every value is a zero-count or empty
-result. `evaluate_bias_gpu` has two more guards, `step < f32::EPSILON`
-(`bias_evaluation.rs:82`, Issue #805) and an empty `bias_candidates`
-(`bias_evaluation.rs:92`). Both sit after the `None` checks, so a `None` field
-reaches them only as an `Err`.
+result. `evaluate_bias_gpu` carried two more guards at this sweep's pinned
+baseline, both sitting after the `None` checks; the whole function was removed
+with the unreachable GPU bias path (Issue #2316).
 
 **Outcome (#2241): no finding.** Every entry point returns `Err` for a `None`
 device, queue, layout, pipeline or reduce field, and every delegation forwards

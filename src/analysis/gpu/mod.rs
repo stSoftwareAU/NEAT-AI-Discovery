@@ -15,7 +15,6 @@
 //! ├── harmful_evaluation.rs     <- Harmful synapse GPU evaluation (Issue #520)
 //! ├── relu_evaluation.rs        <- ReLU activation GPU evaluation (Issue #520)
 //! ├── activation_evaluation.rs  <- Activation function GPU evaluation (Issue #520)
-//! ├── bias_evaluation.rs        <- Bias GPU evaluation (Issue #520)
 //! ├── budget.rs                 <- Per-request GPU time budget (Issue #1928)
 //! ├── breaker.rs                <- Process-wide GPU circuit breaker (Issue #1930)
 //! ├── pipeline_builder.rs      <- Shared compute pipeline builder (Issue #978)
@@ -36,7 +35,6 @@
 
 pub mod activation_evaluation;
 pub mod analyzer;
-pub mod bias_evaluation;
 pub mod breaker;
 pub mod budget;
 pub mod device;
@@ -49,14 +47,15 @@ mod none_field_tests;
 pub(crate) mod pipeline_builder;
 pub mod queue;
 pub mod relu_evaluation;
+pub mod sample_limits;
 pub mod shaders;
 
 // Re-export device module contents for backwards compatibility
 pub use device::{
     GPU_BUFFER_MAP_TIMEOUT_MARGIN_SECS, GPU_BUFFER_MAP_TIMEOUT_SECS, GPU_INIT_TIMEOUT_SECS,
     GpuAvailabilityResult, GpuPerformanceTier, create_wgpu_instance_safely, detect_gpu_tier,
-    detect_unified_memory, get_adapter_info_internal, no_gpu_result, poll_device_until_idle,
-    wait_for_buffer_map, wait_for_buffer_maps_batch,
+    detect_unified_memory, get_adapter_info_internal, map_result_forwarder, no_gpu_result,
+    poll_device_until_idle, wait_for_buffer_map, wait_for_buffer_maps_batch,
 };
 
 // Re-export GPU_QUEUE_TIMEOUT_MAX_SECS from device (which gets it from utils)
@@ -91,7 +90,7 @@ pub use queue::recovery::{
 
 // Re-export shader module contents (Issue #277)
 pub use shaders::{
-    ACTIVATION_REDUCE_SHADER, ACTIVATION_SHADER, BIAS_SHADER,
+    ACTIVATION_REDUCE_SHADER, ACTIVATION_SHADER,
     GPU_INIT_TIMEOUT_SECS as SHADER_GPU_INIT_TIMEOUT_SECS, GPU_SHUTDOWN_TIMEOUT_SECS,
     HARMFUL_SHADER, HELPFUL_SHADER, MIN_NEURON_SAMPLE_COUNT, RELU_SHADER, WORKGROUP_SIZE,
 };
@@ -129,6 +128,7 @@ mod tests {
             available: false,
             reason: None,
             is_error: false,
+            device_type: None,
         };
 
         // Verify constants are accessible using const assertions
@@ -155,7 +155,6 @@ mod tests {
         assert!(HARMFUL_SHADER.contains("@compute"));
         assert!(RELU_SHADER.contains("@compute"));
         assert!(ACTIVATION_SHADER.contains("@compute"));
-        assert!(BIAS_SHADER.contains("@compute"));
 
         // Verify workgroup size matches shaders
         assert_eq!(WORKGROUP_SIZE, 256);

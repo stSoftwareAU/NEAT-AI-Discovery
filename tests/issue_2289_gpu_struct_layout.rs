@@ -1,4 +1,6 @@
-//! Host ↔ WGSL struct-layout parity for the 12 GPU `Pod` structs (Issue #2289).
+//! Host ↔ WGSL struct-layout parity for the 10 GPU `Pod` structs (Issue #2289).
+//! The `BiasResult` / `BiasUniforms` pair this originally pinned was removed
+//! with the unreachable GPU bias path itself (Issue #2316).
 //!
 //! CPU-only: no GPU adapter is requested. Each Rust struct's `size_of` /
 //! `align_of` is pinned, then every WGSL mirror is parsed and validated with
@@ -12,13 +14,12 @@ use std::mem::{align_of, offset_of, size_of};
 use naga::proc::{Alignment, Layouter};
 use naga::{Module, ScalarKind, TypeInner};
 use neat_ai_discovery::analysis::gpu::shaders::{
-    ACTIVATION_REDUCE_SHADER, ACTIVATION_SHADER, BIAS_SHADER, HARMFUL_REDUCE_SHADER,
-    HARMFUL_SHADER, HELPFUL_REDUCE_SHADER, HELPFUL_SHADER, RELU_SHADER,
+    ACTIVATION_REDUCE_SHADER, ACTIVATION_SHADER, HARMFUL_REDUCE_SHADER, HARMFUL_SHADER,
+    HELPFUL_REDUCE_SHADER, HELPFUL_SHADER, RELU_SHADER,
 };
 use neat_ai_discovery::analysis::samples::{
-    ActivationOutput, ActivationUniforms, BiasResult, BiasUniforms, GpuHelpfulSample,
-    HarmfulContribution, HarmfulUniforms, HelpfulContribution, HelpfulUniforms, ReductionUniforms,
-    ReluContribution, ReluUniforms,
+    ActivationOutput, ActivationUniforms, GpuHelpfulSample, HarmfulContribution, HarmfulUniforms,
+    HelpfulContribution, HelpfulUniforms, ReductionUniforms, ReluContribution, ReluUniforms,
 };
 
 /// Host-side layout of one Rust struct: size, alignment and `(name, offset, scalar)` per field.
@@ -118,28 +119,6 @@ fn relu_uniforms() -> RustLayout {
     })
 }
 
-fn bias_result() -> RustLayout {
-    rust_layout!(BiasResult {
-        bias_value: f32,
-        error_reduction: f32,
-        valid_sample_count: u32,
-        pad0: u32,
-    })
-}
-
-fn bias_uniforms() -> RustLayout {
-    rust_layout!(BiasUniforms {
-        sample_count: u32,
-        bias_count: u32,
-        incoming_weight: f32,
-        outgoing_weight: f32,
-        activation_type: u32,
-        epsilon: f32,
-        min_sample_count: u32,
-        pad0: u32,
-    })
-}
-
 fn activation_output() -> RustLayout {
     rust_layout!(ActivationOutput {
         output: f32,
@@ -186,7 +165,6 @@ fn parity_map() -> Vec<(RustLayout, Vec<Mirror>)> {
                 ("harmful.wgsl", HARMFUL_SHADER, "HarmfulSample"),
                 ("relu.wgsl", RELU_SHADER, "HelpfulSample"),
                 ("activation.wgsl", ACTIVATION_SHADER, "HelpfulSample"),
-                ("bias.wgsl", BIAS_SHADER, "HelpfulSample"),
             ],
         ),
         (
@@ -226,14 +204,6 @@ fn parity_map() -> Vec<(RustLayout, Vec<Mirror>)> {
         (
             relu_uniforms(),
             vec![("relu.wgsl", RELU_SHADER, "ReluUniforms")],
-        ),
-        (
-            bias_result(),
-            vec![("bias.wgsl", BIAS_SHADER, "BiasResult")],
-        ),
-        (
-            bias_uniforms(),
-            vec![("bias.wgsl", BIAS_SHADER, "BiasUniforms")],
         ),
         (
             activation_output(),
@@ -311,7 +281,7 @@ fn member_scalar(module: &Module, ty: naga::Handle<naga::Type>) -> String {
 #[test]
 fn rust_pod_structs_have_pinned_size_and_alignment() {
     // Pinned values from Issue #2289; a change here must be matched in the WGSL mirror.
-    let expected: [(&str, usize, usize); 12] = [
+    let expected: [(&str, usize, usize); 10] = [
         ("GpuHelpfulSample", 8, 4),
         ("HelpfulContribution", 48, 4),
         ("HelpfulUniforms", 16, 4),
@@ -319,8 +289,6 @@ fn rust_pod_structs_have_pinned_size_and_alignment() {
         ("HarmfulUniforms", 16, 4),
         ("ReluContribution", 40, 4),
         ("ReluUniforms", 16, 4),
-        ("BiasResult", 16, 4),
-        ("BiasUniforms", 32, 4),
         ("ActivationOutput", 28, 4),
         ("ActivationUniforms", 28, 4),
         ("ReductionUniforms", 16, 4),
@@ -371,11 +339,6 @@ fn rust_pod_structs_have_pinned_size_and_alignment() {
     assert_eq!(
         (size_of::<ReluUniforms>(), align_of::<ReluUniforms>()),
         (16, 4)
-    );
-    assert_eq!((size_of::<BiasResult>(), align_of::<BiasResult>()), (16, 4));
-    assert_eq!(
-        (size_of::<BiasUniforms>(), align_of::<BiasUniforms>()),
-        (32, 4)
     );
     assert_eq!(
         (
@@ -451,8 +414,8 @@ fn every_wgsl_mirror_matches_its_rust_struct_layout() {
             mirrors_checked += 1;
         }
     }
-    // 12 structs across 21 shader declarations — guards against a silently shrunk map.
-    assert_eq!(mirrors_checked, 21);
+    // 10 structs across 18 shader declarations — guards against a silently shrunk map.
+    assert_eq!(mirrors_checked, 18);
 }
 
 #[test]
@@ -473,7 +436,6 @@ fn host_shared_array_strides_equal_rust_size() {
         ("harmful.wgsl", HARMFUL_SHADER),
         ("relu.wgsl", RELU_SHADER),
         ("activation.wgsl", ACTIVATION_SHADER),
-        ("bias.wgsl", BIAS_SHADER),
         ("helpful_reduce.wgsl", HELPFUL_REDUCE_SHADER),
         ("harmful_reduce.wgsl", HARMFUL_REDUCE_SHADER),
         ("activation_reduce.wgsl", ACTIVATION_REDUCE_SHADER),

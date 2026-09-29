@@ -86,8 +86,7 @@ pub struct OperatingPointIssue {
 /// pre-activation range over which the function transitions most of its
 /// output dynamic range.
 ///
-/// Uses `get_bias_range()` from `src/analysis/activation.rs` as a baseline
-/// and narrows to the region where the function is most sensitive.
+/// Narrows to the region where the function is most sensitive.
 ///
 /// Returns `None` for unbounded or discrete activations where the concept
 /// of an active zone does not apply.
