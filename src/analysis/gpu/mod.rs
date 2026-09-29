@@ -44,6 +44,8 @@ pub mod harmful_evaluation;
 pub mod heartbeat;
 pub mod helpful_evaluation;
 pub mod inflight;
+#[cfg(test)]
+mod none_field_tests;
 pub(crate) mod pipeline_builder;
 pub mod queue;
 pub mod relu_evaluation;

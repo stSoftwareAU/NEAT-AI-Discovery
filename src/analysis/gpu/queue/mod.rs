@@ -57,6 +57,9 @@ pub mod submission;
 /// Deterministic wedged-GPU test double (Issue #1935).
 #[cfg(test)]
 mod fake_evaluator;
+/// `RequestEvaluator` on an all-`None` `GpuAnalyzer` returns `Err` (Issue #2241).
+#[cfg(test)]
+mod none_field_tests;
 #[cfg(test)]
 mod stale_skip_tests;
 /// Regression tests for the Issue #1926 wedged-GPU defences (Issue #1935).
