@@ -113,22 +113,56 @@ REGRESSION_PLACEHOLDER
 
 <!-- vibe-standards-review inputs="diff+CODING-STANDARDS.md" -->
 
-This repo has no `CODING-STANDARDS.md`, so the review used `CONTRIBUTING.md`
-and `AGENTS.md`.
+This repo has no `CODING-STANDARDS.md`. The independent reviewer judged the
+#2241 diff against `CONTRIBUTING.md`, the canonical coding conventions, and
+`AGENTS.md`.
 
-- Fixed: the short-circuit test's name said "benign" but it also accepted
-  "finding". It now requires `benign`, which matches the no-finding outcome.
-- Fixed: the short-circuit test now checks that the guard text is still in the
-  function, not just that the line is in range.
-- Fixed: re-wrapped an overlong doc line.
-- Skipped: the two-line `batch`/`harmful`/`budget` fixtures are duplicated
-  in `queue/none_field_tests.rs`. Sharing them across modules would add more
-  coupling than it removes.
-- Accepted: the `file.rs:line` citations. The audit doc is baseline-pinned and
-  already cites this way throughout, and the contract test re-validates every
-  one.
-- Australian English was used throughout. There are no bare `;` characters in
-  the Mermaid text, and `ci.yml` is untouched.
+- **violation** — Cite code by symbol, never by line number (Issue #1942) —
+  evidence: `docs/audits/security-sweep-chunk-9-gpu-wgsl.md:781` — reason:
+  stands. The three new tables cite `path.rs:line`, matching the ~200
+  existing citations in this baseline-pinned audit record. Moving the record
+  to symbol citations is a separate change.
+- **violation** — Cite code by symbol, never by line number (Issue #1942) —
+  evidence: `docs/audits/security-sweep-chunk-9-gpu-wgsl.md:855` — reason:
+  stands, for the same reason. The prose cites `bias_evaluation.rs:82` and
+  `:92`.
+- **violation** — Cite code by symbol, never by line number (Issue #1942) —
+  evidence: `docs/audits/security-sweep-chunk-9-gpu-wgsl.md:937` — reason:
+  stands, for the same reason. This is the queue-core threat row.
+- **violation** — Cite code by symbol, never by line number (Issue #1942) —
+  evidence: `tests/issue_2113_chunk_09c_device_sweep.rs:496` — reason:
+  stands. The tests check that each cited line is in range and that each
+  `.context` string is in the function body in order. They do not check that
+  the string is on the cited line, so a drifted line number stays green. The
+  Evidence section above says each string "must sit on its cited line". That
+  overstates the test, and this entry corrects it.
+- **violation** — Test outcomes, not implementation — evidence:
+  `tests/issue_2113_chunk_09c_device_sweep.rs:570` — reason: stands. Without
+  a GPU the queue, layout, pipeline and reduce checks cannot be reached at
+  runtime, so the contract test pins their `.context` source text. It also
+  pins the `if {guard} {` text (line 642). The reviewer acknowledged this
+  rationale.
+- **violation** (minor) — Australian English throughout all code — evidence:
+  `src/analysis/gpu/none_field_tests.rs:19` — reason: stands. The name
+  `all_none_analyzer` follows the existing `GpuAnalyzer` type and `analyzer`
+  module names.
+- **violation** — PR summary file required — evidence: absent from the diff
+  the reviewer saw — reason: my status departs here, because this is not a
+  violation. The reviewer's diff excluded `docs/archive/`. This file,
+  `docs/archive/pr-summaries/pr-summary-2241.md`, is on the branch.
+- **clean** — Version bump (`0.74.266` → `0.74.267` in `Cargo.toml` and
+  `Cargo.lock`), CI untouched, no new Mermaid blocks in the diff (bare-`;`
+  rule), and Australian English in prose, strings and assertion messages.
+- **clean** — Test placement: the in-crate `#[cfg(test)]` modules are
+  justified because `GpuAnalyzer`'s fields are `pub(super)`, and no API was
+  widened for testing. The tests have non-vacuous assertions: non-empty
+  samples, the specific "GPU device unavailable" text, and exact row counts.
+  They contain no timing assertions and need no `#[serial]`.
+- **clean** — Formatting (`rustfmt --check`), DRY (`first_citation` and
+  `symbol_rows` reuse the new helpers), file sizes under ~1,500 lines, doc
+  comments on the new modules and helpers, no new dependencies, and the
+  forward-only, atomic-write and FFI-memory invariants, which the diff does
+  not touch.
 
 ## Test Plan
 
