@@ -192,6 +192,9 @@ against baseline `b85a551`; the #2078 site is `CreatureTopologyCache::new` in
 - Prior remediations cited by `shared` rows, not filed by this sweep: #2078
   (`creature.output` cap in `validate_creature_input_bounds`) and #2304
   (`pearson_correlation` non-finite hardening).
+- #2092 — the tracker issue (part of #2216) whose six defect classes this
+  sweep probes; cited from the `mod.rs` and `stats.rs` shared rows, not a
+  finding filed by this sweep.
 
 ## Related remediations (not sweep coverage)
 
