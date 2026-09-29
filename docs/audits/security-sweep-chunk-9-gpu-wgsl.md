@@ -63,6 +63,11 @@ contract's `normalise_id` accepts both spellings.
 Line counts as at the baseline commit (`git show <baseline>:<path> | wc -l`):
 24 Rust files (9,658 lines) and 10 WGSL shaders (1,338 lines), 34 in total.
 
+`src/shaders/matching.wgsl` (135 lines, dead) and `src/shaders/relu_reduce.wgsl`
+(110 lines, unused) were swept at the baseline and have since been deleted
+by #2309, so they carry no inventory row below; their audit rows remain in the
+shaders audit section.
+
 Three files are not named in the #2288 owner list and are assigned to the
 group of the module they test or support: `queue/fake_evaluator.rs` (the
 `RequestEvaluator` test double for `executor.rs`, driven through
@@ -84,9 +89,7 @@ the `submission.rs` bounded wait) go to **queue-core**;
 | `src/shaders/harmful_reduce.wgsl` | 92 | audited, no finding — zero-padded load L67–L71; barriers L74/L85 sit under uniform control flow |
 | `src/shaders/helpful.wgsl` | 96 | audited, no finding — `length` guard L48 before any access, no barrier, `epsilon` comparisons at L67/L74/L79 reject NaN, no division |
 | `src/shaders/helpful_reduce.wgsl` | 116 | audited, no finding — zero-padded load L91–L95; barriers L98/L109 sit under uniform control flow |
-| `src/shaders/matching.wgsl` | 135 | dead — no `include_str!` in `shaders.rs`, absent from `ALL_SHADERS`, no pipeline builds it; deleted by #2309 |
 | `src/shaders/relu.wgsl` | 89 | finding filed — #2308 (the L63 `is_finite_value` input skip); `length` guard L45, no barrier, `epsilon` guards L73/L81, unused `threshold` refuted |
-| `src/shaders/relu_reduce.wgsl` | 110 | unused — registered as `RELU_REDUCE_SHADER` (`shaders.rs:91`) and in `ALL_SHADERS` (`shaders.rs:214`) but no `build_compute_pipeline` call builds it; kernel itself is sound (zero-padded load, barriers L92/L103 uniform); deleted by #2309 with `RELU_REDUCE_SHADER` and its `ALL_SHADERS` entry |
 
 ### evaluation
 
