@@ -945,7 +945,8 @@ activation halves (#2238: no new finding; relu and activation
 widen #2313 and #2314, and the unreachable GPU bias path is #2316). The device
 slice has recorded the SEC-fe0b268a3799 disposition (remediated by #1873) and
 the CPU-fallback cross-check (#2240: one finding, #2318) and the entry-point
-`None → Err` sweep (#2241: no finding). Its remaining per-file sweep is pending #2242. Every other file is pending its slice. Each slice records its
+`None → Err` sweep (#2241: no finding). Its remaining per-file sweep is
+pending #2242. Every other file is pending its slice. Each slice records its
 outcome in its region under `## Audit sections`.
 
 ## Issues filed

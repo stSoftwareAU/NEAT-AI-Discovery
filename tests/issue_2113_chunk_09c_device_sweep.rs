@@ -635,10 +635,17 @@ fn every_empty_input_short_circuit_carries_a_benign_verdict() {
         let (path, line) =
             first_citation(&row[2]).unwrap_or_else(|| panic!("{entry} must cite `path.rs:line`"));
         let source = assert_in_range(entry, &path, line);
-        assert!(defines(&source, entry), "`{entry}` is no longer in {path}");
+        let guard = row[1].trim_matches('`');
         assert!(
-            row[4].starts_with("benign") || row[4].starts_with("finding"),
-            "{entry}: verdict must open with `benign` or `finding`: {}",
+            fn_bodies(&source, entry)
+                .iter()
+                .any(|body| body.contains(&format!("if {guard} {{"))),
+            "`{entry}` no longer short-circuits on `{guard}` in {path}"
+        );
+        // #2241 records no finding, so every short-circuit must be benign.
+        assert!(
+            row[4].starts_with("benign"),
+            "{entry}: verdict must open with `benign`: {}",
             row[4]
         );
     }
