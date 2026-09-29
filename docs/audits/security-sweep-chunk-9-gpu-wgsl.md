@@ -332,7 +332,7 @@ and #2238 and are not repeated here.
 
 | Constant | Defined at | Value | Checked against | Verdict |
 | --- | --- | --- | --- | --- |
-| `WORKGROUP_SIZE` | `shaders.rs:122` | `256` | naga test `test_compute_entry_points_declare_workgroup_size` (`shaders.rs:280`) asserts `[WORKGROUP_SIZE, 1, 1]` for every entry point in `ALL_SHADERS`; the 10 `@workgroup_size(256)` kernels agree (`tests/issue_2291_chunk_09a_2b_shader_layer_sweep.rs`); const asserts L313–L316 (64..=1024, power of two) | pinned — refuted |
+| `WORKGROUP_SIZE` | `shaders.rs:122` | `256` | naga test `test_compute_entry_points_declare_workgroup_size` (`shaders.rs:280`) asserts `[WORKGROUP_SIZE, 1, 1]` for every entry point in `ALL_SHADERS`; the 8 `@workgroup_size(256)` kernels agree (10 at the baseline, before #2309 deleted `matching.wgsl` and `relu_reduce.wgsl`) (`tests/issue_2291_chunk_09a_2b_shader_layer_sweep.rs`); const asserts L313–L316 (64..=1024, power of two) | pinned — refuted |
 | `GPU_REDUCTION_THRESHOLD` | `shaders.rs:195` | `10_000` | const asserts `shaders.rs:369` (`>= 256`, one workgroup) and `:373` (`<= 100_000`) | bounded — refuted |
 | `GPU_SHUTDOWN_TIMEOUT_SECS` | `shaders.rs:156` | `10` | const asserts `shaders.rs:326`–`:327` (5..=30) | bounded — refuted |
 | `GPU_BUFFER_MAP_TIMEOUT_MARGIN_SECS` | `device.rs:44` | `5` | const assert `device.rs:621` (`> 0`) | bounded — refuted |
