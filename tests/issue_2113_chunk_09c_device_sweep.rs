@@ -24,6 +24,14 @@
 //! * every empty-input `Ok` short-circuit carries a `benign` verdict;
 //! * the device audit region states "Outcome (#2241): no finding".
 //!
+//! The third slice (Issue #2242) adds the per-file sweep of `analyzer.rs`,
+//! `device.rs`, `budget.rs` and `breaker.rs`:
+//!
+//! * no `### device` row under `## Files swept` still reads `pending — #2113`;
+//! * the device audit region carries the init-timeout, limits and device-loss
+//!   subsections and states "Outcome (#2242)";
+//! * every symbol those verdicts cite still exists in its cited file.
+//!
 //! Only the device check is reachable without a GPU, so this string check is
 //! what pins the queue, layout, pipeline and reduce checks; the device check is
 //! also exercised by `src/analysis/gpu/none_field_tests.rs`.
@@ -78,8 +86,8 @@ const CROSS_CHECK_SYMBOLS: [&str; 3] = [
     "classify_gpu_unavailable_reason",
 ];
 
-/// The findings the device slice filed; the record states "one finding, #2318".
-const SURVIVING_FINDINGS: [&str; 1] = ["SEC-2b0c59cc73d5"];
+/// The findings the device slices filed: #2318 (#2240) and #2332 (#2242).
+const SURVIVING_FINDINGS: [&str; 2] = ["SEC-2b0c59cc73d5", "SEC-d6747980489b"];
 
 const WRITE_PATH_TABLE: &str = "#### SEC-fe0b268a3799 — write path (Issue #2240)";
 const CALL_SITE_TABLE: &str = "#### SEC-fe0b268a3799 — `setup_gpu_environment` sites (Issue #2240)";
@@ -87,6 +95,37 @@ const CROSS_CHECK_TABLE: &str = "#### CPU-fallback cross-check (Issue #2240)";
 const ENTRY_POINT_TABLE: &str = "#### Entry-point None → Err sites (Issue #2241)";
 const DELEGATION_TABLE: &str = "#### Entry-point delegations (Issue #2241)";
 const SHORT_CIRCUIT_TABLE: &str = "#### Empty-input Ok short-circuits (Issue #2241)";
+
+/// The four files the #2242 slice sweeps, as `## Files swept` cites them.
+const SWEPT_FILES: [&str; 4] = [
+    "src/analysis/gpu/analyzer.rs",
+    "src/analysis/gpu/budget.rs",
+    "src/analysis/gpu/breaker.rs",
+    "src/analysis/gpu/device.rs",
+];
+
+/// The #2242 subsections the device audit region must carry.
+const SWEEP_HEADINGS: [&str; 3] = [
+    "#### Init timeout — every `pollster::block_on` site (Issue #2242)",
+    "#### Limits — `Limits::default()` (Issue #2242)",
+    "#### Device loss (Issue #2242)",
+];
+
+/// The #2242 `Symbol | Cited at` tables whose rows must still resolve.
+const SWEEP_TABLES: [&str; 3] = [
+    "#### `device.rs` paths (Issue #2242)",
+    "#### `budget.rs` (Issue #2242)",
+    "#### `breaker.rs` (Issue #2242)",
+];
+
+/// Source text the #2242 verdicts cite, with the file that must still carry it.
+const SWEEP_SYMBOLS: [(&str, &str); 5] = [
+    ("pollster::block_on", "src/analysis/gpu/analyzer.rs"),
+    ("Limits::default()", "src/analysis/gpu/analyzer.rs"),
+    ("GPU_INIT_TIMEOUT_SECS", "src/analysis/gpu/device.rs"),
+    ("GPU_BUFFER_MAP_TIMEOUT_SECS", "src/analysis/gpu/device.rs"),
+    ("fn gpu_wedged_error(", "src/analysis/gpu/breaker.rs"),
+];
 
 /// Every public `GpuAnalyzer` evaluation entry point, in record order.
 const ENTRY_POINTS: [&str; 11] = [
@@ -659,4 +698,66 @@ fn the_device_region_states_the_2241_outcome() {
         audit.contains("**Outcome (#2241): no finding.**"),
         "the device audit region must state the #2241 outcome explicitly"
     );
+}
+
+#[test]
+fn no_device_files_swept_row_is_still_pending() {
+    let doc = read(RECORD);
+    let rows = table_rows(section(section(&doc, "## Files swept"), "### device"));
+    let paths: Vec<&str> = rows.iter().map(|row| row[0].trim_matches('`')).collect();
+    assert_eq!(
+        paths, SWEPT_FILES,
+        "the device Files swept table must carry one row per swept file, in order"
+    );
+    for row in &rows {
+        let outcome = row.last().expect("outcome cell");
+        assert!(
+            !outcome.contains("pending — #2113"),
+            "{}: the device row must carry a verdict, not `pending — #2113`",
+            row[0]
+        );
+        assert!(
+            outcome.starts_with("audited, no finding") || outcome.starts_with("finding filed — #"),
+            "{}: outcome must open with `audited, no finding` or `finding filed — #N`: {outcome}",
+            row[0]
+        );
+    }
+}
+
+#[test]
+fn the_device_region_carries_the_2242_subsections_and_outcome() {
+    let doc = read(RECORD);
+    let audit = device_region(section(&doc, "## Audit sections")).to_string();
+    for heading in SWEEP_HEADINGS {
+        // `section` panics with the heading when it is missing.
+        assert!(
+            !section(&audit, heading).trim().is_empty(),
+            "`{heading}` must record a verdict"
+        );
+    }
+    assert!(
+        audit.contains("**Outcome (#2242):"),
+        "the device audit region must state the #2242 outcome explicitly"
+    );
+}
+
+#[test]
+fn every_2242_cited_symbol_still_exists() {
+    for (symbol, path) in SWEEP_SYMBOLS {
+        assert!(
+            read(path).contains(symbol),
+            "{path} no longer contains `{symbol}` — the #2242 verdicts describe code that moved"
+        );
+    }
+    for heading in SWEEP_TABLES {
+        let rows = symbol_rows(heading);
+        assert!(!rows.is_empty(), "`{heading}` must carry symbol rows");
+        for (symbol, path, line) in &rows {
+            let source = assert_in_range(&format!("`{symbol}`"), path, *line);
+            assert!(
+                defines(&source, symbol),
+                "`{symbol}` is no longer defined in {path} — the #2242 record describes code that moved"
+            );
+        }
+    }
 }
