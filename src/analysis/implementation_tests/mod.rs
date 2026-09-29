@@ -16,6 +16,7 @@
 //! - `optimal_weight_tests` — Optimal outgoing weight calculation
 //! - `prediction_accuracy_tests` — Prediction accuracy vs manual simulation
 //! - `clone_reduction_tests` — Hash-based deduplication key correctness (Issue #526)
+//! - `issue_2308_finite_guard_test` — WGSL `is_finite_value` NaN/Inf guard (Issue #2308)
 
 // Shared imports for all test modules
 #[allow(unused_imports)]
@@ -85,6 +86,7 @@ mod distinct_target_spread_tests;
 mod gain_floor_tests;
 mod gpu_batch_tests;
 mod improvement_model_tests;
+mod issue_2308_finite_guard_test;
 mod optimal_weight_tests;
 mod prediction_accuracy_tests;
 mod relu_evaluation_tests;
