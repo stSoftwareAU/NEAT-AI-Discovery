@@ -83,7 +83,9 @@ fn assert_every_source_in_exactly_one_group(
 }
 
 fn min_grouping_time(sources: &[(&OrderedNeuron, Arc<Vec<DiscoverRecord>>)]) -> Duration {
-    const RUNS: usize = 5;
+    // Readings are tens of microseconds, so one preemption on a busy runner
+    // swamps a sample; the minimum of many runs filters that noise out.
+    const RUNS: usize = 25;
 
     (0..RUNS)
         .map(|_| {
@@ -139,7 +141,9 @@ fn expired_deadline_stops_locality_scan_without_dropping_sources() {
 #[test]
 fn locality_grouping_cost_does_not_grow_quadratically() {
     let small = MAX_SOURCES_FOR_LOCALITY_SCAN + 1;
-    let large = small * 2;
+    // A 4x step separates linear (4x cost) from quadratic (16x) by a wide
+    // margin; a 2x step left only 1.5x headroom and flaked under CI load.
+    let large = small * 4;
 
     // Fixtures are built once, outside the timed region, and the smaller run
     // reuses a prefix of the larger so both time exactly the same kind of work.
@@ -151,10 +155,11 @@ fn locality_grouping_cost_does_not_grow_quadratically() {
     let t_large = min_grouping_time(&large_sources);
 
     // Two readings of the same work, never a reading against a wall-clock
-    // constant: doubling the input may double the cost (linear) but must not
-    // quadruple it (quadratic). The bound sits midway between the two.
+    // constant: quadrupling the input may quadruple the cost (linear) but must
+    // not multiply it sixteenfold (quadratic). The bound is their geometric
+    // midpoint.
     assert!(
-        t_large <= t_small * 3,
+        t_large <= t_small * 8,
         "locality grouping cost grew faster than linearly: {t_small:?} at {small} sources against {t_large:?} at {large} sources"
     );
 }
