@@ -98,42 +98,6 @@ pub struct ReluUniforms {
     pub pad0: f32,
 }
 
-/// GPU result data for bias optimisation.
-#[repr(C)]
-#[derive(Clone, Copy, Pod, Zeroable)]
-pub struct BiasResult {
-    pub bias_value: f32,
-    pub error_reduction: f32,
-    pub valid_sample_count: u32,
-    pub pad0: u32,
-}
-
-impl BiasResult {
-    /// Create a zeroed result.
-    pub fn zeroed() -> Self {
-        Self {
-            bias_value: 0.0,
-            error_reduction: 0.0,
-            valid_sample_count: 0,
-            pad0: 0,
-        }
-    }
-}
-
-/// GPU shader uniforms for bias optimisation.
-#[repr(C)]
-#[derive(Clone, Copy, Pod, Zeroable)]
-pub struct BiasUniforms {
-    pub sample_count: u32,
-    pub bias_count: u32,
-    pub incoming_weight: f32,
-    pub outgoing_weight: f32,
-    pub activation_type: u32,
-    pub epsilon: f32,
-    pub min_sample_count: u32,
-    pub pad0: u32,
-}
-
 /// GPU output data for activation function evaluation.
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]

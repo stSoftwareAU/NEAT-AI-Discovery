@@ -130,7 +130,6 @@ pub(crate) fn evaluate_all_activation_specs_batched<G: GpuEvaluator>(
                 outgoing_weight,
                 spec.activation,
                 spec.name,
-                None,
                 target_squash,
             );
             (outgoing_weight, optimal_bias)
