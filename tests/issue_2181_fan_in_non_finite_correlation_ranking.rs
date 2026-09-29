@@ -3,10 +3,14 @@
 //! must not depend on the order the caller lists neurons in.
 //!
 //! `pearson_correlation`'s `f32` accumulators overflow on finite `±2e30`
-//! activations and return a NaN. Before the fix the `corr.abs() < 0.3` filter
-//! kept it (a NaN loses `<`), and the `partial_cmp(..).unwrap_or(Equal)` sort
-//! gave `truncate` no total order — so listing the poisoned inputs first
+//! activations and used to return a NaN. Before the fix the `corr.abs() < 0.3`
+//! filter kept it (a NaN loses `<`), and the `partial_cmp(..).unwrap_or(Equal)`
+//! sort gave `truncate` no total order — so listing the poisoned inputs first
 //! emptied the window of honest inputs.
+//!
+//! Since Issue #2304 `pearson_correlation` returns `0.0` for that overflow, so
+//! the end-to-end poisoned inputs are dropped by the threshold filter; the
+//! helper tests below still feed `rank_input_scores` NaN and `±inf` directly.
 
 use neat_ai_discovery::analysis::recommendation::fan_in::{
     MAX_INPUTS_PER_TARGET, detect_fan_in_candidates, rank_input_scores,
@@ -272,13 +276,13 @@ fn fan_in_candidates_agree_whichever_order_the_caller_lists_neurons_in() {
     );
     assert_eq!(
         poison_first, baseline,
-        "NaN-correlation inputs must be dropped, leaving exactly the honest-only candidates"
+        "overflowed-correlation inputs must be dropped, leaving exactly the honest-only candidates"
     );
     assert!(
         poison_first
             .iter()
             .chain(&poison_last)
             .all(|(_, inputs)| inputs.iter().all(|u| !u.starts_with("poison-"))),
-        "no candidate may name an input whose correlation was NaN"
+        "no candidate may name an input whose correlation overflowed"
     );
 }
