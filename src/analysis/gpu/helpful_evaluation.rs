@@ -259,6 +259,11 @@ impl GpuAnalyzer {
         let mut all_results = Vec::with_capacity(samples_batch.len());
 
         let max_sample_len = samples_batch.iter().map(|s| s.len()).max().unwrap_or(0);
+        // Issue #2314: reject an oversized sample set before it reaches wgpu allocation.
+        crate::analysis::gpu::sample_limits::check_helpful_set_fits(
+            max_sample_len,
+            &device.limits(),
+        )?;
         let bytes_per_sample = std::mem::size_of::<GpuHelpfulSample>()
             + (2 * std::mem::size_of::<HelpfulContribution>());
         let effective_batch_size = cap_gpu_batch_size_by_bytes(
