@@ -105,10 +105,10 @@ the `submission.rs` bounded wait) go to **queue-core**;
 
 | Path | Lines | Outcome |
 | --- | --- | --- |
-| `src/analysis/gpu/analyzer.rs` | 498 | pending — #2113 |
-| `src/analysis/gpu/budget.rs` | 245 | pending — #2113 |
-| `src/analysis/gpu/breaker.rs` | 511 | pending — #2113 |
-| `src/analysis/gpu/device.rs` | 638 | pending — #2113 |
+| `src/analysis/gpu/analyzer.rs` | 498 | finding filed — #2332 (the `check_gpu_availability` probe blocks on `request_adapter` L276 and `request_device` L288 with no deadline, behind the `OnceLock` at L255); the `new()` requests at L361/L391, `Limits::default()` at L291/L394 and the missing device-lost / uncaptured-error handler are refuted |
+| `src/analysis/gpu/budget.rs` | 245 | audited, no finding — `check` (L111–L119) returns a stage-labelled `Err` once the deadline passes, an unbounded budget is never expired and caps waits at `GPU_BUFFER_MAP_TIMEOUT_SECS`, and the file reads no environment variables |
+| `src/analysis/gpu/breaker.rs` | 511 | audited, no finding — a one-way latch whose first `trip` (L149–L172) logs a `warn!` and whose `check` (L187–L198) returns the typed `DiscoveryError::GpuWedged` via `gpu_wedged_error` (L262–L267); the file reads no environment thresholds |
+| `src/analysis/gpu/device.rs` | 638 | finding filed — #2332 (`get_adapter_info_internal` blocks on `request_adapter` at L445 with no deadline); every other path returns `Err` or a typed outcome, and the discarded poll at L378 and the no-op block at L309–L316 are refuted |
 
 ### queue-core
 
@@ -690,7 +690,7 @@ baseline: the disposition of **SEC-fe0b268a3799** (#1871: `env::set_var` in
 `new()` runs on the spawned GPU thread and again during device recovery), and
 whether a GPU-unavailable run can fall back to CPU without saying so. The
 per-file sweep of `analyzer.rs`, `budget.rs`, `breaker.rs` and `device.rs`
-belongs to #2241/#2242, so their `## Files swept` rows stay `pending — #2113`. The wider
+belongs to #2241/#2242, and #2242 flips their `## Files swept` rows. The wider
 `env::set_var` sweep outside the GPU path belongs to chunk 13 (#2096). This
 slice cross-references it and does not repeat it.
 
