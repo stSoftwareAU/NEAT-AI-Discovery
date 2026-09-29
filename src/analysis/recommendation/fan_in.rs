@@ -42,7 +42,7 @@ use std::time::SystemTime;
 
 /// Minimum absolute correlation between an input's activation and a target's
 /// error to consider that input as a fan-in contributor.
-pub const INPUT_ERROR_CORRELATION_THRESHOLD: f32 = 0.3;
+const INPUT_ERROR_CORRELATION_THRESHOLD: f32 = 0.3;
 
 /// Maximum absolute correlation between two inputs for them to be considered
 /// complementary (low redundancy).
@@ -245,7 +245,7 @@ pub fn detect_fan_in_candidates(
     }
 
     // Sort by estimated improvement (best first), ties on (target, inputs) so
-    // the truncation is deterministic (Issue #2181), then truncate.
+    // exact ties never fall to caller order (Issue #2181), then truncate.
     candidates.sort_by(|a, b| {
         b.estimated_improvement
             .total_cmp(&a.estimated_improvement)
@@ -260,16 +260,15 @@ pub fn detect_fan_in_candidates(
 /// Admit and rank one target's scored inputs: `(input_uuid, corr, payload)`.
 ///
 /// Drops every input whose correlation with the target error is non-finite or
-/// weaker than [`INPUT_ERROR_CORRELATION_THRESHOLD`], sorts the rest by
+/// weaker than `INPUT_ERROR_CORRELATION_THRESHOLD`, sorts the rest by
 /// descending `|corr|` (ties broken on the input UUID), and keeps the top
 /// [`MAX_INPUTS_PER_TARGET`] (Issue #2181).
 #[must_use]
 pub fn rank_input_scores<T>(mut input_scores: Vec<(&str, f32, T)>) -> Vec<(&str, f32, T)> {
     // NaN loses `<`, and `total_cmp` alone would rank a NaN `.abs()` above `+inf`,
     // so the finite-value filter is the load-bearing half.
-    input_scores.retain(|(_, corr, _)| {
-        !(!corr.is_finite() || corr.abs() < INPUT_ERROR_CORRELATION_THRESHOLD)
-    });
+    input_scores
+        .retain(|(_, corr, _)| corr.is_finite() && corr.abs() >= INPUT_ERROR_CORRELATION_THRESHOLD);
     input_scores.sort_by(|a, b| b.1.abs().total_cmp(&a.1.abs()).then_with(|| a.0.cmp(b.0)));
     input_scores.truncate(MAX_INPUTS_PER_TARGET);
     input_scores
