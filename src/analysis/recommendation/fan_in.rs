@@ -42,7 +42,7 @@ use std::time::SystemTime;
 
 /// Minimum absolute correlation between an input's activation and a target's
 /// error to consider that input as a fan-in contributor.
-const INPUT_ERROR_CORRELATION_THRESHOLD: f32 = 0.3;
+pub const INPUT_ERROR_CORRELATION_THRESHOLD: f32 = 0.3;
 
 /// Maximum absolute correlation between two inputs for them to be considered
 /// complementary (low redundancy).
@@ -56,7 +56,7 @@ const MIN_COMBINED_BENEFIT_RATIO: f32 = 1.05;
 const MAX_FAN_IN_CANDIDATES: usize = 30;
 
 /// Maximum number of input contributors to evaluate per target.
-const MAX_INPUTS_PER_TARGET: usize = 15;
+pub const MAX_INPUTS_PER_TARGET: usize = 15;
 
 /// Non-linear activations preferred for fan-in neurons (interaction capture).
 const FAN_IN_ACTIVATIONS: &[&str] = &["TANH", "GELU"];
@@ -215,20 +215,10 @@ pub fn detect_fan_in_candidates(
                 .collect();
 
             let corr = pearson_correlation(&acts, &errs);
-            if corr.abs() < INPUT_ERROR_CORRELATION_THRESHOLD {
-                continue;
-            }
-
             input_scores.push((input_uuid, corr, input_activations));
         }
 
-        // Sort by absolute correlation strength and take top candidates.
-        input_scores.sort_by(|a, b| {
-            b.1.abs()
-                .partial_cmp(&a.1.abs())
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
-        input_scores.truncate(MAX_INPUTS_PER_TARGET);
+        let input_scores = rank_input_scores(input_scores);
 
         // Evaluate all pairs for fan-in opportunity.
         for i in 0..input_scores.len() {
@@ -254,15 +244,35 @@ pub fn detect_fan_in_candidates(
         }
     }
 
-    // Sort by estimated improvement (best first) and truncate.
+    // Sort by estimated improvement (best first), ties on (target, inputs) so
+    // the truncation is deterministic (Issue #2181), then truncate.
     candidates.sort_by(|a, b| {
         b.estimated_improvement
-            .partial_cmp(&a.estimated_improvement)
-            .unwrap_or(std::cmp::Ordering::Equal)
+            .total_cmp(&a.estimated_improvement)
+            .then_with(|| a.target_uuid.cmp(&b.target_uuid))
+            .then_with(|| a.input_uuids.cmp(&b.input_uuids))
     });
     candidates.truncate(MAX_FAN_IN_CANDIDATES);
 
     candidates
+}
+
+/// Admit and rank one target's scored inputs: `(input_uuid, corr, payload)`.
+///
+/// Drops every input whose correlation with the target error is non-finite or
+/// weaker than [`INPUT_ERROR_CORRELATION_THRESHOLD`], sorts the rest by
+/// descending `|corr|` (ties broken on the input UUID), and keeps the top
+/// [`MAX_INPUTS_PER_TARGET`] (Issue #2181).
+#[must_use]
+pub fn rank_input_scores<T>(mut input_scores: Vec<(&str, f32, T)>) -> Vec<(&str, f32, T)> {
+    // NaN loses `<`, and `total_cmp` alone would rank a NaN `.abs()` above `+inf`,
+    // so the finite-value filter is the load-bearing half.
+    input_scores.retain(|(_, corr, _)| {
+        !(!corr.is_finite() || corr.abs() < INPUT_ERROR_CORRELATION_THRESHOLD)
+    });
+    input_scores.sort_by(|a, b| b.1.abs().total_cmp(&a.1.abs()).then_with(|| a.0.cmp(b.0)));
+    input_scores.truncate(MAX_INPUTS_PER_TARGET);
+    input_scores
 }
 
 /// Evaluate a pair of inputs for a fan-in candidate targeting a specific neuron.
