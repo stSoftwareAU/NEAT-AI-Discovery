@@ -6,12 +6,15 @@
 //! halves of the fix: the per-iteration deadline check, and the source-count
 //! ceiling above which the quadratic scan is never entered at all.
 
-use super::{MAX_SOURCES_FOR_LOCALITY_SCAN, SampleLocalityGroup, group_sources_by_locality};
+use super::{
+    MAX_SOURCES_FOR_LOCALITY_SCAN, SampleLocalityGroup, group_sources_by_locality,
+    group_sources_by_locality_observed,
+};
 use crate::analysis::utils::OrderedNeuron;
 use crate::types::DiscoverRecord;
 use std::collections::HashSet;
 use std::sync::Arc;
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, SystemTime};
 
 /// Observation indices attributed to each synthetic source.
 const RECORDS_PER_SOURCE: u32 = 4;
@@ -82,24 +85,15 @@ fn assert_every_source_in_exactly_one_group(
     assert_eq!(seen.len(), expected_sources, "grouping dropped sources");
 }
 
-fn min_grouping_time(sources: &[(&OrderedNeuron, Arc<Vec<DiscoverRecord>>)]) -> Duration {
-    // Readings are tens of microseconds, so one preemption on a busy runner
-    // swamps a sample; the minimum of many runs filters that noise out.
-    const RUNS: usize = 25;
-
-    (0..RUNS)
-        .map(|_| {
-            let start = Instant::now();
-            let groups = group_sources_by_locality(sources, &None);
-            let elapsed = start.elapsed();
-            assert!(
-                !groups.is_empty(),
-                "grouping must always emit at least one group"
-            );
-            elapsed
-        })
-        .min()
-        .expect("RUNS is non-zero")
+/// Count the pairwise overlap comparisons one grouping pass performs (Issue #2296).
+///
+/// The count is the scan's unit of work, so asserting on it is deterministic
+/// where a wall-clock reading flakes under a loaded parallel test run.
+fn count_overlap_comparisons(sources: &[(&OrderedNeuron, Arc<Vec<DiscoverRecord>>)]) -> usize {
+    let mut comparisons = 0usize;
+    let groups = group_sources_by_locality_observed(sources, &None, || comparisons += 1);
+    assert_every_source_in_exactly_one_group(&groups, sources.len());
+    comparisons
 }
 
 #[test]
@@ -140,26 +134,32 @@ fn expired_deadline_stops_locality_scan_without_dropping_sources() {
 
 #[test]
 fn locality_grouping_cost_does_not_grow_quadratically() {
-    let small = MAX_SOURCES_FOR_LOCALITY_SCAN + 1;
-    // A 4x step separates linear (4x cost) from quadratic (16x) by a wide
-    // margin; a 2x step left only 1.5x headroom and flaked under CI load.
-    let large = small * 4;
+    // Issue #1799: positive precondition — below the ceiling the observer sees
+    // every pair of a disjoint fixture, so a zero count further down means the
+    // scan was skipped and not that the counter is inert.
+    const SCANNED: usize = 16;
+    let (neurons, records) = build_sources(SCANNED, ObsLayout::Disjoint);
+    assert_eq!(
+        count_overlap_comparisons(&as_pairs(&neurons, &records)),
+        SCANNED * (SCANNED - 1) / 2,
+        "a disjoint fixture below the ceiling must compare every pair once"
+    );
 
-    // Fixtures are built once, outside the timed region, and the smaller run
-    // reuses a prefix of the larger so both time exactly the same kind of work.
+    // Issue #2296: count the scan's work instead of timing it. Above the
+    // ceiling the quadratic scan must never be entered, so the comparison
+    // count stays at zero however far the source count grows — a load spike
+    // on a parallel test run cannot move it.
+    let small = MAX_SOURCES_FOR_LOCALITY_SCAN + 1;
+    let large = small * 2;
     let (neurons, records) = build_sources(large, ObsLayout::Disjoint);
     let large_sources = as_pairs(&neurons, &records);
-    let small_sources = &large_sources[..small];
 
-    let t_small = min_grouping_time(small_sources).max(Duration::from_nanos(1));
-    let t_large = min_grouping_time(&large_sources);
-
-    // Two readings of the same work, never a reading against a wall-clock
-    // constant: quadrupling the input may quadruple the cost (linear) but must
-    // not multiply it sixteenfold (quadratic). The bound is their geometric
-    // midpoint.
-    assert!(
-        t_large <= t_small * 8,
-        "locality grouping cost grew faster than linearly: {t_small:?} at {small} sources against {t_large:?} at {large} sources"
+    let small_comparisons = count_overlap_comparisons(&large_sources[..small]);
+    let large_comparisons = count_overlap_comparisons(&large_sources);
+    assert_eq!(
+        (small_comparisons, large_comparisons),
+        (0, 0),
+        "locality scan entered above the {MAX_SOURCES_FOR_LOCALITY_SCAN}-source ceiling: \
+         {small_comparisons} comparisons at {small} sources, {large_comparisons} at {large}"
     );
 }
