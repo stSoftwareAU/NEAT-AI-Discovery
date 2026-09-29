@@ -67,6 +67,10 @@ This change adds docs and tests only; there is no UI.
 - The spec review checked about 60 cited lines against the source and found
   all of them accurate.
 
+### Regression tests (fail before, pass after)
+
+REGRESSION_PLACEHOLDER
+
 ## Acceptance Criteria
 
 <!-- vibe-spec-review inputs="diff+issue-body" -->
