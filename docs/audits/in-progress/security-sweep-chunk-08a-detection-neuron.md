@@ -36,11 +36,11 @@ Shared detection infrastructure; no dedicated sub-issue.
 
 | Path | Lines | Outcome |
 | --- | --- | --- |
-| `src/analysis/detection/mod.rs` | 52 | pending |
-| `src/analysis/detection/helpers.rs` | 223 | pending |
-| `src/analysis/detection/stats.rs` | 224 | pending |
-| `src/analysis/detection/topology_cache.rs` | 256 | pending |
-| `src/analysis/detection/activation_properties.rs` | 91 | pending |
+| `src/analysis/detection/mod.rs` | 52 | clean — module declarations only (`pub mod` lines and a doc comment); no allocation, recursion, loop, index, `as` cast, comparator or cache key, so none of the six #2092 classes has a site |
+| `src/analysis/detection/helpers.rs` | 223 | clean — no index anywhere: `build_record_map`, `compute_activation_stats`, `compute_activation_range`, `compute_mean_abs_activation`, `sort_candidates_by_score_gain` and `weighted_confidence` only iterate or collect, so no index derives from a creature-supplied value; the two `records.len() as f32` casts (`compute_activation_stats`, `compute_mean_abs_activation`) are `usize`→`f32` precision loss that `#![allow(clippy::cast_precision_loss)]` documents and that cannot wrap; empty input returns zeroed `ActivationStats` / `0.0` (no divide by zero), and `compute_activation_range`'s `INFINITY`/`NEG_INFINITY` result for empty input is its documented caller contract; `sort_candidates_by_score_gain` sorts with `total_cmp`, never `partial_cmp().unwrap()`; `build_record_map` collapses a duplicate UUID last-wins inside one call — a per-call map, not a cross-creature cache key |
+| `src/analysis/detection/stats.rs` | 224 | finding #2343 — `pearson_correlation_hashmaps` accumulates in `f32` and returns NaN for finite inputs whose variance overflows (the sibling of the #2304 fix to `pearson_correlation`). Ruled out: `spearman_rank_correlation` indexes `rank_y` with `n = x.len()` and no `y.len()` check, but its sole production caller `monotonicity.rs::detect_non_monotonic_neurons` truncates both series to `activations.len().min(errors.len())` and builds `abs_errors` from that truncated slice, so the lengths are equal; `pearson_correlation_samples` never checks `n_samples`, but `redundant_path.rs::compute_activation_correlation` receives `path_a.samples.len().min(path_b.samples.len())`, `pre_screening.rs::compute_activation_correlation` receives `residuals.len().min(complement.samples.len())` where `compute_residual_errors` is a `filter_map` over the primary's samples (so never longer), and `scoring.rs::compute_sample_correlation` passes `samples_a.len().min(samples_b.len())` — both functions are `pub`, so a direct Rust caller with mismatched lengths panics, a precondition no production path violates. The 12 `as` casts: four `f32`→`f64` widenings in `pearson_correlation_samples` (lossless), two `usize`→`f64` and six `usize`→`f32` (`compute_mean`, `compute_variance`, `pearson_correlation`, `pearson_correlation_hashmaps`, `compute_ranks`, `spearman_rank_correlation`) that lose precision but cannot wrap, which is what `#![allow(clippy::cast_precision_loss)]` documents; `compute_ranks`'s `(i + j)` is at most twice a live `Vec` length and cannot overflow `usize`. Empty input: `compute_mean` returns `0.0` when empty and `compute_variance` below 2 elements, and an `f32` sum overflow saturates both to `inf`, never NaN; `compute_ranks` sorts with `total_cmp` and ranks are always finite, so `spearman_rank_correlation` cannot return NaN; `pearson_correlation_samples` accumulates in `f64`, which a finite `f32` input cannot overflow |
+| `src/analysis/detection/topology_cache.rs` | 256 | bounded — the seven `with_capacity` sites in `CreatureTopologyCache::new` are in the capacity table: five sized from `neuron_count` (no numeric cap, bounded by the deserialised `creature.neurons` `Vec`) and `output_uuids` / `input_uuids` sized from `creature.output` / `creature.input`, capped at `1_000_000` by `validate_creature_input_bounds` at the FFI boundary since #2078, not inside `new`, which is `pub`. No recursion and no pairwise loop (one pass over neurons, one over synapses), no index, no `as` cast. Not a poisonable cache: the struct is built once per `analyze_all` call and shared via `Arc` inside that call only, lives outside `src/analysis/cache/`, and is keyed by UUID within one creature, so nothing collides across creatures |
+| `src/analysis/detection/activation_properties.rs` | 91 | clean — `is_bounded_squash`, `is_saturating_squash` and `can_have_dead_zone` are pure string matches (`matches!` / `eq_ignore_ascii_case`) on the squash name; no allocation, index, cast, loop or cache, and an unknown squash name returns `false` |
 
 ### graph
 
@@ -142,6 +142,14 @@ rows added by the section sub-issues.
 
 | Symbol | Kind (capacity / traversal / pairwise loop) | Sized from | Bound | Cancellation-checked? |
 | --- | --- | --- | --- | --- |
+| `topology_cache.rs::CreatureTopologyCache::new` (`hidden_uuids`) | capacity | `HashSet::with_capacity(neuron_count)`, `neuron_count = creature.neurons.len()` | no numeric cap — the bound is the already-deserialised `creature.neurons` `Vec`, one slot per neuron the payload already materialised | n/a — one linear pass over neurons |
+| `topology_cache.rs::CreatureTopologyCache::new` (`fan_in`) | capacity | `HashMap::with_capacity(neuron_count)`, `neuron_count = creature.neurons.len()` | no numeric cap — the bound is the already-deserialised `creature.neurons` `Vec` | n/a — one linear pass over synapses |
+| `topology_cache.rs::CreatureTopologyCache::new` (`fan_out`) | capacity | `HashMap::with_capacity(neuron_count)`, `neuron_count = creature.neurons.len()` | no numeric cap — the bound is the already-deserialised `creature.neurons` `Vec` | n/a — one linear pass over synapses |
+| `topology_cache.rs::CreatureTopologyCache::new` (`existing_synapse_set`) | capacity | `HashMap::with_capacity(neuron_count)`, `neuron_count = creature.neurons.len()` | no numeric cap — the bound is the already-deserialised `creature.neurons` `Vec` | n/a — one linear pass over synapses |
+| `topology_cache.rs::CreatureTopologyCache::new` (`synapse_weight_map`) | capacity | `HashMap::with_capacity(neuron_count)`, `neuron_count = creature.neurons.len()` | no numeric cap — the bound is the already-deserialised `creature.neurons` `Vec` | n/a — one linear pass over synapses |
+| `topology_cache.rs::CreatureTopologyCache::new` (`output_uuids`) | capacity | `HashSet::with_capacity(creature.output)` | `MAX_CREATURE_OUTPUT_NEURONS` = `1_000_000`, enforced by `validate_creature_input_bounds` (via `validate_creature`) at every FFI entry point, not inside `new`; `new` is `pub`, so a Rust caller that skips `validate_creature` is unbounded | n/a — no loop |
+| `topology_cache.rs::CreatureTopologyCache::new` (`input_uuids`) | capacity | `HashSet::with_capacity(creature.input)` | `MAX_CREATURE_INPUT_NEURONS` = `1_000_000`, enforced by `validate_creature_input_bounds` (via `validate_creature`) at every FFI entry point, not inside `new`; `new` is `pub`, so a Rust caller that skips `validate_creature` is unbounded | n/a — no loop |
+| `stats.rs::compute_ranks` (`ranks`) | capacity | `vec![0.0f32; n]`, `n = values.len()` | no numeric cap and no creature count — one `f32` per value in the caller's live slice | n/a — an O(n log n) sort then one linear pass |
 
 ## Defect classes probed
 
@@ -177,7 +185,16 @@ against baseline `b85a551`; the #2078 site is `CreatureTopologyCache::new` in
 
 ## Issues filed
 
-`pending`
+- `#2343` (`security`, `lang:rust`, `severity:low`, `confidence:high`) —
+  `stats.rs::pearson_correlation_hashmaps` accumulates in `f32`, so finite
+  inputs whose variance overflows return NaN, which every production caller's
+  `>=` gate then drops silently. Filed by the `shared` sweep (Issue #2281).
+- Prior remediations cited by `shared` rows, not filed by this sweep: #2078
+  (`creature.output` cap in `validate_creature_input_bounds`) and #2304
+  (`pearson_correlation` non-finite hardening).
+- #2092 — the tracker issue (part of #2216) whose six defect classes this
+  sweep probes; cited from the `mod.rs` and `stats.rs` shared rows, not a
+  finding filed by this sweep.
 
 ## Related remediations (not sweep coverage)
 
