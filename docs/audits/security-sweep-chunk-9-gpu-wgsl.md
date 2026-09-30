@@ -17,6 +17,12 @@ Ledger rules: [`README.md`](README.md). Index entry:
   #2245/#2246, completeness #2249; scaffolded by Issue #2288.
 - **Tracker issue:** `#2094`
 
+Cross-references: the `docs/audits/` bootstrap and the ledger contract this
+record follows are #2088 (`tests/issue_2088_sweep_ledger_contract.rs`). The
+residual crate-wide `env::set_var` sweep beyond `SEC-fe0b268a3799` belongs to
+chunk 13, #2096; the device region below records only the GPU-path
+disposition.
+
 ### Sweep status — IN PROGRESS
 
 This record is a scaffold. Every file row below reads `pending — <owner>` until
@@ -80,6 +86,17 @@ group of the module they test or support: `queue/fake_evaluator.rs` (the
 the `submission.rs` bounded wait) go to **queue-core**;
 `queue/stale_skip_tests.rs` (tests `staleness.rs`) goes to **queue-lifecycle**.
 
+Four files were added after the baseline and had no row until the #2249
+reconciliation: `src/analysis/gpu/sample_limits.rs` goes to **evaluation** —
+the #2314 pre-allocation guard its callers run before any buffer or bind
+group; `src/analysis/gpu/none_field_tests.rs` and
+`src/analysis/gpu/queue/none_field_tests.rs` go to **device** — the evidence
+for the #2241 entry-point verdict; `src/analysis/gpu/queue/empty_vs_zero_tests.rs`
+goes to **queue-core** — the evidence for #2243 check 1. They were read in
+full at `3f103b9` because they have no baseline text, and their Lines cell is
+the count at that commit, not the baseline. The on-disk inventory is
+therefore 27 Rust files and 7 WGSL shaders, still 34.
+
 ### shaders
 
 | Path | Lines | Outcome |
@@ -103,6 +120,7 @@ the `submission.rs` bounded wait) go to **queue-core**;
 | `src/analysis/gpu/harmful_evaluation.rs` | 453 | finding filed — #2313 (the `map_async` callback `.expect` at L376 panics when a timed-out wait drops its receivers, and aborts when two or more maps are still outstanding), #2314 (a set of 8,388,609+ samples exceeds the 128 MiB binding limit at `create_bind_group` L217, and wgpu 30 panics instead of returning `Err`); the casts at L206/L245/L255/L274, the staging buffers at L320/L334 and the map-wait propagation at L383 are refuted |
 | `src/analysis/gpu/helpful_evaluation.rs` | 591 | finding filed — #2313 (the `map_async` callback `.expect` at L446 panics when a timed-out wait drops its receivers, and aborts when two or more maps are still outstanding), #2314 (a set of 2,796,203+ samples exceeds the 128 MiB binding limit at `create_bind_group` L124, and wgpu 30 panics instead of returning `Err`); the casts at L295/L349/L365/L374/L382, the `copy_size` readback chain L374→L405→L426→L441/L461 and the map-wait propagation at L455 are refuted |
 | `src/analysis/gpu/relu_evaluation.rs` | 242 | finding filed — #2313 (the `map_async` callback `.expect` at L185 panics when a timed-out wait drops its receiver), #2314 (a set of 3,355,444+ samples exceeds the 128 MiB binding limit at `create_bind_group` L128, and wgpu 30 panics instead of returning `Err`); the casts at L117/L166, the staging buffer at L148 and the map-wait propagation at L190 are refuted |
+| `src/analysis/gpu/sample_limits.rs` | 210 | audited, no finding — `checked_mul` (L33) bails before the `as u64` widening (L39), both `max_storage_buffer_binding_size` (L41) and `max_buffer_size` (L49) are checked per binding, and the dispatch count (L58–L59) is bounded by `max_compute_workgroups_per_dimension`; every caller passes the live `device.limits()` and the batched paths check the `max_sample_len` their per-slot buffers are sized to (refuted candidates in the evaluation refuted region); read at `3f103b9`, added after the baseline |
 
 ### device
 
@@ -112,6 +130,8 @@ the `submission.rs` bounded wait) go to **queue-core**;
 | `src/analysis/gpu/budget.rs` | 245 | audited, no finding — `check` (L111–L119) returns a stage-labelled `Err` once the deadline passes, an unbounded budget is never expired and caps waits at `GPU_BUFFER_MAP_TIMEOUT_SECS`, and the file reads no environment variables |
 | `src/analysis/gpu/breaker.rs` | 511 | audited, no finding — a one-way latch whose first `trip` (L149–L172) logs a `warn!` and whose `check` (L187–L198) returns the typed `DiscoveryError::GpuWedged` via `gpu_wedged_error` (L262–L267); the file reads no environment thresholds |
 | `src/analysis/gpu/device.rs` | 638 | finding filed — #2332 (`get_adapter_info_internal` blocks on `request_adapter` at L445 with no deadline); every other path returns `Err` or a typed outcome, and the discarded poll at L378 and the no-op block at L309–L316 are refuted |
+| `src/analysis/gpu/none_field_tests.rs` | 130 | audited, test-only — declared under `#[cfg(test)]` (`mod.rs:45`–`:46` at `3f103b9`); builds an all-None `GpuAnalyzer` (L19–L39) and asserts every inherent entry point and `GpuEvaluator` delegation returns the "GPU device unavailable" `Err` — the evidence for the #2241 verdict; no unsafe, no env writes, read at `3f103b9` |
+| `src/analysis/gpu/queue/none_field_tests.rs` | 43 | audited, test-only — declared under `#[cfg(test)]` (`queue/mod.rs:64`–`:65` at `3f103b9`); reuses the `gpu/none_field_tests.rs` helpers to assert every `RequestEvaluator` delegation returns `Err` (L15–L43); read at `3f103b9` |
 
 ### queue-core
 
@@ -124,6 +144,7 @@ the `submission.rs` bounded wait) go to **queue-core**;
 | `src/analysis/gpu/queue/scheduling.rs` | 171 | finding filed — #2361 (a panic in `gpu_thread_loop` (L62) skips the L73 exit signal the L72 comment promises, strands every queued request in the bounded channel until the stall window or batch timeout, which then reports a wedge, and `Drop` discards the payload at L166); the work queue is `bounded(get_work_queue_capacity())` at L38–L40 (4/8/16), CWE-400 refuted; the init timeout trips the breaker (L89) and returns a typed error (L92) |
 | `src/analysis/gpu/queue/fake_evaluator.rs` | 308 | audited, test-only — declared under `#[cfg(test)]` (`mod.rs:58`–`:59` at the baseline); its `Mutex` (L31, L94) and `.lock().expect` (L107–L108, L171–L172) never compile into the library |
 | `src/analysis/gpu/queue/wedge_tests.rs` | 489 | audited, test-only — declared under `#[cfg(test)]` (`mod.rs:63`–`:64` at the baseline); every `expect`/`expect_err` (L145–L470) is a test assertion |
+| `src/analysis/gpu/queue/empty_vs_zero_tests.rs` | 439 | audited, test-only — declared under `#[cfg(test)]` (`queue/mod.rs:58`–`:59` at `3f103b9`); drives the production `run_work_loop` with `FakeGpuEvaluator`; its `Box::leak` of one `GpuCircuitBreaker` per harness (L66, as in `wedge_tests.rs:93`) and every `.expect` are test-only, and `stop` (L85–L93) joins the worker thread; the evidence for #2243 check 1; read at `3f103b9` |
 
 ### queue-lifecycle
 
@@ -683,6 +704,29 @@ propagation of the map wait are all sound. The CPU-only pin test
 `tests/issue_2112_gpu_dispatch_bounds.rs` recomputes each numeric bound these
 verdicts rest on.
 
+#### `src/analysis/gpu/sample_limits.rs` — gap audit (Issue #2249)
+
+Read in full at `3f103b9`; added after the baseline by #2337 as the #2314 fix.
+Findings per defect class: size arithmetic (`checked_mul` L33 → `bail!`, the
+`as u64` widening at L39 is lossless since `usize` is at most 64 bits on every
+supported target); binding limits are both checked (`max_storage_buffer_binding_size`
+L41, `max_buffer_size` L49); dispatch-size overflow is guarded (`div_ceil` L58,
+compared at L59); zero samples returns `Ok` with nothing allocated (L28–L30);
+every caller passes the live `device.limits()` (`helpful_evaluation.rs:263`–`:266`,
+`harmful_evaluation.rs:138`–`:141`, `relu_evaluation.rs:96`,
+`activation_evaluation.rs:127`–`:130` and `:435`–`:438`); the batched paths
+check the `max_sample_len` their per-slot buffers are sized to
+(`helpful_evaluation.rs:300`–`:301`); the reduce-pass partial buffers hold one
+element per workgroup (`helpful_evaluation.rs:381`–`:383`), so they are
+smaller than the checked contribution binding; `bail!` text interpolates only
+counts and byte sizes (already noted in the queue-lifecycle region). Unit
+tests L128–L209 pin the struct sizes and the per-path boundaries the #2314
+ledger row cites (2,796,203 helpful, 8,388,609 harmful, 3,355,444 relu,
+4,793,491 activation).
+
+**Outcome (#2249): no finding.** The SEC-1a9af762e205 ledger status is
+finalised by #2250, not here.
+
 ### device
 
 <!-- section: device -->
@@ -947,6 +991,22 @@ The capability probe (`analyzer.rs:276`, `:288`) and
 the init timeout is armed. Every other `device.rs`, `budget.rs` and `breaker.rs`
 path fails loudly with a typed outcome.
 
+#### Post-baseline test files — gap audit (Issue #2249)
+
+Both `src/analysis/gpu/none_field_tests.rs` and
+`src/analysis/gpu/queue/none_field_tests.rs` are declared under `#[cfg(test)]`
+(`mod.rs:45`–`:46` and `queue/mod.rs:64`–`:65` at `3f103b9`). The first builds
+an all-`None` `GpuAnalyzer` (L19–L39) and asserts that every inherent entry
+point and the `GpuEvaluator` delegation return the "GPU device unavailable"
+`Err` — the evidence for the #2241 verdict. The second reuses those helpers
+to assert every `RequestEvaluator` delegation returns the same `Err` (L15–L43).
+Neither file has an `unwrap`/`expect` on a production path, neither uses
+`unsafe`, neither reads or writes an environment variable, and neither spawns
+a thread; their `pub(super)` helpers (`all_none_analyzer`, `samples`,
+`assert_device_err`, `CONFIGS`) are shared only inside `#[cfg(test)]`.
+
+**Outcome (#2249): no finding — both files are test-only.**
+
 ### queue-core
 
 <!-- section: queue-core -->
@@ -1118,6 +1178,20 @@ Every `unwrap`/`expect`/`.lock()`/`Mutex` in the three files, and in the two que
 **Check 5 — confirmed.** No `unwrap`/`expect`/`.lock()`/`Mutex` in production (L1–L239). The two `.unwrap()` calls (L356, L378) are in the `#[cfg(test)]` module at L240. `fake_evaluator`, `stale_skip_tests` and `wedge_tests` are declared `#[cfg(test)]` (L58–L64), as are `empty_vs_zero_tests` and `none_field_tests`, added since the baseline.
 
 **Outcome (#2244): one finding, #2361** (`SEC-f0d19ede542c`, CWE-755, low). A GPU-thread panic strands the queued requests until the stall window or batch timeout, which then report a wedge, and `Drop` discards the panic payload. The queue depth is bounded (CWE-400 refuted). There are no production `unwrap`/`expect`/`.lock()` sites in the three files, and `fake_evaluator.rs` is test-only.
+
+#### `src/analysis/gpu/queue/empty_vs_zero_tests.rs` — gap audit (Issue #2249)
+
+Declared under `#[cfg(test)]` at `queue/mod.rs:58`–`:59`. The harness (L43–L94)
+runs the production `run_work_loop` on its own thread with `FakeGpuEvaluator`
+(`WedgeBehaviour::Completes`). `Box::leak` (L66) is bounded to one breaker per
+test, matching `wedge_tests.rs:93`. `stop` (L85–L93) sends `Shutdown` with a
+1 s `send_timeout` and joins the worker thread. Each test asserts
+`FakeGpuProbe::calls` to prove the short-circuit never reached the fake device
+for an empty request, and reached it exactly once for an all-zero one. It is
+the pinning evidence cited by the #2243 check 1 rows and the queue-core
+refuted rows.
+
+**Outcome (#2249): no finding — test-only.**
 
 ### queue-lifecycle
 
@@ -1591,6 +1665,8 @@ Each slice appends rows only inside its own marked region.
 | Uninitialised bias/relu/activation staging buffers are read back (CWE-908) | `src/analysis/gpu/bias_evaluation.rs:186`, `:190`; `src/analysis/gpu/relu_evaluation.rs:170`–`:176`, `:180`; `src/analysis/gpu/activation_evaluation.rs:273`, `:285`, `:636`–`:642`, `:649` | Each staging buffer is created fresh at exactly the copy size, from the current `samples.len()` or `bias_candidates.len()`. It is fully overwritten by `copy_buffer_to_buffer` before `slice(..)` maps it, and it is never reused (Issue #2238) |
 | A zeroed bias/relu/activation output element is read back as a real result | `src/shaders/bias.wgsl:300`; `src/shaders/relu.wgsl:64`, `:87`; `src/shaders/activation.wgsl:211`, `:230`; `src/shaders/activation_reduce.wgsl:99` | Every output is `create_buffer_init`-zeroed, and the kernels write every element in the range that is read back (Issue #2238) |
 | A bias/relu/activation map-wait timeout or map error is swallowed and returns zero stats | `src/analysis/gpu/bias_evaluation.rs:199`–`:200`; `src/analysis/gpu/relu_evaluation.rs:190`–`:191`; `src/analysis/gpu/activation_evaluation.rs:302`–`:303`, `:674`–`:675`; `src/analysis/gpu/device.rs:300`, `:320` | All three modules propagate the wait's `Err` and `get_mapped_range`'s `Err` with `?`, and none has a zero-result fallback. What goes wrong on that path is the callback panic during the drop, which is #2313 (Issue #2238) |
+| `sample_limits.rs` truncates the byte count when widening it to `u64` | `src/analysis/gpu/sample_limits.rs:33`, `:39` | `checked_mul` bails on overflow before the cast, and `usize` is at most 64 bits on every supported target, so `as u64` is lossless (Issue #2249) |
+| The #2314 pre-allocation guard checks default limits instead of the device's, or only one sample set of a batch | `src/analysis/gpu/helpful_evaluation.rs:263`–`:266`, `src/analysis/gpu/harmful_evaluation.rs:138`–`:141`, `src/analysis/gpu/relu_evaluation.rs:96`, `src/analysis/gpu/activation_evaluation.rs:127`–`:130`, `:435`–`:438` | Every caller passes the live `device.limits()`, and the batched paths check `max_sample_len`, the length every per-slot buffer is sized to (Issue #2249) |
 <!-- section: device -->
 | GPU-unavailable run silently falls back to a CPU analysis (CPU-fallback cross-check) | `no_gpu_result` `src/analysis/gpu/device.rs:396` → `gpu_is_available` `analyzer.rs:255` → `DiscoveryError::GpuUnavailable` `src/analysis/orchestration.rs:563` → `AnalysisOutcome::gpu_unavailable` `src/analysis/analysis_outcome.rs:130` (mapped at `src/ffi_internal/analysis.rs:422`) → `is_environmentally_disabled` `analysis_outcome.rs:148`; probe: `classify_gpu_unavailable_reason` `src/ffi_internal/gpu.rs:95` | The crate has no CPU analysis path. A missing GPU becomes a typed `Err` with `errorKind: gpu_permanent`, `environmentallyDisabled: "gpu_unavailable"` and a `warn!`, or `gpuAvailable: false` from the probe. The one gap is a software wgpu adapter accepted as a GPU, which is #2318 (Issue #2240) |
 | TOCTOU: a thread spawned between the `/proc/self/task` count and the `set_var` (CWE-367) | `src/analysis/utils/platform.rs:410`, `:421`–`:422`, `:176`–`:216`, `:287`–`:304` | Only an existing thread can spawn one. Between the count and the writes the lone thread runs `env::var`, `temp_dir`, `canonicalize`, `DirBuilder` and `symlink_metadata`, and none of them spawns a thread. Every `tracing::warn!` in that window is on a refusal path that returns before a write (Issue #2240) |
@@ -1645,6 +1721,53 @@ Each slice appends rows only inside its own marked region.
 | A panic under the in-flight registry lock poisons it and blocks every later submission | `src/analysis/gpu/inflight.rs:21`, `:64`, `:71` | `parking_lot` mutexes do not poison, and neither critical section can unwind (Issue #2246) |
 | The thread dump blocks on a contended in-flight registry or reports "none" | `src/analysis/gpu/inflight.rs:29`, `:86`; `src/debug/process_state.rs:79`–`:84` | `try_lock_for(50 ms)` returns `None`, which the dump renders as "UNREADABLE — registry lock contended" (Issue #2246) |
 | A leaked, wedged GPU thread leaves waiters or in-flight entries unresolved | `src/analysis/gpu/queue/submission.rs:107`–`:120`, `:162`; `src/analysis/gpu/queue/scheduling.rs:31`–`:32`, `:149`–`:161` | Waiters end in `Err` within the stall window or the timeout, and their entries go with them; the breaker refuses every later queue, and buffered requests are bounded by the 4/8/16 capacity. The send-phase overrun is #2339 and the panic path is #2361 (Issue #2246) |
+
+## Reconciliation
+
+Every file on disk under `src/analysis/gpu/**/*.rs` and `src/shaders/*.wgsl` at
+`3f103b9`, with the section region holding its verdict, confirmed by reading
+that region; pinned by `tests/issue_2249_chunk9_ledger_complete.rs`.
+
+- [x] `src/analysis/gpu/mod.rs` — shaders — audited, no finding
+- [x] `src/analysis/gpu/pipeline_builder.rs` — shaders — audited, no finding
+- [x] `src/analysis/gpu/shaders.rs` — shaders — finding filed — #2311
+- [x] `src/shaders/activation.wgsl` — shaders — finding filed — #2308
+- [x] `src/shaders/activation_reduce.wgsl` — shaders — audited, no finding
+- [x] `src/shaders/harmful.wgsl` — shaders — audited, no finding
+- [x] `src/shaders/harmful_reduce.wgsl` — shaders — audited, no finding
+- [x] `src/shaders/helpful.wgsl` — shaders — audited, no finding
+- [x] `src/shaders/helpful_reduce.wgsl` — shaders — audited, no finding
+- [x] `src/shaders/relu.wgsl` — shaders — finding filed — #2308
+- [x] `src/analysis/gpu/activation_evaluation.rs` — evaluation — finding filed — #2313, #2314
+- [x] `src/analysis/gpu/harmful_evaluation.rs` — evaluation — finding filed — #2313, #2314
+- [x] `src/analysis/gpu/helpful_evaluation.rs` — evaluation — finding filed — #2313, #2314
+- [x] `src/analysis/gpu/relu_evaluation.rs` — evaluation — finding filed — #2313, #2314
+- [x] `src/analysis/gpu/sample_limits.rs` — evaluation — audited, no finding (gap, #2249)
+- [x] `src/analysis/gpu/analyzer.rs` — device — finding filed — #2332; also the primary site of #2318 (the #2240 CPU-fallback cross-check)
+- [x] `src/analysis/gpu/budget.rs` — device — audited, no finding
+- [x] `src/analysis/gpu/breaker.rs` — device — audited, no finding
+- [x] `src/analysis/gpu/device.rs` — device — finding filed — #2332
+- [x] `src/analysis/gpu/none_field_tests.rs` — device — audited, test-only (gap, #2249)
+- [x] `src/analysis/gpu/queue/none_field_tests.rs` — device — audited, test-only (gap, #2249)
+- [x] `src/analysis/gpu/queue/mod.rs` — queue-core — audited, no finding
+- [x] `src/analysis/gpu/queue/submission.rs` — queue-core — finding filed — #2339
+- [x] `src/analysis/gpu/queue/execution.rs` — queue-core — audited, no finding
+- [x] `src/analysis/gpu/queue/executor.rs` — queue-core — audited, no finding
+- [x] `src/analysis/gpu/queue/scheduling.rs` — queue-core — finding filed — #2361
+- [x] `src/analysis/gpu/queue/fake_evaluator.rs` — queue-core — audited, test-only
+- [x] `src/analysis/gpu/queue/wedge_tests.rs` — queue-core — audited, test-only
+- [x] `src/analysis/gpu/queue/empty_vs_zero_tests.rs` — queue-core — audited, test-only (gap, #2249)
+- [x] `src/analysis/gpu/queue/recovery.rs` — queue-lifecycle — finding filed — #2363, #2364, #2365
+- [x] `src/analysis/gpu/queue/staleness.rs` — queue-lifecycle — audited, no finding
+- [x] `src/analysis/gpu/heartbeat.rs` — queue-lifecycle — audited, no finding
+- [x] `src/analysis/gpu/inflight.rs` — queue-lifecycle — audited, no finding
+- [x] `src/analysis/gpu/queue/stale_skip_tests.rs` — queue-lifecycle — audited, test-only
+
+Gap audit (#2249): no row read `pending` and no cited path was missing, but
+four files added after the baseline had no row — `src/analysis/gpu/sample_limits.rs`,
+`src/analysis/gpu/none_field_tests.rs`, `src/analysis/gpu/queue/none_field_tests.rs`
+and `src/analysis/gpu/queue/empty_vs_zero_tests.rs` — and were audited here at
+`3f103b9` with no finding.
 
 ## Outcome
 
