@@ -1,18 +1,18 @@
-//! Contract tests for the `pairwise` section of the staged chunk 8a sweep
-//! record (Issues #2294 and #2295, part of #2150).
+//! Contract tests for the `pairwise` section of the chunk 8a sweep record
+//! (Issues #2294 and #2295, part of #2150).
 //!
 //! `SWEPT` holds all nine files the `pairwise` section owns: the five
 //! Issue #2294 swept, plus the four Issue #2295 swept
 //! (`opposing_synapse.rs`, `output_conflict.rs`, `hard_sample_cluster.rs`,
 //! `sentinel_cluster.rs`) together with the `TRAVERSAL` rows those files
-//! add. Finalisation (#2154) `git mv`s the record to the top level and
-//! moves `RECORD` there in the same commit.
+//! add. Finalisation (#2302, part of #2154) `git mv`d the record to the
+//! top level and retargeted `RECORD` there in the same commit.
 
 use std::path::PathBuf;
 
-/// The staged chunk 8a prose record. Finalisation (#2154) moves this to
-/// `docs/audits/security-sweep-chunk-08a-detection-neuron.md`.
-const RECORD: &str = "docs/audits/in-progress/security-sweep-chunk-08a-detection-neuron.md";
+/// The chunk 8a prose record, promoted to the top level by finalisation
+/// (#2302, part of #2154).
+const RECORD: &str = "docs/audits/security-sweep-chunk-08a-detection-neuron.md";
 
 /// The nine files the `pairwise` section owns, in record order: the five
 /// Issue #2294 swept, then the four Issue #2295 swept.

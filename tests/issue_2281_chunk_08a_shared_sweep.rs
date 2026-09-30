@@ -1,21 +1,19 @@
-//! Contract tests for the `shared` section of the staged chunk 8a sweep
-//! record (Issue #2281).
+//! Contract tests for the `shared` section of the chunk 8a sweep record
+//! (Issue #2281).
 //!
-//! The record is staged under `docs/audits/in-progress/` while the chunk 8a
-//! audit sub-issues fill their sections; `tests/issue_2280_chunk_08a_ledger_scaffold.rs`
-//! gates the record's shape (exactly six `<!-- section: NAME -->` markers and
-//! 52 `src/` rows under `## Files swept`). This file gates only the `shared`
-//! section's content: the five shared-infrastructure files it owns, and the
-//! shared rows of the capacity and traversal table. Finalisation (#2154)
-//! `git mv`s the record to the top level in the commit that sets the chunk
-//! `"8a"` index entry, so `RECORD` below changes to
-//! `docs/audits/security-sweep-chunk-08a-detection-neuron.md` at that point.
+//! `tests/issue_2280_chunk_08a_ledger_scaffold.rs` gates the record's shape
+//! (exactly six `<!-- section: NAME -->` markers and 52 `src/` rows under
+//! `## Files swept`). This file gates only the `shared` section's content:
+//! the five shared-infrastructure files it owns, and the shared rows of the
+//! capacity and traversal table. Finalisation (#2302, part of #2154) `git
+//! mv`d the record to the top level and retargeted `RECORD` below to
+//! `docs/audits/security-sweep-chunk-08a-detection-neuron.md`.
 
 use std::path::PathBuf;
 
-/// The staged chunk 8a prose record. Finalisation (#2154) moves this to
-/// `docs/audits/security-sweep-chunk-08a-detection-neuron.md`.
-const RECORD: &str = "docs/audits/in-progress/security-sweep-chunk-08a-detection-neuron.md";
+/// The chunk 8a prose record, promoted to the top level by finalisation
+/// (#2302, part of #2154).
+const RECORD: &str = "docs/audits/security-sweep-chunk-08a-detection-neuron.md";
 
 /// The five files the `shared` section owns, in record order.
 const SHARED_FILES: [&str; 5] = [

@@ -1,32 +1,29 @@
 # Security sweep — chunk `8a`: Analysis engine — detection + neuron
 
-This record is **staged** under `docs/audits/in-progress/` while the chunk 8a
-audit sub-issues (#2217, #2150, #2218, #2152, #2153) fill their sections;
-`record_files()` in `tests/issue_2088_sweep_ledger_contract.rs` reads only the
-top level of `docs/audits`, so this staged file is not yet a sweep record, and
-the `"8a"` entry in `docs/audits/lib-sweep-coverage.json` stays null.
-Finalisation (#2154) `git mv`s it to
-`docs/audits/security-sweep-chunk-08a-detection-neuron.md` in the same commit
-that sets `last_swept`, `baseline_commit` and `record` for chunk `"8a"`. Rules:
-[`README.md`](../README.md).
+Ledger rules: [`README.md`](README.md). Index entry:
+[`lib-sweep-coverage.json`](lib-sweep-coverage.json) (chunk `"8a"`). This
+record was staged under `docs/audits/in-progress/` while its six section
+sub-issues filled it; finalisation (#2302, part of #2154) moved it to the top
+level in the same commit that set the `"8a"` index entry.
 
 ## Record
 
 - **Chunk id:** `8a`
-- **Sweep date:** `2026-09-29` (skeleton staged — sections fill in as their sub-issues land)
+- **Human name:** Analysis engine — detection + neuron (`src/analysis/detection`, `src/analysis/neuron`).
+- **Sweep date:** `2026-09-30` — the six sections were swept on 2026-09-29 and 2026-09-30, and the record was finalised by #2302 on 2026-09-30.
 - **Baseline commit:** `b85a551ed2521ed327469b20eb88aeda828357d2` (`b85a551`)
 - **Audit HEAD:** `90e0c151824847f2153d6c593f0dca25592b7d4a` — the tree the line counts below were taken from
 - **Exposure:** `internal`
-- **Swept by:** `pending` — one audit sub-issue per section below
+- **Swept by:** `shared` #2281; `graph` #2282, #2283; `pairwise` #2294, #2295; `per-neuron-a` #2284, #2285; `per-neuron-b` #2298, #2299; `neuron` #2300, #2301 — skeleton staged by #2280, finalised by #2302.
 - **Tracker issue:** #2092 (part of #2216)
 
 Citation convention: symbol names, not line numbers (CONTRIBUTING.md, "Cite Code by Symbol, Never by Line Number (Issue #1942)").
 
 ## Files swept
 
-Line counts from `wc -l` at the audit HEAD `90e0c15`. Each `###` section is
-owned by one audit sub-issue, which flips its rows from `pending`; the
-section markers keep concurrent PRs in disjoint regions.
+Line counts from `wc -l` at the audit HEAD `90e0c15`. Each `###` section was
+filled by its own audit sub-issue; the section markers kept concurrent PRs in
+disjoint regions.
 
 ### shared
 
@@ -262,6 +259,22 @@ rows added by the section sub-issues.
 | `topology_diversification.rs::has_unhealthy_intermediates` | traversal | a `queue.pop()` (LIFO / DFS-ordered, despite the doc comment's "BFS backwards" label — an inaccuracy analogous to #2370's, recorded not filed) stack traversal guarded by `visited.insert`, so each neuron expands at most once | O(V+E) per output neuron considered — bounded regardless of traversal order; dominated by `dfs_max_hidden_depth`'s exponential cost on the same call path (#2383) | no — no `deadline_passed` or cancellation check in the file |
 | `topology_diversification.rs::dfs_max_hidden_depth` | traversal | unmemoised backtracking recursion enumerating every simple path from an output to an input, inserting a node into `visited` before recursing and removing it after, so a node reachable by k distinct paths is re-walked k times | unbounded — O(2^L) time on an L-layer width-2 ladder (measured ≈4096× at L=16 vs L=4) and O(path length) recursion depth, so a 50,000-hidden chain overflows a 2 MiB thread stack and aborts the host process — finding #2383 | no — no `deadline_passed` or cancellation check, and a stack overflow is not a catchable panic a check could pre-empt |
 
+**Regex reconciliation.** Both regex sweeps were re-run at finalisation (#2302)
+against HEAD `6e3ca6f`:
+
+- **Capacity** — `grep -rnE 'with_capacity\(|vec!\[[^\]]*;|\.reserve\(' src/analysis/detection/ src/analysis/neuron/`
+  returns 76 hits (72 in `src/analysis/detection/`, 4 in
+  `src/analysis/neuron/`) across 39 files. That matches the 76-hit checkpoint
+  at `8f5f560`. Every hit is production code, and each of the 39 files has
+  exactly as many `capacity` rows above as it has hits: 76 rows for 76 hits.
+  No hit therefore needs a separate not-creature-sized note. Each row's Bound
+  cell states what bounds it, including the rows sized from a live `Vec`
+  rather than a creature count.
+- **Traversal** — `grep -rnE 'fn .*\(.*\) .*\{' src/analysis/detection/ src/analysis/neuron/ | grep -E 'depth|visited|frontier|queue'`
+  returns one hit, `skip_connection.rs::compute_depths_from_inputs`, which is
+  the `traversal` row above. The other 16 `traversal` rows were found by
+  reading the code, not by this signature regex.
+
 ## Defect classes probed
 
 Quoted verbatim from #2092.
@@ -292,9 +305,86 @@ against baseline `b85a551`; the #2078 site is `CreatureTopologyCache::new` in
 
 ## Outcome
 
-`pending`
+**21 findings filed; the chunk is swept.** All 52 files under
+`src/analysis/detection` and `src/analysis/neuron` (18,829 lines at the audit
+HEAD `90e0c15`) were read for the six #2092 defect classes. Each section was
+swept by its own sub-issue: `shared` (#2281), `graph` (#2282, #2283),
+`pairwise` (#2294, #2295), `per-neuron-a` (#2284, #2285), `per-neuron-b`
+(#2298, #2299) and `neuron` (#2300, #2301). Every file row carries an outcome
+and its reason. Per class:
+
+- **Unbounded allocation** — 76 capacity sites, all in the table above. One is
+  unbounded: the dense `n_outputs × n_outputs` `correlation_matrix` in
+  `correlated_error.rs::detect_correlated_error_patterns` (#2346). The rest
+  are sized from a live `Vec` or from `creature.input` / `creature.output`,
+  which `validate_creature_input_bounds` has capped at `1_000_000` since
+  #2078. Hidden-neuron and synapse counts have no numeric cap beyond the
+  already-deserialised payload.
+- **Unbounded recursion** — one:
+  `topology_diversification.rs::dfs_max_hidden_depth` enumerates every simple
+  path with no memoisation or depth limit, giving exponential time and a stack
+  overflow on a long hidden chain (#2383).
+  `skip_connection.rs::compute_depths_from_inputs` has no visited set and
+  terminates only on the forward-only graphs that
+  `validate_forward_only_synapses` guarantees (#2368). Every other traversal
+  in the table is iterative and either visited-guarded or depth-capped.
+- **Quadratic blowup** — no file under `src/analysis/detection` consults
+  `deadline_passed` or `cancellation::is_cancelled`, so once a pairwise loop
+  there starts, it runs to completion. The super-linear loops are filed:
+  #2346, #2347, #2348, #2349, #2355, #2358, #2367, #2368, #2369, #2370,
+  #2374, #2377 and #2379, plus the per-candidate `creature.neurons` /
+  `creature.synapses` lookups carried by #2350. In `src/analysis/neuron`,
+  `mod.rs`, `evaluation.rs` and `preparation.rs` check the deadline.
+- **Panic sites** — no finding. Each row records why its indexing, division
+  and sorting cannot panic on an FFI-validated creature. One example is the
+  length mismatch ruled out for `stats.rs::spearman_rank_correlation`.
+- **Integer overflow** — no finding. Each row records its `as` casts and count
+  arithmetic as lossless, precision-only, saturating or guarded, so the #1906
+  wrapping class has no site in this chunk.
+- **Cache poisoning** — no finding. Nothing in scope keys a cache across
+  creatures. The `neuron` rows record the `RecordCache` key derivation
+  (#2300). The synthetic `AddNeuron` UUID collisions (#2359) stay within one
+  creature and reach no cache key.
+
+Outside the six classes, the sweep also recorded non-finite values that pass
+fail-open gates and one silent drop:
+
+- non-finite gains (#2343, #2351, #2381);
+- `±∞` weights and biases under a finite gain (#2375);
+- a focus target dropped silently when its `RecordCache` load fails (#2352).
 
 ## Issues filed
+
+**Findings filed by this sweep — 21, deduplicated, all open at finalisation.**
+Not a `negative-result` sweep.
+
+| Issue | Section | Symbol | Severity |
+| --- | --- | --- | --- |
+| #2343 | shared | `stats.rs::pearson_correlation_hashmaps` | low |
+| #2346 | pairwise | `correlated_error.rs::detect_correlated_error_patterns` | medium |
+| #2347 | pairwise | `weight_coherence.rs::detect_symmetric_cancellation` | medium |
+| #2348 | pairwise | `co_adaptation.rs::detect_co_adapted_neurons` | medium |
+| #2349 | pairwise | `symmetry_breaking.rs::detect_symmetric_neurons` | medium |
+| #2350 | pairwise | `fanin_polarity_conflict.rs::fanin_polarity_conflicts_to_coordinated_candidates` | low |
+| #2351 | pairwise | `symmetry_breaking.rs::cosine_similarity` and sibling sites | low |
+| #2352 | neuron | `neuron/mod.rs::analyze_neurons_with_cache_and_gpu_queue` | low |
+| #2355 | pairwise | `sentinel_cluster.rs::assess_sentinel_cluster` | low |
+| #2358 | pairwise | `output_conflict.rs::output_conflicts_to_coordinated_candidates` | low |
+| #2359 | pairwise | `hard_sample_cluster.rs::hard_sample_neuron_uuid` and sibling sites | low |
+| #2367 | graph | `compound_degradation.rs::combine_corrections` | medium |
+| #2368 | graph | `skip_connection.rs::detect_skip_connection_candidates` | medium |
+| #2369 | graph | `topology.rs::detect_topology_issues` | low |
+| #2370 | graph | `dead_neuron.rs::detect_dead_neurons` | low |
+| #2374 | graph | `redundant_path.rs::detect_redundant_paths` | medium |
+| #2375 | graph | `bottleneck.rs::bottleneck_neurons_to_coordinated_candidates` | low |
+| #2377 | per-neuron-a | `bias_perturbation.rs::detect_bias_perturbation_candidates` | low |
+| #2379 | per-neuron-a | `input_sensitivity.rs::detect_dominant_inputs` | low |
+| #2381 | per-neuron-b | `output_squash_mismatch.rs::detect_output_squash_mismatches_with_cost_hint` | low |
+| #2383 | per-neuron-b | `topology_diversification.rs::dfs_max_hidden_depth` | medium |
+
+The per-section log follows, as each sweep recorded it. Entries without
+"Filed by" are cross-references or sibling sites added to an existing issue,
+not new findings.
 
 - `#2343` (`security`, `lang:rust`, `severity:low`, `confidence:high`) —
   `stats.rs::pearson_correlation_hashmaps` accumulates in `f32`, so finite
@@ -587,9 +677,39 @@ sweep and never justify a non-null `last_swept`.
   `validate_creature_input_bounds` in `src/ffi_types/creature_bounds.rs` before
   any detection pass sizes an allocation from `creature.input` /
   `creature.output`.
+- #1184 — forward-only creatures: recurrent synapses are stripped, and
+  `validate_forward_only_synapses` rejects a backward synapse at the FFI
+  boundary. `skip_connection.rs::compute_depths_from_inputs` and every other
+  depth walk in this chunk rely on that invariant to terminate (#2368).
+- #1906 — `NeuronDiscoveryHistory` deserialisation wrapped `successes -
+  attempts` in release builds. It defines the integer-overflow class this
+  sweep probed (see `## Defect classes probed`) and touches no file in this
+  chunk.
 
 ## Verify this record
 
-`pending` — filled at finalisation, #2154, with the
-`git diff <baseline>..HEAD -- src/analysis/detection src/analysis/neuron`
-command.
+```bash
+git diff b85a551ed2521ed327469b20eb88aeda828357d2..HEAD -- \
+  src/analysis/detection src/analysis/neuron
+grep -c 'p[e]nding' docs/audits/security-sweep-chunk-08a-detection-neuron.md
+grep -rnE 'with_capacity\(|vec!\[[^\]]*;|\.reserve\(' \
+  src/analysis/detection/ src/analysis/neuron/ | wc -l
+grep -rnE 'fn .*\(.*\) .*\{' src/analysis/detection/ src/analysis/neuron/ \
+  | grep -E 'depth|visited|frontier|queue'
+cargo test --test issue_2154_chunk_08a_finalisation
+```
+
+At finalisation (HEAD `6e3ca6f`), the diff since the baseline touched four
+files, and the sweep read every change:
+
+- `src/analysis/neuron/mod.rs` (#2161, `928f80a`) and
+  `src/analysis/neuron/post_processing.rs` (#2219, `a8b5ebe`) both predate
+  the audit HEAD `90e0c15`, so their rows describe the changed code.
+- `src/analysis/detection/stats.rs` carries the #2304 `pearson_correlation`
+  non-finite hardening, which the `stats.rs` row cites.
+- `src/analysis/detection/operating_point.rs` (#2316, `638ec0a`) changed only
+  a doc comment.
+
+The `p[e]nding` count must print `0`, the capacity grep `76`, and the
+traversal grep only `compute_depths_from_inputs`. Any further diff under these
+paths means the chunk needs re-sweeping, whatever the index says.
