@@ -1,17 +1,17 @@
 //! Contract tests for the `neuron` section of the staged chunk 8a sweep
-//! record (Issue #2300, part of #2153).
+//! record (Issues #2300 and #2301, part of #2153).
 //!
 //! The record is staged under `docs/audits/in-progress/` while the chunk 8a
 //! audit sub-issues fill their sections; `tests/issue_2280_chunk_08a_ledger_scaffold.rs`
 //! gates the record's shape. This file gates only the `neuron` section's
-//! content, and only the two files Issue #2300 swept
-//! (`src/analysis/neuron/mod.rs` and `src/analysis/neuron/preparation.rs`); a
-//! later sub-issue widens `SWEPT` to the remaining three files
-//! (`evaluation.rs`, `post_processing.rs`, `ranking_score.rs`) before the
-//! `neuron` section as a whole can flip from `pending`. Finalisation (#2154)
-//! `git mv`s the record to the top level in the commit that sets the chunk
-//! `"8a"` index entry, so `RECORD` below changes to
-//! `docs/audits/security-sweep-chunk-08a-detection-neuron.md` at that point.
+//! content, across all five files it owns: Issue #2300 swept
+//! `src/analysis/neuron/mod.rs` and `src/analysis/neuron/preparation.rs`,
+//! and Issue #2301 swept the remaining three
+//! (`evaluation.rs`, `post_processing.rs`, `ranking_score.rs`), completing
+//! the section. Finalisation (#2154) `git mv`s the record to the top level
+//! in the commit that sets the chunk `"8a"` index entry, so `RECORD` below
+//! changes to `docs/audits/security-sweep-chunk-08a-detection-neuron.md` at
+//! that point.
 
 use std::path::PathBuf;
 
@@ -19,10 +19,14 @@ use std::path::PathBuf;
 /// `docs/audits/security-sweep-chunk-08a-detection-neuron.md`.
 const RECORD: &str = "docs/audits/in-progress/security-sweep-chunk-08a-detection-neuron.md";
 
-/// The neuron files Issue #2300 swept. The next sub-issue widens this to all five.
-const SWEPT: [&str; 2] = [
+/// The neuron files the `neuron` section owns: Issue #2300 swept `mod.rs`
+/// and `preparation.rs`, and Issue #2301 swept the remaining three.
+const SWEPT: [&str; 5] = [
+    "src/analysis/neuron/evaluation.rs",
     "src/analysis/neuron/mod.rs",
+    "src/analysis/neuron/post_processing.rs",
     "src/analysis/neuron/preparation.rs",
+    "src/analysis/neuron/ranking_score.rs",
 ];
 
 fn read(rel: &str) -> String {
@@ -313,7 +317,8 @@ fn each_swept_row_is_present_and_not_pending() {
         );
         assert!(
             !outcome.contains("pending"),
-            "{path} was swept by Issue #2300, so its outcome must not read `pending`: {outcome}"
+            "{path} was swept by Issue #2300 or #2301, so its outcome must not read `pending`: \
+             {outcome}"
         );
         let split = outcome.split_once(" — ");
         assert!(
@@ -335,6 +340,18 @@ fn every_capacity_site_in_a_swept_file_is_cited_by_symbol() {
         ),
         "precondition: src/analysis/neuron/preparation.rs must still carry the \
          `neuron_type_map` capacity site the ledger cites, otherwise this test checks nothing"
+    );
+    // Second pinned precondition: post_processing.rs has a test-only
+    // `#[cfg(test)] fn apply_per_target_cap` declared *before* the production
+    // `apply_distinct_target_spread`'s capacity site, so this proves
+    // `production_source` did not truncate at that earlier test-only fn.
+    let post_processing_source = production_source("src/analysis/neuron/post_processing.rs");
+    assert!(
+        post_processing_source.contains("Vec::with_capacity(min_distinct)"),
+        "precondition: src/analysis/neuron/post_processing.rs must still carry the `spread` \
+         capacity site `Vec::with_capacity(min_distinct)` in production_source's output, \
+         otherwise production_source truncated at the earlier test-only \
+         `#[cfg(test)] fn apply_per_target_cap` and this test checks nothing"
     );
 
     let mut all_sites: Vec<(&str, String, String)> = Vec::new();
@@ -385,26 +402,34 @@ fn every_capacity_site_in_a_swept_file_is_cited_by_symbol() {
          this too"
     );
 
-    // mod.rs has no capacity site, and the ledger must say so explicitly.
-    let mod_rs_has_site = production_capacity_sites("src/analysis/neuron/mod.rs").len();
-    assert_eq!(
-        mod_rs_has_site, 0,
-        "precondition: src/analysis/neuron/mod.rs must have zero capacity sites for this branch \
-         of the test to be meaningful"
-    );
-    let mod_rs_outcome = table_rows(neuron_region(&doc))
-        .into_iter()
-        .find(|row| {
-            row.first()
-                .is_some_and(|first| first.trim_matches('`') == "src/analysis/neuron/mod.rs")
-        })
-        .and_then(|row| row.get(2).cloned())
-        .expect("mod.rs row must exist (checked above)");
-    assert!(
-        mod_rs_outcome.contains("hit in `mod.rs`"),
-        "src/analysis/neuron/mod.rs has no capacity site, so its Outcome must record the \
-         negative result (\"... hit in `mod.rs`\"), got: {mod_rs_outcome}"
-    );
+    // Files with zero capacity sites must say so explicitly in their Outcome.
+    for file in [
+        "src/analysis/neuron/mod.rs",
+        "src/analysis/neuron/evaluation.rs",
+        "src/analysis/neuron/ranking_score.rs",
+    ] {
+        let site_count = production_capacity_sites(file).len();
+        assert_eq!(
+            site_count, 0,
+            "precondition: {file} must have zero capacity sites for this branch of the test to \
+             be meaningful"
+        );
+        let basename = file.rsplit('/').next().expect("path has a component");
+        let outcome = table_rows(neuron_region(&doc))
+            .into_iter()
+            .find(|row| {
+                row.first()
+                    .is_some_and(|first| first.trim_matches('`') == file)
+            })
+            .and_then(|row| row.get(2).cloned())
+            .unwrap_or_else(|| panic!("{file} row must exist (checked above)"));
+        let needle = format!("hit in `{basename}`");
+        assert!(
+            outcome.contains(&needle),
+            "{file} has no capacity site, so its Outcome must record the negative result \
+             (\"... {needle}\"), got: {outcome}"
+        );
+    }
 }
 
 #[test]
@@ -540,6 +565,190 @@ fn every_issue_linked_from_a_swept_row_appears_under_issues_filed() {
              sub-issue that reconciles this record"
         );
     }
+}
+
+/// The Outcome cell (index 2) of the `neuron` region row whose Path cell
+/// (backtick-trimmed) equals `path`.
+fn neuron_outcome(doc: &str, path: &str) -> String {
+    table_rows(neuron_region(doc))
+        .into_iter()
+        .find(|row| {
+            row.first()
+                .is_some_and(|first| first.trim_matches('`') == path)
+        })
+        .and_then(|row| row.get(2).cloned())
+        .unwrap_or_else(|| panic!("{path} row must exist in the `neuron` region"))
+}
+
+#[test]
+fn no_row_in_the_neuron_region_reads_pending() {
+    let doc = read(RECORD);
+    let rows = table_rows(neuron_region(&doc));
+
+    assert_eq!(
+        rows.len(),
+        5,
+        "the `neuron` section must still carry exactly 5 rows — a changed row count would let \
+         this test pass vacuously"
+    );
+
+    for row in &rows {
+        let path = row.first().cloned().unwrap_or_default();
+        let outcome = row
+            .get(2)
+            .unwrap_or_else(|| panic!("row for {path} must carry a third (Outcome) cell"));
+        assert!(
+            !outcome.contains("pending"),
+            "{path}'s Outcome cell must not read `pending` — the `neuron` section is complete, \
+             got: {outcome}"
+        );
+    }
+}
+
+#[test]
+fn exactly_four_neuron_capacity_rows() {
+    let doc = read(RECORD);
+    let capacity_row_count = neuron_capacity_rows(&doc)
+        .iter()
+        .filter(|row| row.get(1).is_some_and(|kind| kind == "capacity"))
+        .count();
+    assert_eq!(
+        capacity_row_count, 4,
+        "the `## Capacity and traversal table` must carry exactly 4 neuron rows with Kind \
+         `capacity`: `preparation.rs`'s `neuron_type_map` and `sources_to_process`, and \
+         `post_processing.rs`'s `apply_distinct_target_spread` `spread` and `rest`, got {capacity_row_count}"
+    );
+}
+
+#[test]
+fn the_nan_and_comparator_verdicts_are_explicit() {
+    // Pin the evaluation.rs source this row claims to describe.
+    let evaluation_source = production_source("src/analysis/neuron/evaluation.rs");
+    assert!(
+        evaluation_source.contains("if candidate.total_count == 0"),
+        "precondition: src/analysis/neuron/evaluation.rs must still guard \
+         `if candidate.total_count == 0`, otherwise the NaN verdict below describes code that \
+         has moved or gone"
+    );
+    assert!(
+        evaluation_source
+            .contains("candidate.improved_count as f32 / candidate.total_count as f32"),
+        "precondition: src/analysis/neuron/evaluation.rs must still compute \
+         `candidate.improved_count as f32 / candidate.total_count as f32`, otherwise the NaN \
+         verdict below describes code that has moved or gone"
+    );
+
+    // Pin the ranking_score.rs source this row claims to describe.
+    let ranking_score_source = production_source("src/analysis/neuron/ranking_score.rs");
+    assert!(
+        ranking_score_source.contains(".total_cmp(&candidate_rank_score(a, bands))"),
+        "precondition: src/analysis/neuron/ranking_score.rs must still call \
+         `.total_cmp(&candidate_rank_score(a, bands))`, otherwise the comparator verdict below \
+         describes code that has moved or gone"
+    );
+    assert!(
+        ranking_score_source.contains(".total_cmp(&a.expected_creature_score_gain)"),
+        "precondition: src/analysis/neuron/ranking_score.rs must still call \
+         `.total_cmp(&a.expected_creature_score_gain)`, otherwise the comparator verdict below \
+         describes code that has moved or gone"
+    );
+
+    let doc = read(RECORD);
+
+    let evaluation_outcome = neuron_outcome(&doc, "src/analysis/neuron/evaluation.rs");
+    for needle in ["total_count == 0", "refuted"] {
+        assert!(
+            evaluation_outcome.contains(needle),
+            "src/analysis/neuron/evaluation.rs's Outcome must record the NaN verdict — missing \
+             `{needle}`, got: {evaluation_outcome}"
+        );
+    }
+
+    let ranking_score_outcome = neuron_outcome(&doc, "src/analysis/neuron/ranking_score.rs");
+    for needle in [
+        "total_cmp",
+        "candidate_rank_score",
+        "expected_creature_score_gain",
+        "#2181",
+    ] {
+        assert!(
+            ranking_score_outcome.contains(needle),
+            "src/analysis/neuron/ranking_score.rs's Outcome must record the comparator verdict \
+             — missing `{needle}`, got: {ranking_score_outcome}"
+        );
+    }
+}
+
+#[test]
+fn the_neuron_traversal_rows_are_recorded() {
+    // Pin the source these rows claim to describe.
+    let post_processing_source = production_source("src/analysis/neuron/post_processing.rs");
+    assert!(
+        post_processing_source.contains("candidates.drain(..)"),
+        "precondition: src/analysis/neuron/post_processing.rs must still call \
+         `candidates.drain(..)`, otherwise the traversal row below describes code that has \
+         moved or gone"
+    );
+    let ranking_score_source = production_source("src/analysis/neuron/ranking_score.rs");
+    assert!(
+        ranking_score_source.contains("candidates.sort_by("),
+        "precondition: src/analysis/neuron/ranking_score.rs must still call \
+         `candidates.sort_by(`, otherwise the traversal row below describes code that has moved \
+         or gone"
+    );
+
+    let doc = read(RECORD);
+    let rows = neuron_capacity_rows(&doc);
+
+    let post_processing_matches: Vec<&Vec<String>> = rows
+        .iter()
+        .filter(|row| {
+            row.first().is_some_and(|first| {
+                first.starts_with(
+                    "`src/analysis/neuron/post_processing.rs::apply_distinct_target_spread",
+                )
+            }) && row.get(1).is_some_and(|kind| kind == "traversal")
+        })
+        .collect();
+    assert_eq!(
+        post_processing_matches.len(),
+        1,
+        "there must be exactly one neuron capacity-table row with Kind `traversal` for \
+         `post_processing.rs::apply_distinct_target_spread`, got {}",
+        post_processing_matches.len()
+    );
+    let cancellation = post_processing_matches[0].get(4).unwrap_or_else(|| {
+        panic!("post_processing.rs traversal row must carry a Cancellation-checked cell")
+    });
+    assert!(
+        cancellation.starts_with("no — bounded by"),
+        "the post_processing.rs traversal row's Cancellation-checked cell must start with \
+         `no — bounded by`, got: {cancellation}"
+    );
+
+    let ranking_score_matches: Vec<&Vec<String>> = rows
+        .iter()
+        .filter(|row| {
+            row.first().is_some_and(|first| {
+                first.starts_with("`src/analysis/neuron/ranking_score.rs::sort_candidates_by_rank")
+            }) && row.get(1).is_some_and(|kind| kind == "traversal")
+        })
+        .collect();
+    assert_eq!(
+        ranking_score_matches.len(),
+        1,
+        "there must be exactly one neuron capacity-table row with Kind `traversal` for \
+         `ranking_score.rs::sort_candidates_by_rank`, got {}",
+        ranking_score_matches.len()
+    );
+    let cancellation = ranking_score_matches[0].get(4).unwrap_or_else(|| {
+        panic!("ranking_score.rs traversal row must carry a Cancellation-checked cell")
+    });
+    assert!(
+        cancellation.starts_with("no — bounded by"),
+        "the ranking_score.rs traversal row's Cancellation-checked cell must start with \
+         `no — bounded by`, got: {cancellation}"
+    );
 }
 
 /// Collect every `#<digits>` reference in `text` into `out`, as the bare
