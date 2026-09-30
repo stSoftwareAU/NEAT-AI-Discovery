@@ -130,10 +130,10 @@ the `submission.rs` bounded wait) go to **queue-core**;
 | Path | Lines | Outcome |
 | --- | --- | --- |
 | `src/analysis/gpu/queue/recovery.rs` | 248 | finding filed — #2363 (neither classifier (L56–L72, L79–L82) matches a device loss or memory exhaustion that wgpu 30 can deliver as an `Err`: the map callback's `BufferAsyncError` drops the cause and `Device::poll` panics), #2365 (the crate's budget-capped timeout text at `device.rs:269`/`:319`/`:381` matches `gpu driver` at L70, so a budget expiry drives needless re-initialisations), #2364 (`NEAT_AI_DISCOVERY_GPU_RETRY_LIMIT` parsing is silent); validation-error mis-classification, forged matches and the `MapRangeError` regression refuted |
-| `src/analysis/gpu/queue/staleness.rs` | 266 | pending — #2115 |
-| `src/analysis/gpu/heartbeat.rs` | 274 | pending — #2115 |
-| `src/analysis/gpu/inflight.rs` | 166 | pending — #2115 |
-| `src/analysis/gpu/queue/stale_skip_tests.rs` | 362 | pending — #2115 |
+| `src/analysis/gpu/queue/staleness.rs` | 266 | audited, no finding — each submission creates its own `bounded(1)` response channel and liveness pair (`submission.rs:202`/`:263`/`:325`/`:390`/`:449`/`:524`, `staleness.rs:55`–`:59`), so a stale result cannot reach a later caller (CWE-362 refuted); a guard dropped after the dequeue check ends in a harmless late send (`execution.rs:104`); `Shutdown` is live by design (`staleness.rs:91`); `BudgetExpired` sends an `Err` (`execution.rs:268`–`:273`) |
+| `src/analysis/gpu/heartbeat.rs` | 274 | audited, no finding — a missed heartbeat trips the breaker with `HeartbeatStall` and returns a typed `Err` (`submission.rs:139`–`:141`, `:62`); the `AtomicU64` wrap (L82) is unreachable; another queue's progress can mask a wedge only down to the absolute-timeout backstop; the `0` and 301–600 s windows are silent opt-outs of the #2276 class (not re-filed) |
+| `src/analysis/gpu/inflight.rs` | 166 | audited, no finding — a `parking_lot::Mutex<Vec<Entry>>` registry whose caller-side guard removes its own entry by id (L61–L66): no counter to under/overflow, no entry leaked on a worker or caller panic under the default unwind, no poisoning; the read path returns `None` after 50 ms (L29, L86) |
+| `src/analysis/gpu/queue/stale_skip_tests.rs` | 362 | audited, test-only — declared under `#[cfg(test)]` (`mod.rs:60`–`:61` at the baseline); its `Mutex` (L13, L41) and `.lock()` (L72) never compile into the library |
 
 ## Audit sections
 
@@ -1132,7 +1132,7 @@ against the wgpu 30.0.1 / naga 30.0.1 error text pinned by `Cargo.lock`, and the
 sources (`wgpu-30.0.1/`, `wgpu-core-30.0.1/`, `wgpu-types-30.0.1/`,
 `wgpu-hal-30.0.1/`, `naga-30.0.1/`). The table is pinned by
 `tests/issue_2245_gpu_device_lost_classification.rs`. `staleness.rs`,
-`heartbeat.rs`, `inflight.rs` and `stale_skip_tests.rs` are pending — #2246.
+`heartbeat.rs`, `inflight.rs` and `stale_skip_tests.rs` are swept by #2246 below.
 
 #### `src/analysis/gpu/queue/recovery.rs` — substring table (Issue #2245)
 
@@ -1380,6 +1380,154 @@ device loss (#2365). The retry-limit override is parsed silently (#2364).
 Validation-error mis-classification, forged matches, the `MapRangeError`
 regression and an unbounded retry limit are refuted.
 
+This slice (Issue #2246, second of #2115) sweeps `queue/staleness.rs`, `heartbeat.rs` and `inflight.rs` at the baseline, with the test-only `queue/stale_skip_tests.rs`. Those four files and `submission.rs`, `execution.rs`, `scheduling.rs`, `inflight.rs` and `src/config/user_facing.rs` are unchanged at HEAD, so baseline and HEAD lines agree. `mod.rs`, `device.rs`, `helpful_evaluation.rs` and `harmful_evaluation.rs` lines are baseline lines. `fake_evaluator.rs` and `wedge_tests.rs` (queue-core) are used as evidence only.
+
+#### `src/analysis/gpu/queue/staleness.rs` (Issue #2246)
+
+**CWE-362 — can a stale request's result reach a later caller's slot? Refuted.**
+
+- Every submission creates its own one-shot channel just before it enqueues: `let (response_tx, response_rx) = bounded(1)` at `submission.rs:202` (`submit_helpful_batch`), `:263` (`evaluate_helpful_batch`), `:325` (`evaluate_harmful_batch`), `:390` (`evaluate_relu_gpu`), `:449` (`evaluate_activation_gpu`) and `:524` (`evaluate_activations_batched_gpu`). The pre-resolved empty future builds its own at `:189`.
+- The sender is moved into that request's `GpuWorkRequest` variant (`:216`–`:224` and siblings). Every work variant carries exactly one `response_tx` and one `liveness` (`mod.rs:135`/`:139`, `:149`/`:153`, `:159`/`:163`, `:171`/`:175`, `:184`/`:188`). No sender is cloned, stored, pooled or keyed by an id, so the worker can only answer the receiver created with it.
+- The liveness handle is paired the same way. `caller_liveness_pair()` (`staleness.rs:55`–`:59`) makes a fresh `Arc<()>` and its `Weak` on each call, at `submission.rs:210`, `:273`, `:333`, `:398`, `:457` and `:532`. `CallerLiveness` is built only there (`staleness.rs:57`), so one request's liveness cannot speak for another caller.
+- A later call by the same caller makes a new channel. A late answer to an old call lands in the old channel's `bounded(1)` buffer and is freed with it; no receiver reads it.
+- **Verdict: cross-caller delivery is structurally impossible.**
+
+**TOCTOU — the guard drops after the dequeue check. Harmless.**
+
+- `stale_reason()` (`staleness.rs:111`–`:119`) runs once per request, at dequeue (`execution.rs:352`–`:355`). The caller may drop its guard during evaluation.
+- The receiver never outlives the guard by more than the return. The blocking entry points declare `_caller_guard` after `response_rx` (for example `submission.rs:263`, then `:273`), so both drop together when the function returns, guard first. `GpuFuture::collect` drops `caller_guard` after its wait (`mod.rs:113`), and `response_rx` goes with `self` at the end of `collect`.
+- The worker's late `response_tx.send(result)` (`execution.rs:104`, `:139`, `:171`, `:211`, `:245`) then either lands in the orphaned `bounded(1)` buffer or fails with a `trace!`. Both are harmless: the caller has already returned its own verdict, and only the caller side trips the breaker (#2243).
+- On the device-lost path the loop re-checks liveness before every recovery attempt (`execution.rs:436`–`:445`), so a caller that leaves mid-evaluation costs no re-initialisation.
+
+**`Shutdown` is always live — safe.** `has_live_receiver` returns `true` for `Shutdown` (`staleness.rs:91`) and `request_budget` returns `None` (`:103`), so `stale_reason` never classifies it. The loop intercepts `Shutdown` at `execution.rs:334`–`:341`, before the stale check at `:352`, so the arm is defensive and fails safe. Were `Shutdown` ever classified stale, the loop would `continue` past it and never exit, and `Drop` would wait out the shutdown timeout and record a false abandoned thread (`scheduling.rs:149`–`:161`).
+
+**`BudgetExpired` returns `Err` to the caller.** `skip_stale_request` (`execution.rs:261`–`:275`) calls `send_error_to_request` (`:268`–`:273`, defined at `:529`–`:575`), which sends `Err("GPU time budget expired while the request waited in the work queue …")` on the request's own channel — never an empty `Ok`. `ReceiverGone` sends nothing, because nobody is left to receive it (`:258`). Both paths count the skip (`record_stale_skip`, `:262`).
+
+**Covered by:**
+
+| Verdict | Test |
+| --- | --- |
+| A guard dropped before dequeue is skipped, and the live request behind it is still served | `src/analysis/gpu/queue/stale_skip_tests.rs::stale_request_skipped_without_analysis`; `src/analysis/gpu/queue/staleness.rs::dropped_caller_guard_is_stale`, `::dropped_caller_detected_for_every_variant`; `src/analysis/gpu/queue/wedge_tests.rs::an_abandoned_request_never_reaches_the_wedged_gpu` |
+| A guard dropped during a device-lost evaluation stops recovery | `stale_skip_tests.rs::device_lost_retry_aborts_on_dead_receiver` |
+| A live caller keeps the full recovery budget | `stale_skip_tests.rs::device_lost_retry_still_runs_for_live_caller` |
+| Skips are counted | `stale_skip_tests.rs::stale_skip_counted_in_metrics`; `tests/gpu/issue_1929_stale_request_skip.rs::fresh_metrics_report_no_stale_skips`, `::stale_skips_accumulate_per_skipped_request`, `::stale_skips_do_not_inflate_batch_or_sample_counts`, `::global_metrics_expose_the_stale_skip_counter` |
+| `BudgetExpired` returns `Err` without analysis | `stale_skip_tests.rs::expired_budget_request_fails_loudly_without_analysis`; `staleness.rs::expired_budget_is_stale_even_with_live_caller`, `::expired_budget_detected_for_every_variant`, `::unexpired_budget_with_live_caller_is_not_stale` |
+| A dead receiver wins over an expired budget | `staleness.rs::dropped_caller_wins_over_expired_budget` |
+| `Shutdown` is never stale | `staleness.rs::shutdown_is_never_stale` |
+| A live caller is not stale, and the labels are distinct | `staleness.rs::live_caller_with_unbounded_budget_is_not_stale`, `::stale_reason_labels_are_distinct` |
+
+**Gaps (not vulnerabilities, not filed):**
+
+- **Guard dropped after dequeue, during a successful or non-device-lost evaluation.** `CountingEvaluator::abandoning` (`stale_skip_tests.rs:54`) is used only with `StubOutcome::DeviceLost` (`:248`). No test drives the late `send` at `execution.rs:104` after the guard has gone, or asserts that the loop then serves the next request.
+- No test submits two requests and asserts that each answer reaches only its own receiver. The CWE-362 verdict rests on the construction sites above, and the loop tests hold one receiver per request, the same structure.
+
+#### `src/analysis/gpu/heartbeat.rs` (Issue #2246)
+
+**A missed heartbeat trips the breaker and returns `Err` to the caller.** The chain:
+
+1. `HeartbeatWatch::stalled_for` (`heartbeat.rs:146`–`:158`) returns `Some(idle)` once the tick count has not changed for `stall_window`, measured from the last change (`:148`–`:151`) or from the start of the wait (`:140`).
+2. `wait_for_gpu_response` (`submission.rs:96`–`:127`) calls it on every `recv_timeout` timeout (`:114`–`:120`) and returns `GpuWaitOutcome::Stalled { idle, window }`.
+3. `resolve_gpu_wait` (`:131`–`:148`) maps `Stalled` to `heartbeat_stall_error` (`:139`–`:141`).
+4. `heartbeat_stall_error` (`:56`–`:69`) trips the breaker with **`GpuTripReason::HeartbeatStall`** (`:62`) and returns the typed `gpu_wedged_error` (`:63`).
+5. `await_gpu_response` (`:156`–`:170`) returns that `Err` to the caller.
+
+The first trip logs at `warn` (`breaker.rs:157`–`:162`), and `breaker.check()` then refuses every later GPU entry point (`submission.rs:185`, `:256`, `:319`, `:380`, `:443`, `:512`; `scheduling.rs:31`–`:32`). **A missed heartbeat is never log-only: it is a `warn` line, a breaker trip and a typed `Err`.**
+
+**Tick counter.**
+
+- One process-wide `AtomicU64` (`heartbeat.rs:65`, `:99`–`:102`), advanced by `fetch_add(1, Release)` (`:82`).
+- **Wrap: unreachable.** `fetch_add` wraps silently. The `+ 1` at `:82` would panic under debug overflow checks only when the counter is already `u64::MAX`, which takes about 584 years at a billion beats a second. After a wrap, `stalled_for` still sees a change, because it compares with `!=` (`:148`), not `>`.
+- **Within one queue, global progress cannot mask a wedged request.** A `GpuWorkQueue`'s single GPU thread runs one request at a time (`execution.rs:316`), so when a request is wedged, that thread publishes nothing. A request queued behind a slow-but-progressing one is correctly not flagged.
+- **Across queues, it can.** `GpuWorkQueue::new()` has three production callers (`src/analysis/orchestration.rs:873`, `src/analysis/neuron/mod.rs:146`, `src/analysis/synapse/mod.rs:174`). Concurrent standalone FFI analyses therefore run separate GPU threads on the one global heartbeat, and a progressing thread B keeps resetting the window of a waiter on a wedged thread A. That waiter ends instead at its absolute timeout (`submission.rs:107`–`:110`), and `batch_timeout_error` trips with `BatchTimeout` (`:42`–`:49`, `:142`). **Detection degrades to the 60–300 s backstop, still an `Err` and still a trip.** This is refuted as a vulnerability and recorded as a gap below.
+- Beats come only from completed steps: `execution.rs:346`, `:361`, `:464`, `:484`, `device.rs:262`, `:297`, `:357`, `helpful_evaluation.rs:434` and `harmful_evaluation.rs:364`. None is inside a poll loop, so a spinning driver cannot fake liveness (`heartbeat.rs:78`–`:80`).
+
+**Stall window.**
+
+- `crate::config::gpu_stall_window` (`src/config/user_facing.rs:63`–`:79`) resolves the value as follows. It logs nothing at read time and is read on every wait (`submission.rs:167`), not cached.
+  - Unset or unparsable: 30 s (`DEFAULT_GPU_STALL_WINDOW_SECS`, `heartbeat.rs:37`).
+  - `0`: the guard is disabled (`user_facing.rs:71`–`:72`, `heartbeat.rs:153`–`:155`), and the absolute timeout remains the bound (`submission.rs:107`–`:110`, polled every 1 s per `heartbeat.rs:164`–`:166`).
+  - Anything else: clamped to 1–600 s (`user_facing.rs:74`, `heartbeat.rs:41`, `:45`).
+- `0` is one site of the silent guard opt-out class planned by #2213 and listed in #2276 (its `GPU_STALL_WINDOW_SECS` row). **Not re-filed.**
+- A value of 301–600 s can never fire before the 300 s maximum batch timeout (`GPU_QUEUE_TIMEOUT_MAX_SECS`, `src/analysis/utils/deadline.rs:46`), so it is a silent opt-out too. The `:43`–`:44` doc comment contradicts the 600 s cap. It was added to #2276 as a comment on the same site, not filed separately.
+
+**Wedge fail-loud verdict: holds.**
+
+- A GPU thread that never answers ends every waiter with an `Err`: within the stall window (`HeartbeatStall`), or at the absolute timeout (`BatchTimeout`) when the window is `0`, above 300 s, or masked by another queue.
+- Both verdicts trip the breaker. The first wedge refuses every later submission and every new GPU thread without waiting.
+- A thread that dies instead of wedging answers `Disconnected` (`submission.rs:122`–`:124`, `:143`–`:146`). The queued requests it strands are #2361, and the send-phase overrun is #2339.
+
+**Covered by:**
+
+| Verdict | Test |
+| --- | --- |
+| Silence past the window reads as `Stalled` | `src/analysis/gpu/heartbeat.rs::a_silent_heartbeat_is_reported_as_stalled_after_the_window`; `src/analysis/gpu/queue/wedge_tests.rs::a_silent_gpu_is_declared_wedged_within_the_stall_window` (asserts `GpuTripReason::HeartbeatStall` and `DiscoveryErrorKind::GpuWedged`) |
+| Slow progress is never flagged | `heartbeat.rs::slow_progress_keeps_resetting_the_stall_clock`; `wedge_tests.rs::a_device_that_answers_inside_the_window_is_not_flagged`, `::a_slow_but_progressing_gpu_is_never_flagged_as_wedged` |
+| Endless progress still ends at the backstop (`BatchTimeout`) | `wedge_tests.rs::an_endlessly_progressing_gpu_still_ends_at_the_absolute_timeout` |
+| The first wedge stops every later submission | `wedge_tests.rs::the_first_wedge_stops_every_later_submission`, `::the_whole_wedge_sequence_fits_inside_a_simulated_run_budget` |
+| Process-wide breaker, no second GPU thread, signalled partial result | `tests/issue_1935_wedged_gpu_harness.rs::a_silent_gpu_trips_the_process_wide_breaker_within_the_stall_window`, `::no_second_gpu_thread_is_spawned_after_the_first_wedge`, `::analyze_all_returns_a_signalled_partial_result_after_a_wedge`, `::the_whole_wedge_sequence_fits_inside_a_simulated_run_budget` |
+| `0` disables the guard, the poll interval is bounded, the counter is monotonic, and the device helpers beat the global heartbeat | `heartbeat.rs::a_zero_window_disables_the_guard`, `::the_poll_interval_stays_within_its_bounds`, `::beats_advance_the_counter_monotonically`, `::the_device_step_helpers_publish_on_the_global_heartbeat` |
+| Window parsing: default, clamp, `0`, invalid | `tests/issue_2096_config_user_facing_a.rs::gpu_stall_window_clamps_disables_and_falls_back`; `tests/infrastructure/issue_717_config_env_vars.rs::config_gpu_stall_window_default`, `::config_gpu_stall_window_custom_value` |
+| A missed heartbeat trips `HeartbeatStall` and returns a typed `Err` | `tests/issue_2246_chunk_09e_queue_lifecycle_sweep_test.rs::a_missed_heartbeat_trips_the_breaker_and_returns_a_typed_err` |
+
+**Gaps (not vulnerabilities, not filed):**
+
+- No test drives two heartbeat publishers, so the cross-queue masking above (a wedged queue whose waiter ends only at the backstop) is unpinned.
+- No test pins that a 301–600 s window never fires before the 300 s backstop (tracked on #2276).
+
+#### `src/analysis/gpu/inflight.rs` (Issue #2246)
+
+**What it is.** Not a counter pair but a `parking_lot::Mutex<Vec<Entry>>` registry (`inflight.rs:21`, `:35`):
+
+- `register` (`:69`–`:77`) takes an id from `NEXT_ID.fetch_add(1, Relaxed)` (`:32`, `:70`) and pushes one entry.
+- The caller-side `InflightGuard` removes its own entry by id on `Drop` (`:61`–`:66`).
+- The only production registration is `let _inflight = inflight::register(operation)` in `await_gpu_response` (`submission.rs:162`). It is a local on the caller's stack and lasts exactly as long as the wait.
+
+**Panic verdict: no underflow, no overflow, no leaked entry.**
+
+- **Under/overflow.** Nothing is counted. The Vec holds one entry per live guard, and `retain` (`:64`) removes by id, so a double removal is a no-op, not an underflow. `NEXT_ID` wraps only after 2^64 registrations, which is unreachable. A duplicate id after a wrap could make one guard remove its twin's entry as well, which under-reports a diagnostic and nothing more.
+- **The GPU worker panics.** The worker never touches the registry; only the caller registers, so a worker panic cannot leak an entry. The in-flight waiter sees `Disconnected` at once (`submission.rs:122`–`:124`). A queued waiter is released by the stall window or the timeout (#2361). Either way `await_gpu_response` returns and `_inflight` drops.
+- **A caller panics mid-wait.** `Cargo.toml` sets no `panic` key in `[profile.dev]` (L232–L233) or `[profile.release]` (L235–L238), so the default `unwind` applies and unwinding runs `InflightGuard::drop`. Under `panic = "abort"` the process would end, taking the registry with it, so the answer would not change.
+- **The lock under panic.** `parking_lot` mutexes do not poison. The two critical sections are a `push` (`:71`) and a `retain` whose closure cannot panic (`:64`); an allocation failure there aborts rather than unwinds. The mutex is not re-entrant, but no critical section calls back into `register` or a guard drop, and the reader (`:86`–`:94`) only maps entries.
+
+**Read path.** `outstanding_requests` (`:85`–`:97`) waits at most `READ_LOCK_TIMEOUT` = 50 ms (`:29`) through `try_lock_for` (`:86`). On contention it returns **`None`, not an empty list**.
+
+- The dump renders `None` as "Outstanding GPU requests: UNREADABLE — registry lock contended" (`src/debug/process_state.rs:79`–`:84`), distinct from "none" (`:87`–`:89`).
+- The SIGUSR1 dump runs on a `signal_hook` iterator thread (`src/debug.rs:314`–`:327`), not inside the signal handler, so taking the lock raises no async-signal-safety issue.
+
+**Covered by:** `src/analysis/gpu/inflight.rs::a_registered_request_is_listed_until_its_guard_drops`, `::dropping_one_guard_leaves_its_sibling_registered`, `::an_outstanding_request_reports_its_age`; `src/analysis/gpu/queue/submission.rs::a_waiting_caller_is_listed_as_an_outstanding_request` (L980).
+
+**Gaps (not vulnerabilities, not filed):**
+
+- No test drops a guard by unwinding (a panic mid-wait inside `catch_unwind`).
+- No test holds the lock past 50 ms to pin the `None` path or its "UNREADABLE" rendering.
+- Only the await phase is registered. A submitter blocked in `send_timeout` (#2339) and a `GpuFuture` between submit and `collect` are not listed. Neither has been handed to the GPU yet, so the registry still answers "what the GPU was asked to do".
+
+#### Leaked-thread and wedge lifecycle (Issue #2246)
+
+The #2243 and #2244 slices hand this question to #2115. A wedged GPU thread — breaker tripped, thread never exits — interacts with the three components as follows:
+
+- **Heartbeat.** The wedged thread publishes nothing, so each waiter on it is released within the stall window (`HeartbeatStall`). The exception is a window that is `0`, above 300 s, or reset by another queue, where the waiter is released at the absolute timeout (`BatchTimeout`). After the first trip no other queue can be created (`scheduling.rs:31`–`:32`), so nothing else can beat.
+- **Waiters.** Every waiter that reached `await_gpu_response` resolves to a typed `Err` within the stall window, or at most at the 300 s timeout. `breaker.check()` refuses later submitters at once. A submitter blocked in `send_timeout` waits the full timeout, then gets `queue_full_error` (#2339).
+- **In-flight entries.** They are held only on waiters' stacks (`submission.rs:162`), so each entry is removed as its waiter's `Err` returns. The leaked thread holds none.
+- **Staleness.**
+  - The wedged thread never dequeues. The requests still buffered, at most the 4/8/16 capacity (`scheduling.rs:38`–`:40`), and their payloads are retained for as long as the leaked thread holds `work_rx`. Their guards drop when their callers return.
+  - If the thread ever recovers, `stale_reason` skips each buffered request as `ReceiverGone` without analysis (`execution.rs:352`–`:355`). The loop then exits on `Disconnected` (`:326`–`:332`), because `work_tx` went with the dropped queue.
+  - `Drop` records the thread as abandoned (`scheduling.rs:149`–`:161`, `AbandonedThread`). The breaker allows at most one such thread per process.
+- **Panic path.** A GPU thread that panics rather than wedges is covered by #2244's verdict, cited rather than re-traced. The in-flight caller gets `Disconnected` at once. The queued callers wait out the stall window or the timeout and then report a wedge — finding **#2361** (`SEC-f0d19ede542c`).
+- **Verdict:** every in-flight entry and every waiter resolves to `Err` within the stall window or the batch-timeout bound (at most 300 s). The only overrun is the send phase, #2339.
+
+#### `src/analysis/gpu/queue/stale_skip_tests.rs` (Issue #2246)
+
+Test-only — declared under `#[cfg(test)]` (`mod.rs:60`–`:61` at the baseline). Its `std::sync::Mutex` (L13, L41, L49, L56) and `.lock()` (L72) hold the `CountingEvaluator`'s abandon-on-call guard and never compile into the library. It is the evidence for the `staleness.rs` verdicts above.
+
+**Outcome (#2246): no new finding.**
+
+- Cross-caller stale delivery (CWE-362) is structurally impossible, and the TOCTOU late send is harmless.
+- A missed heartbeat trips the breaker with `HeartbeatStall` and returns a typed `Err`.
+- The in-flight registry cannot under/overflow or leak an entry on either panic path.
+- The stall window's `0` and 301–600 s values are silent opt-outs of the #2276 class, commented there rather than re-filed.
+- The related wedge-lifecycle findings are #2339 and #2361, already filed.
+
 ## Ledger
 
 Each slice appends rows only inside its own marked region.
@@ -1486,6 +1634,17 @@ Each slice appends rows only inside its own marked region.
 | A large or malformed `NEAT_AI_DISCOVERY_GPU_RETRY_LIMIT` drives unbounded re-initialisation (CWE-400) | `src/config/user_facing.rs:51`; `src/analysis/gpu/queue/execution.rs:431` | `n <= 10` bounds the loop at 10 attempts and 4,270 ms of back-off; out-of-range input falls back to 3. The silence is #2364 |
 | `backoff_delay_ms` overflows or panics for a large attempt number | `src/analysis/gpu/queue/recovery.rs:38`–`:42` | `saturating_sub`, `checked_shl(..).unwrap_or(u64::MAX)`, `saturating_mul`, then `min(max_ms)`; pinned by `test_backoff_delay_large_attempt_does_not_overflow` (`:198`–`:202`) |
 | The over-broad `internal error` / `command buffer` patterns re-initialise a healthy device on a wgpu pipeline or validation error | `wgpu-30.0.1/src/backend/wgpu_core.rs:692`–`:694`; `src/analysis/gpu/helpful_evaluation.rs:507` | Those wgpu errors panic in the default handler and never reach the classifier. The only reachable `command buffer` match is the crate's own post-batch poll label on a timeout, which `gpu driver` already matches (#2365) |
+| A stale request's result reaches a later caller's receiver (CWE-362) | `src/analysis/gpu/queue/submission.rs:202`, `:263`, `:325`, `:390`, `:449`, `:524`; `src/analysis/gpu/queue/staleness.rs:55`–`:59` | Each submission creates its own `bounded(1)` channel and `Arc`/`Weak` liveness pair and moves the sender into that request alone; nothing clones, stores or keys a sender, so an answer can only reach the receiver created with it (Issue #2246) |
+| A caller that drops its guard after the dequeue check (TOCTOU) loses a result or blocks the worker | `src/analysis/gpu/queue/execution.rs:104`–`:106`; `src/analysis/gpu/queue/submission.rs:202` | The late send lands in the orphaned `bounded(1)` buffer or fails with a `trace!`; the caller has already returned its own verdict, and the send never blocks (Issue #2246) |
+| Treating `Shutdown` as always live keeps a dead queue's thread running | `src/analysis/gpu/queue/execution.rs:334`–`:341`; `src/analysis/gpu/queue/staleness.rs:91`, `:103` | `Shutdown` is intercepted before the stale check; live is the fail-safe direction, because a stale verdict would skip it and stop the thread exiting (Issue #2246) |
+| An expired-budget skip answers the caller with an empty `Ok` | `src/analysis/gpu/queue/execution.rs:268`–`:273`, `:529`–`:575` | `skip_stale_request` sends `Err("GPU time budget expired …")` through `send_error_to_request` (Issue #2246) |
+| A missed heartbeat is only logged | `src/analysis/gpu/queue/submission.rs:139`–`:141`, `:62`–`:63` | `resolve_gpu_wait` maps `Stalled` to `heartbeat_stall_error`, which trips the breaker with `HeartbeatStall` and returns a typed `GpuWedged` `Err` (Issue #2246) |
+| The heartbeat tick counter wraps or panics on overflow | `src/analysis/gpu/heartbeat.rs:82`, `:148` | 2^64 beats take about 584 years at a billion a second; `stalled_for` compares with `!=`, so a wrap still reads as progress (Issue #2246) |
+| Another queue's progress masks a wedged request so that its waiter hangs | `src/analysis/gpu/queue/submission.rs:107`–`:110`, `:142` | Masking is possible only across concurrent `GpuWorkQueue`s, and the waiter still ends at the absolute timeout (at most 300 s) with a `BatchTimeout` trip and a typed `Err` (Issue #2246) |
+| In-flight accounting under/overflows or leaks an entry when the GPU worker or a caller panics | `src/analysis/gpu/inflight.rs:61`–`:66`; `src/analysis/gpu/queue/submission.rs:162`; `Cargo.toml:232`–`:238` | There is no counter: the registry is a Vec of live guards removed by id. Only the caller registers, and unwinding (the default; no `panic` key is set) drops the guard (Issue #2246) |
+| A panic under the in-flight registry lock poisons it and blocks every later submission | `src/analysis/gpu/inflight.rs:21`, `:64`, `:71` | `parking_lot` mutexes do not poison, and neither critical section can unwind (Issue #2246) |
+| The thread dump blocks on a contended in-flight registry or reports "none" | `src/analysis/gpu/inflight.rs:29`, `:86`; `src/debug/process_state.rs:79`–`:84` | `try_lock_for(50 ms)` returns `None`, which the dump renders as "UNREADABLE — registry lock contended" (Issue #2246) |
+| A leaked, wedged GPU thread leaves waiters or in-flight entries unresolved | `src/analysis/gpu/queue/submission.rs:107`–`:120`, `:162`; `src/analysis/gpu/queue/scheduling.rs:31`–`:32`, `:149`–`:161` | Waiters end in `Err` within the stall window or the timeout, and their entries go with them; the breaker refuses every later queue, and buffered requests are bounded by the 4/8/16 capacity. The send-phase overrun is #2339 and the panic path is #2361 (Issue #2246) |
 
 ## Outcome
 
@@ -1503,7 +1662,9 @@ The queue-core slice has swept `submission.rs` and `execution.rs` (#2243: one
 finding, #2339) and `scheduling.rs`, `executor.rs` and `mod.rs` with the
 test-only `fake_evaluator.rs` and `wedge_tests.rs` (#2244: one finding, #2361).
 The queue-lifecycle slice has swept `recovery.rs` and the retry loop it feeds
-(#2245: three findings, #2363, #2364 and #2365).
+(#2245: three findings, #2363, #2364 and #2365), and `staleness.rs`, `heartbeat.rs` and
+`inflight.rs` with the test-only `stale_skip_tests.rs` (#2246: no new finding; the
+stall-window opt-out is a site of the #2276 class).
 Every other file is pending its slice. Each slice records its
 outcome in its region under `## Audit sections`.
 
