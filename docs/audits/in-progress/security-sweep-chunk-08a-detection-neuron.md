@@ -194,6 +194,17 @@ rows added by the section sub-issues.
 | `src/analysis/neuron/post_processing.rs::apply_distinct_target_spread` (`rest`) | capacity | `Vec::with_capacity(candidates.len())` | no numeric cap — the live candidate `Vec` (the `helpful_map` candidates that survived the gain floor, pairing, sensible-range and squash-diversity filters); `drain(..)` moves every entry into `spread` or `rest`, so the reservation never exceeds what the caller already holds | n/a — sized once |
 | `src/analysis/neuron/post_processing.rs::apply_distinct_target_spread` (`candidates.drain(..)` partition loop) | traversal | one `HashSet` pass counting distinct targets, then one `drain(..)` pass pushing each candidate into `spread` or `rest` | linear — O(n) in the candidate count with O(1) `HashSet` look-ups; no recursion and no pairwise comparison | no — bounded by the candidate count (two linear passes); runs after the per-target GPU work, with no deadline check |
 | `src/analysis/neuron/ranking_score.rs::sort_candidates_by_rank` (`candidates.sort_by`) | traversal | one comparison sort over the caller's candidate slice; each comparison computes two `candidate_rank_score`s | O(n log n); total under NaN — `total_cmp` on `candidate_rank_score`, then `total_cmp` on `expected_creature_score_gain` | no — bounded by the candidate count (O(n log n)); `post_processing.rs` calls it three times per pass |
+| `topology.rs::detect_topology_issues` (`candidates`) | capacity | `Vec::with_capacity(qualified_hidden.len())` | no numeric cap — bounded by the already-filtered `qualified_hidden` `Vec`, itself no larger than the deserialised `creature.neurons` | n/a — one linear pass over `qualified_hidden` |
+| `skip_connection.rs::detect_skip_connection_candidates` (`candidates`) | capacity | `Vec::with_capacity(deep_attenuated.len())` | no numeric cap — bounded by the already-filtered `deep_attenuated` `Vec`, itself no larger than `creature.neurons` | n/a — one linear pass over `deep_attenuated` |
+| `skip_connection.rs::skip_connections_to_coordinated_candidates` (`results`) | capacity | `Vec::with_capacity(candidates.len())` | bounded — one push per entry of the live `candidates` slice | n/a — one pass over candidates |
+| `dead_neuron.rs::detect_dead_neurons` (`candidates`) | capacity | `Vec::with_capacity(topo.hidden_uuids.len())` | no numeric cap — the bound is the already-deserialised `creature.neurons` `Vec`, via the `topology_cache.rs::CreatureTopologyCache` neuron-count basis | n/a — one linear pass over `topo.hidden_uuids` |
+| `dead_neuron.rs::find_connected_outputs_cached` (`visited`) | capacity | `HashSet::with_capacity(neuron_count)`, `neuron_count = topo.hidden_uuids.len() + topo.output_uuids.len()` | no numeric cap — the bound is the already-deserialised `creature.neurons` `Vec`, split across the hidden and output UUID sets | n/a — sized once per call |
+| `dead_neuron.rs::find_connected_outputs_cached` (`queue`) | capacity | `Vec::with_capacity(neuron_count)`, the same `neuron_count` as `visited` | no numeric cap — same basis as `visited` above | n/a — sized once per call |
+| `dead_neuron.rs::dead_neurons_to_coordinated_candidates` (`results`) | capacity | `Vec::with_capacity(candidates.len())` | bounded — one push per entry of the live `candidates` slice | n/a — one pass over candidates |
+| `topology.rs::compute_shortest_paths_to_output` | traversal | a `HashMap` reverse-adjacency build, then a `VecDeque` BFS seeded from every output simultaneously, guarded by `distances.contains_key` | O(V+E), regardless of cycles — an already-visited predecessor is never re-queued | no (module-level only) |
+| `skip_connection.rs::compute_depths_from_inputs` | traversal | a forward `VecDeque` BFS seeded from every input simultaneously, re-pushing a successor only `if new_depth > *entry` | O(V+E) on forward-only, acyclic graphs (the FFI-validated invariant); no visited set and no cycle guard of its own — finding #2368 | no (module-level only) |
+| `dead_neuron.rs::find_connected_outputs_cached` | traversal | a `queue.pop()` (LIFO) stack traversal guarded by `visited.insert`, so each neuron expands at most once | O(V+E) via `topo.fan_out_for` O(1) lookups per edge; the doc comment's BFS label is inaccurate (finding #2370) but the bound holds regardless of traversal order | no (module-level only) |
+| `compound_degradation.rs::reachable_outputs` | traversal | a frontier BFS from `start`, expanding `downstream_of` lookups per hop | hard-capped at `max_depth = 3` at both call sites — bounded regardless of graph size | no (module-level only) |
 
 ## Defect classes probed
 
@@ -242,6 +253,28 @@ against baseline `b85a551`; the #2078 site is `CreatureTopologyCache::new` in
 - #2295 — cross-linked from the `neuron/mod.rs` row: it owns the collision
   verdict for the synthetic `hard_sample_neuron_uuid` / `split_neuron_uuid`
   UUIDs, now recorded in the `pairwise` rows and filed as #2359.
+- `#2367` (`security`, `lang:rust`, `severity:low`, `confidence:high`) —
+  `compound_degradation.rs::detect_weight_corrections` guards
+  `new_weight.is_finite()` but not `baseline_error_sq` / `corrected_error_sq`,
+  so two independently overflowing `f32` sums make `improvement` a `NaN` that
+  the `<= 0.0` gate does not trip on; `combine_corrections` inherits the same
+  open gate. Filed by the `graph` sweep (Issue #2282).
+- `#2368` (`security`, `lang:rust`, `severity:low`, `confidence:medium`) —
+  `skip_connection.rs::compute_depths_from_inputs` has no visited set and
+  relies entirely on the FFI boundary's `validate_forward_only_synapses` to
+  terminate; a cyclic graph that bypassed that validation would not
+  terminate. Filed by the `graph` sweep (Issue #2282).
+- `#2369` (`security`, `lang:rust`, `severity:low`, `confidence:high`) —
+  `topology.rs::detect_topology_issues`'s `mean_errors` sums unguarded `f32`
+  errors into `total_err`; an overflow makes `estimated_improvement` `+∞` in
+  both branches, and the only gate, `estimated_improvement <= 0.0`, does not
+  trip on `+∞`. Filed by the `graph` sweep (Issue #2282).
+- `#2370` (`documentation`, `lang:rust`, `severity:low`, `confidence:high`) —
+  `dead_neuron.rs::find_connected_outputs_cached`'s doc comment and its
+  `detect_dead_neurons` call site both call it a BFS, but `queue.pop()` makes
+  it a stack-based DFS; the `visited` set still bounds it at O(V+E) and the
+  caller sorts and dedups the result, so no downstream logic depends on
+  traversal order. Filed by the `graph` sweep (Issue #2282).
 - Prior remediations cited by `shared` rows, not filed by this sweep: #2078
   (`creature.output` cap in `validate_creature_input_bounds`) and #2304
   (`pearson_correlation` non-finite hardening).
