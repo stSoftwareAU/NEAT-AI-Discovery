@@ -104,6 +104,13 @@ const SWEPT_FILES: [&str; 4] = [
     "src/analysis/gpu/device.rs",
 ];
 
+/// The two `#[cfg(test)]` files #2241 added after the baseline, which #2249's
+/// inventory-completeness sweep gives their own device rows.
+const POST_BASELINE_TEST_FILES: [&str; 2] = [
+    "src/analysis/gpu/none_field_tests.rs",
+    "src/analysis/gpu/queue/none_field_tests.rs",
+];
+
 /// The #2242 subsections the device audit region must carry.
 const SWEEP_HEADINGS: [&str; 3] = [
     "#### Init timeout — every `pollster::block_on` site (Issue #2242)",
@@ -704,14 +711,25 @@ fn the_device_region_states_the_2241_outcome() {
 
 #[test]
 fn no_device_files_swept_row_is_still_pending() {
+    // Inventory completeness (every file has exactly one row, and the row set
+    // matches the on-disk files) is pinned by
+    // `tests/issue_2249_chunk9_ledger_complete.rs`; this test only pins the
+    // #2242 files' order and outcome shape, plus the #2249 test-only rows.
     let doc = read(RECORD);
     let rows = table_rows(section(section(&doc, "## Files swept"), "### device"));
-    let paths: Vec<&str> = rows.iter().map(|row| row[0].trim_matches('`')).collect();
+    let swept_rows: Vec<&Vec<String>> = rows
+        .iter()
+        .filter(|row| SWEPT_FILES.contains(&row[0].trim_matches('`')))
+        .collect();
+    let swept_paths: Vec<&str> = swept_rows
+        .iter()
+        .map(|row| row[0].trim_matches('`'))
+        .collect();
     assert_eq!(
-        paths, SWEPT_FILES,
-        "the device Files swept table must carry one row per swept file, in order"
+        swept_paths, SWEPT_FILES,
+        "the device Files swept table must carry one row per #2242 swept file, in order"
     );
-    for row in &rows {
+    for row in &swept_rows {
         let outcome = row.last().expect("outcome cell");
         assert!(
             !outcome.contains("pending — #2113"),
@@ -722,6 +740,22 @@ fn no_device_files_swept_row_is_still_pending() {
             outcome.starts_with("audited, no finding") || outcome.starts_with("finding filed — #"),
             "{}: outcome must open with `audited, no finding` or `finding filed — #N`: {outcome}",
             row[0]
+        );
+    }
+
+    for row in &rows {
+        let path = row[0].trim_matches('`');
+        if SWEPT_FILES.contains(&path) {
+            continue;
+        }
+        assert!(
+            POST_BASELINE_TEST_FILES.contains(&path),
+            "{path}: unexpected device row — not a #2242 swept file nor a #2249 post-baseline test file"
+        );
+        let outcome = row.last().expect("outcome cell");
+        assert!(
+            outcome.starts_with("audited, test-only"),
+            "{path}: post-baseline test-file outcome must open with `audited, test-only`: {outcome}"
         );
     }
 }
