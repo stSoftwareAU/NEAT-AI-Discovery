@@ -1504,7 +1504,7 @@ The first trip logs at `warn` (`breaker.rs:157`–`:162`), and `breaker.check()`
 
 #### Leaked-thread and wedge lifecycle (Issue #2246)
 
-#2243 and #2244 hand this question to #2115. A wedged GPU thread — breaker tripped, thread never exits — interacts with the three components as follows:
+The #2243 and #2244 slices hand this question to #2115. A wedged GPU thread — breaker tripped, thread never exits — interacts with the three components as follows:
 
 - **Heartbeat.** The wedged thread publishes nothing, so each waiter on it is released within the stall window (`HeartbeatStall`). The exception is a window that is `0`, above 300 s, or reset by another queue, where the waiter is released at the absolute timeout (`BatchTimeout`). After the first trip no other queue can be created (`scheduling.rs:31`–`:32`), so nothing else can beat.
 - **Waiters.** Every waiter that reached `await_gpu_response` resolves to a typed `Err` within the stall window, or at most at the 300 s timeout. `breaker.check()` refuses later submitters at once. A submitter blocked in `send_timeout` waits the full timeout, then gets `queue_full_error` (#2339).
