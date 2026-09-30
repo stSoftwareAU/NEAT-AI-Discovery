@@ -70,6 +70,40 @@ A worker checkpoint commit captured the test and the ledger together, so the
 branch has no separate "test only" commit. The red run above was reproduced by
 restoring the `3f103b9` ledger in the working tree.
 
+### Regression test linkage
+
+- Added `tests/issue_2249_chunk9_ledger_complete.rs::every_on_disk_file_has_exactly_one_files_swept_row_with_a_settled_outcome`.
+  It reproduces the flaw: in-scope GPU files had no sweep row, for example
+  `src/analysis/gpu/none_field_tests.rs`. It fails against the unfixed ledger
+  at `3f103b9` and passes after the fix.
+- Added `tests/issue_2249_chunk9_ledger_complete.rs::the_reconciliation_checklist_is_fully_ticked_and_matches_the_on_disk_inventory`.
+  It reproduces the missing per-file reconciliation. It fails against the
+  unfixed ledger at `3f103b9` and passes after the fix.
+- Added `tests/issue_2249_chunk9_ledger_complete.rs::the_record_section_references_the_related_sweeps`.
+  It reproduces the missing #2088 and #2096 cross-references. It fails against
+  the unfixed ledger at `3f103b9` and passes after the fix.
+
+### Original trigger closed
+
+The original trigger was an in-scope GPU or WGSL file that the sweep had never
+audited. Four such files were added after the baseline. That trigger is now
+closed. The test builds its inventory from the directory tree
+(`src/analysis/gpu/**/*.rs` and `src/shaders/*.wgsl`), not from a hard-coded
+list, and checks it both ways against `## Files swept` and `## Reconciliation`.
+Adding, renaming or moving a file in scope without a settled, ticked row fails
+the test.
+
+There is no trivial bypass:
+
+- A `pending` outcome is rejected.
+- A duplicate row is rejected, because each file needs exactly one.
+- A row naming a file that does not exist is rejected.
+- A checklist line whose section differs from the file's `## Files swept` group
+  is rejected.
+- `the_enumerator_is_pinned_before_trusting_it` requires at least 34 files and
+  the `queue/mod.rs` and `helpful.wgsl` anchors. An empty or broken walk
+  therefore cannot pass the test vacuously.
+
 ```mermaid
 flowchart LR
     A[Walk src/analysis/gpu/**/*.rs and src/shaders/*.wgsl] --> B{Row in Files swept?}
