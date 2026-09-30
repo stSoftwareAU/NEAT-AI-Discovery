@@ -1236,7 +1236,9 @@ the CPU-fallback cross-check (#2240: one finding, #2318) and the entry-point
 `None → Err` sweep (#2241: no finding) and the per-file sweep of `analyzer.rs`,
 `budget.rs`, `breaker.rs` and `device.rs` (#2242: one finding, #2332).
 The queue-core slice has swept `submission.rs` and `execution.rs` (#2243: one
-finding, #2339). Every other file is pending its slice. Each slice records its
+finding, #2339) and `scheduling.rs`, `executor.rs` and `mod.rs` with the
+test-only `fake_evaluator.rs` and `wedge_tests.rs` (#2244: one finding, #2361).
+Every other file is pending its slice. Each slice records its
 outcome in its region under `## Audit sections`.
 
 ## Issues filed
@@ -1273,6 +1275,10 @@ The sweep is in progress; each slice lists the issues it files here.
   `send_timeout` waits the whole batch timeout with no stall-window or breaker
   check, and its response wait then restarts the same timeout (queue-core
   slice, #2243).
+- #2361 — `SEC-f0d19ede542c` (CWE-755, low): a GPU-thread panic strands every
+  queued request in the bounded work channel until the stall window or batch
+  timeout, which then reports a wedge, and `Drop` discards the panic payload
+  (queue-core slice, #2244).
 
 ## Verify this record
 
