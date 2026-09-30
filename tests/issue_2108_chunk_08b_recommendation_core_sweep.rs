@@ -480,15 +480,6 @@ fn a_finite_record_set_no_longer_drives_the_fan_in_correlation_to_nan() {
         "the overflowed f32 covariance accumulator must now be laundered to 0.0, not a NaN, got \
          {corr}"
     );
-
-    // The filter `detect_fan_in_candidates` applies to this value, spelled the
-    // way the production code spells it. `0.0` loses the threshold test
-    // cleanly — no comparator sees a NaN.
-    const INPUT_ERROR_CORRELATION_THRESHOLD: f32 = 0.3;
-    assert!(
-        corr.abs() < INPUT_ERROR_CORRELATION_THRESHOLD,
-        "the threshold filter must drop the laundered 0.0 correlation, a fail-closed outcome"
-    );
 }
 
 /// The half of the #2181 / #2182 reachability claim that lives at the shipped
