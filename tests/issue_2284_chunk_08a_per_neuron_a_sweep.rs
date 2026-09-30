@@ -1,7 +1,6 @@
-//! Contract tests for the first seven rows of the `per-neuron-a` section of
-//! the staged chunk 8a sweep record (Issue #2284, part of #2218). The
-//! remaining six rows in that section belong to the follow-on sub-issue and
-//! are not asserted here.
+//! Contract tests for all 13 rows of the `per-neuron-a` section of the
+//! staged chunk 8a sweep record (both part of #2218): the first seven rows
+//! are swept by Issue #2284, and the remaining six by Issue #2285.
 
 use std::path::PathBuf;
 
@@ -9,7 +8,8 @@ use std::path::PathBuf;
 /// `docs/audits/security-sweep-chunk-08a-detection-neuron.md`.
 const RECORD: &str = "docs/audits/in-progress/security-sweep-chunk-08a-detection-neuron.md";
 
-/// The first seven files the `per-neuron-a` section sweeps under Issue #2284.
+/// The 13 files the `per-neuron-a` section sweeps: the first seven under
+/// Issue #2284, the remaining six under Issue #2285.
 const SWEPT: &[&str] = &[
     "src/analysis/detection/activation_mismatch.rs",
     "src/analysis/detection/bias_perturbation.rs",
@@ -18,6 +18,12 @@ const SWEPT: &[&str] = &[
     "src/analysis/detection/dormant_synapse.rs",
     "src/analysis/detection/error_dispersion.rs",
     "src/analysis/detection/error_plateau.rs",
+    "src/analysis/detection/high_error_squash_exploration.rs",
+    "src/analysis/detection/input_sensitivity.rs",
+    "src/analysis/detection/monotonicity.rs",
+    "src/analysis/detection/noise_signal.rs",
+    "src/analysis/detection/observation_range.rs",
+    "src/analysis/detection/observation_utilisation.rs",
 ];
 
 fn read(rel: &str) -> String {
@@ -278,11 +284,42 @@ fn each_swept_row_is_present_and_not_pending() {
         );
         assert!(
             !outcome.contains("pending"),
-            "{path} was swept by Issue #2284, so its outcome must not read `pending`: {outcome}"
+            "{path} was swept by Issue #2284/#2285, so its outcome must not read `pending`: \
+             {outcome}"
         );
         assert!(
             outcome.contains(" — "),
             "{path}'s Outcome cell must be shaped `<outcome> — <reason>`, got: {outcome}"
+        );
+    }
+
+    assert_eq!(
+        SWEPT.len(),
+        13,
+        "the per-neuron-a sweep must cover exactly 13 files"
+    );
+    let non_pending_rows = rows
+        .iter()
+        .filter(|row| {
+            row.get(2)
+                .is_some_and(|outcome| !outcome.contains("pending"))
+        })
+        .count();
+    assert_eq!(
+        non_pending_rows,
+        SWEPT.len(),
+        "the `per-neuron-a` section must have exactly {} non-pending rows (Issue #2284/#2285), \
+         got {non_pending_rows}",
+        SWEPT.len()
+    );
+
+    for row in &rows {
+        let Some(first) = row.first() else { continue };
+        let path = first.trim_matches('`');
+        assert!(
+            SWEPT.contains(&path),
+            "{path} appears as a row in the `per-neuron-a` section but is not listed in SWEPT \
+             — an extra or unexpected row must be accounted for in this test"
         );
     }
 }
@@ -357,6 +394,16 @@ fn every_capacity_site_in_a_swept_file_is_cited_by_symbol() {
         "the number of capacity-table rows citing a swept per-neuron-a file must equal the \
          number of capacity sites actually found in those files — a stale row for deleted code \
          must fail this too"
+    );
+    assert_eq!(
+        capacity_rows_for_swept_files, 20,
+        "the per-neuron-a capacity table must hold exactly 20 rows (9 from #2284, 11 from #2285)"
+    );
+    assert_eq!(
+        all_sites.len(),
+        20,
+        "the per-neuron-a capacity table must hold exactly 20 rows (9 from #2284, 11 from \
+         #2285) — the production source must also carry exactly 20 capacity sites"
     );
 }
 
