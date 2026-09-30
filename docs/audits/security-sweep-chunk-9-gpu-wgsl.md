@@ -129,7 +129,7 @@ the `submission.rs` bounded wait) go to **queue-core**;
 
 | Path | Lines | Outcome |
 | --- | --- | --- |
-| `src/analysis/gpu/queue/recovery.rs` | 248 | pending — #2115 |
+| `src/analysis/gpu/queue/recovery.rs` | 248 | finding filed — #2363 (neither classifier (L56–L72, L79–L82) matches a device loss or memory exhaustion that wgpu 30 can deliver as an `Err`: the map callback's `BufferAsyncError` drops the cause and `Device::poll` panics), #2365 (the crate's budget-capped timeout text at `device.rs:269`/`:319`/`:381` matches `gpu driver` at L70, so a budget expiry drives needless re-initialisations), #2364 (`NEAT_AI_DISCOVERY_GPU_RETRY_LIMIT` parsing is silent); validation-error mis-classification, forged matches and the `MapRangeError` regression refuted |
 | `src/analysis/gpu/queue/staleness.rs` | 266 | pending — #2115 |
 | `src/analysis/gpu/heartbeat.rs` | 274 | pending — #2115 |
 | `src/analysis/gpu/inflight.rs` | 166 | pending — #2115 |
@@ -1123,7 +1123,262 @@ Every `unwrap`/`expect`/`.lock()`/`Mutex` in the three files, and in the two que
 
 <!-- section: queue-lifecycle -->
 
-Pending — #2115 (#2245, #2246).
+This slice (Issue #2245, first of #2115) sweeps `queue/recovery.rs` — the
+`is_device_lost_error` and `is_memory_exhaustion_error` substring classifiers —
+against the wgpu 30.0.1 / naga 30.0.1 error text pinned by `Cargo.lock`, and the
+`run_work_loop` retry loop they feed. Crate lines are at the baseline
+`a7c3f65`; `recovery.rs`, `execution.rs`, `src/config/user_facing.rs` and
+`src/config/helpers.rs` are unchanged at HEAD. wgpu lines are in the crates.io
+sources (`wgpu-30.0.1/`, `wgpu-core-30.0.1/`, `wgpu-types-30.0.1/`,
+`wgpu-hal-30.0.1/`, `naga-30.0.1/`). The table is pinned by
+`tests/issue_2245_gpu_device_lost_classification.rs`. `staleness.rs`,
+`heartbeat.rs`, `inflight.rs` and `stale_skip_tests.rs` are pending — #2246.
+
+#### `src/analysis/gpu/queue/recovery.rs` — substring table (Issue #2245)
+
+`is_device_lost_error` (`recovery.rs:56`–`:72`) lower-cases
+`format!("{error:#}")` (`:57`) and matches 12 substrings (`:60`–`:71`).
+`is_memory_exhaustion_error` (`:79`–`:82`) matches two; the retry loop uses it
+to halve the batch size (Issue #1083). Verdicts:
+
+- `device-lost` — the producer's text means device loss or a recoverable
+  resource exhaustion;
+- `over-broad` — a producer matches whose meaning is not device loss;
+- `no known producer` — no wgpu 30 / naga 30 type, and no crate string that
+  reaches the classifier, contains it.
+
+"Reaches the classifier" means the text can arrive as an evaluator `Err` in
+`execute_request` (`execution.rs:98`–`:102` and the four sibling arms, #2243).
+wgpu 30 sends most of its errors elsewhere:
+
+- device-lost-typed errors from `Queue::submit` and every `create_*` are
+  dropped (`wgpu-30.0.1/src/backend/wgpu_core.rs:304`, "will be surfaced via
+  callback");
+- validation, internal and out-of-memory errors go to the error sink; with no
+  error scope and no custom handler, `default_error_handler` panics
+  (`wgpu_core.rs:657`–`:694`);
+- a device error from `Device::poll` panics through `handle_error_fatal`
+  (`wgpu_core.rs:1924`, `:349`);
+- every map-callback error, device loss included, becomes the cause-free
+  `BufferAsyncError` (`wgpu_core.rs:2241`).
+
+```mermaid
+flowchart LR
+    L["device lost or OOM<br/>in wgpu-core"] --> P["Device::poll<br/>handle_error_fatal"]
+    L --> S["submit / create_*<br/>ErrorType::DeviceLost"]
+    L --> M["map_async callback"]
+    L --> O["OOM on create_buffer"]
+    P --> X["panic on the GPU thread (#2361)"]
+    O --> H["default_error_handler"] --> X
+    S --> D["dropped silently"]
+    M --> B["BufferAsyncError<br/>no cause"]
+    B --> C["is_device_lost_error: false"]
+    C --> E["Err sent to caller<br/>no re-init (#2363)"]
+```
+
+| # | Substring | wgpu 30 / naga 30 producer(s) | Crate-internal producer(s) | Reaches the classifier as `Err`? | Verdict |
+| --- | --- | --- | --- | --- | --- |
+| 1 | `device is lost` | `wgpu_core::device::DeviceError::Lost` — "Parent device is lost" (`wgpu-core-30.0.1/src/device/mod.rs:345`). `wgpu_hal::DeviceError::Lost` — "Device is lost" (`wgpu-hal-30.0.1/src/lib.rs:384`) is converted to the core type by `DeviceError::from_hal` (`device/mod.rs:363`–`:369`) before it is displayed | none | No — poll panics (`wgpu_core.rs:1924`), a map yields `BufferAsyncError` (`wgpu_core.rs:2241`), submit and create drop it (`wgpu_core.rs:304`), and `get_mapped_range` never checks device validity (`wgpu-core-30.0.1/src/resource.rs:831`). Finding #2363 | `device-lost` |
+| 2 | `device lost` | none as an error — only `panic!` payloads in wgpu-hal (`wgpu-hal-30.0.1/src/auxil/dxgi/result.rs:17`, `vulkan/mod.rs:1686`) | `execution.rs:516` "GPU device lost and recovery failed after …" — sent to the caller, never re-classified | No | `no known producer` |
+| 3 | `device was lost` | none | none | No | `no known producer` |
+| 4 | `gpu device poll error` | wraps `wgpu::PollError` (`wgpu-types-30.0.1/src/lib.rs:243`–`:265`): `Timeout` "The requested Wait timed out before the submission was completed." and `WrongSubmissionIndex` — neither means device loss | `device.rs:266` `"GPU device poll error ({label}): {e}"` | No — `poll_device_until_idle` uses `PollType::Poll` (`device.rs:258`), for which `Device::maintain` returns neither variant (`wgpu-core-30.0.1/src/device/resource.rs:836`–`:864`), and a device error has no `to_poll_error` (`wgpu-core-30.0.1/src/device/life.rs:147`–`:156`), so it panics (`wgpu_core.rs:1924`) | `over-broad` |
+| 5 | `internal error` | `CreateComputePipelineError::Internal` "Internal error: {0}" (`wgpu-core-30.0.1/src/pipeline.rs:279`); `CreateRenderPipelineError::Internal` "Internal error in {stage:?} shader: {error}" (`pipeline.rs:818`); the pass `set_immediates` messages (`command/pass.rs:268`, `:280`); naga's GLSL front end "Internal error: {0}" (`naga-30.0.1/src/front/glsl/error.rs:134`, feature `glsl-in` not enabled) | none | No — pipeline and pass errors are validation- or internal-typed and panic in the default handler (`wgpu_core.rs:692`–`:694`) | `over-broad` |
+| 6 | `out of memory` | `wgpu::Error::OutOfMemory` — "Out of Memory" (`wgpu-30.0.1/src/api/device.rs:941`). `wgpu_hal::DeviceError::OutOfMemory` — "Out of memory" (`wgpu-hal-30.0.1/src/lib.rs:382`) is converted to the core "Not enough memory left." (`device/mod.rs:347`), which does **not** match | none | No — `Error::OutOfMemory` is delivered only to an error scope or the uncaptured handler, which panics (`wgpu_core.rs:692`–`:694`). Finding #2363 | `device-lost` |
+| 7 | `allocation failed` | none (wgpu 30.0.1, wgpu-hal 30.0.1, naga 30.0.1, gpu-allocator 0.28.0) | none | No | `no known producer` |
+| 8 | `command buffer` | `EncoderStateError::Submitted` — "This command buffer has already been submitted." (`wgpu-core-30.0.1/src/command/mod.rs:1621`), validation-typed. Metal's "refusing to create new command buffer …" is a `log::warn!`, not an error (`wgpu-hal-30.0.1/src/metal/command.rs:493`–`:499`) | the poll labels `"post-harmful-batch command buffer release"` (`harmful_evaluation.rs:447`) and `"post-helpful-batch command buffer release"` (`helpful_evaluation.rs:507`), interpolated into `device.rs:266` and `:270` | Yes, through the label — a post-batch poll timeout matches here as well as on row 11 | `over-broad` |
+| 9 | `too many command buffers` | none — Metal's command-buffer limit returns `DeviceError::Lost` (`metal/command.rs:491`–`:500`), so it reaches the crate as row 1 | none | No | `no known producer` |
+| 10 | `device creation failed` | none in wgpu — `RequestDeviceError` displays its inner core error (`wgpu-30.0.1/src/api/device.rs:824`–`:835`) | `analyzer.rs:403` "GPU device creation failed: {e}. …" (init `Err`) and `analyzer.rs:301` (a probe reason string) | No — init errors go to `factory.create` (`execution.rs:466`, logged at `:497`–`:503`) or `scheduling.rs:84`, never to `execute_request` | `no known producer` |
+| 11 | `gpu driver` | none | `device.rs:269`–`:272` (poll timeout), `:319`–`:322` (map timeout), `:381`–`:384` (batch map timeout): "… The GPU driver may be unresponsive." | Yes | `over-broad` — the map waits and post-batch polls are bounded by the request budget (`relu_evaluation.rs:190`, `helpful_evaluation.rs:455`, `:506`, `harmful_evaluation.rs:383`, `:446`), so a budget expiry is routed to re-initialisation. Finding #2365 |
+| 12 | `driver may be unresponsive` | none | the three sites in row 11 | Yes | `over-broad` — as row 11. Finding #2365 |
+| M1 | `out of memory` (`is_memory_exhaustion_error`, `recovery.rs:81`) | as row 6 | none — `execution.rs:408`–`:413` "GPU memory exhaustion …" is sent to the caller and does not contain it | No — the #1083 halving (`execution.rs:397`–`:416`) never runs on a real wgpu 30 error. Finding #2363 | `device-lost` |
+| M2 | `allocation failed` (`is_memory_exhaustion_error`, `recovery.rs:81`) | none | none | No | `no known producer` |
+
+The crate's FFI error classifier (`src/ffi_types/error_classification.rs:224`–`:233`,
+`:255`–`:257`) repeats most of these substrings. It classifies host-facing
+responses, not the retry loop, so it is outside this slice.
+
+#### wgpu 29 → 30 regression check — `MapRangeError`, `BufferAsyncError`, `PollError` (Issue #2245)
+
+wgpu 30 made `Buffer::get_mapped_range()` return
+`Result<BufferView, MapRangeError>`. The five sites wrap it in
+`.context("… get_mapped_range failed")`: `helpful_evaluation.rs:464`,
+`harmful_evaluation.rs:406`, `bias_evaluation.rs:204` (deleted since by #2316),
+`activation_evaluation.rs:307` and `:683`. Those are the `.context` lines at the
+baseline; each `get_mapped_range()` call is one line earlier.
+
+`MapRangeError` is a struct around a crate-private `String`
+(`wgpu-30.0.1/src/api/buffer.rs:895`), displayed as `"Buffer view error: {0}"`
+(`:897`–`:901`). It has no public constructor. Its producers:
+
+| Producer | Text after the `Buffer view error:` prefix | Means device loss? | Matches the table? |
+| --- | --- | --- | --- |
+| client `validate_and_add` (`buffer.rs:815`–`:817`) | "tried to call get_mapped_range(_mut) on an unmapped buffer" | No | No |
+| client `validate_and_add` (`buffer.rs:821`–`:827`) | "tried to call get_mapped_range(_mut) on a range that is not entirely mapped. Attempted to get range …, but the mapped range is …" | No | No |
+| client `validate_and_add` (`buffer.rs:836`–`:842`) | "tried to call get_mapped_range(_mut) on a range that has already been mapped and would break Rust memory aliasing rules. …" | No | No |
+| core, through `format_error` (`wgpu_core.rs:2275`; prefix "Validation Error\n\nCaused by:\n", `:352`–`:376`), wrapping the `BufferAccessError` from `buffer_get_mapped_range` (`wgpu-core-30.0.1/src/device/global.rs:2027`–`:2039`, `resource.rs:831`): `InvalidResource` "{0} is invalid" (`resource.rs:452`), `UnalignedOffset` (`:339`), `UnalignedRangeSize` (`:341`), `OutOfBoundsStartOffsetUnderrun` / `…Overrun` / `OutOfBoundsEndOffsetOverrun` (`:343`–`:362`), `MapStartOffsetOverrun` (`:367`), `MapEndOffsetOverrun` (`:372`), `NotMapped` "Buffer is not mapped" (`:333`) | as listed | No — this path never checks device validity, so `BufferAccessError::Device` cannot come from it | No |
+
+**Verdict: no regression.** No `MapRangeError` producer means device loss, and
+none matches the table, which is correct. A lost device fails the earlier
+`map_async` instead, so the evaluator returns before `get_mapped_range`.
+
+The async-map and poll errors the evaluators propagate:
+
+- `wgpu::BufferAsyncError` (`wgpu-30.0.1/src/api/buffer.rs:878`–`:885`) is a
+  unit struct with the single text "Error occurred when trying to async map a
+  buffer". Every map-callback error collapses into it (`wgpu_core.rs:2241`),
+  including device loss: `try_map_async` fails `device.check_is_valid()`
+  (`wgpu-core-30.0.1/src/resource.rs:752`) and fires the callback at once
+  (`:667`). The crate wraps it at `device.rs:300` / `:372` and
+  `.context("… buffer mapping failed")` (`helpful_evaluation.rs:456`,
+  `harmful_evaluation.rs:384`, `relu_evaluation.rs:191`,
+  `activation_evaluation.rs:303`, `:675`). **Means device loss: yes, once the
+  device is lost. Matches: no.** A device lost outside a map wait — for example
+  Metal's command-buffer refusal (`metal/command.rs:491`–`:500`), which
+  `Device::handle_hal_error` turns into a permanent `lose`
+  (`wgpu-core-30.0.1/src/device/resource.rs:701`–`:710`) — is never
+  re-initialised, and every later request fails the same way. **Finding #2363.**
+- `wgpu::PollError` is row 4. Device errors never become a `PollError`;
+  `Device::poll` panics on them instead (`wgpu_core.rs:1924`), which is the
+  GPU-thread panic path of #2361.
+
+wgpu 29 is not in the lockfile, so whether it carried the cause through either
+path was not checked. The finding stands on wgpu 30 alone.
+
+#### Validation-error mis-classification (Issue #2245)
+
+**The retry loop** (`execution.rs:383`–`:521`). When `execute_request` returns
+a matched `Err`:
+
+- `is_memory_exhaustion_error` (`:384`) decides the batch halving. Only a
+  memory match halves `batch_size` (`:397`–`:416`); a halved size below
+  `MINIMUM_GPU_BATCH_SIZE` (64) sends the error and stops (`:399`–`:414`).
+- `for attempt in 1..=retry_limit` (`:431`). Each attempt checks
+  `has_live_receiver` (`:436`–`:445`), then sleeps
+  `backoff_delay_ms(attempt, 10, 1_000)` (`:447`–`:461`): 10, 20 and 40 ms for
+  the default 3 (70 ms in total), 4,270 ms in total at the maximum of 10. It then
+  re-initialises the device with `factory.create` (`:466`), which is a full
+  `GpuAnalyzer::new` (adapter, device, every pipeline and the warm-up poll), and
+  re-runs the request (`:477`).
+- The loop stops at the first attempt whose `execute_request` returns `Ok`
+  (`:478`–`:486`). A retry whose new error does **not** match is sent to the
+  caller inside `execute_request` and returns `Ok`, so it also ends the loop.
+- Exhaustion sends "GPU device lost and recovery failed after {retry_limit}
+  attempts: …" (`:507`–`:520`).
+
+So a non-device-lost error that matches costs **1 to `retry_limit`** device
+re-initialisations (at most 10) and 10 ms to 4.27 s of back-off. The batch is
+halved only if the text also carries `out of memory`, and a working
+`GpuAnalyzer` is replaced each time.
+
+**Can a validation error reach `is_device_lost_error`?** No.
+
+- `src/` has no `push_error_scope`, `pop_error_scope`, `on_uncaptured_error` or
+  `set_device_lost_callback` call. This is #2242's verdict ("Device loss" in the
+  device section).
+- wgpu 30's `handle_error_or_return_handler` (`wgpu_core.rs:657`–`:689`) finds
+  no scope and no custom handler, and calls `default_error_handler`, which
+  panics with "wgpu error: {err}" (`:692`–`:694`). The brief's assumption that
+  the default handler panics holds.
+- The workgroup example: a dispatch over `max_compute_workgroups_per_dimension`
+  records `DispatchError::InvalidGroupSize` — "Each current dispatch group size
+  dimension ({current:?}) must be less or equal to {limit}"
+  (`wgpu-core-30.0.1/src/command/compute.rs:137`–`:140`). It is
+  validation-typed, so it panics the GPU thread through that handler and never
+  becomes an evaluator `Err`. Its text matches none of the 12 patterns either
+  (pinned in the test). #2237 found that the binding limit trips before the
+  dispatch limit; that panic is #2314.
+- The panic unwinds the GPU thread; the stranded-queue consequence is #2361
+  (#2244).
+
+**Verdict: unreachable — validation errors take the uncaptured-error path.**
+`execution.rs:98`–`:102` (and its four sibling arms) is the only way into the
+classifier, and the panic bypasses it. Rows 5 and 8 are over-broad in text
+only, for wgpu's own errors.
+
+The reachable over-broad matches are the crate's own timeout messages
+(rows 8, 11 and 12), which #2243 cross-referenced. A budget expiry during a map
+wait or post-batch poll produces "… The GPU driver may be unresponsive." and is
+routed to re-initialisation. Helpful and harmful stop after one needless
+re-initialisation, because their retry fails `budget.check`
+(`helpful_evaluation.rs:315`, `harmful_evaluation.rs:160`), which does not
+match. ReLU and activation have no `budget.check`: their retry waits
+`budget.remaining_secs()` = 0 s, times out at once with the same matching
+text, and repeats up to `retry_limit` times. The loop re-checks only
+`has_live_receiver` (`:436`), not budget expiry (`staleness.rs:111`–`:119`).
+The budget deadline is only 5 s before the caller's timeout
+(`budget.rs:61`–`:66`, `device.rs:44`), so a slow recovery can let the caller's
+batch timeout trip the breaker (`submission.rs:47`). **Finding #2365** (CWE-754,
+low).
+
+#### Forged-match verdict (Issue #2245)
+
+Every `anyhow!` / `bail!` / `.context` / `format!`-built error in
+`src/analysis/gpu/**` (production code, baseline) that interpolates a runtime
+value:
+
+| Site | Interpolated value(s) | Source | Caller-controlled text? |
+| --- | --- | --- | --- |
+| `budget.rs:113`–`:116` | `{label}` | literal stage labels (`helpful_evaluation.rs:315`, `harmful_evaluation.rs:160`) | No |
+| `device.rs:266` | `{label}`, `{e}` | literal poll labels (`analyzer.rs:434`, `harmful_evaluation.rs:447`, `helpful_evaluation.rs:507`); `wgpu::PollError` | No — the two post-batch labels contain `command buffer` (row 8), a crate literal |
+| `device.rs:269`–`:272` | `{:.1}` timeout, `{label}` | `Duration`; the literal labels above | No |
+| `device.rs:300` | `{err}` | `wgpu::BufferAsyncError` (fixed text) | No |
+| `device.rs:319`–`:322` | `{:.1}` timeout | `Duration` | No |
+| `device.rs:362` | `{i}` | receiver index | No |
+| `device.rs:372` | `{i}`, `{err}` | index; `BufferAsyncError` | No |
+| `device.rs:381`–`:384` | `{:.1}` timeout | `Duration` | No |
+| `analyzer.rs:402`–`:405` | `{e}` | `wgpu::RequestDeviceError` (wgpu-core text) | No — init path, never classified |
+| `analyzer.rs:301` | `{e}` | same; a `no_gpu_result` reason, not an `Err` | No |
+| `execution.rs:101`, `:136`, `:168`, `:208`, `:242` | `{e:#}` | the evaluator error, re-wrapped | No |
+| `execution.rs:408`–`:413` | `{effective_batch_size}`, `{device_err}` | a number; an already-matched error | No — sent to the caller, not re-classified |
+| `execution.rs:515`–`:518` | `{retry_limit}`, `{device_err}` | a number; an already-matched error | No — sent to the caller |
+| `execution.rs:533`, `:541`, `:549`, `:557`, `:565` | `{error_msg}` | the two strings above | No |
+| `scheduling.rs:84` | `.context` over `e` | the `GpuAnalyzer::new` error | No — init path |
+| `scheduling.rs:92`–`:94` | `{GPU_INIT_TIMEOUT_SECS}` | a constant | No |
+| `submission.rs:30`–`:33`, `:48`, `:63`–`:68` | `{timeout_secs}`, `{operation}`, idle and window seconds | numbers; literal operation names (e.g. `submission.rs:427`, `:489`) | No — caller side, never classified |
+| `breaker.rs:232` | `{reason}` | `GpuTripReason` | No — caller side |
+
+The evaluators' `.context(...)` strings and the non-interpolating `anyhow!`
+sites (`device.rs:302`, `scheduling.rs:97`, `submission.rs:143`–`:146`,
+`:230`, `analyzer.rs:356`–`:359`, `:374`–`:377`) are fixed text. A
+`GpuWorkRequest` carries numeric samples, a threshold or activation id, a
+`GpuTimeBudget`, a response channel and a liveness guard — no string
+(`queue/mod.rs:130`–`:170`). `sample_limits.rs`, added after the baseline,
+interpolates only counts and byte sizes (`bail!` at HEAD L34, L42, L50 and
+L60).
+
+**Verdict: refuted.** The classifier is text-only, so
+`anyhow!("user label: internal error")` does match (pinned in the test), but no
+error that reaches it can carry caller-controlled text.
+
+#### Retry-limit parsing (Issue #2245)
+
+`crate::config::gpu_retry_limit()` (`src/config/user_facing.rs:47`–`:54`) calls
+`parse_env::<u32>` (`src/config/helpers.rs:36`–`:38`: `trim()`, then
+`.parse().ok()`), keeps the value only if `n <= 10` (`user_facing.rs:51`),
+falls back to `DEFAULT_GPU_RETRY_LIMIT` = 3 (`:52`; `recovery.rs:10`), and
+caches it in a `OnceLock` (`user_facing.rs:48`). The loop reads it once per
+queue (`execution.rs:311`).
+
+| `NEAT_AI_DISCOVERY_GPU_RETRY_LIMIT` | Result | Log output |
+| --- | --- | --- |
+| `""` | 3 — `"".parse::<u32>()` fails (`helpers.rs:37`), so `unwrap_or` applies (`user_facing.rs:52`) | none |
+| `"abc"` | 3 — the parse fails (`helpers.rs:37`) | none |
+| `"0"` | 0 — passes `n <= 10` (`user_facing.rs:51`) | none at read time. `for attempt in 1..=0` never runs (`execution.rs:431`), so the first device loss logs "GPU recovery exhausted all 0 attempts" at `warn` (`:508`–`:512`) and sends the error (`:513`–`:519`) |
+| `"999999"` | 3 — fails `n <= 10` (`user_facing.rs:51`) | none |
+
+The loop is bounded at 10 attempts either way (CWE-400 refuted below). The
+silent fallback and the silent `0` are one site of the "silent guard opt-outs"
+class that #2213 planned and #2276 is to file. No class issue existed when this
+slice ran, so the site is filed on its own as **#2364** (CWE-778, low) and
+cross-referenced on #2276. The chunk-13 ledger records the `0–10` range
+under #2122.
+
+**Outcome (#2245): three findings — #2363, #2364 and #2365.** wgpu 30 never
+delivers a device loss or memory exhaustion to the classifiers as a matching
+`Err` (#2363). The crate's own budget-capped timeout text is mis-classified as
+device loss (#2365). The retry-limit override is parsed silently (#2364).
+Validation-error mis-classification, forged matches, the `MapRangeError`
+regression and an unbounded retry limit are refuted.
 
 ## Ledger
 
@@ -1145,6 +1400,9 @@ Each slice appends rows only inside its own marked region.
 | SEC-1124ca631044 | `src/analysis/gpu/queue/submission.rs:216` (also `:281`, `:340`, `:405`, `:465`, `:540`; await restart `:102`) | CWE-400 | low | open — #2339 |
 | SEC-f0d19ede542c | `src/analysis/gpu/queue/scheduling.rs:62` (also `:72`–`:73`, `:166`; stranded wait `submission.rs:115`–`:120`) | CWE-755 | low | open — #2361 |
 <!-- section: queue-lifecycle -->
+| SEC-19ddcad53b91 | `src/analysis/gpu/queue/recovery.rs:60` (also `recovery.rs:81`; opaque map error `device.rs:300`, `:372`; wgpu `wgpu_core.rs:2241`, `:1924`, `:694`) | CWE-754 | low | open — #2363 |
+| SEC-6f84944cf02b | `src/analysis/gpu/queue/recovery.rs:70` (also `recovery.rs:71`; timeout text `device.rs:269`, `:319`, `:381`; retry re-check `execution.rs:436`) | CWE-754 | low | open — #2365 |
+| SEC-c01db5943e3c | `src/config/user_facing.rs:51` (also `user_facing.rs:52`, `helpers.rs:37`; `execution.rs:431`) | CWE-778 | low | open — #2364 |
 
 ## Refuted / not findings
 
@@ -1222,6 +1480,12 @@ Each slice appends rows only inside its own marked region.
 | A poisoned `Mutex` or closed channel panics the GPU thread | `src/analysis/gpu/queue/mod.rs:58`–`:59` | The only `Mutex` is `fake_evaluator.rs`'s, which compiles only under `#[cfg(test)]`. crossbeam channels do not poison, and every channel operation in the three files handles its `Err` (Issue #2244) |
 | `GpuAnalyzerFactory::create` swallows a re-initialisation failure | `src/analysis/gpu/queue/executor.rs:131`–`:136` | It returns the `GpuAnalyzer` constructor's `Result` unchanged. The loop routes a failed re-init per #2243's `run_work_loop` verdict (Issue #2244) |
 <!-- section: queue-lifecycle -->
+| A wgpu validation error (for example a dispatch over `max_compute_workgroups_per_dimension`) is mis-classified as device loss and drives a re-initialisation loop | `wgpu-30.0.1/src/backend/wgpu_core.rs:692`–`:694`; `src/analysis/gpu/queue/execution.rs:98`–`:102` | No error scope and no uncaptured-error handler in `src/`, so wgpu's default handler panics; the classifier is reached only from an evaluator `Err`. Verdict: unreachable — validation errors take the uncaptured-error path (the panic is #2314 / #2361) |
+| Caller-controlled text forges a device-lost match (for example `"user label: internal error"`) | `src/analysis/gpu/device.rs:266`, `:269`–`:272`; `src/analysis/gpu/budget.rs:113`–`:116` | Every interpolating error site in `src/analysis/gpu/**` interpolates a wgpu error, a number or a crate-literal label, and no `GpuWorkRequest` carries a string (`src/analysis/gpu/queue/mod.rs:130`–`:170`). The classifier would match such text (pinned), but nothing can supply it |
+| `MapRangeError` from the wgpu 29 → 30 `get_mapped_range()` change hides a device loss from recovery | `wgpu-core-30.0.1/src/resource.rs:831`; `wgpu-30.0.1/src/api/buffer.rs:815`–`:842` | No `MapRangeError` producer means device loss, and a lost device fails the earlier `map_async` first. The map-callback gap is #2363 |
+| A large or malformed `NEAT_AI_DISCOVERY_GPU_RETRY_LIMIT` drives unbounded re-initialisation (CWE-400) | `src/config/user_facing.rs:51`; `src/analysis/gpu/queue/execution.rs:431` | `n <= 10` bounds the loop at 10 attempts and 4,270 ms of back-off; out-of-range input falls back to 3. The silence is #2364 |
+| `backoff_delay_ms` overflows or panics for a large attempt number | `src/analysis/gpu/queue/recovery.rs:38`–`:42` | `saturating_sub`, `checked_shl(..).unwrap_or(u64::MAX)`, `saturating_mul`, then `min(max_ms)`; pinned by `test_backoff_delay_large_attempt_does_not_overflow` (`:198`–`:202`) |
+| The over-broad `internal error` / `command buffer` patterns re-initialise a healthy device on a wgpu pipeline or validation error | `wgpu-30.0.1/src/backend/wgpu_core.rs:692`–`:694`; `src/analysis/gpu/helpful_evaluation.rs:507` | Those wgpu errors panic in the default handler and never reach the classifier. The only reachable `command buffer` match is the crate's own post-batch poll label on a timeout, which `gpu driver` already matches (#2365) |
 
 ## Outcome
 
@@ -1238,6 +1502,8 @@ the CPU-fallback cross-check (#2240: one finding, #2318) and the entry-point
 The queue-core slice has swept `submission.rs` and `execution.rs` (#2243: one
 finding, #2339) and `scheduling.rs`, `executor.rs` and `mod.rs` with the
 test-only `fake_evaluator.rs` and `wedge_tests.rs` (#2244: one finding, #2361).
+The queue-lifecycle slice has swept `recovery.rs` and the retry loop it feeds
+(#2245: three findings, #2363, #2364 and #2365).
 Every other file is pending its slice. Each slice records its
 outcome in its region under `## Audit sections`.
 
@@ -1279,6 +1545,21 @@ The sweep is in progress; each slice lists the issues it files here.
   queued request in the bounded work channel until the stall window or batch
   timeout, which then reports a wedge, and `Drop` discards the panic payload
   (queue-core slice, #2244).
+- #2363 — `SEC-19ddcad53b91` (CWE-754, low): wgpu 30 reports a lost device to
+  the evaluators only as the cause-free `BufferAsyncError` or a `Device::poll`
+  panic, and GPU OOM only as an uncaptured-error panic, so
+  `is_device_lost_error` and `is_memory_exhaustion_error` never match and the
+  #647 recovery and #1083 batch halving never run (queue-lifecycle slice,
+  #2245).
+- #2364 — `SEC-c01db5943e3c` (CWE-778, low):
+  `NEAT_AI_DISCOVERY_GPU_RETRY_LIMIT` silently falls back to 3 on empty,
+  invalid or out-of-range input, and `0` silently disables device-lost
+  recovery (queue-lifecycle slice, #2245; one site of the #2276 class).
+- #2365 — `SEC-6f84944cf02b` (CWE-754, low): a budget-capped map-wait or poll
+  timeout ("… The GPU driver may be unresponsive.") is classified as device
+  loss, driving up to `retry_limit` needless device re-initialisations for
+  ReLU and activation requests and possibly a caller-side breaker trip
+  (queue-lifecycle slice, #2245).
 
 ## Verify this record
 
