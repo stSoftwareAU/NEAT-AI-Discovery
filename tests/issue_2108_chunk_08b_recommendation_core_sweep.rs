@@ -231,17 +231,18 @@ fn every_float_comparator_in_the_swept_files_has_a_table_row() {
 
     // Issue #1799: an assertion that holds either way is not coverage. The loop
     // below passes vacuously for a file with no comparator, so pin the
-    // precondition first — `fan_in.rs` holds the two non-total comparators this
-    // sweep is about, and if the detector stops matching there, every citation
-    // check below is vacuous.
+    // precondition first — `fan_in.rs` holds the two descending `total_cmp`
+    // sorts that replaced the non-total `partial_cmp(…).unwrap_or(Equal)`
+    // comparators #2181 was filed against, and if the detector stops matching
+    // there, every citation check below is vacuous.
     let ranking_file = "src/analysis/recommendation/fan_in.rs";
     assert!(
         production_source(ranking_file)
             .lines()
             .any(is_comparator_site),
-        "{ranking_file} holds the two `partial_cmp(…).unwrap_or(Equal)` sorts the sweep filed \
-         #2181 against — if no comparator is detected there, the detector stopped matching and \
-         every citation check below is vacuous"
+        "{ranking_file} holds the two descending `total_cmp` sorts that fixed #2181 — if no \
+         comparator is detected there, the detector stopped matching and every citation check \
+         below is vacuous"
     );
 
     for file in RECOMMENDATION_CORE_FILES {
@@ -478,15 +479,6 @@ fn a_finite_record_set_no_longer_drives_the_fan_in_correlation_to_nan() {
         corr, 0.0,
         "the overflowed f32 covariance accumulator must now be laundered to 0.0, not a NaN, got \
          {corr}"
-    );
-
-    // The filter `detect_fan_in_candidates` applies to this value, spelled the
-    // way the production code spells it. `0.0` loses the threshold test
-    // cleanly — no comparator sees a NaN.
-    const INPUT_ERROR_CORRELATION_THRESHOLD: f32 = 0.3;
-    assert!(
-        corr.abs() < INPUT_ERROR_CORRELATION_THRESHOLD,
-        "the threshold filter must drop the laundered 0.0 correlation, a fail-closed outcome"
     );
 }
 
