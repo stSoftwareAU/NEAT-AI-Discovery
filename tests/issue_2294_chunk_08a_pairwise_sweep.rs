@@ -1,12 +1,12 @@
 //! Contract tests for the `pairwise` section of the staged chunk 8a sweep
-//! record (Issue #2294, part of #2150).
+//! record (Issues #2294 and #2295, part of #2150).
 //!
-//! `SWEPT` holds the five files Issue #2294 swept out of the nine the
-//! `pairwise` section owns. `#2150`'s second sub-issue extends coverage to
-//! the remaining four (`opposing_synapse.rs`, `output_conflict.rs`,
-//! `hard_sample_cluster.rs`, `sentinel_cluster.rs`) together with the
-//! `TRAVERSAL` rows those files add. Finalisation (#2154) `git mv`s the
-//! record to the top level and moves `RECORD` there in the same commit.
+//! `SWEPT` holds all nine files the `pairwise` section owns: the five
+//! Issue #2294 swept, plus the four Issue #2295 swept
+//! (`opposing_synapse.rs`, `output_conflict.rs`, `hard_sample_cluster.rs`,
+//! `sentinel_cluster.rs`) together with the `TRAVERSAL` rows those files
+//! add. Finalisation (#2154) `git mv`s the record to the top level and
+//! moves `RECORD` there in the same commit.
 
 use std::path::PathBuf;
 
@@ -14,14 +14,18 @@ use std::path::PathBuf;
 /// `docs/audits/security-sweep-chunk-08a-detection-neuron.md`.
 const RECORD: &str = "docs/audits/in-progress/security-sweep-chunk-08a-detection-neuron.md";
 
-/// The five files Issue #2294 swept, in record order. A slice (not a fixed
-/// array) so `#2150`'s second sub-issue can grow it to nine.
+/// The nine files the `pairwise` section owns, in record order: the five
+/// Issue #2294 swept, then the four Issue #2295 swept.
 const SWEPT: &[&str] = &[
     "src/analysis/detection/correlated_error.rs",
     "src/analysis/detection/weight_coherence.rs",
     "src/analysis/detection/co_adaptation.rs",
     "src/analysis/detection/symmetry_breaking.rs",
     "src/analysis/detection/fanin_polarity_conflict.rs",
+    "src/analysis/detection/opposing_synapse.rs",
+    "src/analysis/detection/output_conflict.rs",
+    "src/analysis/detection/hard_sample_cluster.rs",
+    "src/analysis/detection/sentinel_cluster.rs",
 ];
 
 /// One entry per traversal / pairwise-loop row this sweep added to
@@ -87,6 +91,56 @@ const TRAVERSAL: &[(&str, &str, &str)] = &[
         "src/analysis/detection/fanin_polarity_conflict.rs",
         "fanin_polarity_conflicts_to_coordinated_candidates",
         "`creature.neurons.iter().find` per candidate",
+    ),
+    (
+        "src/analysis/detection/opposing_synapse.rs",
+        "detect_opposing_synapses",
+        "synapses × `source_records`",
+    ),
+    (
+        "src/analysis/detection/output_conflict.rs",
+        "output_conflicts_to_coordinated_candidates",
+        "`existing_synapses` filter per conflict",
+    ),
+    (
+        "src/analysis/detection/output_conflict.rs",
+        "output_conflicts_to_coordinated_candidates",
+        "`existing_synapses.iter().find` per harmed output",
+    ),
+    (
+        "src/analysis/detection/output_conflict.rs",
+        "split_neuron_uuid",
+        "FNV-1a over the key bytes",
+    ),
+    (
+        "src/analysis/detection/hard_sample_cluster.rs",
+        "aggregate_obs_errors",
+        "outputs × records pass",
+    ),
+    (
+        "src/analysis/detection/hard_sample_cluster.rs",
+        "find_dominant_inputs",
+        "inputs × records pass",
+    ),
+    (
+        "src/analysis/detection/hard_sample_cluster.rs",
+        "hard_sample_clusters_to_coordinated_candidates",
+        "clusters × outputs `AddSynapse` fan-out",
+    ),
+    (
+        "src/analysis/detection/hard_sample_cluster.rs",
+        "hard_sample_neuron_uuid",
+        "FNV-1a over the key bytes",
+    ),
+    (
+        "src/analysis/detection/sentinel_cluster.rs",
+        "assess_sentinel_cluster",
+        "`sentinel_indices.contains` per sample",
+    ),
+    (
+        "src/analysis/detection/sentinel_cluster.rs",
+        "compute_error_variance",
+        "two passes over `indices`",
     ),
 ];
 
@@ -270,7 +324,8 @@ fn each_swept_file_has_exactly_one_filled_pairwise_row() {
             .unwrap_or_else(|| panic!("{path}'s row must carry a third (Outcome) cell"));
         assert!(
             !outcome.contains("pending"),
-            "{path} was swept by Issue #2294, so its outcome must not read `pending`: {outcome}"
+            "{path} was swept by Issues #2294 / #2295, so its outcome must not read `pending`: \
+             {outcome}"
         );
         let split = outcome.split_once(" — ");
         assert!(
@@ -339,7 +394,7 @@ fn capacity_row_count_per_file_matches_the_production_capacity_sites() {
 
     assert!(
         total > 0,
-        "precondition: the five swept files must together carry at least one capacity site \
+        "precondition: the nine swept files must together carry at least one capacity site \
          (correlated_error.rs's dense correlation matrix alone is one), otherwise the equality \
          checks above pass vacuously"
     );
@@ -432,6 +487,137 @@ fn every_issue_linked_from_a_swept_row_appears_under_issues_filed() {
             "issue {needle} is referenced from a swept `pairwise` row, so it must also appear \
              under `## Issues filed` — an unlinked finding is invisible to the finalisation \
              sub-issue that reconciles this record"
+        );
+    }
+}
+
+#[test]
+fn pairwise_section_holds_exactly_nine_rows_none_pending() {
+    assert_eq!(
+        SWEPT.len(),
+        9,
+        "SWEPT must list all nine files the `pairwise` section owns, or the checks below are \
+         checking the wrong count"
+    );
+
+    let doc = read(RECORD);
+    let region = pairwise_region(&doc);
+    let rows = table_rows(region);
+
+    assert_eq!(
+        rows.len(),
+        9,
+        "the `pairwise` section must carry exactly nine rows now that both sub-issues have \
+         landed — a missing or extra row means the ledger no longer matches the files the \
+         section owns"
+    );
+
+    for row in &rows {
+        let outcome = row
+            .get(2)
+            .unwrap_or_else(|| panic!("every `pairwise` row must carry a third (Outcome) cell"));
+        assert!(
+            !outcome.contains("pending"),
+            "the `pairwise` section is complete (Issues #2294 and #2295), so no row may still \
+             read `pending`: {outcome}"
+        );
+    }
+
+    let row_paths: std::collections::BTreeSet<String> = rows
+        .iter()
+        .filter_map(|row| row.first())
+        .map(|first| first.trim_matches('`').to_string())
+        .collect();
+    let swept_paths: std::collections::BTreeSet<String> =
+        SWEPT.iter().map(|s| (*s).to_string()).collect();
+    assert_eq!(
+        row_paths, swept_paths,
+        "the set of paths in the `pairwise` section's rows must exactly match SWEPT — a \
+         mismatch means either the ledger carries a file this test does not know about, or \
+         SWEPT claims a file the ledger does not"
+    );
+}
+
+#[test]
+fn files_without_capacity_sites_state_none_explicitly() {
+    let doc = read(RECORD);
+    let region = pairwise_region(&doc);
+    let rows = table_rows(region);
+
+    let mut checked_any = false;
+    for path in SWEPT {
+        let source_sites = production_source(path)
+            .lines()
+            .filter(|line| !line.trim_start().starts_with("//"))
+            .filter(|line| is_capacity_site(line))
+            .count();
+        if source_sites != 0 {
+            continue;
+        }
+        checked_any = true;
+
+        let row = rows
+            .iter()
+            .find(|row| {
+                row.first()
+                    .is_some_and(|first| first.trim_matches('`') == *path)
+            })
+            .unwrap_or_else(|| panic!("{path} must have a row in the `pairwise` section"));
+        let outcome = row
+            .get(2)
+            .unwrap_or_else(|| panic!("{path}'s row must carry a third (Outcome) cell"));
+        assert!(
+            outcome.contains("capacity sites: none"),
+            "{path} has no `with_capacity` / `vec![_; n]` / `.reserve(` site in production code, \
+             but its Outcome cell does not say `capacity sites: none` — a reader cannot tell an \
+             audited absence from an unaudited one: {outcome}"
+        );
+    }
+
+    assert!(
+        checked_any,
+        "precondition: at least one SWEPT file (hard_sample_cluster.rs and sentinel_cluster.rs \
+         have none) must have zero capacity sites, otherwise this test passes vacuously"
+    );
+}
+
+#[test]
+fn synthetic_uuid_helpers_record_a_collision_verdict_cross_linked_to_2153() {
+    let doc = read(RECORD);
+    let capacity_region = section(&doc, "## Capacity and traversal table");
+    let rows = table_rows(capacity_region);
+
+    for (path, name) in [
+        (
+            "src/analysis/detection/hard_sample_cluster.rs",
+            "hard_sample_neuron_uuid",
+        ),
+        (
+            "src/analysis/detection/output_conflict.rs",
+            "split_neuron_uuid",
+        ),
+    ] {
+        assert!(
+            production_source(path).contains(&format!("fn {name}")),
+            "the `pairwise` sweep cites `{name}` in {path}, but no `fn {name}` is declared \
+             there any more — the sweep describes code that has moved or gone"
+        );
+
+        let base = basename(path);
+        let symbol_needle = format!("`{base}::{name}`");
+        let found = rows.iter().any(|row| {
+            let symbol = row.first().map(String::as_str).unwrap_or_default();
+            let bound = row.get(3).map(String::as_str).unwrap_or_default();
+            symbol.contains(&symbol_needle)
+                && bound.contains("Collision verdict")
+                && bound.contains("#2153")
+        });
+        assert!(
+            found,
+            "`## Capacity and traversal table` must carry a row for `{base}::{name}` whose \
+             Bound cell states a `Collision verdict` cross-linked to #2153 — without it a \
+             reader cannot tell whether the synthetic UUID this helper derives was ever checked \
+             against `RecordCache`'s key derivation, which #2153 owns"
         );
     }
 }
