@@ -231,17 +231,18 @@ fn every_float_comparator_in_the_swept_files_has_a_table_row() {
 
     // Issue #1799: an assertion that holds either way is not coverage. The loop
     // below passes vacuously for a file with no comparator, so pin the
-    // precondition first — `fan_in.rs` holds the two non-total comparators this
-    // sweep is about, and if the detector stops matching there, every citation
-    // check below is vacuous.
+    // precondition first — `fan_in.rs` holds the two descending `total_cmp`
+    // sorts that replaced the non-total `partial_cmp(…).unwrap_or(Equal)`
+    // comparators #2181 was filed against, and if the detector stops matching
+    // there, every citation check below is vacuous.
     let ranking_file = "src/analysis/recommendation/fan_in.rs";
     assert!(
         production_source(ranking_file)
             .lines()
             .any(is_comparator_site),
-        "{ranking_file} holds the two `partial_cmp(…).unwrap_or(Equal)` sorts the sweep filed \
-         #2181 against — if no comparator is detected there, the detector stopped matching and \
-         every citation check below is vacuous"
+        "{ranking_file} holds the two descending `total_cmp` sorts that fixed #2181 — if no \
+         comparator is detected there, the detector stopped matching and every citation check \
+         below is vacuous"
     );
 
     for file in RECOMMENDATION_CORE_FILES {
