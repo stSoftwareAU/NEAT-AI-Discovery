@@ -225,6 +225,23 @@ rows added by the section sub-issues.
 | `error_plateau.rs::detect_error_plateaus` (`candidates`) | capacity | `Vec::with_capacity(output_neurons.len())`, the `"output"`-typed entries of `creature.neurons` | no numeric cap — `MAX_CREATURE_OUTPUT_NEURONS` = `1_000_000` (`src/ffi_types/creature_bounds.rs`) caps `creature.output` via `validate_creature_input_bounds`, but nothing ties the `"output"`-typed neuron count to it (as in #2346), so the bound is the deserialised `creature.neurons` `Vec` | no — the per-neuron `find` is its own pairwise-loop row (#2377) |
 | `bias_perturbation.rs::detect_bias_perturbation_candidates` (`neuron_records.iter().find` per hidden neuron) | pairwise loop | a linear scan of the `load_records_for_hidden` slice for every entry of `hidden_neurons` | unbounded — O(H·R) = O(H²) UUID comparisons, finding #2377; not in `EXPENSIVE_MODULES`, so it runs on every pass | no (module-level only) |
 | `error_plateau.rs::detect_error_plateaus` (`neuron_records.iter().find` per output neuron) | pairwise loop | a linear scan of the `"output"` records slice for every `"output"`-typed neuron | unbounded — O(O·R) = O(O²) UUID comparisons, finding #2377 | no (module-level only) |
+| `input_sensitivity.rs::detect_dominant_inputs` (`candidates`) | capacity | `Vec::with_capacity(input_uuids.len())` | no numeric cap — the bound is the deserialised `creature.neurons` `"input"`-typed count, with at most one push per input | no — one pass over inputs |
+| `input_sensitivity.rs::detect_threshold_effects` (`candidates`) | capacity | `Vec::with_capacity(input_uuids.len())` | no numeric cap — the bound is the deserialised `creature.neurons` `"input"`-typed count, with at most one push per input | no — one pass over inputs |
+| `input_sensitivity.rs::dominant_inputs_to_coordinated_candidates` (`results`) | capacity | `Vec::with_capacity(candidates.len())` | bounded — one push per entry of the live `candidates` slice | no — one pass over candidates |
+| `input_sensitivity.rs::threshold_effects_to_coordinated_candidates` (`results`) | capacity | `Vec::with_capacity(candidates.len())` | bounded — one push per entry of the live `candidates` slice | no — one pass over candidates |
+| `monotonicity.rs::detect_non_monotonic_neurons` (`candidates`) | capacity | `Vec::with_capacity(neuron_records.len())` | no numeric cap — the bound is the caller-supplied `neuron_records` `Vec`, with at most one push per hidden neuron record | no — one pass over neuron records |
+| `monotonicity.rs::non_monotonic_neurons_to_coordinated_candidates` (`results`) | capacity | `Vec::with_capacity(candidates.len())` | bounded — one push per entry of the live `candidates` slice | no — one pass over candidates |
+| `noise_signal.rs::detect_noisy_neurons` (`candidates`) | capacity | `Vec::with_capacity(neuron_records.len())` | no numeric cap — the bound is the caller-supplied `neuron_records` `Vec`, with at most one push per neuron record | no — one pass over neuron records |
+| `noise_signal.rs::detect_noisy_synapses` (`candidates`) | capacity | `Vec::with_capacity(creature.synapses.len())` | no numeric cap — the synapse count is uncapped, the bound is the already-deserialised `creature.synapses` `Vec`, with at most one push per synapse | no — one pass over synapses |
+| `noise_signal.rs::noisy_neurons_to_coordinated_candidates` (`results`) | capacity | `Vec::with_capacity(candidates.len())` | bounded — one push per entry of the live `candidates` slice | no — one pass over candidates |
+| `noise_signal.rs::noisy_synapses_to_coordinated_candidates` (`results`) | capacity | `Vec::with_capacity(candidates.len())` | bounded — one push per entry of the live `candidates` slice | no — one pass over candidates |
+| `observation_range.rs::detect_observation_ranges` (`results`) | capacity | `Vec::with_capacity(neuron_records.len())` | no numeric cap — the bound is the caller-supplied `neuron_records` `Vec`, with at most one push per `"input"`-typed neuron record | no — one pass over neuron records |
+| `input_sensitivity.rs::detect_dominant_inputs` (`synapse_map.get(target_uuid)` output rescan per input × target) | pairwise loop | a rescan of `synapse_map`'s per-target synapse list for every non-output target of every input | unbounded — O(S²/4) worst case, finding #2379 | no (module-level only) |
+| `input_sensitivity.rs::detect_threshold_effects` (per-connection `hidden_value_map` / `hidden_activation_map` builds) | traversal | a fresh `HashMap` built from the records slice for every input-to-hidden connection | O(S·R), inherent to matching `obs_index` pairs | no (module-level only) |
+| `monotonicity.rs::non_monotonic_neurons_to_coordinated_candidates` (`creature.neurons.iter().find` + two `creature.synapses` filters per candidate) | pairwise loop | a `find` over `creature.neurons` plus two `filter` passes over `creature.synapses` for every candidate | unbounded — O(C·(N+S)), #2350 sibling site | no (module-level only) |
+| `noise_signal.rs::detect_noisy_synapses` (per-synapse `target_error_map` build) | traversal | a fresh `HashMap` built from the target neuron's records slice for every synapse | O(S·R), inherent to matching `obs_index` pairs | no (module-level only) |
+| `observation_utilisation.rs::observation_utilisation_to_coordinated_candidates` (per-observation `creature.synapses` filter + per-target `creature.synapses` find) | pairwise loop | a `filter` over `creature.synapses` for every observation, then a `find` over `creature.synapses` for every downstream target | unbounded — O(I·S + ΣD·S), finding #2379 | no (module-level only) |
+| `high_error_squash_exploration.rs::evaluate_neuron` (`CANDIDATE_SQUASHES` × `records` MAE simulation) | traversal | the fixed 10-entry `CANDIDATE_SQUASHES` list simulated once per neuron against its `records` slice | O(10·R), linear per neuron | no (module-level only) |
 
 ## Defect classes probed
 
@@ -426,8 +443,41 @@ against baseline `b85a551`; the #2078 site is `CreatureTopologyCache::new` in
   `stats.rs` and `helpers.rs` verdicts are cited, not re-adjudicated, and
   #2152 (`per-neuron-b`) owns the `topology_diversification.rs` consumer of
   `error_dispersion`; neither is a finding filed by this sweep.
-- The first seven `per-neuron-a` rows are swept (Issue #2284); the remaining
-  six stay `pending` for the follow-on sub-issue.
+- `#2379` (`security`, `lang:rust`, `severity:low`, `confidence:high`) —
+  `input_sensitivity.rs::detect_dominant_inputs` rescans `synapse_map`'s
+  per-target synapse list for every non-output target of every input, an
+  uncancellable O(S²/4) worst case, and
+  `observation_utilisation.rs::observation_utilisation_to_coordinated_candidates`
+  filters `creature.synapses` per observation and then `find`s it again per
+  downstream target, O(I·S + ΣD·S). Filed by the `per-neuron-a` sweep
+  (Issue #2285).
+- #2351 — also carries two `per-neuron-a` sibling sites, added by #2285 as a
+  comment (same root cause, not a new issue):
+  `high_error_squash_exploration.rs::evaluate_neuron` (an unfiltered
+  non-finite `target = activation + error` poisons `total_error`, but fails
+  closed since a non-finite `current_mae` never clears the
+  `MIN_MEAN_ERROR_THRESHOLD` gate) and
+  `noise_signal.rs::detect_noisy_synapses` (an unfiltered `NaN` source
+  activation poisons `noise_contribution` via `compute_variance`, and
+  `NaN <= signal_contribution * 2.0` fails open, pushing a candidate with a
+  `NaN` gain).
+- #2350 — also carries the per-candidate `creature.neurons.iter().find` squash
+  lookup plus the two `creature.synapses` filter passes in
+  `monotonicity.rs::non_monotonic_neurons_to_coordinated_candidates`
+  (O(C·(N+S))) as a sibling site, added by #2285 as a comment.
+- #2375 — also carries `observation_utilisation.rs`'s `bias_compensation`
+  (`-effective_centre * current_weight`) as a sibling site (a `±∞` bias under
+  a finite gain), added by #2285 as a comment.
+- #2272 — cross-referenced from the `observation_range.rs` row: it documents
+  the env-configurable `CANDIDATE_SENTINELS` values consumed by
+  `sentinel_cluster.rs::assess_sentinel_cluster`, not a finding filed by this
+  sweep.
+- #2042 — cross-referenced from the `observation_range.rs` row: it owns the
+  shared sentinel-detection rule in
+  `sentinel_cluster.rs::assess_sentinel_cluster`, also used by
+  `sentinel_gating.rs` (Issue #400), not a finding filed by this sweep.
+- All 13 `per-neuron-a` rows are swept — the first seven by Issue #2284, the
+  remaining six by Issue #2285 — so the section is complete.
 
 ## Related remediations (not sweep coverage)
 
