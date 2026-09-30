@@ -1,6 +1,6 @@
-//! Contract tests for the first six rows of the `per-neuron-b` section of the
-//! staged chunk 8a sweep record (part of #2152): the first six rows are swept
-//! by Issue #2298, and the remaining six by Issue #2299.
+//! Contract tests for the whole `per-neuron-b` section of the staged chunk 8a
+//! sweep record (part of #2152): the first six rows are swept by Issue #2298,
+//! and the remaining six by Issue #2299.
 
 use std::path::PathBuf;
 
@@ -8,8 +8,8 @@ use std::path::PathBuf;
 /// `docs/audits/security-sweep-chunk-08a-detection-neuron.md`.
 const RECORD: &str = "docs/audits/in-progress/security-sweep-chunk-08a-detection-neuron.md";
 
-/// The six files the `per-neuron-b` section sweeps under Issue #2298. The
-/// remaining six rows of the section are owned by Issue #2299.
+/// The twelve files the `per-neuron-b` section sweeps: the first six under
+/// Issue #2298, and the remaining six under Issue #2299.
 const SWEPT: &[&str] = &[
     "src/analysis/detection/operating_point.rs",
     "src/analysis/detection/oscillating_neuron.rs",
@@ -17,6 +17,20 @@ const SWEPT: &[&str] = &[
     "src/analysis/detection/output_squash_mismatch.rs",
     "src/analysis/detection/restricted_range.rs",
     "src/analysis/detection/saturation.rs",
+    "src/analysis/detection/sentinel_gating.rs",
+    "src/analysis/detection/squash_weight_rescale.rs",
+    "src/analysis/detection/topology_diversification.rs",
+    "src/analysis/detection/unbounded_capping.rs",
+    "src/analysis/detection/weight_magnitude_reset.rs",
+    "src/analysis/detection/weight_polarity_flip.rs",
+];
+
+/// The traversal cited by `topology_diversification.rs`: `has_unhealthy_intermediates`
+/// walks the graph via `dfs_max_hidden_depth`, so both symbols are pinned here
+/// to catch a rename before the ledger row goes stale.
+const TRAVERSAL: &[&str] = &[
+    "topology_diversification.rs::has_unhealthy_intermediates",
+    "topology_diversification.rs::dfs_max_hidden_depth",
 ];
 
 fn read(rel: &str) -> String {
@@ -277,7 +291,8 @@ fn each_swept_row_is_present_and_not_pending() {
         );
         assert!(
             !outcome.contains("pending"),
-            "{path} was swept by Issue #2298, so its outcome must not read `pending`: {outcome}"
+            "{path} was swept by Issue #2298 or #2299, so its outcome must not read `pending`: \
+             {outcome}"
         );
         assert!(
             outcome.contains(" — "),
@@ -287,14 +302,12 @@ fn each_swept_row_is_present_and_not_pending() {
 
     assert_eq!(
         SWEPT.len(),
-        6,
-        "the per-neuron-b-1 sweep must cover exactly 6 files"
+        12,
+        "the per-neuron-b sweep (Issues #2298 and #2299 together) must cover exactly 12 files"
     );
 
-    // Unlike the per-neuron-a section, the per-neuron-b region legitimately
-    // still holds six `pending` rows owned by Issue #2299, so every row in
-    // the region need not be in SWEPT. Instead, a row that has been flipped
-    // away from `pending` without being listed in SWEPT must fail this test.
+    // Every row that has been flipped away from `pending` must be listed in
+    // SWEPT — a row flipped without being accounted for here must fail.
     for row in &rows {
         let Some(first) = row.first() else { continue };
         let path = first.trim_matches('`');
@@ -308,6 +321,8 @@ fn each_swept_row_is_present_and_not_pending() {
         }
     }
 
+    // With Issue #2299 sweeping the remaining six rows, the whole
+    // `per-neuron-b` section must now be non-pending.
     let non_pending_rows = rows
         .iter()
         .filter(|row| {
@@ -318,8 +333,8 @@ fn each_swept_row_is_present_and_not_pending() {
     assert_eq!(
         non_pending_rows,
         SWEPT.len(),
-        "the `per-neuron-b` section must have exactly {} non-pending rows (Issue #2298), got \
-         {non_pending_rows}",
+        "the `per-neuron-b` section must have exactly {} non-pending rows (Issues #2298 and \
+         #2299 together sweep the whole section), got {non_pending_rows}",
         SWEPT.len()
     );
 }
@@ -364,7 +379,7 @@ fn every_capacity_site_in_a_swept_file_is_cited_by_symbol() {
     assert!(
         !all_sites.is_empty(),
         "precondition: production_capacity_sites must find at least one site across the swept \
-         per-neuron-b-1 files, otherwise this test passes vacuously"
+         per-neuron-b files, otherwise this test passes vacuously"
     );
 
     let doc = read(RECORD);
@@ -398,20 +413,85 @@ fn every_capacity_site_in_a_swept_file_is_cited_by_symbol() {
     assert_eq!(
         capacity_rows_for_swept_files,
         all_sites.len(),
-        "the number of capacity-table rows citing a swept per-neuron-b-1 file must equal the \
+        "the number of capacity-table rows citing a swept per-neuron-b file must equal the \
          number of capacity sites actually found in those files — a stale row for deleted code \
          must fail this too"
     );
     assert_eq!(
-        capacity_rows_for_swept_files, 8,
-        "the per-neuron-b-1 capacity table must hold exactly 8 rows (Issue #2298)"
+        capacity_rows_for_swept_files, 17,
+        "the per-neuron-b capacity table must hold exactly 17 rows (8 from Issue #2298 + 9 from \
+         Issue #2299)"
     );
     assert_eq!(
         all_sites.len(),
-        8,
-        "the per-neuron-b-1 capacity table must hold exactly 8 rows (Issue #2298) — the \
-         production source must also carry exactly 8 capacity sites"
+        17,
+        "the per-neuron-b capacity table must hold exactly 17 rows (8 from Issue #2298 + 9 from \
+         Issue #2299) — the production source must also carry exactly 17 capacity sites"
     );
+}
+
+#[test]
+fn every_traversal_symbol_has_a_bounded_and_cancellation_checked_row() {
+    // Issue #1799: pin the symbol this test actually depends on, so a rename
+    // of `dfs_max_hidden_depth` cannot let the row below go stale unnoticed.
+    let topology_diversification_source =
+        production_source("src/analysis/detection/topology_diversification.rs");
+    assert!(
+        topology_diversification_source.contains("fn dfs_max_hidden_depth"),
+        "precondition: src/analysis/detection/topology_diversification.rs must still declare \
+         `fn dfs_max_hidden_depth`, otherwise this test checks nothing"
+    );
+
+    let doc = read(RECORD);
+
+    for symbol in TRAVERSAL {
+        let (base, name) = symbol
+            .split_once("::")
+            .unwrap_or_else(|| panic!("TRAVERSAL entry `{symbol}` must be `<basename>::<fn>`"));
+        let file = SWEPT
+            .iter()
+            .find(|f| basename(f) == base)
+            .unwrap_or_else(|| panic!("TRAVERSAL entry `{symbol}` names a file not in SWEPT"));
+        assert!(
+            production_source(file).contains(&format!("fn {name}")),
+            "the per-neuron-b sweep cites `{name}` in {file}, but no `fn {name}` is declared \
+             there any more — the sweep describes code that has moved or gone"
+        );
+
+        let rows = capacity_table_rows_for(&doc, base);
+        let matching: Vec<&Vec<String>> = rows
+            .iter()
+            .filter(|row| {
+                row.first()
+                    .is_some_and(|first| first.starts_with(&format!("`{base}::{name}")))
+                    && row.get(1).is_some_and(|kind| kind == "traversal")
+            })
+            .collect();
+        assert_eq!(
+            matching.len(),
+            1,
+            "there must be exactly one `## Capacity and traversal table` row with Kind \
+             `traversal` for `{base}::{name}`, got {}",
+            matching.len()
+        );
+        let row = matching[0];
+
+        let bound = row
+            .get(3)
+            .unwrap_or_else(|| panic!("`{symbol}` traversal row must carry a Bound cell"));
+        assert!(
+            !bound.is_empty(),
+            "`{symbol}` traversal row's Bound cell must not be empty"
+        );
+
+        let cancellation = row.get(4).unwrap_or_else(|| {
+            panic!("`{symbol}` traversal row must carry a Cancellation-checked? cell")
+        });
+        assert!(
+            !cancellation.is_empty(),
+            "`{symbol}` traversal row's Cancellation-checked? cell must not be empty"
+        );
+    }
 }
 
 #[test]
