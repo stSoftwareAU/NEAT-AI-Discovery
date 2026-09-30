@@ -1,22 +1,31 @@
-//! Contract tests for the staged chunk 8a sweep record skeleton (Issue #2280).
+//! Contract tests for the chunk 8a sweep record skeleton (Issue #2280).
 //!
-//! The record is staged under `docs/audits/in-progress/` — invisible to
-//! `record_files()` in `tests/issue_2088_sweep_ledger_contract.rs`, which reads
-//! only the top level of `docs/audits` — while audit sub-issues #2217, #2150,
-//! #2218, #2152 and #2153 fill their sections. These tests deliberately do not
-//! assert `pending`: the sub-issues flip those outcomes. Finalisation (#2154)
-//! `git mv`s the file to the top level in the commit that fills the `"8a"`
-//! index entry, and must delete or retarget
+//! The record was originally staged under `docs/audits/in-progress/` —
+//! invisible to `record_files()` in `tests/issue_2088_sweep_ledger_contract.rs`,
+//! which reads only the top level of `docs/audits` — while audit sub-issues
+//! #2217, #2150, #2218, #2152 and #2153 filled their sections. These tests
+//! deliberately do not assert `pending`: the sub-issues flip those outcomes.
+//! Finalisation (#2302, part of #2154) `git mv`d the file to the top level
+//! in the commit that filled the `"8a"` index entry, and retargeted
 //! `the_record_is_staged_under_in_progress`,
 //! `no_top_level_chunk_08a_record_exists` and
-//! `the_chunk_8a_index_entry_is_still_all_null` in that same commit — all
-//! three assert facts that finalisation flips.
+//! `the_chunk_8a_index_entry_is_still_all_null` in that same commit to
+//! `the_record_is_promoted_to_the_top_level`,
+//! `exactly_one_top_level_chunk_08a_record_exists` and
+//! `the_chunk_8a_index_entry_points_at_the_promoted_record` — all three now
+//! assert the post-finalisation facts instead.
 
+use std::path::Path;
 use std::path::PathBuf;
 
-/// The staged chunk 8a prose record.
-const RECORD: &str = "docs/audits/in-progress/security-sweep-chunk-08a-detection-neuron.md";
-/// Machine-readable sweep index — its `"8a"` entry stays null until finalisation.
+/// The chunk 8a prose record, promoted to the top level by finalisation
+/// (#2302, part of #2154).
+const RECORD: &str = "docs/audits/security-sweep-chunk-08a-detection-neuron.md";
+/// The path the record was originally staged under, before finalisation
+/// (#2302, part of #2154) promoted it to `RECORD`.
+const STAGED: &str = "docs/audits/in-progress/security-sweep-chunk-08a-detection-neuron.md";
+/// Machine-readable sweep index — its `"8a"` entry was filled in by
+/// finalisation (#2302, part of #2154).
 const INDEX: &str = "docs/audits/lib-sweep-coverage.json";
 /// The top-level audits directory `record_files()` scans.
 const AUDITS_DIR: &str = "docs/audits";
@@ -171,30 +180,50 @@ fn row_paths(body: &str) -> Vec<String> {
 }
 
 #[test]
-fn the_record_is_staged_under_in_progress() {
+fn the_record_is_promoted_to_the_top_level() {
     let doc = read(RECORD);
     assert!(
         !doc.is_empty(),
-        "{RECORD} must exist and be non-empty — the staged skeleton is what the audit \
-         sub-issues fill in"
+        "{RECORD} must exist and be non-empty — finalisation (#2302, part of #2154) promoted \
+         the staged skeleton to the top level"
+    );
+    let staged_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(STAGED);
+    assert!(
+        !staged_path.exists(),
+        "{STAGED} must not exist any more — finalisation (#2302, part of #2154) `git mv`d it \
+         to {RECORD}"
     );
 }
 
 #[test]
-fn no_top_level_chunk_08a_record_exists() {
+fn exactly_one_top_level_chunk_08a_record_exists() {
     let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(AUDITS_DIR);
     let entries = std::fs::read_dir(&dir)
         .unwrap_or_else(|e| panic!("{} must be readable: {e}", dir.display()));
+    let mut matches: Vec<String> = Vec::new();
     for entry in entries {
         let entry = entry.unwrap_or_else(|e| panic!("failed to read a {AUDITS_DIR} entry: {e}"));
         let name = entry.file_name();
-        let name = name.to_string_lossy();
-        assert!(
-            !name.starts_with(TOP_LEVEL_PREFIX),
-            "{AUDITS_DIR}/{name} must not exist at the top level while the chunk 8a index \
-             entry is still null — the #2088 contract would pick it up as a swept record"
-        );
+        let name = name.to_string_lossy().to_string();
+        if name.starts_with(TOP_LEVEL_PREFIX) {
+            matches.push(name);
+        }
     }
+    assert_eq!(
+        matches.len(),
+        1,
+        "exactly one top-level {AUDITS_DIR} entry must start with {TOP_LEVEL_PREFIX}, found \
+         {matches:?}"
+    );
+    let record_name = Path::new(RECORD)
+        .file_name()
+        .unwrap_or_else(|| panic!("{RECORD} must have a file name"))
+        .to_string_lossy()
+        .to_string();
+    assert_eq!(
+        matches[0], record_name,
+        "the single top-level chunk 8a record must be {RECORD}"
+    );
 }
 
 #[test]
@@ -291,23 +320,28 @@ fn each_in_scope_file_has_exactly_one_row_under_its_owning_section() {
 }
 
 #[test]
-fn the_chunk_8a_index_entry_is_still_all_null() {
+fn the_chunk_8a_index_entry_points_at_the_promoted_record() {
     let index = read(INDEX);
     let entry = index
         .lines()
         .find(|line| line.contains(r#""id": "8a""#))
         .unwrap_or_else(|| panic!("{INDEX} must carry a chunk 8a entry"));
+    let expected_record = format!(r#""record": "{RECORD}""#);
     assert!(
-        entry.contains(r#""last_swept": null"#),
-        "the chunk 8a entry in {INDEX} must still carry `\"last_swept\": null` while the \
-         record is staged under in-progress/ and unfinalised: {entry}"
+        entry.contains(&expected_record),
+        "the chunk 8a entry in {INDEX} must carry `{expected_record}` now that finalisation \
+         (#2302, part of #2154) has promoted the record: {entry}"
     );
     assert!(
-        entry.contains(r#""baseline_commit": null"#),
-        "the chunk 8a entry in {INDEX} must still carry `\"baseline_commit\": null`: {entry}"
+        !entry.contains(r#""last_swept": null"#),
+        "the chunk 8a entry in {INDEX} must no longer carry `\"last_swept\": null`: {entry}"
     );
     assert!(
-        entry.contains(r#""record": null"#),
-        "the chunk 8a entry in {INDEX} must still carry `\"record\": null`: {entry}"
+        !entry.contains(r#""baseline_commit": null"#),
+        "the chunk 8a entry in {INDEX} must no longer carry `\"baseline_commit\": null`: {entry}"
+    );
+    assert!(
+        !entry.contains(r#""record": null"#),
+        "the chunk 8a entry in {INDEX} must no longer carry `\"record\": null`: {entry}"
     );
 }

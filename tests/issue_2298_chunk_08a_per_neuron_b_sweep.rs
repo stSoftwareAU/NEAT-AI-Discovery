@@ -1,12 +1,13 @@
-//! Contract tests for the whole `per-neuron-b` section of the staged chunk 8a
-//! sweep record (part of #2152): the first six rows are swept by Issue #2298,
-//! and the remaining six by Issue #2299.
+//! Contract tests for the whole `per-neuron-b` section of the chunk 8a sweep
+//! record (part of #2152): the first six rows are swept by Issue #2298, and
+//! the remaining six by Issue #2299. Finalisation (#2302, part of #2154)
+//! promoted the record to the top level and retargeted `RECORD` below.
 
 use std::path::PathBuf;
 
-/// The staged chunk 8a prose record. Finalisation (#2154) moves this to
-/// `docs/audits/security-sweep-chunk-08a-detection-neuron.md`.
-const RECORD: &str = "docs/audits/in-progress/security-sweep-chunk-08a-detection-neuron.md";
+/// The chunk 8a prose record, promoted to the top level by finalisation
+/// (#2302, part of #2154).
+const RECORD: &str = "docs/audits/security-sweep-chunk-08a-detection-neuron.md";
 
 /// The twelve files the `per-neuron-b` section sweeps: the first six under
 /// Issue #2298, and the remaining six under Issue #2299.

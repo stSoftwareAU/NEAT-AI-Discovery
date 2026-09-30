@@ -1,16 +1,17 @@
-//! Contract tests for the whole `graph` section of the staged chunk 8a sweep
-//! record (Issues #2282 and #2283, part of #2217).
+//! Contract tests for the whole `graph` section of the chunk 8a sweep record
+//! (Issues #2282 and #2283, part of #2217).
 //!
 //! `SWEPT` holds all eight files the `graph` section sweeps: `topology.rs`,
 //! `skip_connection.rs`, `dead_neuron.rs`, `compound_degradation.rs`,
 //! `redundant_path.rs`, `bottleneck.rs`, `low_impact_neuron.rs` and
-//! `cross_detection_synthesis.rs`.
+//! `cross_detection_synthesis.rs`. Finalisation (#2302, part of #2154)
+//! promoted the record to the top level and retargeted `RECORD` below.
 
 use std::path::PathBuf;
 
-/// The staged chunk 8a prose record. Finalisation (#2154) moves this to
-/// `docs/audits/security-sweep-chunk-08a-detection-neuron.md`.
-const RECORD: &str = "docs/audits/in-progress/security-sweep-chunk-08a-detection-neuron.md";
+/// The chunk 8a prose record, promoted to the top level by finalisation
+/// (#2302, part of #2154).
+const RECORD: &str = "docs/audits/security-sweep-chunk-08a-detection-neuron.md";
 
 /// The eight files the `graph` section sweeps.
 const SWEPT: &[&str] = &[
