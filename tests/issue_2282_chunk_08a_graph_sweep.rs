@@ -1,12 +1,10 @@
-//! Contract tests for part 1 of the `graph` section of the staged chunk 8a
-//! sweep record (Issue #2282, part of #2217).
+//! Contract tests for the whole `graph` section of the staged chunk 8a sweep
+//! record (Issues #2282 and #2283, part of #2217).
 //!
-//! `SWEPT` holds the four files this part sweeps: `topology.rs`,
-//! `skip_connection.rs`, `dead_neuron.rs` and `compound_degradation.rs`. The
-//! remaining `graph` rows (`redundant_path.rs`, `bottleneck.rs`,
-//! `low_impact_neuron.rs`, `cross_detection_synthesis.rs`) belong to sibling
-//! Issue #2283 and are deliberately left untested here — see the "Make NO
-//! assertion" note on `each_swept_row_is_present_and_not_pending`.
+//! `SWEPT` holds all eight files the `graph` section sweeps: `topology.rs`,
+//! `skip_connection.rs`, `dead_neuron.rs`, `compound_degradation.rs`,
+//! `redundant_path.rs`, `bottleneck.rs`, `low_impact_neuron.rs` and
+//! `cross_detection_synthesis.rs`.
 
 use std::path::PathBuf;
 
@@ -14,20 +12,26 @@ use std::path::PathBuf;
 /// `docs/audits/security-sweep-chunk-08a-detection-neuron.md`.
 const RECORD: &str = "docs/audits/in-progress/security-sweep-chunk-08a-detection-neuron.md";
 
-/// The four files this part of the `graph` section sweeps.
+/// The eight files the `graph` section sweeps.
 const SWEPT: &[&str] = &[
     "src/analysis/detection/topology.rs",
     "src/analysis/detection/skip_connection.rs",
     "src/analysis/detection/dead_neuron.rs",
     "src/analysis/detection/compound_degradation.rs",
+    "src/analysis/detection/redundant_path.rs",
+    "src/analysis/detection/bottleneck.rs",
+    "src/analysis/detection/low_impact_neuron.rs",
+    "src/analysis/detection/cross_detection_synthesis.rs",
 ];
 
-/// The one graph traversal this part cites per file, as `<basename>::<fn>`.
+/// One graph traversal or pair scan cited per file that has one, as
+/// `<basename>::<fn>` — not every swept file carries a traversal.
 const TRAVERSAL: &[&str] = &[
     "topology.rs::compute_shortest_paths_to_output",
     "skip_connection.rs::compute_depths_from_inputs",
     "dead_neuron.rs::find_connected_outputs_cached",
     "compound_degradation.rs::reachable_outputs",
+    "redundant_path.rs::detect_redundant_paths",
 ];
 
 fn read(rel: &str) -> String {
@@ -144,9 +148,10 @@ fn capacity_table_rows_for(doc: &str, base: &str) -> Vec<Vec<String>> {
 }
 
 /// The production half of a source file: everything before the `#[cfg(test)]`
-/// that actually opens the test module. If no such pair exists (as for all
-/// four `SWEPT` files here — none carries a `#[cfg(test)]` module), return
-/// the whole file.
+/// that actually opens the test module. Some `SWEPT` files (`redundant_path.rs`
+/// and `cross_detection_synthesis.rs`) carry a `#[cfg(test)]` module and are
+/// trimmed accordingly; for the rest, no such pair exists and the whole file
+/// is returned.
 fn production_source(rel: &str) -> String {
     let body = read(rel);
     let lines: Vec<&str> = body.lines().collect();
@@ -259,9 +264,6 @@ fn collect_issue_refs(text: &str, out: &mut std::collections::BTreeSet<String>) 
 
 #[test]
 fn each_swept_row_is_present_and_not_pending() {
-    // Make NO assertion about the other `graph` rows (`redundant_path.rs`,
-    // `bottleneck.rs`, `low_impact_neuron.rs`, `cross_detection_synthesis.rs`)
-    // — they stay `pending` here; sibling #2283 owns them.
     let doc = read(RECORD);
     let region = graph_region(&doc);
     let rows = table_rows(region);
@@ -290,7 +292,47 @@ fn each_swept_row_is_present_and_not_pending() {
         );
         assert!(
             !outcome.contains("pending"),
-            "{path} was swept by Issue #2282, so its outcome must not read `pending`: {outcome}"
+            "{path} was swept by Issue #2282 or #2283, so its outcome must not read `pending`: \
+             {outcome}"
+        );
+    }
+}
+
+#[test]
+fn graph_section_holds_exactly_the_eight_swept_rows() {
+    let doc = read(RECORD);
+    let rows = table_rows(graph_region(&doc));
+
+    let found: std::collections::BTreeSet<String> = rows
+        .iter()
+        .filter_map(|row| row.first())
+        .map(|first| first.trim_matches('`').to_string())
+        .collect();
+    let expected: std::collections::BTreeSet<String> =
+        SWEPT.iter().map(ToString::to_string).collect();
+
+    assert_eq!(
+        found.len(),
+        SWEPT.len(),
+        "the `graph` section must hold exactly {} rows (one per SWEPT file), found {}: {found:?}",
+        SWEPT.len(),
+        found.len()
+    );
+
+    let missing: Vec<&String> = expected.difference(&found).collect();
+    let unexpected: Vec<&String> = found.difference(&expected).collect();
+    assert!(
+        missing.is_empty() && unexpected.is_empty(),
+        "the `graph` section's rows must be exactly the SWEPT set — missing: {missing:?}, \
+         unexpected: {unexpected:?}"
+    );
+
+    for row in &rows {
+        let path = row.first().map_or("", |f| f.trim_matches('`'));
+        let outcome = row.get(2).map_or("", String::as_str);
+        assert!(
+            !outcome.contains("pending"),
+            "{path}'s Outcome cell must not read `pending`: {outcome}"
         );
     }
 }
@@ -306,6 +348,14 @@ fn every_capacity_site_in_a_swept_file_is_cited_by_symbol() {
         "precondition: src/analysis/detection/dead_neuron.rs must still carry a \
          `with_capacity(` site inside `find_connected_outputs_cached`, otherwise this test \
          checks nothing"
+    );
+    let bottleneck_source = production_source("src/analysis/detection/bottleneck.rs");
+    assert!(
+        bottleneck_source.contains("Vec::with_capacity(candidates.len() * 2)")
+            && bottleneck_source.contains("fn bottleneck_neurons_to_coordinated_candidates"),
+        "precondition: src/analysis/detection/bottleneck.rs must still carry a \
+         `Vec::with_capacity(candidates.len() * 2)` site inside \
+         `bottleneck_neurons_to_coordinated_candidates`, otherwise this test checks nothing"
     );
 
     let mut all_sites: Vec<(&str, String, String)> = Vec::new();
