@@ -117,13 +117,13 @@ the `submission.rs` bounded wait) go to **queue-core**;
 
 | Path | Lines | Outcome |
 | --- | --- | --- |
-| `src/analysis/gpu/queue/mod.rs` | 423 | pending — #2114 |
+| `src/analysis/gpu/queue/mod.rs` | 423 | audited, no finding — `GpuFuture::collect` (L100–L115) returns the worker's answer or an `Err` for every non-answer (timeout and stall trip the breaker, a disconnect is a plain `Err`), never an empty or zero `Ok`; `with_deadline` (L234–L237) only stores the deadline; no `unwrap`/`expect`/`.lock()` before the `#[cfg(test)]` module at L240 |
 | `src/analysis/gpu/queue/submission.rs` | 1048 | finding filed — #2339 (`send_timeout` at L216/L281/L340/L405/L465/L540 waits the whole batch timeout with no heartbeat or breaker check, and `await_gpu_response` then restarts the same timeout at L102); all seven empty-input short-circuits (L187/L258/L321/L382/L445/L515/L519) run after `breaker.check()?`, and the three that return zero statistics (L382/L445/L519) are indistinguishable from an all-zero answer but unreachable from production callers (refuted); no `unwrap`/`expect`/`.lock()` before the `#[cfg(test)]` module at L571 |
 | `src/analysis/gpu/queue/execution.rs` | 928 | audited, no finding — `execute_request` (L67–L254) returns `Err` only for `is_device_lost_error` (L98–L102, L133–L137, L165–L169, L205–L209, L239–L243) and otherwise sends exactly once (L104/L139/L171/L211/L245); every `run_work_loop` device-lost branch sends or finds the caller gone (L406, L477, L513, L436–L445); the byte cap is applied inside the evaluators, not here; no `unwrap`/`expect`/`.lock()` before the `#[cfg(test)]` module at L612 |
-| `src/analysis/gpu/queue/executor.rs` | 137 | pending — #2114 |
-| `src/analysis/gpu/queue/scheduling.rs` | 171 | pending — #2114 |
-| `src/analysis/gpu/queue/fake_evaluator.rs` | 308 | pending — #2114 |
-| `src/analysis/gpu/queue/wedge_tests.rs` | 489 | pending — #2114 |
+| `src/analysis/gpu/queue/executor.rs` | 137 | audited, no finding — every `RequestEvaluator` method (L62–L117) and `GpuAnalyzerFactory::create` (L130–L136) returns the `GpuAnalyzer` result unchanged; the byte cap is #2243's verdict; no `unwrap`/`expect`/`.lock()`/`Mutex` |
+| `src/analysis/gpu/queue/scheduling.rs` | 171 | finding filed — #2361 (a panic in `gpu_thread_loop` (L62) skips the L73 exit signal the L72 comment promises, strands every queued request in the bounded channel until the stall window or batch timeout, which then reports a wedge, and `Drop` discards the payload at L166); the work queue is `bounded(get_work_queue_capacity())` at L38–L40 (4/8/16), CWE-400 refuted; the init timeout trips the breaker (L89) and returns a typed error (L92) |
+| `src/analysis/gpu/queue/fake_evaluator.rs` | 308 | audited, test-only — declared under `#[cfg(test)]` (`mod.rs:58`–`:59` at the baseline); its `Mutex` (L31, L94) and `.lock().expect` (L107–L108, L171–L172) never compile into the library |
+| `src/analysis/gpu/queue/wedge_tests.rs` | 489 | audited, test-only — declared under `#[cfg(test)]` (`mod.rs:63`–`:64` at the baseline); every `expect`/`expect_err` (L145–L470) is a test assertion |
 
 ### queue-lifecycle
 
@@ -1035,7 +1035,89 @@ This slice (Issue #2243, first of #2114) sweeps `queue/submission.rs` and `queue
 
 **Outcome (#2243): one finding, #2339** (`SEC-1124ca631044`, CWE-400, low). A submission blocked in `send_timeout` ignores the stall window and the breaker, and its await restarts the timeout. Everything else in `submission.rs` and `execution.rs` fails loudly with a typed or descriptive `Err`.
 
-`mod.rs`, `executor.rs` and `scheduling.rs` are pending — #2244.
+This slice (Issue #2244, second of #2114) sweeps `queue/scheduling.rs`, `queue/executor.rs` and `queue/mod.rs` at the baseline. `scheduling.rs` and `executor.rs` are unchanged since the baseline. `mod.rs` gained two `#[cfg(test)]` module declarations (#2241, #2243), so baseline L57–L59 sit 3 lower at HEAD and baseline L60 onwards sits 6 lower; the lines below are baseline lines. Checks: 1 empty vs zero, 2 caller-side waiting and error routing, 3 batch byte cap, 4 queue fairness and depth bound (CWE-400), 5 channel/mutex panic discipline. Leaked-thread and wedge lifecycle are #2115's (queue-lifecycle slices #2245/#2246) and are cross-referenced, not re-audited.
+
+#### `src/analysis/gpu/queue/scheduling.rs` (Issue #2244)
+
+**Check 1 — N/A — no result path.** `new()` returns `Ok(Self)` only after `Ok(Ok(()))` at L82. Every other arm returns `Err` (L83–L98). The file submits no work, so it has no empty-input short-circuit.
+
+**Check 2 — error paths in `new()` and `shutdown()`.**
+
+- L31–L32: `breaker.check()?` runs before the spawn, so no new thread is started against a wedged GPU.
+- L83–L85, init `Err`: returned with context and no breaker trip, because a failed initialisation is not a wedge. The thread exits after its send (L67).
+- L86–L95, init timeout: trips the breaker with `GpuTripReason::InitTimeout` (L89) and returns the typed `gpu_wedged_error` (L92). The `JoinHandle` is dropped when `new()` returns, so the thread is detached, and `work_tx` is dropped with it. If initialisation later completes, the init send fails (trace, L59) and the loop exits on `Disconnected` (`execution.rs:327`–`:332`). If it never completes, the thread is leaked; that accounting is #2115's.
+- L96–L98, `Disconnected`: both non-panic arms send (L58, L67), so this arm means `GpuAnalyzer::new()` panicked on the GPU thread. The caller gets a plain `Err` at once. The breaker is not tripped, and the dropped handle discards the payload, so the panic is visible only as the default hook's stderr line. The next analysis retries initialisation and fails fast in the same way (refuted below).
+- `shutdown()` (L116–L129) sends `Shutdown` with a 2 s `send_timeout` (L120, L124) and trace-logs a failure only (L127). It is not silent in effect: `Drop` then waits on `exit_rx` (L141–L142), and that wait's `Timeout` arm warns (L152–L156) and calls `record_abandoned_thread` (L161), which trips the breaker. Whether a slow but healthy thread that misses the shutdown window is misjudged as abandoned is #2115's.
+- `thread::spawn` (L51) panics if the OS refuses a thread. That panic reaches no `extern "C"` frame unguarded, because the analysis entry points run inside `catch_unwind` (`src/ffi/analysis.rs:114`, `:182`) (refuted below).
+
+**Check 3 — N/A — no batch here.** The evaluator is built inside the thread by `GpuAnalyzer::new()` (L54) with the auto-detected batch size. The byte cap is applied in the evaluators (#2243 check 3).
+
+**Check 4 — queue fairness and depth bound (deep trace).**
+
+- **Depth.** The work queue is `bounded(queue_capacity)` (L38–L40). `get_work_queue_capacity` returns 4, 8 or 16 by memory tier (`src/analysis/utils/memory.rs:655`–`:668`). Every other channel in the three files is bounded too: init and exit are `bounded(1)` (L44, L48), and each request's response channel is `bounded(1)` (`submission.rs:202`, `:263`, `:325`, `:390`, `:449`, `:524`, and the pre-resolved empty future at `:189`). **No queue-side buffer is unbounded.**
+- **Service.** One GPU thread takes one request at a time (`execution.rs:316`) and runs it to completion before the next `recv_timeout`. The buffer is FIFO.
+- **Blocked senders.** crossbeam-channel 0.5.17 makes no FIFO hand-off among blocked senders. A woken sender retries `start_send`, and when a barging sender has taken the slot it re-registers at the back (`crossbeam-channel-0.5.17/src/flavors/array.rs:357`–`:399`, `src/waker.rs:55`). Each blocked sender is still bounded by its own `send_timeout`, which ends in `queue_full_error`.
+- **Starvation bound.** Each request's worker time is capped by its `GpuTimeBudget::from_caller_timeout` (`src/analysis/gpu/budget.rs:54`–`:56`, delegating to `from_caller_timeout_at` at `:61`–`:65`), which is at most the caller's timeout minus the margin, and so at most 300 s (`GPU_QUEUE_TIMEOUT_MAX_SECS`). #2243's byte-cap verdict bounds the allocation **per chunk** (256 MiB through `cap_gpu_batch_size_by_bytes`, `memory.rs:633`–`:650`), not the number of chunks. So one maximum-size `HelpfulBatch` or `HarmfulBatch` runs its chunks back to back inside that one budget, and a caller submitting maximum-size batches can hold the GPU thread for up to its budget per request. A caller queued at depth `d` could need up to `d` budgets before service, but its own await deadline (`submission.rs:102`–`:110`, at most 300 s) ends its wait first with a typed timeout or stall error. The worker then skips the stale request without running it (`execution.rs:352`–`:355`).
+- **Per-caller share.** There is no per-caller quota, but each caller thread has at most one outstanding request. The blocking entry points hold the caller for the whole send and await, and the only `GpuFuture` in production is collected before that thread's next submission (`src/analysis/synapse/target_analysis/mod.rs:424`–`:447`).
+- **Response channels cannot accumulate.** There is one `bounded(1)` channel per outstanding request, freed when both the request and the caller drop it. The exception is the stranded-after-panic case in check 5 (finding #2361).
+- **Full queue.** A full queue does **not** fail fast. The submitter blocks for the whole `timeout` and only then returns `queue_full_error` (`submission.rs:28`–`:34`). That is finding #2339, already filed by #2243.
+- **Verdict (CWE-400): refuted.** The depth is bounded at L40, every wait ends at a bounded deadline with a typed `Err`, and no caller can monopolise the thread for longer than one request budget. The send-phase overrun is #2339. No new finding.
+
+**Check 5 — channel/mutex panic discipline (deep trace).**
+
+Every `unwrap`/`expect`/`.lock()`/`Mutex` in the three files, and in the two queue-core test files they declare, at the baseline:
+
+| File | Site | Kind | Production or test |
+| --- | --- | --- | --- |
+| `scheduling.rs` | — | none in 171 lines | — |
+| `executor.rs` | — | none in 137 lines | — |
+| `mod.rs` | L356, L378 | `.unwrap()` on `queue.deadline` | test — `#[cfg(test)] mod tests` at L240 |
+| `fake_evaluator.rs` | L31, L94 | `Mutex` import, `Arc<Mutex<Vec<Observation>>>` | test — `#[cfg(test)] mod fake_evaluator` (`mod.rs:58`–`:59`) |
+| `fake_evaluator.rs` | L107–L108, L171–L172 | `.lock().expect("fake GPU observation buffer poisoned")` | test — as above |
+| `wedge_tests.rs` | L145, L172, L210, L262, L263, L331, L356 | `.expect(…)` | test — `#[cfg(test)] mod wedge_tests` (`mod.rs:63`–`:64`) |
+| `wedge_tests.rs` | L295, L399, L425, L433, L470 | `.expect_err(…)` | test — as above |
+
+**Production hits: zero.** `fake_evaluator.rs` is test-only: confirmed. crossbeam channels do not poison, so no closed channel or lock can panic the worker. The only implicit production panic site is `thread::spawn` (L51), covered in check 2.
+
+**GPU-thread panic path.** The spawned closure (L51–L77) has no `catch_unwind`.
+
+- A panic in `gpu_thread_loop` (L62) unwinds past `exit_tx.send(())` at L73. The comment at L72 ("Always signal exit, even if initialisation failed or loop panicked") is **inaccurate**. The unwind drops `exit_tx`, which `Drop` sees as `Disconnected` (L163). So `Drop` does not sit out the shutdown timeout, which is right in effect, but no exit signal is sent. `let _ = handle.join()` (L166) discards the panic payload.
+- **The in-flight caller** gets an `Err` at once. Its `response_tx` drops in the unwinding frame, and the caller sees `Disconnected` (`submission.rs:122`–`:124`) and gets `"GPU response channel closed unexpectedly"` (`:143`–`:146`). The breaker is not tripped.
+- **Blocked and later submitters** get an `Err` at once. Dropping `work_rx` disconnects the channel and wakes blocked senders (`array.rs:498`–`:508`), and `send_timeout` returns `"GPU work queue channel closed"` (`submission.rs:230`).
+- **Queued callers are not told.** crossbeam's array flavour only marks the channel disconnected when its last receiver drops. Buffered messages are dropped when the channel is freed (`array.rs:540`–`:570`), which is after every `Sender` has gone. `work_tx` (`mod.rs:210`) lives until the queue drops, so each queued request's `response_tx` stays alive. Its caller waits out the stall window (default 30 s; the full 60–300 s batch timeout when the window is `0` or another live queue beats the process-wide heartbeat). It then returns a stall or timeout `GpuWedged` error that trips the breaker (`submission.rs:139`–`:142`), naming a wedge rather than the panic. **Finding #2361 (`SEC-f0d19ede542c`, CWE-755, low).**
+- **Breaker and logging.** The panic itself neither trips the breaker nor logs through `tracing`. The breaker is tripped only later, by a stranded queued caller's stall or timeout verdict. The payload is lost at L166, and the only record is the default panic hook's stderr line (the crate installs no hook).
+- Reachable panics on this thread today: #2313 (`map_async` `.expect`) and #2314 (wgpu validation panic, being fixed by PR #2337).
+
+#### `src/analysis/gpu/queue/executor.rs` (Issue #2244)
+
+**Check 1 — N/A — no early return.** Each `RequestEvaluator for GpuAnalyzer` method (L62–L117) forwards to its `GpuAnalyzer` method and returns that `Result` unchanged.
+
+**Check 2 — error routing: no finding.** No method maps, logs or drops an `Err`. `GpuAnalyzerFactory::create` (L130–L136) returns `GpuAnalyzer::new()` or `new_with_batch_size(size)` unchanged. The loop routes a failed re-initialisation (`execution.rs:466`) per #2243's `run_work_loop` verdict.
+
+**Check 3 — batch byte cap: #2243's verdict applies, not re-traced.** For `create(batch_size_override)`: the OOM path passes `Some(halved)` and stops below `MINIMUM_GPU_BATCH_SIZE` = 64. A non-OOM recovery passes `None`, restoring the auto-detected size. The byte cap is recomputed on every call, and a single oversized set is #2314's (see the `submission.rs` check 3 trace above).
+
+**Check 4 — N/A — no channel or queue.** `batch_size()` (L63–L65) is read only on the OOM path (`execution.rs:396`).
+
+**Check 5 — confirmed: none.** No `unwrap`/`expect`/`.lock()`/`Mutex` in 137 lines, and no test module. A panic inside `GpuAnalyzer::new` during recovery unwinds the GPU thread and follows the `scheduling.rs` panic path (#2361).
+
+#### `src/analysis/gpu/queue/mod.rs` (Issue #2244)
+
+**Check 1 — `GpuFuture::collect` and `with_deadline`: no finding.**
+
+- `collect` (L100–L115) calls `await_gpu_response` and returns its result. The answer is the worker's own `Result`. `TimedOut` and `Stalled` become typed `GpuWedged` errors that trip the breaker, and `Disconnected` becomes a plain `Err` (`submission.rs:139`–`:146`). A timed-out request therefore always yields `Err`, never an empty or zero `Ok`.
+- An abandoned future (dropped uncollected) yields nothing to anyone. Its drop releases `caller_guard` (L91), and the worker skips the request (`execution.rs:352`–`:355`).
+- The only `Ok(Vec::new())` future is the pre-resolved one for an empty input (`submission.rs:187`–`:199`), which #2243 check 1 found distinguishable.
+- `with_deadline` (L234–L237) only stores the deadline and never short-circuits a submission. A deadline that has already passed gives the 60 s floor (`src/analysis/utils/deadline.rs:396`–`:399`), a bounded wait rather than an empty result. The overrun past the deadline is #2339's.
+
+**Check 2 — caller-side waiting: covered.** `collect` uses the same bounded wait as the blocking entry points. The `timeout` it restarts (`mod.rs:105`) is part of #2339. Every work variant of `GpuWorkRequest` (L124–L189) carries exactly one `response_tx`, `budget` and `liveness`. `Shutdown` (L191) carries none and is intercepted before `execute_request`.
+
+**Check 3 — N/A — no size here.** The variants carry sample payloads (`Vec<Arc<Vec<HelpfulSample>>>` L133, `(Arc<Vec<HelpfulSample>>, f32)` L147, `Vec<HelpfulSample>` L157/L167/L182) with no size field. The cap is applied in the evaluators (#2243 check 3).
+
+**Check 4 — depth bound held.** `work_tx: Sender<GpuWorkRequest>` (L210) is the bounded sender created at `scheduling.rs:38`–`:40`. The struct holds no other buffer (see the `scheduling.rs` check 4).
+
+**Check 5 — confirmed.** No `unwrap`/`expect`/`.lock()`/`Mutex` in production (L1–L239). The two `.unwrap()` calls (L356, L378) are in the `#[cfg(test)]` module at L240. `fake_evaluator`, `stale_skip_tests` and `wedge_tests` are declared `#[cfg(test)]` (L58–L64), as are `empty_vs_zero_tests` and `none_field_tests`, added since the baseline.
+
+**Outcome (#2244): one finding, #2361** (`SEC-f0d19ede542c`, CWE-755, low). A GPU-thread panic strands the queued requests until the stall window or batch timeout, which then report a wedge, and `Drop` discards the panic payload. The queue depth is bounded (CWE-400 refuted). There are no production `unwrap`/`expect`/`.lock()` sites in the three files, and `fake_evaluator.rs` is test-only.
 
 ### queue-lifecycle
 
@@ -1061,6 +1143,7 @@ Each slice appends rows only inside its own marked region.
 | SEC-d6747980489b | `src/analysis/gpu/analyzer.rs:276` (also `analyzer.rs:288`, `device.rs:445`) | CWE-1088 | low | open — #2332 |
 <!-- section: queue-core -->
 | SEC-1124ca631044 | `src/analysis/gpu/queue/submission.rs:216` (also `:281`, `:340`, `:405`, `:465`, `:540`; await restart `:102`) | CWE-400 | low | open — #2339 |
+| SEC-f0d19ede542c | `src/analysis/gpu/queue/scheduling.rs:62` (also `:72`–`:73`, `:166`; stranded wait `submission.rs:115`–`:120`) | CWE-755 | low | open — #2361 |
 <!-- section: queue-lifecycle -->
 
 ## Refuted / not findings
@@ -1127,6 +1210,17 @@ Each slice appends rows only inside its own marked region.
 | The GPU thread blocks sending on a full response channel | `src/analysis/gpu/queue/submission.rs:202`; `src/analysis/gpu/queue/execution.rs:98`–`:104` | Each response channel is `bounded(1)`, and the worker sends at most once per request, so the send never blocks (Issue #2243) |
 | A single sample set larger than `GPU_MAX_BATCH_ALLOC_BYTES` bypasses the byte cap and aborts the process | `src/analysis/utils/memory.rs:648`–`:649`; `src/analysis/gpu/queue/submission.rs:122`–`:124`, `:143`–`:146` | The cap bounds sets per chunk, clamped to 1, so an oversized set is submitted alone. At the baseline the wgpu validation panic (#2314) unwinds the GPU thread and the caller gets an `Err`, not an abort. PR #2337 on `Develop` returns that `Err` before wgpu (Issue #2243) |
 | `as u64` truncation of elapsed time at `execution.rs:95`/`:130`/`:162`/`:202`/`:236`/`:378` (CWE-197) | `src/analysis/gpu/queue/execution.rs:95`, `:378` | Microseconds or milliseconds truncate only after about 584,000 years. The values feed metrics counters and a log field, not control flow (Issue #2243) |
+| Unbounded GPU work-queue depth lets submitters exhaust memory (CWE-400) | `src/analysis/gpu/queue/scheduling.rs:38`–`:40`; `src/analysis/utils/memory.rs:655`–`:668` | The work queue is `bounded(get_work_queue_capacity())`, 4, 8 or 16. A full queue blocks the submitter in `send_timeout`, which is bounded (its full-timeout wait is #2339) (Issue #2244) |
+| One caller submitting maximum-size batches starves the others indefinitely (CWE-400) | `src/analysis/gpu/budget.rs:54`–`:65`; `src/analysis/gpu/queue/submission.rs:102`–`:110`; `src/analysis/gpu/queue/execution.rs:352`–`:355` | Each request's worker time is capped by its budget (at most 300 s). A queued caller's own await deadline ends its wait with a typed error, and the worker then skips the stale request. The byte cap bounds each chunk's allocation, not the request's duration (Issue #2244) |
+| Per-request `bounded(1)` response channels accumulate | `src/analysis/gpu/queue/submission.rs:202`; `src/analysis/synapse/target_analysis/mod.rs:424`–`:447` | There is one per outstanding request, freed when both ends drop. Each caller thread has at most one outstanding request, and the only `GpuFuture` is collected before that thread's next submission. The post-panic stranding is #2361 (Issue #2244) |
+| Blocked senders are served out of order, starving one of them | `src/analysis/gpu/queue/submission.rs:216`, `:227` | crossbeam makes no FIFO hand-off (`array.rs:357`–`:399`), but each blocked sender's wait ends at its `send_timeout` with `queue_full_error`. The full-timeout wait is #2339 (Issue #2244) |
+| `GpuFuture::collect` or `with_deadline` turns an abandoned or timed-out request into an empty or zero result | `src/analysis/gpu/queue/mod.rs:100`–`:115`, `:234`–`:237`; `src/analysis/gpu/queue/submission.rs:139`–`:146` | `collect` returns the worker's answer, or an `Err` for all three non-answer outcomes. A dropped future yields nothing. `with_deadline` only stores the deadline, and a passed deadline gives the 60 s floor (`deadline.rs:396`–`:399`), not an empty result (Issue #2244) |
+| `thread::spawn` at `scheduling.rs:51` panics when the OS refuses a thread and aborts the host across `extern "C"` | `src/ffi/analysis.rs:114`, `:182` | The analysis entry points run inside `catch_unwind`, so the panic becomes a structured error response, not an abort (Issue #2244) |
+| The init `Disconnected` arm (`scheduling.rs:96`–`:98`) hides an initialisation panic | `src/analysis/gpu/queue/scheduling.rs:97` | The caller gets an `Err` at once. Both non-panic arms send (L58, L67), so the arm fires only on a panic, which the default hook prints. The next analysis retries and fails fast the same way (Issue #2244) |
+| The init timeout leaves an unaccounted thread running against the device | `src/analysis/gpu/queue/scheduling.rs:31`–`:32`, `:89`, `:92` | The breaker is tripped with `InitTimeout` and a typed `gpu_wedged_error` is returned, so `new()` refuses to spawn another thread. The leaked-thread accounting is #2115's (#2245/#2246) (Issue #2244) |
+| `shutdown()`'s trace-only send failure (`scheduling.rs:127`) hides a hung GPU thread | `src/analysis/gpu/queue/scheduling.rs:142`, `:152`–`:161` | `Drop`'s exit wait follows at once, and its timeout arm warns and records the abandoned thread, tripping the breaker. The slow-versus-hung classification is #2115's (Issue #2244) |
+| A poisoned `Mutex` or closed channel panics the GPU thread | `src/analysis/gpu/queue/mod.rs:58`–`:59` | The only `Mutex` is `fake_evaluator.rs`'s, which compiles only under `#[cfg(test)]`. crossbeam channels do not poison, and every channel operation in the three files handles its `Err` (Issue #2244) |
+| `GpuAnalyzerFactory::create` swallows a re-initialisation failure | `src/analysis/gpu/queue/executor.rs:131`–`:136` | It returns the `GpuAnalyzer` constructor's `Result` unchanged. The loop routes a failed re-init per #2243's `run_work_loop` verdict (Issue #2244) |
 <!-- section: queue-lifecycle -->
 
 ## Outcome
@@ -1142,7 +1236,9 @@ the CPU-fallback cross-check (#2240: one finding, #2318) and the entry-point
 `None → Err` sweep (#2241: no finding) and the per-file sweep of `analyzer.rs`,
 `budget.rs`, `breaker.rs` and `device.rs` (#2242: one finding, #2332).
 The queue-core slice has swept `submission.rs` and `execution.rs` (#2243: one
-finding, #2339). Every other file is pending its slice. Each slice records its
+finding, #2339) and `scheduling.rs`, `executor.rs` and `mod.rs` with the
+test-only `fake_evaluator.rs` and `wedge_tests.rs` (#2244: one finding, #2361).
+Every other file is pending its slice. Each slice records its
 outcome in its region under `## Audit sections`.
 
 ## Issues filed
@@ -1179,6 +1275,10 @@ The sweep is in progress; each slice lists the issues it files here.
   `send_timeout` waits the whole batch timeout with no stall-window or breaker
   check, and its response wait then restarts the same timeout (queue-core
   slice, #2243).
+- #2361 — `SEC-f0d19ede542c` (CWE-755, low): a GPU-thread panic strands every
+  queued request in the bounded work channel until the stall window or batch
+  timeout, which then reports a wedge, and `Drop` discards the panic payload
+  (queue-core slice, #2244).
 
 ## Verify this record
 
