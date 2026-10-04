@@ -6,7 +6,7 @@
 //! maps once per hidden neuron — O(hidden × records). Neither carried a
 //! cancellation point, so `analysis_deadline_ms` and a host cancellation
 //! request could not interrupt them once started. These tests pin the
-//! deadline exits, the incoming-input ceiling, the linear cost of both scans,
+//! deadline exits, the incoming-input ceiling, the work counts of both scans,
 //! and that the detectors' output is unchanged below the ceiling.
 //!
 //! Every test is `#[serial]`: the scans honour the process-global cancellation
@@ -16,7 +16,9 @@
 #![allow(clippy::cast_precision_loss)] // Synthetic fixtures map small u32 indices onto f32 activations.
 
 use super::{
-    MAX_INCOMING_INPUTS_FOR_NOISY_SCAN, detect_collapsible_hidden_neurons, detect_noisy_vs_trusted,
+    MAX_INCOMING_INPUTS_FOR_NOISY_SCAN, detect_collapsible_hidden_neurons,
+    detect_collapsible_hidden_neurons_observed, detect_noisy_vs_trusted,
+    detect_noisy_vs_trusted_observed,
 };
 use crate::analysis::cache::RecordCache;
 use crate::analysis::diagnostics::TargetMap;
@@ -29,7 +31,7 @@ use crate::{
 use serial_test::serial;
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, SystemTime};
 
 const TARGET: &str = "target-0";
 
@@ -238,7 +240,7 @@ fn noisy_vs_trusted_is_skipped_above_the_incoming_input_cap() {
 
 /// `count` inputs with identical records: every pair passes the weight and
 /// mean filters and fails the variance-ratio filter, the cheapest path through
-/// the pairwise scan — so any growth measured is the scan's shape alone.
+/// the pairwise scan — so any growth counted is the scan's shape alone.
 fn build_uniform_inputs(count: usize) -> (Vec<SynapseJson>, RecordCache, TargetMap) {
     const OBS: u32 = 4;
     let mut records: HashMap<String, Vec<DiscoverRecord>> = HashMap::with_capacity(count);
@@ -264,48 +266,63 @@ fn build_uniform_inputs(count: usize) -> (Vec<SynapseJson>, RecordCache, TargetM
     )
 }
 
-fn min_noisy_time(
+/// Count the pairs of incoming inputs one noisy-vs-trusted scan considers
+/// (Issue #2320).
+///
+/// The count is the scan's unit of work, so asserting on it is deterministic
+/// where a wall-clock reading flakes under a loaded parallel test run.
+fn count_noisy_pairs(
     synapses: &[SynapseJson],
     cache: &RecordCache,
     target_map: &TargetMap,
-) -> Duration {
-    const RUNS: usize = 5;
-
-    (0..RUNS)
-        .map(|_| {
-            let start = Instant::now();
-            let candidate = run_noisy(synapses, cache, target_map, &None);
-            let elapsed = start.elapsed();
-            assert!(
-                candidate.is_none(),
-                "identical inputs never form a noisy/trusted pair"
-            );
-            elapsed
-        })
-        .min()
-        .expect("RUNS is non-zero")
+) -> usize {
+    let refs: Vec<&SynapseJson> = synapses.iter().collect();
+    let mut pairs = 0usize;
+    let candidate = detect_noisy_vs_trusted_observed(
+        TARGET,
+        &refs,
+        cache,
+        target_map,
+        &HashMap::new(),
+        &None,
+        || pairs += 1,
+    );
+    assert!(
+        candidate.is_none(),
+        "identical inputs never form a noisy/trusted pair"
+    );
+    pairs
 }
 
 #[test]
 #[serial]
 fn noisy_vs_trusted_cost_does_not_grow_quadratically() {
+    // Issue #1799: positive precondition — below the ceiling every pair of a
+    // uniform fixture is considered, so a zero count further down means the
+    // scan was skipped and not that the counter is inert.
+    const SCANNED: usize = 16;
+    let (synapses, cache, target_map) = build_uniform_inputs(SCANNED);
+    assert_eq!(
+        count_noisy_pairs(&synapses, &cache, &target_map),
+        SCANNED * (SCANNED - 1) / 2,
+        "a uniform fixture below the ceiling must compare every pair once"
+    );
+
+    // Issue #2320: count the scan's work instead of timing it. Above the
+    // ceiling the quadratic scan must never be entered, so the pair count
+    // stays at zero however far the input count grows — a load spike on a
+    // parallel test run cannot move it.
     let small = MAX_INCOMING_INPUTS_FOR_NOISY_SCAN + 1;
     let large = small * 2;
-
-    // Fixtures are built once, outside the timed region, and the smaller run
-    // reuses a prefix of the larger so both time exactly the same kind of work.
     let (synapses, cache, target_map) = build_uniform_inputs(large);
 
-    let t_small =
-        min_noisy_time(&synapses[..small], &cache, &target_map).max(Duration::from_nanos(1));
-    let t_large = min_noisy_time(&synapses, &cache, &target_map);
-
-    // Two readings of the same work, never a reading against a wall-clock
-    // constant: doubling the input may double the cost (linear) but must not
-    // quadruple it (quadratic). The bound sits midway between the two.
-    assert!(
-        t_large <= t_small * 3,
-        "noisy-vs-trusted cost grew faster than linearly: {t_small:?} at {small} inputs against {t_large:?} at {large} inputs"
+    let small_pairs = count_noisy_pairs(&synapses[..small], &cache, &target_map);
+    let large_pairs = count_noisy_pairs(&synapses, &cache, &target_map);
+    assert_eq!(
+        (small_pairs, large_pairs),
+        (0, 0),
+        "noisy-vs-trusted scan entered above the {MAX_INCOMING_INPUTS_FOR_NOISY_SCAN}-input ceiling: \
+         {small_pairs} pairs at {small} inputs, {large_pairs} at {large}"
     );
 }
 
@@ -472,51 +489,50 @@ fn expired_deadline_stops_collapse_scan() {
     assert_eq!(cancelled.bypass_weight_below_floor_drops, 0);
 }
 
-fn min_collapse_time(
+/// Count the shared `a`/`b` activation maps one collapse scan actually builds
+/// (Issue #2320).
+///
+/// The count is the scan's unit of work — what the memoisation in
+/// `detect_collapsible_hidden_neurons` is meant to bound — so asserting on it
+/// is deterministic where a wall-clock reading flakes under a loaded parallel
+/// test run.
+fn count_shared_map_builds(
     input: &AnalyzeSynapsesInput,
     cache: &RecordCache,
-    expected: usize,
-) -> Duration {
-    const RUNS: usize = 5;
-
-    (0..RUNS)
-        .map(|_| {
-            let start = Instant::now();
-            let outcome = detect_collapsible_hidden_neurons(input, cache, &None);
-            let elapsed = start.elapsed();
-            assert_eq!(
-                outcome.candidates.len(),
-                expected,
-                "every passthrough chain must collapse"
-            );
-            elapsed
-        })
-        .min()
-        .expect("RUNS is non-zero")
+    expected_candidates: usize,
+) -> usize {
+    let mut builds = 0usize;
+    let outcome = detect_collapsible_hidden_neurons_observed(input, cache, &None, || builds += 1);
+    assert_eq!(
+        outcome.candidates.len(),
+        expected_candidates,
+        "every passthrough chain must collapse"
+    );
+    builds
 }
 
 #[test]
 #[serial]
 fn collapse_cost_does_not_grow_with_hidden_times_records() {
-    // Hidden neurons share one `a` and one `b`. Doubling both the hidden count
-    // and the shared record count quadruples the work when the shared maps are
-    // rebuilt per hidden neuron, but only doubles it once they are memoised.
+    // Hidden neurons share one `a` (input-0) and one `b` (output-0), so
+    // exactly two shared maps are built however many hidden neurons and
+    // records there are (Issue #2320) — rebuilding per hidden neuron would
+    // give 2 × hidden instead (Issue #1799: the positive precondition this
+    // test's `every passthrough chain must collapse` assertion protects).
     const HIDDEN_OBS: u32 = 12;
-    let (small_hidden, small_obs) = (256usize, 8_192u32);
+    let (small_hidden, small_obs) = (8usize, 64u32);
     let (large_hidden, large_obs) = (small_hidden * 2, small_obs * 2);
 
     let (small_input, small_cache) = build_collapse_fixture(small_hidden, small_obs, HIDDEN_OBS);
     let (large_input, large_cache) = build_collapse_fixture(large_hidden, large_obs, HIDDEN_OBS);
 
-    let t_small =
-        min_collapse_time(&small_input, &small_cache, small_hidden).max(Duration::from_nanos(1));
-    let t_large = min_collapse_time(&large_input, &large_cache, large_hidden);
+    let small_builds = count_shared_map_builds(&small_input, &small_cache, small_hidden);
+    let large_builds = count_shared_map_builds(&large_input, &large_cache, large_hidden);
 
-    // Two readings of the same work, never a reading against a wall-clock
-    // constant: doubling both dimensions may double the cost (linear in their
-    // sum) but must not quadruple it (their product). The bound sits midway.
-    assert!(
-        t_large <= t_small * 3,
-        "collapse cost grew with hidden × records: {t_small:?} at {small_hidden}×{small_obs} against {t_large:?} at {large_hidden}×{large_obs}"
+    assert_eq!(
+        (small_builds, large_builds),
+        (2, 2),
+        "shared map builds must stay constant regardless of hidden count or record count: \
+         {small_builds} builds at {small_hidden}×{small_obs} against {large_builds} at {large_hidden}×{large_obs}"
     );
 }
