@@ -158,7 +158,16 @@ pub fn wait_for_gpu_response<T>(
     loop {
         let remaining = deadline.saturating_duration_since(Instant::now());
         if remaining.is_zero() {
-            return GpuWaitOutcome::TimedOut;
+            // Issue #2339 follow-up: overlapped CPU work (or a pre-resolved
+            // empty-batch future) can eat the whole shared deadline after the
+            // GPU already answered. A non-blocking read here is what stops an
+            // answer already sitting in the channel from being discarded as a
+            // timeout and tripping the process-wide breaker.
+            return match response_rx.try_recv() {
+                Ok(result) => GpuWaitOutcome::Answered(result),
+                Err(crossbeam_channel::TryRecvError::Disconnected) => GpuWaitOutcome::Disconnected,
+                Err(crossbeam_channel::TryRecvError::Empty) => GpuWaitOutcome::TimedOut,
+            };
         }
 
         match response_rx.recv_timeout(interval.min(remaining)) {
@@ -1006,6 +1015,94 @@ mod tests {
         assert!(
             started.elapsed() >= timeout,
             "the backstop must wait out the full timeout"
+        );
+    }
+
+    /// Issue #2339 follow-up: a response already sitting in the channel when
+    /// the deadline has already passed must still be read, not discarded as a
+    /// timeout. This is the race the earlier review raised at c67df0c9 —
+    /// overlapped CPU work (e.g. `prepare_harmful_samples`) outlasting the
+    /// batch timeout after the GPU already answered.
+    #[test]
+    fn a_response_already_in_the_channel_wins_over_an_expired_deadline() {
+        let (response_tx, response_rx) = bounded::<Result<Vec<HelpfulStats>>>(1);
+        response_tx
+            .send(Ok(vec![HelpfulStats::default()]))
+            .expect("send succeeds into the capacity-1 channel");
+        let heartbeat = GpuHeartbeat::new();
+
+        // A zero timeout mirrors a deadline that has already expired by the
+        // time this wait is entered.
+        let outcome = wait_for_gpu_response(
+            &response_rx,
+            Duration::ZERO,
+            &heartbeat,
+            Duration::from_millis(200),
+        );
+
+        match outcome {
+            GpuWaitOutcome::Answered(Ok(stats)) => assert_eq!(stats.len(), 1),
+            other => panic!(
+                "an already-answered response must win over an expired deadline, got {other:?}"
+            ),
+        }
+    }
+
+    /// The same zero-remaining race must leave the breaker closed: a real
+    /// answer that arrived in time must never be reported as a wedged GPU.
+    #[test]
+    fn an_expired_deadline_with_an_answer_already_queued_leaves_the_breaker_closed() {
+        let (response_tx, response_rx) = bounded::<Result<Vec<HelpfulStats>>>(1);
+        response_tx
+            .send(Ok(Vec::new()))
+            .expect("send succeeds into the capacity-1 channel");
+        let breaker = GpuCircuitBreaker::new();
+
+        let result = await_gpu_response(
+            &response_rx,
+            Instant::now() - Duration::from_secs(1),
+            &breaker,
+            "helpful batch evaluation",
+            60,
+        );
+
+        assert!(
+            result.is_ok(),
+            "an already-answered response must not be treated as a timeout"
+        );
+        assert!(
+            !breaker.is_tripped(),
+            "a real answer must not trip the breaker"
+        );
+    }
+
+    /// Issue #2339 follow-up: the pre-resolved empty-batch future
+    /// (`submit_helpful_batch` with no samples) carries its `Ok(vec![])`
+    /// already queued behind a fixed deadline. Collecting it after that
+    /// deadline has passed must still resolve, not trip the breaker — the
+    /// answer was always there.
+    #[test]
+    fn empty_batch_future_with_an_expired_deadline_still_resolves() {
+        let breaker: &'static GpuCircuitBreaker = Box::leak(Box::new(GpuCircuitBreaker::new()));
+        let (tx, rx) = bounded::<Result<Vec<HelpfulStats>>>(1);
+        tx.send(Ok(Vec::new())).expect("send succeeds");
+        let (caller_guard, _liveness) = caller_liveness_pair();
+
+        let future = GpuFuture {
+            response_rx: rx,
+            deadline: Instant::now() - Duration::from_secs(1),
+            timeout_secs: 1,
+            caller_guard,
+            breaker,
+        };
+
+        let stats = future
+            .collect()
+            .expect("an already-queued empty result must resolve past its deadline");
+        assert!(stats.is_empty());
+        assert!(
+            !breaker.is_tripped(),
+            "a pre-resolved future answered on time must never trip the breaker"
         );
     }
 
