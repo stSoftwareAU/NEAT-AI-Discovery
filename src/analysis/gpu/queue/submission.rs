@@ -4,7 +4,7 @@
 //! including both synchronous (blocking) and asynchronous (future-based) submission.
 
 use anyhow::{Result, anyhow};
-use crossbeam_channel::{Receiver, bounded};
+use crossbeam_channel::{Receiver, Sender, SendTimeoutError, bounded};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -21,10 +21,12 @@ use crate::analysis::utils::calculate_gpu_batch_timeout;
 
 /// Error for a work request the GPU thread never accepted (Issue #1930).
 ///
-/// A full queue that will not drain within the caller's whole timeout means the
-/// GPU thread is not consuming work, so this trips the breaker. Issue #1932: the
-/// returned error is typed, so the host reads it as a wedged GPU rather than as
-/// a retryable timeout.
+/// A full queue that will not drain before the shared send deadline means the
+/// GPU thread is not consuming work, so this trips the breaker. Issue #2339:
+/// the deadline is shared with the response wait rather than being a second,
+/// independent timeout, so the caller's total wait is bounded by one timeout,
+/// not two. Issue #1932: the returned error is typed, so the host reads it as
+/// a wedged GPU rather than as a retryable timeout.
 pub fn queue_full_error(breaker: &GpuCircuitBreaker, timeout_secs: u64) -> anyhow::Error {
     breaker.trip(GpuTripReason::BatchTimeout);
     gpu_wedged_error(format!(
@@ -66,6 +68,55 @@ pub fn heartbeat_stall_error(
         idle_secs = idle.as_secs_f64(),
         window_secs = window.as_secs(),
     ))
+}
+
+/// Send a work request without letting a full queue restart its own timeout
+/// (Issue #2339).
+///
+/// A plain `send_timeout` wedge is identical to the response-wait wedge this
+/// module already guards against: a full queue with a silent GPU thread would
+/// otherwise sit out the whole send `timeout` even though the breaker tripped
+/// or the heartbeat stalled seconds in. This polls in short steps up to
+/// `deadline`, re-checking the breaker and the heartbeat stall window between
+/// polls, so a wedge is caught as fast on the send side as it already is on
+/// the wait side.
+pub(super) fn send_until_deadline(
+    work_tx: &Sender<GpuWorkRequest>,
+    request: GpuWorkRequest,
+    deadline: Instant,
+    breaker: &GpuCircuitBreaker,
+    heartbeat: &GpuHeartbeat,
+    stall_window: Duration,
+    operation: &'static str,
+    timeout_secs: u64,
+) -> Result<()> {
+    let mut watch = HeartbeatWatch::new(heartbeat, stall_window);
+    let interval = watch.poll_interval();
+    let mut request = request;
+    loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return Err(queue_full_error(breaker, timeout_secs));
+        }
+        match work_tx.send_timeout(request, interval.min(remaining)) {
+            Ok(()) => return Ok(()),
+            Err(SendTimeoutError::Timeout(returned)) => {
+                breaker.check()?;
+                if let Some(idle) = watch.stalled_for() {
+                    return Err(heartbeat_stall_error(
+                        breaker,
+                        operation,
+                        idle,
+                        watch.stall_window(),
+                    ));
+                }
+                request = returned;
+            }
+            Err(SendTimeoutError::Disconnected(_)) => {
+                return Err(anyhow!("GPU work queue channel closed"));
+            }
+        }
+    }
 }
 
 /// How a bounded wait for a GPU response ended (Issue #1933).
@@ -150,23 +201,32 @@ pub(crate) fn resolve_gpu_wait<T>(
 /// Wait for a submitted request on the global heartbeat with the configured
 /// stall window (Issue #1933).
 ///
+/// `deadline` is shared with the send phase that queued this request (Issue
+/// #2339): the remaining time is computed from that single deadline rather
+/// than restarting a fresh `timeout`, so a caller's total wait across send and
+/// response is bounded by one timeout, not two. `timeout_secs` is the
+/// caller's originally configured timeout, reported in any error regardless
+/// of how much of it the send phase already spent.
+///
 /// Issue #1934: the operation is listed as outstanding for exactly as long as
 /// this wait lasts, so a SIGUSR1 thread dump on a wedged GPU can name what the
 /// device was asked to do and how long ago.
 pub(crate) fn await_gpu_response<T>(
     response_rx: &Receiver<Result<T>>,
-    timeout: Duration,
+    deadline: Instant,
     breaker: &GpuCircuitBreaker,
     operation: &'static str,
+    timeout_secs: u64,
 ) -> Result<T> {
     let _inflight = inflight::register(operation);
+    let remaining = deadline.saturating_duration_since(Instant::now());
     let outcome = wait_for_gpu_response(
         response_rx,
-        timeout,
+        remaining,
         global_gpu_heartbeat(),
         crate::config::gpu_stall_window(),
     );
-    resolve_gpu_wait(outcome, breaker, operation, timeout.as_secs())
+    resolve_gpu_wait(outcome, breaker, operation, timeout_secs)
 }
 
 impl GpuWorkQueue {
@@ -193,7 +253,8 @@ impl GpuWorkQueue {
             let (caller_guard, _) = caller_liveness_pair();
             return Ok(GpuFuture {
                 response_rx: rx,
-                timeout: Duration::from_secs(1),
+                deadline: Instant::now() + Duration::from_secs(1),
+                timeout_secs: 1,
                 caller_guard,
                 breaker: self.breaker,
             });
@@ -202,6 +263,7 @@ impl GpuWorkQueue {
         let (response_tx, response_rx) = bounded(1);
         let timeout = calculate_gpu_batch_timeout(deadline);
         let timeout_secs = timeout.as_secs();
+        let send_deadline = Instant::now() + timeout;
         // Issue #1928: the worker's inner waits share this request's budget,
         // which expires a safety margin before the caller stops waiting.
         let budget = GpuTimeBudget::from_caller_timeout(timeout);
@@ -213,27 +275,26 @@ impl GpuWorkQueue {
             batch_count = samples.len(),
             "GPU queue: enqueuing helpful batch"
         );
-        match self.work_tx.send_timeout(
+        send_until_deadline(
+            &self.work_tx,
             GpuWorkRequest::HelpfulBatch {
                 samples,
                 response_tx,
                 budget,
                 liveness,
             },
-            timeout,
-        ) {
-            Ok(()) => {}
-            Err(crossbeam_channel::SendTimeoutError::Timeout(_)) => {
-                return Err(queue_full_error(self.breaker, timeout_secs));
-            }
-            Err(crossbeam_channel::SendTimeoutError::Disconnected(_)) => {
-                return Err(anyhow!("GPU work queue channel closed"));
-            }
-        }
+            send_deadline,
+            self.breaker,
+            global_gpu_heartbeat(),
+            crate::config::gpu_stall_window(),
+            "batch evaluation",
+            timeout_secs,
+        )?;
 
         Ok(GpuFuture {
             response_rx,
-            timeout,
+            deadline: send_deadline,
+            timeout_secs,
             caller_guard,
             breaker: self.breaker,
         })
@@ -265,6 +326,7 @@ impl GpuWorkQueue {
         // Calculate timeout based on remaining deadline
         let timeout = calculate_gpu_batch_timeout(deadline);
         let timeout_secs = timeout.as_secs();
+        let send_deadline = Instant::now() + timeout;
         // Issue #1928: the worker's inner waits share this request's budget,
         // which expires a safety margin before the caller stops waiting.
         let budget = GpuTimeBudget::from_caller_timeout(timeout);
@@ -276,34 +338,33 @@ impl GpuWorkQueue {
             batch_count = samples.len(),
             "GPU queue: enqueuing helpful batch (blocking)"
         );
-        // Send the work request with timeout to prevent deadlock if GPU thread is hung
-        // If the channel is full (GPU not processing), this will timeout instead of blocking forever
-        match self.work_tx.send_timeout(
+        // Issue #2339: send and wait share one deadline, so a full queue with
+        // a silent GPU does not cost this caller two independent timeouts.
+        send_until_deadline(
+            &self.work_tx,
             GpuWorkRequest::HelpfulBatch {
                 samples,
                 response_tx,
                 budget,
                 liveness,
             },
-            timeout,
-        ) {
-            Ok(()) => {}
-            Err(crossbeam_channel::SendTimeoutError::Timeout(_)) => {
-                return Err(queue_full_error(self.breaker, timeout_secs));
-            }
-            Err(crossbeam_channel::SendTimeoutError::Disconnected(_)) => {
-                return Err(anyhow!("GPU work queue channel closed"));
-            }
-        }
+            send_deadline,
+            self.breaker,
+            global_gpu_heartbeat(),
+            crate::config::gpu_stall_window(),
+            "helpful batch evaluation",
+            timeout_secs,
+        )?;
 
         // Issue #1933: bounded wait — a GPU thread that stops publishing
         // progress is declared wedged within the stall window rather than
         // costing this caller the whole batch timeout.
         await_gpu_response(
             &response_rx,
-            timeout,
+            send_deadline,
             self.breaker,
             "helpful batch evaluation",
+            timeout_secs,
         )
     }
 
@@ -325,6 +386,7 @@ impl GpuWorkQueue {
         let (response_tx, response_rx) = bounded(1);
         let timeout = calculate_gpu_batch_timeout(deadline);
         let timeout_secs = timeout.as_secs();
+        let send_deadline = Instant::now() + timeout;
         // Issue #1928: the worker's inner waits share this request's budget,
         // which expires a safety margin before the caller stops waiting.
         let budget = GpuTimeBudget::from_caller_timeout(timeout);
@@ -336,33 +398,33 @@ impl GpuWorkQueue {
             batch_count = samples_with_weights.len(),
             "GPU queue: enqueuing harmful batch"
         );
-        // Send with timeout to prevent deadlock if GPU thread is hung
-        match self.work_tx.send_timeout(
+        // Issue #2339: send and wait share one deadline, so a full queue with
+        // a silent GPU does not cost this caller two independent timeouts.
+        send_until_deadline(
+            &self.work_tx,
             GpuWorkRequest::HarmfulBatch {
                 samples_with_weights,
                 response_tx,
                 budget,
                 liveness,
             },
-            timeout,
-        ) {
-            Ok(()) => {}
-            Err(crossbeam_channel::SendTimeoutError::Timeout(_)) => {
-                return Err(queue_full_error(self.breaker, timeout_secs));
-            }
-            Err(crossbeam_channel::SendTimeoutError::Disconnected(_)) => {
-                return Err(anyhow!("GPU work queue channel closed"));
-            }
-        }
+            send_deadline,
+            self.breaker,
+            global_gpu_heartbeat(),
+            crate::config::gpu_stall_window(),
+            "harmful batch evaluation",
+            timeout_secs,
+        )?;
 
         // Issue #1933: bounded wait — a GPU thread that stops publishing
         // progress is declared wedged within the stall window rather than
         // costing this caller the whole batch timeout.
         await_gpu_response(
             &response_rx,
-            timeout,
+            send_deadline,
             self.breaker,
             "harmful batch evaluation",
+            timeout_secs,
         )
     }
 
@@ -390,6 +452,7 @@ impl GpuWorkQueue {
         let (response_tx, response_rx) = bounded(1);
         let timeout = calculate_gpu_batch_timeout(deadline);
         let timeout_secs = timeout.as_secs();
+        let send_deadline = Instant::now() + timeout;
         // Issue #1928: the worker's inner waits share this request's budget,
         // which expires a safety margin before the caller stops waiting.
         let budget = GpuTimeBudget::from_caller_timeout(timeout);
@@ -401,8 +464,10 @@ impl GpuWorkQueue {
             sample_count = samples.len(),
             "GPU queue: enqueuing ReLU eval"
         );
-        // Send with timeout to prevent deadlock if GPU thread is hung
-        match self.work_tx.send_timeout(
+        // Issue #2339: send and wait share one deadline, so a full queue with
+        // a silent GPU does not cost this caller two independent timeouts.
+        send_until_deadline(
+            &self.work_tx,
             GpuWorkRequest::ReluEval {
                 samples: samples.to_vec(),
                 threshold,
@@ -410,21 +475,24 @@ impl GpuWorkQueue {
                 budget,
                 liveness,
             },
-            timeout,
-        ) {
-            Ok(()) => {}
-            Err(crossbeam_channel::SendTimeoutError::Timeout(_)) => {
-                return Err(queue_full_error(self.breaker, timeout_secs));
-            }
-            Err(crossbeam_channel::SendTimeoutError::Disconnected(_)) => {
-                return Err(anyhow!("GPU work queue channel closed"));
-            }
-        }
+            send_deadline,
+            self.breaker,
+            global_gpu_heartbeat(),
+            crate::config::gpu_stall_window(),
+            "ReLU evaluation",
+            timeout_secs,
+        )?;
 
         // Issue #1933: bounded wait — a GPU thread that stops publishing
         // progress is declared wedged within the stall window rather than
         // costing this caller the whole batch timeout.
-        await_gpu_response(&response_rx, timeout, self.breaker, "ReLU evaluation")
+        await_gpu_response(
+            &response_rx,
+            send_deadline,
+            self.breaker,
+            "ReLU evaluation",
+            timeout_secs,
+        )
     }
 
     /// Submit an activation evaluation and wait for results.
@@ -449,6 +517,7 @@ impl GpuWorkQueue {
         let (response_tx, response_rx) = bounded(1);
         let timeout = calculate_gpu_batch_timeout(deadline);
         let timeout_secs = timeout.as_secs();
+        let send_deadline = Instant::now() + timeout;
         // Issue #1928: the worker's inner waits share this request's budget,
         // which expires a safety margin before the caller stops waiting.
         let budget = GpuTimeBudget::from_caller_timeout(timeout);
@@ -461,8 +530,10 @@ impl GpuWorkQueue {
             activation_type,
             "GPU queue: enqueuing activation eval"
         );
-        // Send with timeout to prevent deadlock if GPU thread is hung
-        match self.work_tx.send_timeout(
+        // Issue #2339: send and wait share one deadline, so a full queue with
+        // a silent GPU does not cost this caller two independent timeouts.
+        send_until_deadline(
+            &self.work_tx,
             GpuWorkRequest::ActivationEval {
                 samples: samples.to_vec(),
                 activation_type,
@@ -472,21 +543,24 @@ impl GpuWorkQueue {
                 budget,
                 liveness,
             },
-            timeout,
-        ) {
-            Ok(()) => {}
-            Err(crossbeam_channel::SendTimeoutError::Timeout(_)) => {
-                return Err(queue_full_error(self.breaker, timeout_secs));
-            }
-            Err(crossbeam_channel::SendTimeoutError::Disconnected(_)) => {
-                return Err(anyhow!("GPU work queue channel closed"));
-            }
-        }
+            send_deadline,
+            self.breaker,
+            global_gpu_heartbeat(),
+            crate::config::gpu_stall_window(),
+            "activation evaluation",
+            timeout_secs,
+        )?;
 
         // Issue #1933: bounded wait — a GPU thread that stops publishing
         // progress is declared wedged within the stall window rather than
         // costing this caller the whole batch timeout.
-        await_gpu_response(&response_rx, timeout, self.breaker, "activation evaluation")
+        await_gpu_response(
+            &response_rx,
+            send_deadline,
+            self.breaker,
+            "activation evaluation",
+            timeout_secs,
+        )
     }
 
     /// Submit a batched activation evaluation and wait for results.
@@ -524,6 +598,7 @@ impl GpuWorkQueue {
         let (response_tx, response_rx) = bounded(1);
         let timeout = calculate_gpu_batch_timeout(deadline);
         let timeout_secs = timeout.as_secs();
+        let send_deadline = Instant::now() + timeout;
         // Issue #1928: the worker's inner waits share this request's budget,
         // which expires a safety margin before the caller stops waiting.
         let budget = GpuTimeBudget::from_caller_timeout(timeout);
@@ -536,8 +611,10 @@ impl GpuWorkQueue {
             config_count = activation_configs.len(),
             "GPU queue: enqueuing activation batch eval"
         );
-        // Send with timeout to prevent deadlock if GPU thread is hung
-        match self.work_tx.send_timeout(
+        // Issue #2339: send and wait share one deadline, so a full queue with
+        // a silent GPU does not cost this caller two independent timeouts.
+        send_until_deadline(
+            &self.work_tx,
             GpuWorkRequest::ActivationBatchEval {
                 samples: samples.to_vec(),
                 activation_configs: activation_configs.to_vec(),
@@ -545,25 +622,23 @@ impl GpuWorkQueue {
                 budget,
                 liveness,
             },
-            timeout,
-        ) {
-            Ok(()) => {}
-            Err(crossbeam_channel::SendTimeoutError::Timeout(_)) => {
-                return Err(queue_full_error(self.breaker, timeout_secs));
-            }
-            Err(crossbeam_channel::SendTimeoutError::Disconnected(_)) => {
-                return Err(anyhow!("GPU work queue channel closed"));
-            }
-        }
+            send_deadline,
+            self.breaker,
+            global_gpu_heartbeat(),
+            crate::config::gpu_stall_window(),
+            "batched activation evaluation",
+            timeout_secs,
+        )?;
 
         // Issue #1933: bounded wait — a GPU thread that stops publishing
         // progress is declared wedged within the stall window rather than
         // costing this caller the whole batch timeout.
         await_gpu_response(
             &response_rx,
-            timeout,
+            send_deadline,
             self.breaker,
             "batched activation evaluation",
+            timeout_secs,
         )
     }
 }
@@ -986,9 +1061,10 @@ mod tests {
         let waiter = std::thread::spawn(move || {
             await_gpu_response(
                 &response_rx,
-                Duration::from_secs(30),
+                Instant::now() + Duration::from_secs(30),
                 breaker,
                 "helpful batch evaluation",
+                30,
             )
         });
 
