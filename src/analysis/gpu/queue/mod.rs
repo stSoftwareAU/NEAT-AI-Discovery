@@ -57,6 +57,9 @@ pub mod submission;
 /// Deterministic wedged-GPU test double (Issue #1935).
 #[cfg(test)]
 mod fake_evaluator;
+/// Regression tests for the Issue #2339 send-phase wedge bound.
+#[cfg(test)]
+mod send_phase_test;
 #[cfg(test)]
 mod stale_skip_tests;
 /// Regression tests for the Issue #1926 wedged-GPU defences (Issue #1935).
@@ -67,7 +70,7 @@ use anyhow::Result;
 use crossbeam_channel::{Receiver, Sender};
 use std::sync::Arc;
 use std::thread::JoinHandle;
-use std::time::{Duration, SystemTime};
+use std::time::{Instant, SystemTime};
 
 use self::staleness::{CallerGuard, CallerLiveness};
 use crate::analysis::gpu::breaker::GpuCircuitBreaker;
@@ -85,7 +88,13 @@ use crate::analysis::samples::{HarmfulStats, HelpfulSample, HelpfulStats, ReluSt
 /// later via `collect()`.
 pub(crate) struct GpuFuture<T> {
     pub(super) response_rx: Receiver<Result<T>>,
-    pub(super) timeout: Duration,
+    /// Issue #2339: a shared absolute deadline rather than a relative
+    /// `timeout`, so `collect()` waits only the time left since the request
+    /// was submitted instead of restarting a fresh timeout at collection time.
+    pub(super) deadline: Instant,
+    /// The caller's originally configured timeout, in seconds, reported in
+    /// any error regardless of how much of it submission already spent.
+    pub(super) timeout_secs: u64,
     /// Keeps the worker's liveness handle alive until the future is collected
     /// or dropped (Issue #1929).
     pub(super) caller_guard: CallerGuard,
@@ -101,12 +110,15 @@ impl<T> GpuFuture<T> {
         // Issue #1933: the async counterpart of the blocking bounded wait — a
         // silent GPU thread is declared wedged within the stall window, with the
         // absolute timeout still the backstop. Issue #1930: either verdict trips
-        // the breaker.
+        // the breaker. Issue #2339: `self.deadline` is the same deadline the
+        // send phase used, so overlapping CPU work done before `collect()` is
+        // called eats into the one shared timeout rather than being free.
         let outcome = self::submission::await_gpu_response(
             &self.response_rx,
-            self.timeout,
+            self.deadline,
             self.breaker,
             "batch evaluation",
+            self.timeout_secs,
         );
         // Issue #1929: stop advertising liveness the moment we stop waiting, so
         // the worker skips this request if it has not started it yet.
@@ -241,6 +253,7 @@ impl GpuWorkQueue {
 mod tests {
     use super::*;
     use crossbeam_channel::bounded;
+    use std::time::Duration;
 
     use crate::analysis::gpu::analyzer::GpuEvaluator;
     use crate::analysis::gpu::queue::staleness::caller_liveness_pair;
