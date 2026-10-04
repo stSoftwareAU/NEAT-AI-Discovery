@@ -325,7 +325,11 @@ deadline instead of reading the timeout wording as "retry with longer". See
 - **Minimum GPU batch timeout**: 60 seconds
 - **Maximum GPU batch timeout**: 5 minutes
 - **Deadline-aware**: When analysis has a deadline, uses up to half remaining time
-- **Non-blocking work submission**: `send_timeout()` prevents deadlock if GPU hangs
+- **Non-blocking work submission**: `send_until_deadline()` polls `send_timeout()`
+  against a shared deadline, re-checking the circuit breaker and GPU heartbeat
+  between polls, so a full queue behind a silent GPU is caught within the
+  stall window rather than sitting out the whole send timeout and then a
+  second, fresh wait for the response (Issue #2339)
 - **Shutdown timeout**: 12 seconds max (2s send + 10s exit wait)
 
 **Per-request time budget** (Issue #1928): each work request carries the

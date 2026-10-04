@@ -4,7 +4,7 @@
 //! including both synchronous (blocking) and asynchronous (future-based) submission.
 
 use anyhow::{Result, anyhow};
-use crossbeam_channel::{Receiver, Sender, SendTimeoutError, bounded};
+use crossbeam_channel::{Receiver, SendTimeoutError, Sender, bounded};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -80,6 +80,7 @@ pub fn heartbeat_stall_error(
 /// `deadline`, re-checking the breaker and the heartbeat stall window between
 /// polls, so a wedge is caught as fast on the send side as it already is on
 /// the wait side.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn send_until_deadline(
     work_tx: &Sender<GpuWorkRequest>,
     request: GpuWorkRequest,

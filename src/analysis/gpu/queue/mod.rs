@@ -70,7 +70,7 @@ use anyhow::Result;
 use crossbeam_channel::{Receiver, Sender};
 use std::sync::Arc;
 use std::thread::JoinHandle;
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Instant, SystemTime};
 
 use self::staleness::{CallerGuard, CallerLiveness};
 use crate::analysis::gpu::breaker::GpuCircuitBreaker;
@@ -253,6 +253,7 @@ impl GpuWorkQueue {
 mod tests {
     use super::*;
     use crossbeam_channel::bounded;
+    use std::time::Duration;
 
     use crate::analysis::gpu::analyzer::GpuEvaluator;
     use crate::analysis::gpu::queue::staleness::caller_liveness_pair;
