@@ -130,6 +130,7 @@ therefore 27 Rust files and 7 WGSL shaders, still 34.
 | `src/analysis/gpu/budget.rs` | 245 | audited, no finding — `check` (L111–L119) returns a stage-labelled `Err` once the deadline passes, an unbounded budget is never expired and caps waits at `GPU_BUFFER_MAP_TIMEOUT_SECS`, and the file reads no environment variables |
 | `src/analysis/gpu/breaker.rs` | 511 | audited, no finding — a one-way latch whose first `trip` (L149–L172) logs a `warn!` and whose `check` (L187–L198) returns the typed `DiscoveryError::GpuWedged` via `gpu_wedged_error` (L262–L267); the file reads no environment thresholds |
 | `src/analysis/gpu/device.rs` | 638 | finding filed — #2332 (`get_adapter_info_internal` blocks on `request_adapter` at L445 with no deadline); every other path returns `Err` or a typed outcome, and the discarded poll at L378 and the no-op block at L309–L316 are refuted |
+| `src/analysis/gpu/issue_2332_probe_timeout_test.rs` | 213 | audited, test-only — regression tests for the #2332 fix (`run_gpu_probe_with_timeout`, `check_gpu_availability_with`); every test uses an isolated `GpuCircuitBreaker::new()`, never the global breaker, and none touch real GPU hardware |
 | `src/analysis/gpu/none_field_tests.rs` | 130 | audited, test-only — declared under `#[cfg(test)]` (`mod.rs:45`–`:46` at `3f103b9`); builds an all-None `GpuAnalyzer` (L19–L39) and asserts every inherent entry point and `GpuEvaluator` delegation returns the "GPU device unavailable" `Err` — the evidence for the #2241 verdict; no unsafe, no env writes, read at `3f103b9` |
 | `src/analysis/gpu/queue/none_field_tests.rs` | 43 | audited, test-only — declared under `#[cfg(test)]` (`queue/mod.rs:64`–`:65` at `3f103b9`); reuses the `gpu/none_field_tests.rs` helpers to assert every `RequestEvaluator` delegation returns `Err` (L15–L43); read at `3f103b9` |
 
@@ -1747,6 +1748,7 @@ that region; pinned by `tests/issue_2249_chunk9_ledger_complete.rs`.
 - [x] `src/analysis/gpu/budget.rs` — device — audited, no finding
 - [x] `src/analysis/gpu/breaker.rs` — device — audited, no finding
 - [x] `src/analysis/gpu/device.rs` — device — finding filed — #2332
+- [x] `src/analysis/gpu/issue_2332_probe_timeout_test.rs` — device — audited, test-only
 - [x] `src/analysis/gpu/none_field_tests.rs` — device — audited, test-only (gap, #2249)
 - [x] `src/analysis/gpu/queue/none_field_tests.rs` — device — audited, test-only (gap, #2249)
 - [x] `src/analysis/gpu/queue/mod.rs` — queue-core — audited, no finding
