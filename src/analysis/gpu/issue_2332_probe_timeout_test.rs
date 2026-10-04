@@ -17,16 +17,21 @@ use crate::analysis::gpu::device::{
 };
 use crate::analysis::gpu::shaders::GPU_INIT_TIMEOUT_SECS;
 
-/// Short enough to keep the test fast; long enough that a resolving probe
-/// never races it on a loaded CI box.
-const TEST_TIMEOUT: Duration = Duration::from_millis(100);
+/// Short timeout for probes that must actually time out — kept tight so the
+/// hung-probe tests stay fast.
+const HUNG_PROBE_TIMEOUT: Duration = Duration::from_millis(100);
+
+/// Generous timeout for probes that resolve or panic immediately — a long
+/// deadline costs nothing since they never wait for it, and it avoids flaking
+/// on a loaded CI runner where thread spawn/scheduling can exceed 100 ms.
+const RESOLVING_PROBE_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[test]
 fn hung_probe_times_out_and_trips_breaker() {
     let breaker = GpuCircuitBreaker::new();
     let (tx, rx) = crossbeam_channel::unbounded::<()>();
 
-    let result = check_gpu_availability_with(TEST_TIMEOUT, &breaker, move || {
+    let result = check_gpu_availability_with(HUNG_PROBE_TIMEOUT, &breaker, move || {
         // Never resolves until the sender is dropped below.
         let _ = rx.recv();
         GpuAvailabilityResult {
@@ -58,11 +63,13 @@ fn hung_probe_times_out_and_trips_breaker() {
 fn resolving_probe_returns_its_result_without_tripping() {
     let breaker = GpuCircuitBreaker::new();
 
-    let result = check_gpu_availability_with(TEST_TIMEOUT, &breaker, || GpuAvailabilityResult {
-        available: true,
-        reason: None,
-        is_error: false,
-        device_type: Some(crate::analysis::shared::GpuDeviceType::Discrete),
+    let result = check_gpu_availability_with(RESOLVING_PROBE_TIMEOUT, &breaker, || {
+        GpuAvailabilityResult {
+            available: true,
+            reason: None,
+            is_error: false,
+            device_type: Some(crate::analysis::shared::GpuDeviceType::Discrete),
+        }
     });
 
     assert!(result.available);
@@ -80,10 +87,13 @@ fn resolving_probe_returns_its_result_without_tripping() {
 fn panicking_probe_fails_without_tripping() {
     let breaker = GpuCircuitBreaker::new();
 
-    let result =
-        check_gpu_availability_with(TEST_TIMEOUT, &breaker, || -> GpuAvailabilityResult {
+    let result = check_gpu_availability_with(
+        RESOLVING_PROBE_TIMEOUT,
+        &breaker,
+        || -> GpuAvailabilityResult {
             panic!("probe exploded");
-        });
+        },
+    );
 
     assert!(!result.available);
     assert!(
@@ -105,7 +115,7 @@ fn run_gpu_probe_with_timeout_times_out_on_a_hung_closure() {
     let breaker = GpuCircuitBreaker::new();
     let (tx, rx) = crossbeam_channel::unbounded::<()>();
 
-    let outcome = run_gpu_probe_with_timeout(TEST_TIMEOUT, &breaker, move || {
+    let outcome = run_gpu_probe_with_timeout(HUNG_PROBE_TIMEOUT, &breaker, move || {
         let _ = rx.recv();
         42
     });
@@ -121,7 +131,7 @@ fn run_gpu_probe_with_timeout_times_out_on_a_hung_closure() {
 fn run_gpu_probe_with_timeout_completes_on_a_resolving_closure() {
     let breaker = GpuCircuitBreaker::new();
 
-    let outcome = run_gpu_probe_with_timeout(TEST_TIMEOUT, &breaker, || 42);
+    let outcome = run_gpu_probe_with_timeout(RESOLVING_PROBE_TIMEOUT, &breaker, || 42);
 
     assert!(matches!(outcome, BoundedProbe::Completed(42)));
     assert!(!breaker.is_tripped());

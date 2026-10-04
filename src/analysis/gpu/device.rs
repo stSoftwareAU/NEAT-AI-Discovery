@@ -549,19 +549,22 @@ pub fn no_gpu_result(reason: &str) -> GpuAvailabilityResult {
 /// Instance creation, `request_adapter` and `get_info()` run on a dedicated
 /// thread bounded by `GPU_INIT_TIMEOUT_SECS`, so a hung driver cannot wedge
 /// every caller forever (Issue #2332); on timeout or probe failure this
-/// returns `None`, matching the existing "no GPU" contract.
+/// returns `None`, matching the existing "no GPU" contract. Environment setup
+/// stays on the caller thread, before the bounded thread is spawned (Issue
+/// #1873).
 pub fn get_adapter_info_internal() -> Option<wgpu::AdapterInfo> {
+    // Suppress Mesa/libEGL warnings and set XDG_RUNTIME_DIR, but only while
+    // the process is observably single-threaded; otherwise the writes are
+    // skipped and logged rather than racing a concurrent getenv (Issue
+    // #1873). This must run before the probe thread is spawned below, since
+    // spawning it would itself make the process multi-threaded.
+    setup_gpu_environment();
+
     let breaker = crate::analysis::gpu::breaker::global_gpu_breaker();
     let probe = run_gpu_probe_with_timeout(
         Duration::from_secs(GPU_INIT_TIMEOUT_SECS),
         breaker,
         move || {
-            // Suppress Mesa/libEGL warnings and set XDG_RUNTIME_DIR, but only
-            // while the process is observably single-threaded; otherwise the
-            // writes are skipped and logged rather than racing a concurrent
-            // getenv (Issue #1873).
-            setup_gpu_environment();
-
             let instance = create_wgpu_instance_safely()?;
             let adapter =
                 pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
