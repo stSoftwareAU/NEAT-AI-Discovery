@@ -117,7 +117,7 @@ sequenceDiagram
 
 - `./quality.sh < /dev/null` passed (fmt, clippy `-D warnings`, tests, release
   build). All 7 `send_phase_test` tests passed.
-- `cargo test --lib analysis::gpu::queue`: 80/80 passed.
+- `cargo test --lib analysis::gpu::queue`: 83/83 passed.
 
 **Branch outcomes:**
 - `src/analysis/gpu/queue/submission.rs:99` — error (deadline exhausted on a full queue → `queue_full_error`, breaker tripped with `BatchTimeout`) — `src/analysis/gpu/queue/send_phase_test.rs::a_full_queue_past_the_deadline_trips_the_breaker_as_a_batch_timeout` — flipped to an untyped `anyhow!`, test went red
@@ -126,7 +126,7 @@ sequenceDiagram
 - `src/analysis/gpu/queue/submission.rs:106` — error (heartbeat stalled → `heartbeat_stall_error`) — `src/analysis/gpu/queue/send_phase_test.rs::a_full_queue_with_a_silent_gpu_is_declared_wedged_within_the_stall_window`, `src/analysis/gpu/queue/send_phase_test.rs::a_third_submitter_behind_a_wedged_gpu_returns_within_the_detection_cap` — stall check forced to `None`, both went red
 - `src/analysis/gpu/queue/submission.rs:114` — retry (slice timed out, no breaker trip or stall → request recovered and resent) — `src/analysis/gpu/queue/send_phase_test.rs::a_full_queue_past_the_deadline_trips_the_breaker_as_a_batch_timeout` — flipped to return an error instead of resending, test went red (as did the two stall tests)
 - `src/analysis/gpu/queue/submission.rs:116` — error (queue disconnected → "GPU work queue channel closed", breaker not tripped) — `src/analysis/gpu/queue/send_phase_test.rs::a_closed_queue_is_reported_as_channel_closed` — flipped to `queue_full_error`, test went red
-- `src/analysis/gpu/queue/submission.rs:223` — deadline (response wait uses the time left on the shared deadline) — `src/analysis/gpu/queue/send_phase_test.rs::collect_honours_the_shared_deadline_rather_than_restarting_it` — flipped to a fresh `Duration::from_secs(timeout_secs)`, test went red
+- `src/analysis/gpu/queue/submission.rs:232` — deadline (response wait uses the time left on the shared deadline) — `src/analysis/gpu/queue/send_phase_test.rs::collect_honours_the_shared_deadline_rather_than_restarting_it` — flipped to a fresh `Duration::from_secs(timeout_secs)`, test went red
 
 Every flip above was re-run against the current head and then reverted.
 `Cargo.toml` / `Cargo.lock` only bump the version and add no branch.
