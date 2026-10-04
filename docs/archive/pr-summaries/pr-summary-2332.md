@@ -85,7 +85,7 @@ screenshot.
   - `docs/FFI_API.md:485`: "Probe timeout" bullet.
   - `src/analysis/gpu/breaker.rs:54`: the `InitTimeout` doc covers both trip
     sites.
-- **Docs sweep:**
+- **Sweep hits read and kept as still true:**
   - `src/analysis/gpu/breaker.rs:99`: still true, because the
     "GPU initialisation timed out" label is generic to both trip sites.
   - `src/ffi_internal/gpu.rs:39`: still true, because "Hard error (`is_error`,
@@ -94,6 +94,8 @@ screenshot.
     a hardware probe.
   - `src/analysis/gpu/queue/scheduling.rs:89`: still true, because the queue
     init trip site is unchanged.
+
+**Docs sweep** — grep: `check_gpu_availability`, `get_adapter_info_internal`, `InitTimeout`, `GPU_INIT_TIMEOUT_SECS`, `check_gpu_available`, `gpu_permanent`, "GPU queue creation timed out", "probe timed out"; section: `docs/FFI_API.md#️-checking-for-a-usable-gpu` (the `check_gpu_available` capability verdict), `docs/GPU_GUIDE.md` "Process-wide circuit breaker", `README.md#minimum-system-requirements`; updated: `docs/FFI_API.md`, `docs/GPU_GUIDE.md` (README.md:146 read and still true — it describes the requirements-not-met `success: true` verdict, which this change leaves untouched)
 
 ## Test Plan
 
