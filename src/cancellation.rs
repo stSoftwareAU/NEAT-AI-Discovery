@@ -98,14 +98,14 @@ pub fn mark_analysis_started() {
 /// (including error and cancellation paths).
 pub fn mark_analysis_finished() {
     // Saturating decrement as a single atomic read-modify-write (Issue #1752):
-    // `fetch_update` makes the "only decrement if > 0" guard and the decrement
+    // `try_update` makes the "only decrement if > 0" guard and the decrement
     // one atomic step. A previous `load` + `fetch_sub` split the check from the
     // mutation, so two concurrent callers observing `prev == 1` could both
     // decrement and wrap the counter to `usize::MAX` — leaving
     // `is_analysis_active()` stuck at `true` forever. Returning `None` from the
     // closure when the value is already `0` leaves the counter untouched.
     let _ =
-        ANALYSIS_ACTIVE.fetch_update(Ordering::Release, Ordering::Acquire, |v| v.checked_sub(1));
+        ANALYSIS_ACTIVE.try_update(Ordering::Release, Ordering::Acquire, |v| v.checked_sub(1));
 }
 
 /// Returns `true` if at least one analysis invocation is currently in-flight.
@@ -299,7 +299,7 @@ mod tests {
     /// counter of `1` must never wrap. With the previous non-atomic
     /// load-then-fetch_sub, two threads could both observe `prev == 1`, both
     /// decrement, and wrap the counter to `usize::MAX`. The atomic
-    /// `fetch_update` guarantees at most one decrement takes effect.
+    /// `try_update` guarantees at most one decrement takes effect.
     #[test]
     #[serial]
     fn test_mark_analysis_finished_concurrent_does_not_wrap() {
