@@ -104,11 +104,13 @@ const SWEPT_FILES: [&str; 4] = [
     "src/analysis/gpu/device.rs",
 ];
 
-/// The two `#[cfg(test)]` files #2241 added after the baseline, which #2249's
+/// The `#[cfg(test)]` files added after the baseline — two by #2241, one
+/// (the #2332 probe-timeout regression tests) by #2332 — which #2249's
 /// inventory-completeness sweep gives their own device rows.
-const POST_BASELINE_TEST_FILES: [&str; 2] = [
+const POST_BASELINE_TEST_FILES: [&str; 3] = [
     "src/analysis/gpu/none_field_tests.rs",
     "src/analysis/gpu/queue/none_field_tests.rs",
+    "src/analysis/gpu/issue_2332_probe_timeout_test.rs",
 ];
 
 /// The #2242 subsections the device audit region must carry.

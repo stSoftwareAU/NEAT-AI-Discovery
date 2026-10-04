@@ -9,9 +9,11 @@
 use anyhow::Result;
 use std::time::Duration;
 
+use crate::analysis::gpu::breaker::{GpuCircuitBreaker, global_gpu_breaker};
 use crate::analysis::gpu::device::{
-    GpuAvailabilityResult, GpuPerformanceTier, create_wgpu_instance_safely, detect_gpu_tier,
-    detect_unified_memory, get_adapter_info_internal, no_gpu_result, poll_device_until_idle,
+    BoundedProbe, GpuAvailabilityResult, GpuPerformanceTier, create_wgpu_instance_safely,
+    detect_gpu_tier, detect_unified_memory, get_adapter_info_internal, no_gpu_result,
+    poll_device_until_idle, probe_timeout_result, run_gpu_probe_with_timeout, tripped_probe_result,
 };
 
 use crate::analysis::gpu::shaders::GPU_INIT_TIMEOUT_SECS;
@@ -158,6 +160,69 @@ fn check_minimum_system_requirements() -> Option<GpuAvailabilityResult> {
     None
 }
 
+/// The wgpu probe sequence run inside the bounded thread: instance creation,
+/// `request_adapter`, then `request_device`. Pulled out of
+/// `check_gpu_availability` so it can be spawned onto a dedicated thread —
+/// wgpu's instance and adapter are created and consumed entirely within the
+/// closure (Issue #2332).
+fn check_gpu_availability_probe() -> GpuAvailabilityResult {
+    // Use safe instance creation to avoid panics from EGL/GL backend probing on Linux
+    let Some(instance) = create_wgpu_instance_safely() else {
+        return no_gpu_result("wgpu instance creation failed (GPU backend unavailable)");
+    };
+    let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+        power_preference: wgpu::PowerPreference::HighPerformance,
+        compatible_surface: None,
+        force_fallback_adapter: false,
+        apply_limit_buckets: false,
+    }));
+
+    let adapter = match adapter {
+        Ok(adapter) => adapter,
+        Err(_) => return no_gpu_result("No GPU adapter found"),
+    };
+
+    let device_type: crate::analysis::shared::GpuDeviceType = adapter.get_info().device_type.into();
+
+    let device_result = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
+        label: Some("NEAT-AI Discovery GPU probe device"),
+        required_features: wgpu::Features::empty(),
+        required_limits: wgpu::Limits::default(),
+        ..Default::default()
+    }));
+
+    match device_result {
+        Ok(_) => GpuAvailabilityResult {
+            available: true,
+            reason: None,
+            is_error: false,
+            device_type: Some(device_type),
+        },
+        Err(e) => no_gpu_result(&format!("GPU device creation failed: {e}")),
+    }
+}
+
+/// Bounded form of `check_gpu_availability`, testable without real GPU
+/// hardware (Issue #2332).
+///
+/// Runs `probe` on a dedicated thread with a `timeout` deadline; on timeout,
+/// `breaker` is tripped with `GpuTripReason::InitTimeout` and the stuck
+/// thread is leaked rather than joined, mirroring `GpuWorkQueue::new`. A probe
+/// that panics fails the check without tripping the breaker — a panic is not
+/// evidence the GPU itself is wedged.
+pub(crate) fn check_gpu_availability_with(
+    timeout: Duration,
+    breaker: &GpuCircuitBreaker,
+    probe: impl FnOnce() -> GpuAvailabilityResult + Send + 'static,
+) -> GpuAvailabilityResult {
+    match run_gpu_probe_with_timeout(timeout, breaker, probe) {
+        BoundedProbe::Completed(result) => result,
+        BoundedProbe::TimedOut => probe_timeout_result(),
+        BoundedProbe::Failed => no_gpu_result("GPU capability probe thread failed"),
+        BoundedProbe::Tripped => tripped_probe_result(breaker),
+    }
+}
+
 /// Adjust batch size based on both GPU tier and memory availability.
 fn get_adjusted_batch_size(gpu_tier: GpuPerformanceTier) -> usize {
     // Check for explicit override first
@@ -262,6 +327,9 @@ impl GpuAnalyzer {
     }
 
     /// Check GPU availability with detailed diagnostics and error classification.
+    ///
+    /// The probe itself is bounded by `GPU_INIT_TIMEOUT_SECS` against the
+    /// process-wide breaker (Issue #2332) — see `check_gpu_availability_with`.
     pub fn check_gpu_availability() -> GpuAvailabilityResult {
         // Check minimum system requirements FIRST before any GPU operations.
         // This prevents hangs on very old/constrained machines by disabling discovery early.
@@ -275,41 +343,11 @@ impl GpuAnalyzer {
         // logged rather than racing a concurrent getenv (Issue #1873).
         setup_gpu_environment();
 
-        // Use safe instance creation to avoid panics from EGL/GL backend probing on Linux
-        let Some(instance) = create_wgpu_instance_safely() else {
-            return no_gpu_result("wgpu instance creation failed (GPU backend unavailable)");
-        };
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::HighPerformance,
-            compatible_surface: None,
-            force_fallback_adapter: false,
-            apply_limit_buckets: false,
-        }));
-
-        let adapter = match adapter {
-            Ok(adapter) => adapter,
-            Err(_) => return no_gpu_result("No GPU adapter found"),
-        };
-
-        let device_type: crate::analysis::shared::GpuDeviceType =
-            adapter.get_info().device_type.into();
-
-        let device_result = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-            label: Some("NEAT-AI Discovery GPU probe device"),
-            required_features: wgpu::Features::empty(),
-            required_limits: wgpu::Limits::default(),
-            ..Default::default()
-        }));
-
-        match device_result {
-            Ok(_) => GpuAvailabilityResult {
-                available: true,
-                reason: None,
-                is_error: false,
-                device_type: Some(device_type),
-            },
-            Err(e) => no_gpu_result(&format!("GPU device creation failed: {e}")),
-        }
+        check_gpu_availability_with(
+            Duration::from_secs(GPU_INIT_TIMEOUT_SECS),
+            global_gpu_breaker(),
+            check_gpu_availability_probe,
+        )
     }
 
     /// Check if the GPU supports unified memory (Apple Silicon / integrated GPU).
@@ -480,6 +518,10 @@ impl GpuAnalyzer {
         self.batch_size
     }
 }
+
+#[cfg(test)]
+#[path = "issue_2332_probe_timeout_test.rs"]
+mod issue_2332_probe_timeout_test;
 
 #[cfg(test)]
 mod tests {

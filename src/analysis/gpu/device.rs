@@ -27,6 +27,7 @@ use anyhow::{Result, anyhow};
 use std::thread;
 use std::time::Duration;
 
+use crate::analysis::gpu::breaker::{GpuCircuitBreaker, GpuTripReason};
 use crate::analysis::gpu::heartbeat::{beat_buffer_mapped, beat_device_idle};
 use crate::analysis::utils::setup_gpu_environment;
 
@@ -85,7 +86,10 @@ pub struct GpuAvailabilityResult {
     pub available: bool,
     /// Human-readable reason for the availability status.
     pub reason: Option<String>,
-    /// Whether this is an error condition (true on macOS when GPU unavailable).
+    /// Whether this is an error condition: true on macOS when the GPU is
+    /// unavailable, and true for every platform when the capability probe
+    /// itself times out (Issue #2332) — a hung driver is a fault, not a
+    /// graceful "no GPU here" outcome.
     pub is_error: bool,
     /// Adapter classification when a device was created; `None` when no GPU
     /// is available (Issue #2318).
@@ -407,6 +411,127 @@ pub fn wait_for_buffer_maps_batch(
 }
 
 // =============================================================================
+// Bounded GPU Probe (Issue #2332)
+// =============================================================================
+
+/// Outcome of a bounded GPU probe (Issue #2332).
+///
+/// `GpuAnalyzer::new()` already bounds device creation via
+/// `GpuWorkQueue::new` (spawned thread + `recv_timeout`); the capability
+/// probes (`check_gpu_availability`, `get_adapter_info_internal`) had no such
+/// bound and could wedge every `OnceLock::get_or_init` caller behind a hung
+/// driver.
+#[derive(Debug)]
+pub(crate) enum BoundedProbe<T> {
+    /// The probe ran to completion within the timeout.
+    Completed(T),
+    /// The probe did not finish in time; the thread running it is leaked.
+    TimedOut,
+    /// The probe thread panicked (or failed to spawn) before it could reply.
+    Failed,
+    /// The breaker was already tripped; no thread was spawned (Issue #2332
+    /// follow-up — a tripped breaker must stop new probe threads, not just
+    /// future ones started after this call).
+    Tripped,
+}
+
+/// Run `probe` on a dedicated thread, bounded by `timeout`.
+///
+/// Honours the breaker's documented contract (`GpuCircuitBreaker::check`):
+/// called at the head of every path that would otherwise spawn a GPU thread
+/// or start a long wait. If `breaker` is already tripped, returns
+/// [`BoundedProbe::Tripped`] without spawning — otherwise a hung driver turns
+/// every later capability check into another leaked thread and another full
+/// `timeout` wait (Issue #2332 follow-up).
+///
+/// On timeout, trips `breaker` with [`GpuTripReason::InitTimeout`] and leaks
+/// the stuck thread rather than joining it — mirroring `GpuWorkQueue::new` in
+/// `queue/scheduling.rs`, which never joins a thread that did not answer in
+/// time. The thread is left to the process to reclaim at exit.
+pub(crate) fn run_gpu_probe_with_timeout<T: Send + 'static>(
+    timeout: Duration,
+    breaker: &GpuCircuitBreaker,
+    probe: impl FnOnce() -> T + Send + 'static,
+) -> BoundedProbe<T> {
+    if breaker.is_tripped() {
+        tracing::debug!(
+            "GPU capability probe skipped — breaker already tripped, refusing to spawn"
+        );
+        return BoundedProbe::Tripped;
+    }
+
+    let (tx, rx) = crossbeam_channel::bounded(1);
+
+    let spawn_result = thread::Builder::new()
+        .name("gpu-capability-probe".into())
+        .spawn(move || {
+            let result = probe();
+            // A dropped receiver means the waiter already timed out and
+            // moved on; nothing left to do.
+            if tx.send(result).is_err() {
+                tracing::trace!("GPU capability probe: receiver dropped before result was sent");
+            }
+        });
+
+    let Ok(handle) = spawn_result else {
+        tracing::warn!("GPU capability probe thread failed to spawn");
+        return BoundedProbe::Failed;
+    };
+
+    match rx.recv_timeout(timeout) {
+        Ok(value) => BoundedProbe::Completed(value),
+        Err(crossbeam_channel::RecvTimeoutError::Timeout) => {
+            breaker.trip(GpuTripReason::InitTimeout);
+            tracing::warn!(
+                timeout_secs = timeout.as_secs(),
+                "GPU capability probe timed out — breaker tripped, probe thread leaked"
+            );
+            // Leaked like scheduling.rs: cleaned up at process exit, never joined.
+            drop(handle);
+            BoundedProbe::TimedOut
+        }
+        Err(crossbeam_channel::RecvTimeoutError::Disconnected) => {
+            // The probe thread panicked before sending a result; do not trip
+            // the breaker — a panic is not evidence the GPU itself is wedged.
+            BoundedProbe::Failed
+        }
+    }
+}
+
+/// The result `check_gpu_availability` returns when its bounded probe times
+/// out. Treated as an error on every platform (Issue #2332): a hung driver,
+/// unlike a genuinely absent GPU, is not a graceful "disabled" outcome.
+pub(crate) fn probe_timeout_result() -> GpuAvailabilityResult {
+    GpuAvailabilityResult {
+        available: false,
+        reason: Some(format!(
+            "GPU capability probe timed out after {GPU_INIT_TIMEOUT_SECS}s"
+        )),
+        is_error: true,
+        device_type: None,
+    }
+}
+
+/// The result `check_gpu_availability` returns when the breaker is already
+/// tripped: the probe is refused outright rather than spawning another
+/// thread into a driver already known to be hung (Issue #2332 follow-up).
+/// Treated as an error, matching `probe_timeout_result` — a wedged GPU is not
+/// a graceful "disabled" outcome.
+pub(crate) fn tripped_probe_result(breaker: &GpuCircuitBreaker) -> GpuAvailabilityResult {
+    let reason = breaker
+        .trip_reason()
+        .map_or("unknown", GpuTripReason::as_str);
+    GpuAvailabilityResult {
+        available: false,
+        reason: Some(format!(
+            "GPU circuit breaker already tripped ({reason}) — refusing to probe again"
+        )),
+        is_error: true,
+        device_type: None,
+    }
+}
+
+// =============================================================================
 // Internal Helpers for GPU Availability
 // =============================================================================
 
@@ -456,23 +581,45 @@ pub fn no_gpu_result(reason: &str) -> GpuAvailabilityResult {
 
 /// Get raw wgpu adapter info.
 ///
-/// This is an internal helper used by `check_gpu_availability` and related functions.
+/// This is an internal helper used by `GpuAnalyzer::supports_unified_memory`
+/// and `GpuAnalyzer::get_adapter_info` (both cached behind an `OnceLock`).
+/// Instance creation, `request_adapter` and `get_info()` run on a dedicated
+/// thread bounded by `GPU_INIT_TIMEOUT_SECS`, so a hung driver cannot wedge
+/// every caller forever (Issue #2332); on timeout or probe failure this
+/// returns `None`, matching the existing "no GPU" contract. Environment setup
+/// stays on the caller thread, before the bounded thread is spawned (Issue
+/// #1873).
 pub fn get_adapter_info_internal() -> Option<wgpu::AdapterInfo> {
-    // Suppress Mesa/libEGL warnings and set XDG_RUNTIME_DIR, but only while the
-    // process is observably single-threaded; otherwise the writes are skipped
-    // and logged rather than racing a concurrent getenv (Issue #1873).
+    // Suppress Mesa/libEGL warnings and set XDG_RUNTIME_DIR, but only while
+    // the process is observably single-threaded; otherwise the writes are
+    // skipped and logged rather than racing a concurrent getenv (Issue
+    // #1873). This must run before the probe thread is spawned below, since
+    // spawning it would itself make the process multi-threaded.
     setup_gpu_environment();
 
-    let instance = create_wgpu_instance_safely()?;
-    let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-        power_preference: wgpu::PowerPreference::HighPerformance,
-        compatible_surface: None,
-        force_fallback_adapter: false,
-        apply_limit_buckets: false,
-    }))
-    .ok()?;
+    let breaker = crate::analysis::gpu::breaker::global_gpu_breaker();
+    let probe = run_gpu_probe_with_timeout(
+        Duration::from_secs(GPU_INIT_TIMEOUT_SECS),
+        breaker,
+        move || {
+            let instance = create_wgpu_instance_safely()?;
+            let adapter =
+                pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+                    power_preference: wgpu::PowerPreference::HighPerformance,
+                    compatible_surface: None,
+                    force_fallback_adapter: false,
+                    apply_limit_buckets: false,
+                }))
+                .ok()?;
 
-    Some(adapter.get_info())
+            Some(adapter.get_info())
+        },
+    );
+
+    match probe {
+        BoundedProbe::Completed(value) => value,
+        BoundedProbe::TimedOut | BoundedProbe::Failed | BoundedProbe::Tripped => None,
+    }
 }
 
 // =============================================================================

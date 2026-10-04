@@ -482,6 +482,12 @@ suitable GPU, controllers must disable discovery entirely.
     (device lost, creation failure). Retrying may succeed.
   - `"errorKind": "memory_exhausted"`, `"retryable": true` — minimum system
     memory was not met; retry after freeing resources.
+- **Probe timeout (Issue #2332)**: the adapter/device request is bounded by
+  `GPU_INIT_TIMEOUT_SECS` (30s). A driver that never answers yields
+  `"success": false`, `"gpuAvailable": false`, `"errorKind": "gpu_permanent"`,
+  `"retryable": false` with `reason` "GPU capability probe timed out after
+  30s", and trips the process-wide GPU breaker, so later analysis calls fail
+  fast instead of hanging. Treat it like any other permanent skip.
 - **Software adapter (Issue #2318)**: a CPU rasteriser such as Mesa
   lavapipe/llvmpipe still passes the capability gate and reports
   `"gpuAvailable": true`, but with `"softwareAdapter": true` and
