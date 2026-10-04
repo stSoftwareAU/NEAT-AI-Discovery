@@ -51,7 +51,9 @@ pub enum GpuTripReason {
     /// A batch submission timed out: either the work queue never accepted the
     /// request, or the GPU thread never answered it.
     BatchTimeout,
-    /// GPU queue creation timed out waiting for the analyser to initialise.
+    /// GPU initialisation timed out: either queue creation waited too long for the
+    /// analyser to initialise, or the capability probe's adapter/device request
+    /// never resolved (Issue #2332).
     InitTimeout,
     /// The GPU thread published no progress for the configured stall window
     /// while a submitter was waiting on it (Issue #1933).

@@ -98,12 +98,13 @@ pub fn mark_analysis_started() {
 /// (including error and cancellation paths).
 pub fn mark_analysis_finished() {
     // Saturating decrement as a single atomic read-modify-write (Issue #1752):
-    // `try_update` makes the "only decrement if > 0" guard and the decrement
-    // one atomic step. A previous `load` + `fetch_sub` split the check from the
-    // mutation, so two concurrent callers observing `prev == 1` could both
-    // decrement and wrap the counter to `usize::MAX` — leaving
-    // `is_analysis_active()` stuck at `true` forever. Returning `None` from the
-    // closure when the value is already `0` leaves the counter untouched.
+    // `try_update` (renamed from `fetch_update`, Issue #2387) makes the "only
+    // decrement if > 0" guard and the decrement one atomic step. A previous
+    // `load` + `fetch_sub` split the check from the mutation, so two concurrent
+    // callers observing `prev == 1` could both decrement and wrap the counter
+    // to `usize::MAX` — leaving `is_analysis_active()` stuck at `true` forever.
+    // Returning `None` from the closure when the value is already `0` leaves
+    // the counter untouched.
     let _ = ANALYSIS_ACTIVE.try_update(Ordering::Release, Ordering::Acquire, |v| v.checked_sub(1));
 }
 
