@@ -398,13 +398,16 @@ The first sign that the GPU is wedged now trips a one-way, process-wide breaker:
 | A batch submission timed out — the queue never accepted it, or the GPU never answered | every `submit_*`/`evaluate_*` entry point |
 | The GPU thread published no progress for `NEAT_AI_DISCOVERY_GPU_STALL_WINDOW_SECS` while a submitter waited | the bounded submitter wait (Issue #1933) |
 | GPU initialisation timed out after `GPU_INIT_TIMEOUT_SECS` | `GpuWorkQueue::new()` |
+| The GPU capability probe (adapter/device request) timed out after `GPU_INIT_TIMEOUT_SECS` — the stuck probe thread is leaked | `check_gpu_availability()` / `get_adapter_info_internal()` (Issue #2332) |
 
 Once tripped, for the rest of the process: `GpuWorkQueue::new()` returns an error
 instead of spawning another thread, and every submission returns that error
 immediately instead of starting a new multi-minute wait. The error carries the
-original trip reason and the abandoned-thread count. Every one of those sites
+original trip reason and the abandoned-thread count. Every work-queue site
 returns the typed `DiscoveryError::GpuWedged` (Issue #1932), so the host is told
-`retryable: false` rather than being invited to extend the deadline. The trip is logged **once**
+`retryable: false` rather than being invited to extend the deadline; the
+capability probe instead answers `check_gpu_available` with `success: false`
+and `errorKind: "gpu_permanent"` (also `retryable: false`). The trip is logged **once**
 at `warn`; every suppressed call afterwards logs at `debug` only, so a wedged GPU
 cannot flood the log.
 
