@@ -104,8 +104,7 @@ pub fn mark_analysis_finished() {
     // decrement and wrap the counter to `usize::MAX` — leaving
     // `is_analysis_active()` stuck at `true` forever. Returning `None` from the
     // closure when the value is already `0` leaves the counter untouched.
-    let _ =
-        ANALYSIS_ACTIVE.try_update(Ordering::Release, Ordering::Acquire, |v| v.checked_sub(1));
+    let _ = ANALYSIS_ACTIVE.try_update(Ordering::Release, Ordering::Acquire, |v| v.checked_sub(1));
 }
 
 /// Returns `true` if at least one analysis invocation is currently in-flight.
