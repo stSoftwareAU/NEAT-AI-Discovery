@@ -13,7 +13,7 @@ use crate::analysis::gpu::breaker::{GpuCircuitBreaker, global_gpu_breaker};
 use crate::analysis::gpu::device::{
     BoundedProbe, GpuAvailabilityResult, GpuPerformanceTier, create_wgpu_instance_safely,
     detect_gpu_tier, detect_unified_memory, get_adapter_info_internal, no_gpu_result,
-    poll_device_until_idle, probe_timeout_result, run_gpu_probe_with_timeout,
+    poll_device_until_idle, probe_timeout_result, run_gpu_probe_with_timeout, tripped_probe_result,
 };
 
 use crate::analysis::gpu::shaders::GPU_INIT_TIMEOUT_SECS;
@@ -219,6 +219,7 @@ pub(crate) fn check_gpu_availability_with(
         BoundedProbe::Completed(result) => result,
         BoundedProbe::TimedOut => probe_timeout_result(),
         BoundedProbe::Failed => no_gpu_result("GPU capability probe thread failed"),
+        BoundedProbe::Tripped => tripped_probe_result(breaker),
     }
 }
 

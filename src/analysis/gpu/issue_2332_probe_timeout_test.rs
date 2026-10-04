@@ -136,3 +136,78 @@ fn run_gpu_probe_with_timeout_completes_on_a_resolving_closure() {
     assert!(matches!(outcome, BoundedProbe::Completed(42)));
     assert!(!breaker.is_tripped());
 }
+
+/// A pre-tripped breaker must refuse to spawn a new probe thread at all
+/// (Issue #2332 follow-up) — otherwise a hung driver turns every later
+/// capability check into another leaked thread and another full timeout
+/// wait.
+#[test]
+fn a_pretripped_breaker_skips_the_probe_without_spawning() {
+    let breaker = GpuCircuitBreaker::new();
+    breaker.trip(GpuTripReason::InitTimeout);
+
+    let invoked = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let invoked_clone = invoked.clone();
+
+    let started = std::time::Instant::now();
+    let outcome = run_gpu_probe_with_timeout(RESOLVING_PROBE_TIMEOUT, &breaker, move || {
+        invoked_clone.store(true, std::sync::atomic::Ordering::SeqCst);
+        42
+    });
+    let elapsed = started.elapsed();
+
+    assert!(matches!(outcome, BoundedProbe::Tripped));
+    assert!(
+        !invoked.load(std::sync::atomic::Ordering::SeqCst),
+        "the probe closure must never run once the breaker is tripped"
+    );
+    assert!(
+        elapsed < Duration::from_secs(1),
+        "a tripped breaker must return immediately, not wait out the {RESOLVING_PROBE_TIMEOUT:?} timeout; took {elapsed:?}"
+    );
+    // The original trip reason must survive untouched.
+    assert_eq!(breaker.trip_reason(), Some(GpuTripReason::InitTimeout));
+}
+
+/// Same guarantee through the `check_gpu_availability_with` seam the FFI
+/// entry point actually calls: a pre-tripped breaker must short-circuit to
+/// an error verdict without spawning a thread or waiting.
+#[test]
+fn check_gpu_availability_with_short_circuits_on_a_pretripped_breaker() {
+    let breaker = GpuCircuitBreaker::new();
+    breaker.trip(GpuTripReason::BatchTimeout);
+
+    let invoked = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let invoked_clone = invoked.clone();
+
+    let started = std::time::Instant::now();
+    let result = check_gpu_availability_with(RESOLVING_PROBE_TIMEOUT, &breaker, move || {
+        invoked_clone.store(true, std::sync::atomic::Ordering::SeqCst);
+        GpuAvailabilityResult {
+            available: true,
+            reason: None,
+            is_error: false,
+            device_type: None,
+        }
+    });
+    let elapsed = started.elapsed();
+
+    assert!(!result.available);
+    assert!(result.is_error);
+    assert!(
+        result
+            .reason
+            .as_deref()
+            .is_some_and(|reason| reason.contains(GpuTripReason::BatchTimeout.as_str())),
+        "got: {:?}",
+        result.reason
+    );
+    assert!(
+        !invoked.load(std::sync::atomic::Ordering::SeqCst),
+        "the probe closure must never run once the breaker is tripped"
+    );
+    assert!(
+        elapsed < Duration::from_secs(1),
+        "a tripped breaker must return immediately, not wait out the {RESOLVING_PROBE_TIMEOUT:?} timeout; took {elapsed:?}"
+    );
+}

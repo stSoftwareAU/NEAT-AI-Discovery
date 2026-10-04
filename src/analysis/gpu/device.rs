@@ -429,9 +429,20 @@ pub(crate) enum BoundedProbe<T> {
     TimedOut,
     /// The probe thread panicked (or failed to spawn) before it could reply.
     Failed,
+    /// The breaker was already tripped; no thread was spawned (Issue #2332
+    /// follow-up — a tripped breaker must stop new probe threads, not just
+    /// future ones started after this call).
+    Tripped,
 }
 
 /// Run `probe` on a dedicated thread, bounded by `timeout`.
+///
+/// Honours the breaker's documented contract (`GpuCircuitBreaker::check`):
+/// called at the head of every path that would otherwise spawn a GPU thread
+/// or start a long wait. If `breaker` is already tripped, returns
+/// [`BoundedProbe::Tripped`] without spawning — otherwise a hung driver turns
+/// every later capability check into another leaked thread and another full
+/// `timeout` wait (Issue #2332 follow-up).
 ///
 /// On timeout, trips `breaker` with [`GpuTripReason::InitTimeout`] and leaks
 /// the stuck thread rather than joining it — mirroring `GpuWorkQueue::new` in
@@ -442,6 +453,13 @@ pub(crate) fn run_gpu_probe_with_timeout<T: Send + 'static>(
     breaker: &GpuCircuitBreaker,
     probe: impl FnOnce() -> T + Send + 'static,
 ) -> BoundedProbe<T> {
+    if breaker.is_tripped() {
+        tracing::debug!(
+            "GPU capability probe skipped — breaker already tripped, refusing to spawn"
+        );
+        return BoundedProbe::Tripped;
+    }
+
     let (tx, rx) = crossbeam_channel::bounded(1);
 
     let spawn_result = thread::Builder::new()
@@ -488,6 +506,25 @@ pub(crate) fn probe_timeout_result() -> GpuAvailabilityResult {
         available: false,
         reason: Some(format!(
             "GPU capability probe timed out after {GPU_INIT_TIMEOUT_SECS}s"
+        )),
+        is_error: true,
+        device_type: None,
+    }
+}
+
+/// The result `check_gpu_availability` returns when the breaker is already
+/// tripped: the probe is refused outright rather than spawning another
+/// thread into a driver already known to be hung (Issue #2332 follow-up).
+/// Treated as an error, matching `probe_timeout_result` — a wedged GPU is not
+/// a graceful "disabled" outcome.
+pub(crate) fn tripped_probe_result(breaker: &GpuCircuitBreaker) -> GpuAvailabilityResult {
+    let reason = breaker
+        .trip_reason()
+        .map_or("unknown", GpuTripReason::as_str);
+    GpuAvailabilityResult {
+        available: false,
+        reason: Some(format!(
+            "GPU circuit breaker already tripped ({reason}) — refusing to probe again"
         )),
         is_error: true,
         device_type: None,
@@ -581,7 +618,7 @@ pub fn get_adapter_info_internal() -> Option<wgpu::AdapterInfo> {
 
     match probe {
         BoundedProbe::Completed(value) => value,
-        BoundedProbe::TimedOut | BoundedProbe::Failed => None,
+        BoundedProbe::TimedOut | BoundedProbe::Failed | BoundedProbe::Tripped => None,
     }
 }
 
