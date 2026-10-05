@@ -11,7 +11,6 @@
 //! its first request and asserts that a request queued behind it fails
 //! promptly with a typed panic error instead of stalling.
 
-use anyhow::Result;
 use crossbeam_channel::bounded;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -190,13 +189,15 @@ fn panicking_worker_with_empty_queue_still_trips_the_breaker() {
         });
     });
 
-    let result: Result<Vec<_>> = response_rx
-        .recv_timeout(DETECTION_CAP)
-        .expect("the panicking request must still receive a response");
+    // The request that actually panicked never gets an answer: its own
+    // `response_tx` is dropped while the worker unwinds (before the guard's
+    // drain loop even starts), so the channel disconnects rather than
+    // delivering an `Err`.
+    let outcome = response_rx.recv_timeout(DETECTION_CAP);
     drop(guard);
     assert!(
-        result.is_err(),
-        "the panicking request's own response must be an error"
+        outcome.is_err(),
+        "the panicking request's own response channel must disconnect, got: {outcome:?}"
     );
 
     assert_eq!(
