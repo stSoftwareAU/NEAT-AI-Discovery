@@ -9,7 +9,7 @@ Ledger rules: [`README.md`](README.md). Index entry:
 - **Human name:** Filesystem lifecycle — `src/discovery_cleanup.rs`,
   `src/debug.rs` + `src/debug/`, `src/watchdog.rs`, `src/tracking_alloc.rs`,
   `src/discovery_history.rs`.
-- **Sweep date:** `2026-09-27`
+- **Sweep date:** `2026-10-05`
 - **Baseline commit:** `b85a551ed2521ed327469b20eb88aeda828357d2`
 - **Exposure:** `local`
 - **Swept by:** Issue #2095 (chunk 11 of the #2083 overflow tracker), split
@@ -17,13 +17,13 @@ Ledger rules: [`README.md`](README.md). Index entry:
   (11d); scaffolded by Issue #2233.
 - **Tracker issue:** `#2095`
 
-### Sweep status — IN PROGRESS
+### Sweep status — COMPLETE
 
-This record is a scaffold. Every file row below reads `pending` until its
-owning audit sub-issue sweeps it; the index's `last_swept` date marks when the
-scaffold was cut, not a finished sweep. Each sub-issue edits only its own `###`
-section and its own marked region of the two finding tables below, so
-concurrent PRs do not conflict.
+All 8 files in this chunk have been swept, across four slices: #2234
+(PR #2257), #2251 (PR #2268), #2252 (PR #2287) and #2253 (PR #2394). Issue
+#2254 then reconciled the tables below against a fresh grep inventory of the
+chunk and wrote the `## Outcome` and `## Issues filed` sections. The index's
+`last_swept` date now marks this finished sweep, not a scaffold cut.
 
 ### Why the finding tables cite symbols, not line numbers
 
