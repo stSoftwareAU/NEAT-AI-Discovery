@@ -134,8 +134,7 @@ fn fanin_at_the_cap_is_scanned_fanin_over_the_cap_is_skipped() {
         "a target exactly at the cap must do pair work"
     );
 
-    let (creature_over_cap, records_over_cap) =
-        fanin_fixture(MAX_FANIN_FOR_CANCELLATION_SCAN + 1);
+    let (creature_over_cap, records_over_cap) = fanin_fixture(MAX_FANIN_FOR_CANCELLATION_SCAN + 1);
     let scan_over_cap = detect_symmetric_cancellation_with_deadline(
         &creature_over_cap,
         &records_over_cap,
@@ -188,13 +187,8 @@ fn elapsed_deadline_stops_the_scan_before_any_pair_work() {
     let config = WeightCoherenceConfig::default();
     let (creature, records) = fanin_fixture(20);
 
-    let scan = detect_symmetric_cancellation_with_deadline(
-        &creature,
-        &records,
-        &config,
-        None,
-        &elapsed(),
-    );
+    let scan =
+        detect_symmetric_cancellation_with_deadline(&creature, &records, &config, None, &elapsed());
 
     assert_eq!(scan.truncation, Some(ScanTruncation::DeadlinePassed));
     assert_eq!(scan.pairs_correlated, 0);

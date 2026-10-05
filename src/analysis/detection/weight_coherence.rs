@@ -537,10 +537,12 @@ pub fn detect_symmetric_cancellation_with_deadline(
 
                 // Issue #2347: build each source's activation map once, on
                 // first use, rather than once per pair.
-                activation_maps.insert(*source1_uuid, build_activation_map(records1));
-                scan.activation_maps_built += 1;
-                activation_maps.insert(*source2_uuid, build_activation_map(records2));
-                scan.activation_maps_built += 1;
+                for (uuid, recs) in [(*source1_uuid, records1), (*source2_uuid, records2)] {
+                    if !activation_maps.contains_key(uuid) {
+                        activation_maps.insert(uuid, build_activation_map(recs));
+                        scan.activation_maps_built += 1;
+                    }
+                }
                 let map1 = &activation_maps[*source1_uuid];
                 let map2 = &activation_maps[*source2_uuid];
 
@@ -737,7 +739,9 @@ fn correlation_from_maps(
     }
 
     Some(super::stats::pearson_correlation_hashmaps(
-        map1, map2, min_samples,
+        map1,
+        map2,
+        min_samples,
     ))
 }
 
