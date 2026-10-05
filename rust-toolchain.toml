@@ -1,0 +1,12 @@
+# Pinned toolchain (#2395, NEAT-AI-core#747).
+#
+# NEAT-AI-Discovery#2395: `try_update` (stable from 1.95) shipped while this
+# crate declared no Rust version, so the fleet's runlib.sh gate passed hosts on
+# 1.93/1.94 and every build died with E0658. The pin and `rust-version` in
+# Cargo.toml are the same version: CI builds at exactly the declared minimum,
+# so code needing a newer std API cannot merge without raising both — and
+# raising them is what makes runlib.sh install that toolchain on every host.
+# 1.99 is the NEAT-AI family floor (NEAT-AI-core#747).
+[toolchain]
+channel = "1.99.0"
+components = ["rustfmt", "clippy"]

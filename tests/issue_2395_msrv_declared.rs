@@ -199,3 +199,24 @@ fn version_1_95_0_equals_1_95() {
 fn version_1_100_is_above_1_95_numerically_not_lexically() {
     assert!(version_at_least("1.100", "1.95"));
 }
+
+/// NEAT-AI-core#747: the pinned toolchain and the declared minimum are the same
+/// release, so CI's everyday build (the pin) and the MSRV job agree, and a
+/// newer std API cannot merge without raising both.
+#[test]
+fn rust_toolchain_pin_is_the_declared_rust_version() {
+    let declared = package_rust_version(&read("Cargo.toml"))
+        .expect("Cargo.toml [package] must declare rust-version");
+    let pin = read("rust-toolchain.toml");
+    let channel = pin
+        .lines()
+        .find_map(|l| l.trim().strip_prefix("channel = \""))
+        .and_then(|rest| rest.strip_suffix('"'))
+        .expect("rust-toolchain.toml must pin a channel");
+    assert_eq!(
+        version_components(channel),
+        version_components(&declared),
+        "rust-toolchain.toml pins {channel} but Cargo.toml declares rust-version {declared}; \
+         raise both together (NEAT-AI-core#747)"
+    );
+}
