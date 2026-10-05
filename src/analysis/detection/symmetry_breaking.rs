@@ -161,6 +161,13 @@ pub fn detect_symmetric_neurons_observed(
         };
     }
 
+    if deadline_passed(deadline) {
+        return BoundedScan {
+            candidates: Vec::new(),
+            truncation: Some(ScanTruncation::DeadlinePassed),
+        };
+    }
+
     // Build incoming weight vectors for each hidden neuron. Issue #2349: use
     // a HashSet for the hidden-neuron membership test instead of `.any(..)`
     // over the whole hidden-neuron list for every synapse.
@@ -218,6 +225,10 @@ pub fn detect_symmetric_neurons_observed(
 
     // Compare all pairs of eligible hidden neurons
     'outer: for i in 0..eligible_neurons.len() {
+        if deadline_passed(deadline) {
+            truncation = Some(ScanTruncation::DeadlinePassed);
+            break 'outer;
+        }
         for j in (i + 1)..eligible_neurons.len() {
             let neuron_a = eligible_neurons[i];
             let neuron_b = eligible_neurons[j];

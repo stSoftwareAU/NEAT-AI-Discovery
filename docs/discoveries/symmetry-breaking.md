@@ -51,7 +51,7 @@ flowchart TD
     B -->|"No"| Z["✅ Not symmetric"]
     B -->|"Yes"| C{"|bias_a − bias_b| <= 0.5?"}
     C -->|"No"| Z
-    C -->|"Yes"| D["📐 Build weight vectors<br/>from shared source neurons"]
+    C -->|"Yes"| D["📐 Compare weight vectors<br/>(built once per neuron)"]
     D --> E["📐 Compute cosine similarity"]
     E --> F{"🪞 Cosine similarity >= 0.95?"}
     F -->|"Yes"| G["🪞 Symmetric pair detected"]
@@ -67,6 +67,14 @@ flowchart TD
 ```
 
 Requires at least 2 hidden neurons in the network.
+
+**Bounded scan (Issue [#2349](https://github.com/stSoftwareAU/NEAT-AI-Discovery/issues/2349)):**
+each hidden neuron's incoming weight vector is built once, before the pair
+loop, so the per-pair cost is one cosine similarity. The pair scan checks the
+discovery deadline (and host cancellation) once per outer neuron and stops
+after `MAX_SYMMETRIC_PAIR_CANDIDATES` (256) candidates. Either stop returns
+the candidates found so far and logs a `Symmetry-breaking scan stopped early`
+warning.
 
 ---
 
