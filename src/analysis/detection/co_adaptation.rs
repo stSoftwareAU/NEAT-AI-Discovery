@@ -21,6 +21,17 @@
 //! For each co-adapted pair:
 //! - `RemoveNeuron` — remove the lower-impact neuron (reuse `remove-low-impact`)
 //! - `SetWeight` — perturb one neuron's incoming weights to break the co-adaptation
+//!
+//! ## Scan bounds (Issue #2348)
+//!
+//! The pairwise comparison is `O(E²·S)` in the number of eligible hidden
+//! neurons `E` and the shared sample count `S`. [`MAX_CO_ADAPTATION_ELIGIBLE_NEURONS`]
+//! caps how many eligible hidden neurons are compared (bounding pairs to
+//! 256·255/2 = 32,640), [`MAX_CO_ADAPTED_PAIR_CANDIDATES`] caps how many
+//! co-adapted pairs are emitted, and
+//! [`detect_co_adapted_neurons_with_deadline`] checks the shared analysis
+//! deadline / global cancellation once per outer row so a hung or oversized
+//! scan can be stopped mid-flight.
 
 #![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use std::collections::HashMap;
@@ -29,6 +40,8 @@ use crate::types::DiscoverRecord;
 use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson, CreatureJson};
 
 use crate::analysis::constants::MIN_DISCOVERY_SAMPLE_COUNT;
+use crate::analysis::recommendation::epistatic::ScanTruncation;
+use crate::analysis::utils::deadline_passed;
 
 use super::helpers::build_record_map;
 
@@ -40,6 +53,15 @@ const PERTURBATION_SCALE: f32 = 0.6;
 
 /// Base estimated improvement for removing a redundant neuron.
 const BASE_IMPROVEMENT: f32 = 0.003;
+
+/// Ceiling on the number of eligible hidden neurons compared in the
+/// co-adaptation pairwise scan (Issue #2348). Bounds the number of pairs
+/// evaluated to 256·255/2 = 32,640, regardless of creature size.
+pub const MAX_CO_ADAPTATION_ELIGIBLE_NEURONS: usize = 256;
+
+/// Ceiling on the number of co-adapted pair candidates emitted by the scan
+/// (Issue #2348).
+pub const MAX_CO_ADAPTED_PAIR_CANDIDATES: usize = 256;
 
 /// Candidate representing a detected co-adapted neuron pair.
 #[derive(Debug, Clone)]
@@ -60,10 +82,29 @@ pub struct CoAdaptedPairCandidate {
     pub estimated_improvement: f32,
 }
 
+/// Result of a deadline- and ceiling-bounded co-adaptation scan (Issue #2348).
+#[derive(Debug, Clone)]
+pub struct CoAdaptationScan {
+    /// Co-adapted pair candidates found before the scan finished or stopped,
+    /// sorted by |correlation| (highest first).
+    pub candidates: Vec<CoAdaptedPairCandidate>,
+    /// `Some` when the scan stopped before visiting every pair.
+    pub truncation: Option<ScanTruncation>,
+    /// Number of (A, B) pairs actually visited.
+    pub pairs_evaluated: usize,
+    /// Number of otherwise-eligible hidden neurons skipped because
+    /// [`MAX_CO_ADAPTATION_ELIGIBLE_NEURONS`] was exceeded.
+    pub eligible_skipped: usize,
+}
+
 /// Detect co-adapted neuron pairs from recorded activations.
 ///
 /// Computes pairwise Pearson correlation between hidden neurons' activations
 /// and flags pairs where |correlation| exceeds the threshold.
+///
+/// Applies both the eligible-neuron and candidate-emission ceilings (Issue
+/// #2348) but no deadline — equivalent to calling
+/// [`detect_co_adapted_neurons_with_deadline`] with a `None` deadline.
 ///
 /// # Arguments
 /// * `creature` - The creature's network topology (neurons and synapses).
@@ -75,6 +116,22 @@ pub fn detect_co_adapted_neurons(
     creature: &CreatureJson,
     neuron_records: &[(String, impl AsRef<[DiscoverRecord]>)],
 ) -> Vec<CoAdaptedPairCandidate> {
+    detect_co_adapted_neurons_with_deadline(creature, neuron_records, &None).candidates
+}
+
+/// Deadline- and cancellation-aware variant of [`detect_co_adapted_neurons`]
+/// (Issue #2348).
+///
+/// Bounds the O(E²·S) pairwise comparison with two ceilings
+/// ([`MAX_CO_ADAPTATION_ELIGIBLE_NEURONS`], [`MAX_CO_ADAPTED_PAIR_CANDIDATES`])
+/// and checks `deadline` once per outer row so the scan stops promptly on an
+/// elapsed deadline or global cancellation rather than visiting every
+/// remaining pair.
+pub fn detect_co_adapted_neurons_with_deadline(
+    creature: &CreatureJson,
+    neuron_records: &[(String, impl AsRef<[DiscoverRecord]>)],
+    deadline: &Option<std::time::SystemTime>,
+) -> CoAdaptationScan {
     // Identify hidden neuron UUIDs
     let hidden_uuids: Vec<&str> = creature
         .neurons
@@ -84,14 +141,19 @@ pub fn detect_co_adapted_neurons(
         .collect();
 
     if hidden_uuids.len() < 2 {
-        return Vec::new();
+        return CoAdaptationScan {
+            candidates: Vec::new(),
+            truncation: None,
+            pairs_evaluated: 0,
+            eligible_skipped: 0,
+        };
     }
 
     // Build records lookup
     let records_map = build_record_map(neuron_records);
 
     // Filter to hidden neurons with sufficient samples
-    let eligible: Vec<&str> = hidden_uuids
+    let mut eligible: Vec<&str> = hidden_uuids
         .iter()
         .filter(|&&uuid| {
             records_map
@@ -102,8 +164,20 @@ pub fn detect_co_adapted_neurons(
         .collect();
 
     if eligible.len() < 2 {
-        return Vec::new();
+        return CoAdaptationScan {
+            candidates: Vec::new(),
+            truncation: None,
+            pairs_evaluated: 0,
+            eligible_skipped: 0,
+        };
     }
+
+    // Issue #2348: cap the eligible hidden neurons compared, keeping the
+    // first MAX in creature evaluation order, before the O(E²) comparison.
+    let eligible_skipped = eligible
+        .len()
+        .saturating_sub(MAX_CO_ADAPTATION_ELIGIBLE_NEURONS);
+    eligible.truncate(MAX_CO_ADAPTATION_ELIGIBLE_NEURONS);
 
     // Pre-compute per-neuron activation vectors indexed by obs_index
     // for consistent pairing across samples.
@@ -116,11 +190,25 @@ pub fn detect_co_adapted_neurons(
         })
         .collect();
 
-    let mut candidates = Vec::with_capacity(eligible.len());
+    let mut candidates = Vec::with_capacity(eligible.len().min(MAX_CO_ADAPTED_PAIR_CANDIDATES));
+    let mut pairs_evaluated: usize = 0;
+    let mut truncation: Option<ScanTruncation> = None;
 
     // Compare all pairs of eligible hidden neurons
-    for i in 0..eligible.len() {
+    'outer: for i in 0..eligible.len() {
+        if deadline_passed(deadline) {
+            truncation = Some(ScanTruncation::DeadlinePassed);
+            break;
+        }
+
         for j in (i + 1)..eligible.len() {
+            if candidates.len() >= MAX_CO_ADAPTED_PAIR_CANDIDATES {
+                truncation = Some(ScanTruncation::CandidateCeiling);
+                break 'outer;
+            }
+
+            pairs_evaluated += 1;
+
             let uuid_a = eligible[i];
             let uuid_b = eligible[j];
 
@@ -168,7 +256,12 @@ pub fn detect_co_adapted_neurons(
     // Sort by |correlation| descending (most co-adapted first)
     candidates.sort_by(|a, b| b.correlation.abs().total_cmp(&a.correlation.abs()));
 
-    candidates
+    CoAdaptationScan {
+        candidates,
+        truncation,
+        pairs_evaluated,
+        eligible_skipped,
+    }
 }
 
 /// Convert co-adapted pair candidates into coordinated structural candidates.

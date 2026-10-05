@@ -1339,6 +1339,14 @@ differ.
 2. **Both hidden neurons**: Only hidden-to-hidden pairs are considered.
 3. **Sufficient samples**: At least 20 samples for statistical reliability.
 
+**Scan bounds**: the pairwise comparison is capped at the first 256 eligible
+hidden neurons (creature evaluation order) — at most 32,640 pairs — and stops
+once 256 co-adapted pairs are found; the scan also checks the discovery
+deadline and the global cancellation flag before each outer row and returns
+its partial results if either is hit. See
+[docs/discoveries/co-adaptation.md](discoveries/co-adaptation.md#-scan-bounds)
+for details.
+
 **Recommended actions**:
 
 1. **Remove neuron**: Remove the weaker of the two co-adapted neurons.
