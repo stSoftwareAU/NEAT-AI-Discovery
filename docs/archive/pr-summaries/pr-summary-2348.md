@@ -119,7 +119,9 @@ and expects `None`. Reverting the closure to pass `&None` instead of
 `co_adaptation_spec_detects_pairs_before_the_deadline`, proves the same inputs
 yield pairs when the deadline is still in the future.
 
-**Docs sweep:**
+**Docs sweep** — grep: `co-adaptation`, `co_adaptation`, `co-adapted`, `append_neuron_specs`, `detect_co_adapted_neurons`; section: `docs/discoveries/co-adaptation.md#-scan-bounds`, `docs/DISCOVERY_TYPES.md#co-adaptation-detection`, `docs/ANALYSIS_DEEP_DIVE.md` (Co-Adaptation Detection algorithm steps); updated: `docs/discoveries/co-adaptation.md`, `docs/DISCOVERY_TYPES.md`, `docs/ANALYSIS_DEEP_DIVE.md`
+
+Docs sweep details:
 
 - Grep terms: `co-adaptation|co_adaptation|co-adapted`,
   `append_neuron_specs`, `detect_co_adapted_neurons`.
@@ -128,14 +130,14 @@ yield pairs when the deadline is still in the future.
   Co-Adaptation → Scan bounds), `docs/ANALYSIS_DEEP_DIVE.md`
   (section: co-adaptation algorithm steps).
 - Hits outside the diff, and why each is still true:
-  - `README.md:272` — still true because it is a feature-list entry only.
+  - `README.md:273` — still true because it is a feature-list entry only.
   - `docs/DROUGHT_PLAYBOOK.md:400` — still true because the dispatch-level
     skip for creatures with more than 1000 hidden neurons is orthogonal to
     the in-scan caps.
   - `docs/analysis/snapshot-mining-1631.md:50` — still true because it is a
     generator list.
-  - `docs/PRIOR_ART.md:148,216` — still true because it is a Hinton 2012
-    citation.
+  - `docs/PRIOR_ART.md:148,216` — still true because they are a prior-art
+    table row and the Hinton 2012 citation.
   - `docs/DISCOVERY_TYPES.md:50,199,1327` — still true because they are the
     table of contents, a summary row and a source link.
   - `docs/DISCOVERY_TYPES.md:1330,1332,1352,1367` — still true because they
