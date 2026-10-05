@@ -23,14 +23,16 @@ residual crate-wide `env::set_var` sweep beyond `SEC-fe0b268a3799` belongs to
 chunk 13, #2096; the device region below records only the GPU-path
 disposition.
 
-### Sweep status — IN PROGRESS
+### Sweep status — COMPLETE
 
-This record is a scaffold. Every file row below reads `pending — <owner>` until
-its owning slice sweeps it; the index's `last_swept` date marks when the
-scaffold was cut, not a finished sweep. Each slice edits only its own `###`
-group in `## Files swept`, its own region under `## Audit sections`, and its own
-marked region of the `## Ledger` and `## Refuted / not findings` tables, so
-concurrent PRs do not conflict.
+All five slices have swept their files, and the #2249 reconciliation audited
+the four files added after the baseline. Every `## Files swept` row carries a
+settled outcome, every finding has a `## Ledger` row, every refuted candidate
+has a `## Refuted / not findings` row, and `## Outcome` gives the chunk-wide
+view (Issue #2250). The index's `last_swept` date is the sweep date above. Each
+slice edited only its own `###` group in `## Files swept`, its own region under
+`## Audit sections`, and its own marked region of the `## Ledger` and
+`## Refuted / not findings` tables, so concurrent PRs did not conflict.
 
 ### Methodology
 
@@ -1607,6 +1609,18 @@ Test-only — declared under `#[cfg(test)]` (`mod.rs:60`–`:61` at the baseline
 
 Each slice appends rows only inside its own marked region.
 
+Rows are sorted by severity (critical → high → medium → low) within each
+region; the chunk-wide severity-sorted list is in `## Outcome`. The last
+column keeps the `status` header that
+`tests/issue_2288_chunk_09_ledger_scaffold.rs` pins, and carries each row's
+`#N` link.
+
+Finding-issue audit (Issue #2250, 2026-10-05): all 11 finding issues — #2308,
+#2311, #2313, #2314, #2318, #2332, #2339, #2361, #2363, #2364 and #2365 —
+carry `security`, `lang:rust`, exactly one `severity:*` matching their row and
+exactly one `confidence:*`, and their bodies link this record, so no body edit
+was needed. `SEC-fe0b268a3799` predates the sweep and has no chunk-9 issue.
+
 | finding-id | file:line | CWE | severity | status |
 | --- | --- | --- | --- | --- |
 <!-- section: shaders -->
@@ -1650,7 +1664,7 @@ Each slice appends rows only inside its own marked region.
 | `WORKGROUP_SIZE` or another GPU constant drifts from what the kernels or deadlines assume | `src/analysis/gpu/shaders.rs:280`, `:313`–`:327`, `:369`–`:373`; `src/analysis/gpu/device.rs:621`–`:624` | `WORKGROUP_SIZE` is pinned to every entry point by the naga test; the other constants are bounded by const asserts and `GPU_BUFFER_MAP_TIMEOUT_SECS` is derived from `GPU_QUEUE_TIMEOUT_MAX_SECS`. Only the duplicated `GPU_INIT_TIMEOUT_SECS` lacks a pin (#2311) |
 | 41 `pub use` re-exports in `gpu/mod.rs` unused through the module root (dead surface) | `src/analysis/gpu/mod.rs:54`–`:99` | Each re-export is a redundant path to an item still reached through its submodule (or used inside `gpu/`); `gpu` is not a C-ABI surface and none of them reads env or config, so none is an operator lever that silently does nothing |
 <!-- section: evaluation -->
-| Dispatch-limit overflow: more than 65,535 workgroups at helpful L366/L402 or harmful L246/L316 (CWE-190) | `src/analysis/gpu/helpful_evaluation.rs:124`, `:110`; `src/analysis/gpu/harmful_evaluation.rs:217`, `:196` | The dispatch limit (a set of 16,776,961+ samples) is never the limit that trips first. The 48-byte (helpful) and 16-byte (harmful) contribution buffers exceed the 128 MiB binding limit at 2,796,203 and 8,388,609 samples, during allocation and binding, before any dispatch. That panic is #2314 |
+| Dispatch-limit overflow: more than `max_compute_workgroups_per_dimension` (65,535) workgroups at helpful L366/L402 or harmful L246/L316 (CWE-190) | `src/analysis/gpu/helpful_evaluation.rs:124`, `:110`; `src/analysis/gpu/harmful_evaluation.rs:217`, `:196` | The dispatch limit (a set of 16,776,961+ samples) is never the limit that trips first. The 48-byte (helpful) and 16-byte (harmful) contribution buffers exceed the 128 MiB binding limit at 2,796,203 and 8,388,609 samples, during allocation and binding, before any dispatch. That panic is #2314 |
 | A wgpu validation error is misclassified as device loss (for example by `"internal error"`), causing a device re-initialisation loop | `src/analysis/gpu/queue/recovery.rs:60`–`:71`; `src/analysis/gpu/queue/execution.rs:97`–`:101`; `wgpu-30.0.1/src/backend/wgpu_core.rs:692`–`:694` | The validation error is a panic from wgpu's default handler, not an `Err`, so `is_device_lost_error` is never called on it. The resulting "response channel closed" / "work queue channel closed" messages match none of its patterns. There is no re-initialisation or retry, and the panic itself is #2314 |
 | `usize as u32` length truncation in helpful (L295/L349/L365/L374/L382) or harmful (L206/L245/L255/L274) (CWE-190) | `src/analysis/gpu/helpful_evaluation.rs:104`, `:110`, `:124`; `src/analysis/gpu/harmful_evaluation.rs:190`, `:196`, `:217` | A wrap needs more than 4,294,967,295 samples in one set, which is about 103 GB of `HelpfulSample`s on the host. Buffer creation or binding panics at 2,796,203 (helpful) or 8,388,609 (harmful) before any truncated value reaches a buffer or a dispatch |
 | A reused helpful pool slot returns stale bytes from a longer, earlier set (CWE-908) | `src/analysis/gpu/helpful_evaluation.rs:374`–`:377`, `:405`, `:426`, `:441`, `:461`; `src/shaders/helpful.wgsl:95`; `src/shaders/helpful_reduce.wgsl:114` | `copy_size` comes from the current set's `num_workgroups` or length. Only `[0, copy_size)` is copied, mapped and read, and the kernels write every element in that range. Stale tail bytes are never read |
@@ -1659,7 +1673,7 @@ Each slice appends rows only inside its own marked region.
 | The helpful `pool[slot_idx]` index goes out of range | `src/analysis/gpu/helpful_evaluation.rs:287`, `:311`, `:335` | A chunk holds at most `effective_batch_size` sets, and `pool_size = effective_batch_size.min(samples_batch.len())`. `slot_idx` counts only the non-empty sets in the chunk |
 | A map-wait timeout or map error is swallowed and returns zero stats | `src/analysis/gpu/helpful_evaluation.rs:455`–`:456`, `:462`–`:464`; `src/analysis/gpu/harmful_evaluation.rs:383`–`:384`, `:404`–`:406`; `src/analysis/gpu/device.rs:362`, `:372`, `:382` | Both modules propagate the wait's `Err` and `get_mapped_range`'s `Err` with `?`, and neither has a zero-result fallback. What goes wrong on that path is the callback panic during the drop, which is #2313 |
 | `merge_batch_results` silently inserts default stats on a count mismatch (fail-silent) | `src/analysis/gpu/helpful_evaluation.rs:405`, `:410`, `:493`, `:537`–`:540` | Each non-empty set pushes exactly one `used` entry, and each `used` entry pushes exactly one result, so the counts are equal by construction. The fallback branch is unreachable, and `debug_assert_eq!` (L523) pins it |
-| Dispatch-limit overflow at relu L167 or activation L193/L263/L568/L632 (CWE-190) | `src/analysis/gpu/relu_evaluation.rs:128`; `src/analysis/gpu/activation_evaluation.rs:160`, `:495` | The per-dispatch ceiling is 256 × 65,535 = 16,776,960 elements. The 40-byte `ReluContribution` and 28-byte `ActivationOutput` bindings exceed the 128 MiB limit first, at 3,355,444 and 4,793,491 samples. That panic is #2314 (Issue #2238) |
+| Dispatch-limit overflow at relu L167 or activation L193/L263/L568/L632 (CWE-190) | `src/analysis/gpu/relu_evaluation.rs:128`; `src/analysis/gpu/activation_evaluation.rs:160`, `:495` | The per-dispatch ceiling is 256 × 65,535 (`max_compute_workgroups_per_dimension`) = 16,776,960 elements. The 40-byte `ReluContribution` and 28-byte `ActivationOutput` bindings exceed the 128 MiB limit first, at 3,355,444 and 4,793,491 samples. That panic is #2314 (Issue #2238) |
 | Dispatch-limit overflow at bias L183 (CWE-190) | `src/analysis/gpu/bias_evaluation.rs:182`–`:183`; `src/analysis/activation/specs.rs:219` | The bias dispatch is sized from `bias_candidates.len()`, which is at most 41, so it is always one workgroup (Issue #2238) |
 | `bias_evaluation.rs` L87 `num_steps` is unbounded, so a huge candidate `Vec` or dispatch is possible (CWE-770) | `src/analysis/activation/specs.rs:219`; `src/analysis/scoring/weights/calculation.rs:283`, `:286`, `:290` | The sole caller passes `get_bias_range(squash)`, whose constants give 21 or 41 steps. No FFI entry point supplies a range, and every production caller passes `analyzer: None`, so the GPU branch never runs. The `pub fn` stays a latent risk for Rust callers, and #2316 removes it (Issue #2238) |
 | `usize as u32` length truncation in bias (L125/L126/L182), relu (L117/L166) or activation (L146/L179/L224/L456/L480/L583) (CWE-190) | `src/analysis/gpu/bias_evaluation.rs:104`; `src/analysis/gpu/relu_evaluation.rs:108`; `src/analysis/gpu/activation_evaluation.rs:137`, `:448`, `:470` | Each sample-length cast runs after a buffer that exceeds `max_buffer_size` at 33,554,433 samples or fewer. A wrap needs more than 4,294,967,295. The bias-candidate casts are at most 41 (Issue #2238) |
@@ -1773,29 +1787,113 @@ and `src/analysis/gpu/queue/empty_vs_zero_tests.rs` — and were audited here at
 
 ## Outcome
 
-In progress — the shaders slice is complete: the 10 `src/shaders/*.wgsl`
-kernels (#2290: one finding, #2308) and `mod.rs`, `pipeline_builder.rs` and
-`shaders.rs` (#2291: one finding, #2311). The evaluation slice is complete: the helpful and
-harmful halves (#2237: two findings, #2313 and #2314) and the bias, relu and
-activation halves (#2238: no new finding; relu and activation
-widen #2313 and #2314, and the unreachable GPU bias path is #2316). The device
-slice has recorded the SEC-fe0b268a3799 disposition (remediated by #1873) and
-the CPU-fallback cross-check (#2240: one finding, #2318) and the entry-point
-`None → Err` sweep (#2241: no finding) and the per-file sweep of `analyzer.rs`,
-`budget.rs`, `breaker.rs` and `device.rs` (#2242: one finding, #2332).
-The queue-core slice has swept `submission.rs` and `execution.rs` (#2243: one
-finding, #2339) and `scheduling.rs`, `executor.rs` and `mod.rs` with the
-test-only `fake_evaluator.rs` and `wedge_tests.rs` (#2244: one finding, #2361).
-The queue-lifecycle slice has swept `recovery.rs` and the retry loop it feeds
-(#2245: three findings, #2363, #2364 and #2365), and `staleness.rs`, `heartbeat.rs` and
-`inflight.rs` with the test-only `stale_skip_tests.rs` (#2246: no new finding; the
-stall-window opt-out is a site of the #2276 class).
-Every other file is pending its slice. Each slice records its
-outcome in its region under `## Audit sections`.
+**Sweep complete — 12 `## Ledger` rows: 0 critical, 0 high, 1 medium, 11
+low.** Eleven are finding issues filed by the chunk-9 slices. The twelfth,
+`SEC-fe0b268a3799`, is the pre-existing GPU-environment `set_var` race the
+device slice re-verified as remediated by #1873. The #2249 gap audit added no
+finding.
+
+| Severity | Ledger rows |
+| --- | --- |
+| critical | 0 |
+| high | 0 |
+| medium | 1 |
+| low | 11 |
+
+Per slice: the shaders slice swept the 10 `src/shaders/*.wgsl` kernels at the
+baseline (#2290: one finding, #2308) and `mod.rs`, `pipeline_builder.rs` and
+`shaders.rs` (#2291: one finding, #2311). The evaluation slice swept the helpful
+and harmful halves (#2237: two findings, #2313 and #2314) and the bias, relu and
+activation halves (#2238: no new finding, relu and activation widen #2313 and
+#2314, and the unreachable GPU bias path is #2316). The device slice recorded
+the `SEC-fe0b268a3799` disposition (remediated by #1873), the CPU-fallback
+cross-check (#2240: one finding, #2318), the entry-point `None → Err` sweep
+(#2241: no finding) and the per-file sweep of `analyzer.rs`, `budget.rs`,
+`breaker.rs` and `device.rs` (#2242: one finding, #2332). The queue-core slice
+swept `submission.rs` and `execution.rs` (#2243: one finding, #2339) and
+`scheduling.rs`, `executor.rs` and `mod.rs` with the test-only
+`fake_evaluator.rs` and `wedge_tests.rs` (#2244: one finding, #2361). The
+queue-lifecycle slice swept `recovery.rs` and the retry loop it feeds (#2245:
+three findings, #2363, #2364 and #2365), and `staleness.rs`, `heartbeat.rs` and
+`inflight.rs` with the test-only `stale_skip_tests.rs` (#2246: no new finding,
+the stall-window opt-out is a site of the #2276 class). The #2249 completeness
+audit read the four post-baseline files with no finding. Each slice's detailed
+verdict is in its region under `## Audit sections`.
+
+### Findings by severity (chunk-wide)
+
+This is the chunk-wide view: one severity-sorted list across all five regions,
+where `## Ledger` sorts only within each region. Issue state is as at
+2026-10-05. The ledger's `status` cells record each verdict as filed.
+
+1. **medium** — #2313 — `SEC-d3bf886bc1d3` (CWE-248) — readback: the
+   `map_async` callback `.expect` panics after a timed-out map wait, and aborts
+   with two or more maps pending (evaluation) — closed.
+2. **low** — #2308 — `SEC-e8e1dd84a447` (CWE-754) — shader: WGSL
+   `is_finite_value` is a float self-comparison fast-math may fold (shaders) —
+   closed.
+3. **low** — #2311 — `SEC-4b2140a0cd91` (CWE-1041) — device init:
+   `GPU_INIT_TIMEOUT_SECS` is defined twice with no equality pin (shaders) —
+   closed.
+4. **low** — #2314 — `SEC-1a9af762e205` (CWE-1284) — evaluation: a sample set
+   over the 128 MiB binding limit panics at `create_bind_group` instead of
+   returning `Err` (evaluation) — closed.
+5. **low** — #2318 — `SEC-2b0c59cc73d5` (CWE-754) — device: a software (CPU)
+   adapter passes the GPU capability gate (device) — closed.
+6. **low** — #2332 — `SEC-d6747980489b` (CWE-1088) — device: the capability
+   probe blocks on `request_adapter`/`request_device` with no deadline
+   (device) — closed.
+7. **low** — #2339 — `SEC-1124ca631044` (CWE-400) — queue submission:
+   `send_timeout` waits the whole batch timeout with no heartbeat or breaker
+   check (queue-core) — closed.
+8. **low** — #2361 — `SEC-f0d19ede542c` (CWE-755) — queue execution: a
+   GPU-thread panic strands every queued request (queue-core) — open.
+9. **low** — #2363 — `SEC-19ddcad53b91` (CWE-754) — queue execution: the
+   recovery classifiers never match a wgpu 30 device loss or memory exhaustion
+   (queue-lifecycle) — open.
+10. **low** — #2364 — `SEC-c01db5943e3c` (CWE-778) — queue execution:
+    `NEAT_AI_DISCOVERY_GPU_RETRY_LIMIT` parsing falls back silently
+    (queue-lifecycle) — open.
+11. **low** — #2365 — `SEC-6f84944cf02b` (CWE-754) — queue execution: a
+    budget-capped timeout is classified as device loss (queue-lifecycle) —
+    open.
+12. **low** — `SEC-fe0b268a3799` (CWE-362) — device init: the GPU-environment
+    `set_var` race, remediated by #1873 before this sweep (device) — no
+    chunk-9 issue.
+
+### Data path
+
+Each finding issue is attached, by a dotted link, to the node where its
+defect sits. Mermaid syntax beyond the no-`;` rule that
+`tests/issue_2249_chunk9_ledger_complete.rs` pins is checked only by the
+worker's external Mermaid validator.
+
+```mermaid
+flowchart LR
+    caller["Caller: FFI analysis entry point"] --> device["Device: capability probe and GpuAnalyzer init"]
+    device --> submit["Queue submission: submission.rs send and response wait"]
+    submit --> exec["Queue execution: scheduling.rs GPU thread, execution.rs work loop, recovery.rs retry"]
+    exec --> evaluation["Evaluation: helpful, harmful, relu and activation buffers and bind groups"]
+    evaluation --> shader["Shader: src/shaders WGSL kernels"]
+    shader --> readback["Readback: map_async and the device.rs map wait"]
+    readback --> result["Result or Err returned to the caller"]
+    f1873["SEC-fe0b268a3799, remediated by #1873"] -.- device
+    f2311["#2311 SEC-4b2140a0cd91, low"] -.- device
+    f2318["#2318 SEC-2b0c59cc73d5, low"] -.- device
+    f2332["#2332 SEC-d6747980489b, low"] -.- device
+    f2339["#2339 SEC-1124ca631044, low"] -.- submit
+    f2361["#2361 SEC-f0d19ede542c, low"] -.- exec
+    f2363["#2363 SEC-19ddcad53b91, low"] -.- exec
+    f2364["#2364 SEC-c01db5943e3c, low"] -.- exec
+    f2365["#2365 SEC-6f84944cf02b, low"] -.- exec
+    f2314["#2314 SEC-1a9af762e205, low"] -.- evaluation
+    f2308["#2308 SEC-e8e1dd84a447, low"] -.- shader
+    f2313["#2313 SEC-d3bf886bc1d3, medium"] -.- readback
+```
 
 ## Issues filed
 
-The sweep is in progress; each slice lists the issues it files here.
+Each slice listed the issues it filed here; `## Outcome` gives the chunk-wide severity view.
 
 - #2308 — `SEC-e8e1dd84a447` (CWE-754, low): WGSL `is_finite_value` guards are
   float self-comparisons fast-math may fold away (shaders slice, #2290).
