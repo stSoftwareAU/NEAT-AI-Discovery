@@ -61,12 +61,26 @@ signal that their value was ignored, or that `0` turned recovery off.
   `unparsable_value_warns_and_uses_default`, `accessor_routes_env_through_resolver`,
   `zero_warns_that_recovery_is_disabled`); `unset_does_not_warn` and
   `valid_values_do_not_warn` passed. With the fix: 7 passed.
-- Quality gate: GATE_RESULT_PLACEHOLDER
-- Docs sweep — grep for `GPU_RETRY_LIMIT|gpu_retry_limit|get_gpu_retry_limit`
-  re-run on the head; updated: `docs/CONFIGURATION.md:42`,
-  `src/analysis/gpu/queue/recovery.rs:88-91`, and the doc comment on
-  `gpu_retry_limit()` in `src/config/user_facing.rs`. Remaining hits, each
-  "file:line — still true because …":
+- Quality gate: `./quality.sh` failed in this summary-fix run on the branch
+  head, on its first build step and not on this change. The first error was
+  `error: rustc 1.98.0 is not supported by the following package:
+  neat_ai_discovery@0.74.278 requires rustc 1.99`. This host has rustc 1.98.0
+  and no `rustup`, so the toolchain pinned in `rust-toolchain.toml` (1.99.0) is
+  unavailable. The steps before the build passed: bash syntax, shellcheck,
+  install pinning, PR-summary layout and `cargo deny check`
+  (`advisories ok, bans ok, licenses ok, sources ok`). With
+  `cargo test --ignore-rust-version --test issue_2364_gpu_retry_limit_warn_test`
+  on 1.98.0, all 7 tests passed. CI builds on the pinned 1.99.0.
+
+**Docs sweep** — grep: `GPU_RETRY_LIMIT`, `gpu_retry_limit`, `get_gpu_retry_limit`, "Accepted range `0–10`"; section: `docs/CONFIGURATION.md#gpu`; updated: `docs/CONFIGURATION.md`, `src/analysis/gpu/queue/recovery.rs`, `src/config/user_facing.rs`
+
+- Docs sweep detail: I read the `## GPU` table in `docs/CONFIGURATION.md`
+  through. Its `NEAT_AI_DISCOVERY_GPU_RETRY_LIMIT` row (line 42) now states the
+  range, the warn on invalid or above-10 values and the warn on `0`. No other
+  row in that section mentions the retry limit. Also updated:
+  `src/analysis/gpu/queue/recovery.rs:88-91` and the doc comment on
+  `gpu_retry_limit()` in `src/config/user_facing.rs`. Each remaining hit is
+  listed as "file:line — still true because …":
   - `CHANGELOG.md:151` — historical #2006 entry listing `gpu_retry_limit` among
     the accessors that lost the trim before that fix.
   - `src/analysis/gpu/mod.rs:84-85` — re-exports only.
@@ -124,20 +138,21 @@ Optional notes not actioned:
 
 ## Test Plan
 
-- `cargo test --test issue_2364_gpu_retry_limit_warn_test` — 7 passed.
-- Branch outcomes, checked against `src/config/user_facing.rs` on this head:
-  - `src/config/user_facing.rs:65` unset → default, no warn —
-    `unset_does_not_warn` — flipped (returned 0) went red.
-  - `src/config/user_facing.rs:70` `Ok(0)` → warn + 0 —
-    `zero_warns_that_recovery_is_disabled` — flipped (default, no warn) went
-    red.
-  - `src/config/user_facing.rs:78` above max → warn + default —
-    `above_maximum_warns_and_uses_default` — flipped (arm removed) went red.
-  - `src/config/user_facing.rs:89` valid → value, no warn —
-    `valid_values_do_not_warn` — flipped (returned default) went red.
-  - `src/config/user_facing.rs:90` `Err` → warn + default —
-    `empty_value_warns_and_uses_default`, `unparsable_value_warns_and_uses_default`,
-    `accessor_routes_env_through_resolver` — flipped (no warn) went red.
+- `cargo test --ignore-rust-version --test issue_2364_gpu_retry_limit_warn_test`
+  on rustc 1.98.0: 7 passed. `--ignore-rust-version` was needed because this
+  host lacks the pinned 1.99.0 toolchain (see Quality gate under Evidence).
+
+**Branch outcomes:**
+- `src/config/user_facing.rs:65` — absent (variable unset) → default 3, no log — `tests/issue_2364_gpu_retry_limit_warn_test.rs::unset_does_not_warn` — flipped to `return 0`, test went red
+- `src/config/user_facing.rs:70` — `Ok(0)` → WARN "device-lost recovery is disabled", returns 0 — `tests/issue_2364_gpu_retry_limit_warn_test.rs::zero_warns_that_recovery_is_disabled` — arm disabled (`Ok(0) if false`, so 0 is returned silently), test went red
+- `src/config/user_facing.rs:78` — error (above the maximum of 10) → WARN, returns default 3 — `tests/issue_2364_gpu_retry_limit_warn_test.rs::above_maximum_warns_and_uses_default` — arm disabled (`if false && …`), test went red
+- `src/config/user_facing.rs:89` — success (`1..=10`, trimmed) → value returned, no log — `tests/issue_2364_gpu_retry_limit_warn_test.rs::valid_values_do_not_warn` — flipped to return the default, test went red
+- `src/config/user_facing.rs:90` — error (unparsable, including empty) → WARN, returns default 3 — `tests/issue_2364_gpu_retry_limit_warn_test.rs::empty_value_warns_and_uses_default`, `tests/issue_2364_gpu_retry_limit_warn_test.rs::unparsable_value_warns_and_uses_default`, `tests/issue_2364_gpu_retry_limit_warn_test.rs::accessor_routes_env_through_resolver` — warn removed, all three tests went red
+
+I re-did every flip in this summary-fix run against the branch head with
+`--ignore-rust-version` on rustc 1.98.0, restoring the file after each one. `src/analysis/gpu/queue/recovery.rs`
+changes a comment only, so it adds no branch.
+
 - Entry points checked: `gpu_retry_limit()` accessor →
   `accessor_routes_env_through_resolver`; reverting to the old inline parse
   makes it go red, as the baseline run showed.
