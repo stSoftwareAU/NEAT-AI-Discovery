@@ -24,12 +24,24 @@
 //!
 //! These are emitted as `CoordinatedStructuralCandidateJson` with `AddNeuron` and
 //! `AddSynapse` operations.
+//!
+//! ## Bounds (Issue #2346)
+//!
+//! The output count is checked against `MAX_CORRELATED_ERROR_OUTPUTS` before the
+//! O(n²) correlation matrix is allocated. The input count is checked against
+//! `MAX_CORRELATED_ERROR_INPUTS` before the per-group predictive-input search runs.
+//! The analysis deadline/global cancellation (via `deadline_passed`) is checked once
+//! per matrix row, once per group, and once per candidate input neuron, so a scan
+//! stops early rather than running unbounded. Skipped or partial work is reported via
+//! `CorrelatedErrorScan::skip`.
 
 #![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use std::collections::{HashMap, HashSet};
+use std::time::SystemTime;
 
 use super::helpers::build_record_map;
 
+use crate::analysis::utils::deadline_passed;
 use crate::types::DiscoverRecord;
 use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson, CreatureJson};
 
@@ -39,6 +51,14 @@ use crate::analysis::constants::MIN_DISCOVERY_SAMPLE_COUNT as MIN_SAMPLES_FOR_CO
 /// Minimum Pearson correlation to consider two outputs as correlated.
 const CORRELATION_THRESHOLD: f32 = 0.7;
 
+/// Maximum number of eligible output neurons before the correlation matrix is
+/// skipped entirely; a 1,000² f32 matrix is ~4 MB / ~500k Pearson pairs (Issue #2346).
+pub const MAX_CORRELATED_ERROR_OUTPUTS: usize = 1_000;
+
+/// Maximum number of input neurons considered by the predictive-input search
+/// before it is skipped entirely (Issue #2346).
+pub const MAX_CORRELATED_ERROR_INPUTS: usize = 10_000;
+
 /// Minimum absolute correlation between an input activation and the shared error
 /// to consider the input "predictive".
 const PREDICTIVE_INPUT_THRESHOLD: f32 = 0.4;
@@ -46,6 +66,26 @@ const PREDICTIVE_INPUT_THRESHOLD: f32 = 0.4;
 /// Minimum fraction of samples where the group's errors share the same sign
 /// to count as "shared error samples".
 const SHARED_ERROR_SIGN_THRESHOLD: f32 = 0.0;
+
+/// Why a correlated-error scan skipped work or stopped early (Issue #2346).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CorrelatedErrorSkip {
+    /// More eligible outputs than `MAX_CORRELATED_ERROR_OUTPUTS`; the matrix was never built.
+    OutputCeilingExceeded { eligible: usize, ceiling: usize },
+    /// More input neurons than `MAX_CORRELATED_ERROR_INPUTS`; the predictive-input search was skipped.
+    InputCeilingExceeded { inputs: usize, ceiling: usize },
+    /// The analysis deadline elapsed or the host requested cancellation.
+    DeadlinePassed,
+}
+
+/// Groups from a bounded correlated-error scan, plus why it skipped work (Issue #2346).
+#[derive(Debug, Clone)]
+pub struct CorrelatedErrorScan {
+    /// Detected correlated error groups, sorted by estimated improvement (best first).
+    pub groups: Vec<CorrelatedErrorGroup>,
+    /// `Some` when work was skipped or the scan stopped early.
+    pub skip: Option<CorrelatedErrorSkip>,
+}
 
 /// Result of detecting a correlated error group among output neurons.
 #[derive(Debug, Clone)]
@@ -66,6 +106,10 @@ pub struct CorrelatedErrorGroup {
 
 /// Detect correlated error patterns among output neurons.
 ///
+/// Unbounded by deadline: this is a thin wrapper over
+/// [`detect_correlated_error_patterns_with_deadline`] with `deadline` set to `None`.
+/// The output/input ceilings still apply.
+///
 /// # Arguments
 /// * `creature` - The creature's network topology (neurons and synapses).
 /// * `neuron_records` - List of `(neuron_uuid, records)` tuples with recorded activations
@@ -78,6 +122,27 @@ pub fn detect_correlated_error_patterns(
     creature: &CreatureJson,
     neuron_records: &[(String, impl AsRef<[DiscoverRecord]>)],
 ) -> Vec<CorrelatedErrorGroup> {
+    detect_correlated_error_patterns_with_deadline(creature, neuron_records, &None).groups
+}
+
+/// Detect correlated error patterns among output neurons, bounded by `deadline`
+/// and by `MAX_CORRELATED_ERROR_OUTPUTS` / `MAX_CORRELATED_ERROR_INPUTS` (Issue #2346).
+///
+/// # Arguments
+/// * `creature` - The creature's network topology (neurons and synapses).
+/// * `neuron_records` - List of `(neuron_uuid, records)` tuples with recorded activations
+///   and errors. Should include both output and input neuron records.
+/// * `deadline` - When set, the scan stops early (and reports why via
+///   `CorrelatedErrorScan::skip`) once the deadline elapses or global cancellation is requested.
+///
+/// # Returns
+/// A [`CorrelatedErrorScan`] with the detected groups (sorted by estimated improvement, best
+/// first) and, when work was skipped or the scan stopped early, the reason why.
+pub fn detect_correlated_error_patterns_with_deadline(
+    creature: &CreatureJson,
+    neuron_records: &[(String, impl AsRef<[DiscoverRecord]>)],
+    deadline: &Option<SystemTime>,
+) -> CorrelatedErrorScan {
     // Identify output neuron UUIDs
     let output_uuids: HashSet<&str> = creature
         .neurons
@@ -88,7 +153,10 @@ pub fn detect_correlated_error_patterns(
 
     // Skip if only one output neuron — nothing to correlate
     if output_uuids.len() < 2 {
-        return Vec::new();
+        return CorrelatedErrorScan {
+            groups: Vec::new(),
+            skip: None,
+        };
     }
 
     // Identify input neuron UUIDs (for predictive input analysis)
@@ -115,7 +183,26 @@ pub fn detect_correlated_error_patterns(
     output_neurons_with_errors.sort(); // deterministic ordering
 
     if output_neurons_with_errors.len() < 2 {
-        return Vec::new();
+        return CorrelatedErrorScan {
+            groups: Vec::new(),
+            skip: None,
+        };
+    }
+
+    // Issue #2346: the correlation matrix below is O(n²); refuse to build it for an
+    // unbounded number of eligible outputs.
+    if output_neurons_with_errors.len() > MAX_CORRELATED_ERROR_OUTPUTS {
+        let eligible = output_neurons_with_errors.len();
+        let ceiling = MAX_CORRELATED_ERROR_OUTPUTS;
+        tracing::warn!(
+            eligible,
+            ceiling,
+            "Correlated error detection: eligible output count exceeds ceiling; correlation matrix was not built"
+        );
+        return CorrelatedErrorScan {
+            groups: Vec::new(),
+            skip: Some(CorrelatedErrorSkip::OutputCeilingExceeded { eligible, ceiling }),
+        };
     }
 
     // Build per-sample error vectors for each output neuron, indexed by obs_index.
@@ -139,6 +226,13 @@ pub fn detect_correlated_error_patterns(
     let mut correlation_matrix: Vec<Vec<f32>> = vec![vec![0.0; n_outputs]; n_outputs];
 
     for i in 0..n_outputs {
+        // Issue #2346: a partial matrix cannot be clustered soundly, so stop without groups.
+        if deadline_passed(deadline) {
+            return CorrelatedErrorScan {
+                groups: Vec::new(),
+                skip: Some(CorrelatedErrorSkip::DeadlinePassed),
+            };
+        }
         correlation_matrix[i][i] = 1.0; // self-correlation
         for j in (i + 1)..n_outputs {
             let uuid_i = output_neurons_with_errors[i];
@@ -167,10 +261,33 @@ pub fn detect_correlated_error_patterns(
         CORRELATION_THRESHOLD,
     );
 
+    // Issue #2346: the predictive-input search below is O(inputs) per group; refuse to
+    // run it for an unbounded number of input neurons.
+    let inputs_over_ceiling = input_uuids.len() > MAX_CORRELATED_ERROR_INPUTS;
+    let mut skip: Option<CorrelatedErrorSkip> = if inputs_over_ceiling {
+        let inputs = input_uuids.len();
+        let ceiling = MAX_CORRELATED_ERROR_INPUTS;
+        tracing::warn!(
+            inputs,
+            ceiling,
+            "Correlated error detection: input count exceeds ceiling; predictive-input search was skipped"
+        );
+        Some(CorrelatedErrorSkip::InputCeilingExceeded { inputs, ceiling })
+    } else {
+        None
+    };
+
     // For each group, compute statistics and find predictive inputs
     let mut results: Vec<CorrelatedErrorGroup> = Vec::with_capacity(groups.len());
 
     for group_indices in &groups {
+        // Issue #2346: a partial group scan is still sound (each completed group is
+        // fully computed), so return the groups gathered so far.
+        if deadline_passed(deadline) {
+            skip = Some(CorrelatedErrorSkip::DeadlinePassed);
+            break;
+        }
+
         let group_uuids: Vec<&str> = group_indices
             .iter()
             .map(|&i| output_neurons_with_errors[i])
@@ -209,14 +326,23 @@ pub fn detect_correlated_error_patterns(
             continue;
         }
 
-        // Find predictive input neurons
-        let predictive_inputs = find_predictive_inputs(
-            &group_uuids,
-            &input_uuids,
-            &records_map,
-            &error_by_obs,
-            &shared_obs,
-        );
+        // Find predictive input neurons (skipped entirely when over the input ceiling)
+        let predictive_inputs = if inputs_over_ceiling {
+            Vec::new()
+        } else {
+            let Some(predictive_inputs) = find_predictive_inputs(
+                &group_uuids,
+                &input_uuids,
+                &records_map,
+                &error_by_obs,
+                &shared_obs,
+                deadline,
+            ) else {
+                skip = Some(CorrelatedErrorSkip::DeadlinePassed);
+                break;
+            };
+            predictive_inputs
+        };
 
         // Estimate improvement: based on correlation strength, group size, and error magnitude
         let mean_abs_error = compute_mean_abs_error(&group_uuids, &error_by_obs, &shared_obs);
@@ -239,7 +365,10 @@ pub fn detect_correlated_error_patterns(
     // Sort by estimated improvement (best first)
     results.sort_by(|a, b| b.estimated_improvement.total_cmp(&a.estimated_improvement));
 
-    results
+    CorrelatedErrorScan {
+        groups: results,
+        skip,
+    }
 }
 
 /// Compute Pearson correlation between two error vectors indexed by `obs_index`.
@@ -357,15 +486,19 @@ fn count_shared_error_samples(
 /// For each input neuron, compute the correlation between its activation and the
 /// average error across the correlated group. Inputs with |correlation| > threshold
 /// are considered predictive.
+///
+/// Returns `None` (Issue #2346) if `deadline_passed(deadline)` at the start of any
+/// input iteration, meaning the deadline elapsed or global cancellation was requested.
 fn find_predictive_inputs(
     group_uuids: &[&str],
     input_uuids: &HashSet<&str>,
     records_map: &HashMap<&str, &[DiscoverRecord]>,
     error_by_obs: &HashMap<&str, HashMap<u32, f32>>,
     shared_obs: &[u32],
-) -> Vec<String> {
+    deadline: &Option<SystemTime>,
+) -> Option<Vec<String>> {
     if shared_obs.is_empty() {
-        return Vec::new();
+        return Some(Vec::new());
     }
 
     // Compute average error across the group for each shared obs_index
@@ -388,6 +521,10 @@ fn find_predictive_inputs(
     let mut predictive: Vec<(String, f32)> = Vec::new();
 
     for &input_uuid in input_uuids {
+        if deadline_passed(deadline) {
+            return None;
+        }
+
         let Some(input_records) = records_map.get(input_uuid) else {
             continue;
         };
@@ -409,7 +546,7 @@ fn find_predictive_inputs(
     // Sort by correlation strength (strongest first)
     predictive.sort_by(|a, b| b.1.total_cmp(&a.1));
 
-    predictive.into_iter().map(|(uuid, _)| uuid).collect()
+    Some(predictive.into_iter().map(|(uuid, _)| uuid).collect())
 }
 
 /// Compute Pearson correlation between two f32 vectors indexed by u32 keys.

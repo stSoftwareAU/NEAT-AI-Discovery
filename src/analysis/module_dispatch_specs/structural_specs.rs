@@ -16,8 +16,9 @@ use super::super::{cache, discovery_dispatch};
 
 /// Append structural discovery module specs to the provided vector.
 ///
-/// `deadline` (Issue #2183) is forwarded into the multi-hop and fan-in
-/// scans so they stop at the discovery deadline or on global cancellation.
+/// `deadline` (Issue #2183) is forwarded into the multi-hop and fan-in scans, and
+/// (Issue #2346) into the correlated-error scan, so they stop at the discovery
+/// deadline or on global cancellation.
 pub(crate) fn append_structural_specs(
     modules: &mut Vec<discovery_dispatch::DiscoveryModuleSpec>,
     creature: &Arc<crate::CreatureJson>,
@@ -39,8 +40,14 @@ pub(crate) fn append_structural_specs(
                 return None;
             }
             let records = cache.load_records_for_neuron_types(&creature, &["output", "input"]);
-            let detected =
-                correlated_error::detect_correlated_error_patterns(&creature, &records);
+            let scan = correlated_error::detect_correlated_error_patterns_with_deadline(
+                &creature, &records, &deadline,
+            );
+            // Issue #2346: report (and return) partial results rather than failing silently.
+            if let Some(reason) = scan.skip {
+                tracing::warn!(reason = ?reason, returned = scan.groups.len(), "Correlated error scan skipped work or stopped early; returning partial groups.");
+            }
+            let detected = scan.groups;
             if detected.is_empty() {
                 return None;
             }
