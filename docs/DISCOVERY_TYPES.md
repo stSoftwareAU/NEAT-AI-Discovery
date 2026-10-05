@@ -986,6 +986,13 @@ ratios, near-constant output paths, and symmetric weight cancellation.
 
 1. **Opposing weights**: Two synapses with nearly equal magnitude but
    opposite signs feed the same target, cancelling each other's contribution.
+2. **Bounded pair scan**: Targets whose weighted fan-in exceeds
+   `MAX_FANIN_FOR_CANCELLATION_SCAN` (256) are skipped and counted, since the
+   per-target pair scan is O(k²); the whole scan also stops once it has found
+   `MAX_SYMMETRIC_CANCELLATION_CANDIDATES` (1024) candidates or the analysis
+   deadline is reached, and a truncated or target-skipping scan is logged.
+   Each source neuron's `obs_index → activation` map is built once and reused
+   across all pairs and targets, instead of being rebuilt per pair.
 
 **Recommended actions**:
 

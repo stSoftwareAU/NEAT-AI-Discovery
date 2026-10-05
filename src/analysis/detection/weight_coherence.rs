@@ -21,13 +21,32 @@
 //! - `max_weight_ratio`: Maximum allowed incoming/outgoing weight ratio (default: 100.0)
 //! - `min_activation_variance`: Minimum variance to consider output non-constant (default: 0.01)
 //! - `min_correlation_for_cancellation`: Minimum correlation to flag symmetric cancellation (default: 0.8)
+//!
+//! ## Symmetric Cancellation Scan Bounds (Issue #2347)
+//!
+//! `detect_symmetric_cancellation_with_deadline` runs an `i < j` pair scan over
+//! every target's fan-in. Without bounds this is `O(Σ k² · S)` across targets,
+//! each pair rebuilding a pair of `obs_index → activation` maps. Three guards
+//! keep it bounded:
+//! - [`MAX_FANIN_FOR_CANCELLATION_SCAN`] — a target whose fan-in exceeds this
+//!   is skipped entirely (counted in `skipped_high_fanin_targets`).
+//! - [`MAX_SYMMETRIC_CANCELLATION_CANDIDATES`] — the scan stops once this many
+//!   candidates have been emitted (`ScanTruncation::CandidateCeiling`).
+//! - `deadline` — checked before each target; an elapsed deadline (or host
+//!   cancellation) stops the scan (`ScanTruncation::DeadlinePassed`).
+//!
+//! Each source's `obs_index → activation` map is built at most once per scan
+//! (cached across targets), not once per pair.
 
 #![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use super::activation_properties::is_saturating_squash;
 use super::topology_cache::CreatureTopologyCache;
+use crate::analysis::recommendation::epistatic::ScanTruncation;
+use crate::analysis::utils::deadline_passed;
 use crate::types::DiscoverRecord;
 use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson, CreatureJson};
 use std::collections::HashMap;
+use std::time::SystemTime;
 
 // =============================================================================
 // Constants
@@ -47,6 +66,16 @@ const MIN_SAMPLE_COUNT: usize = 20;
 
 /// Small epsilon for numerical stability.
 const EPSILON: f32 = 1e-9;
+
+/// Maximum fan-in a target may have before its symmetric-cancellation pair
+/// scan is skipped entirely (Issue #2347). The unguarded `i < j` pair loop is
+/// `O(k²)` per target, so an unbounded fan-in makes the whole scan
+/// quadratic-then-some in network size.
+pub const MAX_FANIN_FOR_CANCELLATION_SCAN: usize = 256;
+
+/// Maximum number of `SymmetricCancellationCandidate`s a single scan may
+/// emit before it stops early (Issue #2347).
+pub const MAX_SYMMETRIC_CANCELLATION_CANDIDATES: usize = 1024;
 
 // =============================================================================
 // Configuration
@@ -141,6 +170,26 @@ pub struct SymmetricCancellationCandidate {
     pub sample_count: usize,
     /// Estimated improvement from fixing this issue.
     pub estimated_improvement: f32,
+}
+
+/// Result of a deadline- and ceiling-bounded symmetric-cancellation scan
+/// (Issue #2347), plus the work counters needed to prove the bounds hold.
+#[derive(Debug, Clone)]
+pub struct SymmetricCancellationScan {
+    /// Candidates found before the scan finished or stopped, sorted by
+    /// estimated improvement (descending).
+    pub candidates: Vec<SymmetricCancellationCandidate>,
+    /// `Some` when the scan stopped before visiting every target.
+    pub truncation: Option<ScanTruncation>,
+    /// Number of targets skipped because their fan-in exceeded
+    /// [`MAX_FANIN_FOR_CANCELLATION_SCAN`].
+    pub skipped_high_fanin_targets: usize,
+    /// Number of pair correlations actually computed; the work counter the
+    /// fan-in and candidate ceilings bound.
+    pub pairs_correlated: usize,
+    /// Number of per-source `obs_index → activation` maps built. Each
+    /// source's map is built at most once per scan, not once per pair.
+    pub activation_maps_built: usize,
 }
 
 // =============================================================================
@@ -353,6 +402,13 @@ pub fn detect_near_constant_paths(
 /// and the inputs are highly correlated, the signals tend to cancel out.
 /// This creates brittleness as small correlation changes can flip the behaviour.
 ///
+/// Unbounded (no deadline) and uncapped (no ceiling reporting) wrapper around
+/// [`detect_symmetric_cancellation_with_deadline`] for backward compatibility;
+/// the fan-in and candidate-count ceilings (Issue #2347) still apply, but a
+/// truncated scan's reason is silently dropped. Production dispatch uses
+/// `detect_symmetric_cancellation_with_deadline` directly so a partial scan is
+/// never presented as complete.
+///
 /// # Arguments
 /// * `creature` - The creature JSON containing network topology
 /// * `records` - Vector of (`neuron_uuid`, records) tuples with activation data
@@ -366,7 +422,43 @@ pub fn detect_symmetric_cancellation(
     config: &WeightCoherenceConfig,
     topo: Option<&CreatureTopologyCache>,
 ) -> Vec<SymmetricCancellationCandidate> {
-    let mut candidates = Vec::with_capacity(creature.synapses.len());
+    detect_symmetric_cancellation_with_deadline(creature, records, config, topo, &None).candidates
+}
+
+/// Deadline- and ceiling-bounded symmetric-cancellation scan (Issue #2347).
+///
+/// Targets are visited in sorted UUID order so [`ScanTruncation::CandidateCeiling`]
+/// truncation is deterministic. Before each target the scan checks `deadline`
+/// (which also reports host cancellation); an elapsed deadline stops the scan
+/// with [`ScanTruncation::DeadlinePassed`]. A target whose fan-in exceeds
+/// [`MAX_FANIN_FOR_CANCELLATION_SCAN`] is skipped before any pair work or map
+/// build. Each source's `obs_index → activation` map is built at most once per
+/// scan (cached across targets), not once per pair.
+///
+/// # Arguments
+/// * `creature` - The creature JSON containing network topology
+/// * `records` - Vector of (`neuron_uuid`, records) tuples with activation data
+/// * `config` - Configuration for detection thresholds
+/// * `topo` - Optional shared topology cache
+/// * `deadline` - Optional analysis deadline; also honours host cancellation
+///
+/// # Returns
+/// A [`SymmetricCancellationScan`] with the candidates found, the truncation
+/// reason (if any), and the scan's work counters.
+pub fn detect_symmetric_cancellation_with_deadline(
+    creature: &CreatureJson,
+    records: &[(String, impl AsRef<[DiscoverRecord]>)],
+    config: &WeightCoherenceConfig,
+    topo: Option<&CreatureTopologyCache>,
+    deadline: &Option<SystemTime>,
+) -> SymmetricCancellationScan {
+    let mut scan = SymmetricCancellationScan {
+        candidates: Vec::new(),
+        truncation: None,
+        skipped_high_fanin_targets: 0,
+        pairs_correlated: 0,
+        activation_maps_built: 0,
+    };
 
     // Use shared topology cache or build locally for backward compatibility.
     let local_cache;
@@ -384,8 +476,22 @@ pub fn detect_symmetric_cancellation(
         .map(|(uuid, recs)| (uuid.clone(), recs.as_ref()))
         .collect();
 
-    // Iterate fan-in directly to avoid building a separate synapses-by-target map.
-    for (target_uuid, from_uuids) in &topo.fan_in {
+    // Issue #2347: each source's obs_index -> activation map is built at most
+    // once per scan, lazily, cached across all targets.
+    let mut activation_maps: HashMap<&str, HashMap<u32, f32>> = HashMap::new();
+
+    // Issue #2347: visit targets in sorted UUID order so candidate-ceiling
+    // truncation is deterministic.
+    let mut target_uuids: Vec<&String> = topo.fan_in.keys().collect();
+    target_uuids.sort();
+
+    'outer: for target_uuid in target_uuids {
+        if deadline_passed(deadline) {
+            scan.truncation = Some(ScanTruncation::DeadlinePassed);
+            break;
+        }
+
+        let from_uuids = &topo.fan_in[target_uuid];
         let incoming_synapses: Vec<(&str, f32)> = from_uuids
             .iter()
             .filter_map(|from_uuid| {
@@ -394,6 +500,12 @@ pub fn detect_symmetric_cancellation(
             })
             .collect();
         if incoming_synapses.len() < 2 {
+            continue;
+        }
+
+        // Issue #2347: skip pathologically wide fan-in before any pair work.
+        if incoming_synapses.len() > MAX_FANIN_FOR_CANCELLATION_SCAN {
+            scan.skipped_high_fanin_targets += 1;
             continue;
         }
 
@@ -423,8 +535,22 @@ pub fn detect_symmetric_cancellation(
                     continue;
                 };
 
+                // Issue #2347: build each source's activation map once, on
+                // first use, rather than once per pair.
+                if !activation_maps.contains_key(*source1_uuid) {
+                    activation_maps.insert(*source1_uuid, build_activation_map(records1));
+                    scan.activation_maps_built += 1;
+                }
+                if !activation_maps.contains_key(*source2_uuid) {
+                    activation_maps.insert(*source2_uuid, build_activation_map(records2));
+                    scan.activation_maps_built += 1;
+                }
+                let map1 = &activation_maps[*source1_uuid];
+                let map2 = &activation_maps[*source2_uuid];
+
                 // Calculate correlation between source activations
-                let correlation = calculate_correlation(records1, records2, config.min_samples);
+                let correlation = correlation_from_maps(map1, map2, config.min_samples);
+                scan.pairs_correlated += 1;
 
                 if let Some(corr) = correlation
                     && corr.abs() >= config.min_correlation_for_cancellation
@@ -436,7 +562,7 @@ pub fn detect_symmetric_cancellation(
                         // Significant cancellation detected
                         let estimated_improvement = 0.01 * cancellation_ratio;
 
-                        candidates.push(SymmetricCancellationCandidate {
+                        scan.candidates.push(SymmetricCancellationCandidate {
                             source1_neuron_uuid: source1_uuid.to_string(),
                             source2_neuron_uuid: source2_uuid.to_string(),
                             target_neuron_uuid: target_uuid.clone(),
@@ -448,6 +574,12 @@ pub fn detect_symmetric_cancellation(
                             sample_count: records1.len().min(records2.len()),
                             estimated_improvement,
                         });
+
+                        // Issue #2347: stop once the candidate ceiling is hit.
+                        if scan.candidates.len() >= MAX_SYMMETRIC_CANCELLATION_CANDIDATES {
+                            scan.truncation = Some(ScanTruncation::CandidateCeiling);
+                            break 'outer;
+                        }
                     }
                 }
             }
@@ -455,9 +587,10 @@ pub fn detect_symmetric_cancellation(
     }
 
     // Sort by estimated improvement (best first)
-    candidates.sort_by(|a, b| b.estimated_improvement.total_cmp(&a.estimated_improvement));
+    scan.candidates
+        .sort_by(|a, b| b.estimated_improvement.total_cmp(&a.estimated_improvement));
 
-    candidates
+    scan
 }
 
 // =============================================================================
@@ -581,37 +714,34 @@ pub fn symmetric_cancellation_to_coordinated_candidates(
 // Helper Functions
 // =============================================================================
 
-/// Calculate Pearson correlation between two sets of records.
-///
-/// Returns None if there are insufficient paired samples.
-fn calculate_correlation(
-    records1: &[DiscoverRecord],
-    records2: &[DiscoverRecord],
+/// Build an `obs_index -> activation` lookup for a single neuron's records,
+/// filtering non-finite activations (Issue #2347). Built once per source and
+/// cached by the caller rather than rebuilt per pair.
+fn build_activation_map(records: &[DiscoverRecord]) -> HashMap<u32, f32> {
+    records
+        .iter()
+        .filter(|r| r.activation.is_finite())
+        .map(|r| (r.obs_index, r.activation))
+        .collect()
+}
+
+/// Calculate Pearson correlation from two prebuilt `obs_index -> activation`
+/// maps (Issue #2347). Returns `None` if there are insufficient shared
+/// samples; this preserves the exact semantics of the previous
+/// `calculate_correlation`, which rebuilt both maps on every call.
+fn correlation_from_maps(
+    map1: &HashMap<u32, f32>,
+    map2: &HashMap<u32, f32>,
     min_samples: usize,
 ) -> Option<f32> {
-    // Build lookup by obs_index, filtering non-finite activations
-    let lookup1: HashMap<u32, f32> = records1
-        .iter()
-        .filter(|r| r.activation.is_finite())
-        .map(|r| (r.obs_index, r.activation))
-        .collect();
-
-    let lookup2: HashMap<u32, f32> = records2
-        .iter()
-        .filter(|r| r.activation.is_finite())
-        .map(|r| (r.obs_index, r.activation))
-        .collect();
-
     // Check sufficient shared samples before delegating
-    let shared_count = lookup1.keys().filter(|k| lookup2.contains_key(k)).count();
+    let shared_count = map1.keys().filter(|k| map2.contains_key(k)).count();
     if shared_count < min_samples {
         return None;
     }
 
     Some(super::stats::pearson_correlation_hashmaps(
-        &lookup1,
-        &lookup2,
-        min_samples,
+        map1, map2, min_samples,
     ))
 }
 
@@ -662,7 +792,11 @@ mod tests {
 
         let records2 = records1.clone();
 
-        let corr = calculate_correlation(&records1, &records2, 10);
+        let corr = correlation_from_maps(
+            &build_activation_map(&records1),
+            &build_activation_map(&records2),
+            10,
+        );
         assert!(corr.is_some());
         assert!(
             (corr.unwrap() - 1.0).abs() < 0.001,
@@ -692,7 +826,11 @@ mod tests {
             })
             .collect();
 
-        let corr = calculate_correlation(&records1, &records2, 10);
+        let corr = correlation_from_maps(
+            &build_activation_map(&records1),
+            &build_activation_map(&records2),
+            10,
+        );
         assert!(corr.is_some());
         assert!(
             (corr.unwrap() + 1.0).abs() < 0.001,
@@ -714,7 +852,11 @@ mod tests {
 
         let records2 = records1.clone();
 
-        let corr = calculate_correlation(&records1, &records2, 10);
+        let corr = correlation_from_maps(
+            &build_activation_map(&records1),
+            &build_activation_map(&records2),
+            10,
+        );
         assert!(
             corr.is_none(),
             "Should return None for insufficient samples"

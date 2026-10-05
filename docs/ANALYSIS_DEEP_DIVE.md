@@ -603,6 +603,10 @@ regardless of input.
 
 **Symmetric cancellation**: Flags pairs of synapses with nearly equal magnitude
 but opposite signs feeding the same target, cancelling each other's contribution.
+The per-target pair scan is bounded — targets with weighted fan-in above
+`MAX_FANIN_FOR_CANCELLATION_SCAN` (256) are skipped, the scan stops after
+`MAX_SYMMETRIC_CANCELLATION_CANDIDATES` (1024) candidates, and it checks the
+analysis deadline before each target.
 
 #### Weight Magnitude Reset Detection (Issue #550)
 

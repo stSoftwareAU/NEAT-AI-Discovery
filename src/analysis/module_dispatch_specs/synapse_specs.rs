@@ -5,6 +5,7 @@
 //! weight magnitude reset detection.
 
 use std::sync::Arc;
+use std::time::SystemTime;
 
 use super::super::detection::{
     dormant_synapse, fanin_polarity_conflict, noise_signal, opposing_synapse,
@@ -14,12 +15,16 @@ use super::super::detection::{
 use super::super::{cache, discovery_dispatch};
 
 /// Append synapse-focused discovery module specs to the provided vector.
+///
+/// `deadline` (Issue #2347) is forwarded into the symmetric-cancellation pair
+/// scan so it stops at the discovery deadline or on global cancellation.
 pub(crate) fn append_synapse_specs(
     modules: &mut Vec<discovery_dispatch::DiscoveryModuleSpec>,
     creature: &Arc<crate::CreatureJson>,
     hidden_neurons: &Arc<Vec<(String, String, f32)>>,
     shared_cache: &Arc<cache::RecordCache>,
     topo: &Arc<CreatureTopologyCache>,
+    deadline: Option<SystemTime>,
 ) {
     // Issue #359: Dormant synapse detection
     discovery_spec!(modules, "dormant synapse detection", "dormant_synapse_detection",
@@ -61,13 +66,31 @@ pub(crate) fn append_synapse_specs(
         convert: |detected| weight_coherence::near_constant_paths_to_coordinated_candidates(&detected),
     );
 
-    // Issue #437: Weight coherence validation - symmetric weight cancellation
+    // Issue #437 / #2347: Weight coherence validation - symmetric weight
+    // cancellation. The O(fan_in^2) pair scan is bounded by a fan-in cap, a
+    // candidate ceiling and the discovery deadline; a truncated or partially
+    // skipped scan is logged, not hidden.
     discovery_spec!(modules, "symmetric cancellation detection", "symmetric_cancellation_detection",
         cache = shared_cache, creature = creature, topo = topo =>
         records: cache.load_records_for_all_neurons(&creature),
         detect: |records| {
             let config = weight_coherence::WeightCoherenceConfig::default();
-            weight_coherence::detect_symmetric_cancellation(&creature, &records, &config, Some(&topo))
+            let scan = weight_coherence::detect_symmetric_cancellation_with_deadline(
+                &creature,
+                &records,
+                &config,
+                Some(&topo),
+                &deadline,
+            );
+            if scan.truncation.is_some() || scan.skipped_high_fanin_targets > 0 {
+                tracing::warn!(
+                    reason = ?scan.truncation,
+                    returned = scan.candidates.len(),
+                    skipped_high_fanin_targets = scan.skipped_high_fanin_targets,
+                    "Symmetric cancellation scan stopped early or skipped high fan-in targets; returning partial candidates."
+                );
+            }
+            scan.candidates
         },
         convert: |detected| weight_coherence::symmetric_cancellation_to_coordinated_candidates(&detected),
     );
