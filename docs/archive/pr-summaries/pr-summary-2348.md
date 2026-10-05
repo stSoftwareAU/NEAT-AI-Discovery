@@ -37,7 +37,6 @@ across every sample (O(E²·S)). Nothing capped it and it could not be cancelled
   - `tests/issue_2348_co_adaptation_growth.rs`;
   - `tests/issue_2348_co_adaptation_scan_bounds.rs`;
   - two co-adaptation spec tests in `src/analysis/module_dispatch_specs/mod.rs`.
-- `Cargo.toml` / `Cargo.lock`: 0.74.275 → 0.74.276.
 
 ```mermaid
 flowchart TD
@@ -119,40 +118,21 @@ and expects `None`. Reverting the closure to pass `&None` instead of
 `co_adaptation_spec_detects_pairs_before_the_deadline`, proves the same inputs
 yield pairs when the deadline is still in the future.
 
-**Docs sweep** — grep: `co-adaptation`, `co_adaptation`, `co-adapted`, `append_neuron_specs`, `detect_co_adapted_neurons`; section: `docs/discoveries/co-adaptation.md#-scan-bounds`, `docs/DISCOVERY_TYPES.md#co-adaptation-detection`, `docs/ANALYSIS_DEEP_DIVE.md` (Co-Adaptation Detection algorithm steps); updated: `docs/discoveries/co-adaptation.md`, `docs/DISCOVERY_TYPES.md`, `docs/ANALYSIS_DEEP_DIVE.md`
+**Docs sweep** — grep: `detect_co_adapted_neurons`, `MAX_CO_ADAPTATION_ELIGIBLE_NEURONS`, `MAX_CO_ADAPTED_PAIR_CANDIDATES`, `CoAdaptationScan`; section: Scan Bounds in docs/discoveries/co-adaptation.md, Scan bounds paragraph in docs/DISCOVERY_TYPES.md, Co-Adaptation Detection algorithm steps in docs/ANALYSIS_DEEP_DIVE.md; updated: docs/discoveries/co-adaptation.md, docs/DISCOVERY_TYPES.md, docs/ANALYSIS_DEEP_DIVE.md
 
-Docs sweep details:
+Hits outside the diff, and why each is still true:
 
-- Grep terms: `co-adaptation|co_adaptation|co-adapted`,
-  `append_neuron_specs`, `detect_co_adapted_neurons`.
-- Sections updated: `docs/discoveries/co-adaptation.md`
-  (section: 🚧 Scan Bounds), `docs/DISCOVERY_TYPES.md` (section:
-  Co-Adaptation → Scan bounds), `docs/ANALYSIS_DEEP_DIVE.md`
-  (section: co-adaptation algorithm steps).
-- Hits outside the diff, and why each is still true:
-  - `README.md:273` — still true because it is a feature-list entry only.
-  - `docs/DROUGHT_PLAYBOOK.md:400` — still true because the dispatch-level
-    skip for creatures with more than 1000 hidden neurons is orthogonal to
-    the in-scan caps.
-  - `docs/analysis/snapshot-mining-1631.md:50` — still true because it is a
-    generator list.
-  - `docs/PRIOR_ART.md:148,216` — still true because they are a prior-art
-    table row and the Hinton 2012 citation.
-  - `docs/DISCOVERY_TYPES.md:50,199,1327` — still true because they are the
-    table of contents, a summary row and a source link.
-  - `docs/DISCOVERY_TYPES.md:1330,1332,1352,1367` — still true because they
-    are concept prose, the remove-neuron strategy and a symmetry-breaking
-    cross-reference, none of which describe scan size.
-  - `docs/discoveries/co-adaptation.md:3,38,86,132,157` — still true because
-    they are header links, the complexity-cost note, strategies and a source
-    link.
-  - `docs/discoveries/symmetry-breaking.md:14,126` — still true because they
-    only contrast it with co-adaptation.
-  - `docs/discoveries/README.md:109` — still true because it is an index
-    entry.
-  - `docs/analysis/candidate-rate-diagnosis-1777.md:72` — still true because
-    it is a historical point-in-time citation of `co_adaptation.rs:82`,
-    deliberately left unedited.
+- src/analysis/detection/co_adaptation.rs:115 — still true because it is the unchanged signature of the legacy entry point, which now delegates to the bounded scan with no deadline.
+- tests/detection/issue_571_co_adaptation_detection.rs:20 — still true because the legacy entry point keeps its signature, and these fixtures stay well under both caps.
+- tests/detection/issue_571_co_adaptation_detection.rs:70 — still true because the legacy entry point keeps its signature, and these fixtures stay well under both caps.
+- tests/detection/issue_571_co_adaptation_detection.rs:114 — still true because the legacy entry point keeps its signature, and these fixtures stay well under both caps.
+- tests/detection/issue_571_co_adaptation_detection.rs:150 — still true because the legacy entry point keeps its signature, and these fixtures stay well under both caps.
+- tests/detection/issue_571_co_adaptation_detection.rs:185 — still true because the legacy entry point keeps its signature, and these fixtures stay well under both caps.
+- tests/detection/issue_571_co_adaptation_detection.rs:238 — still true because the legacy entry point keeps its signature, and these fixtures stay well under both caps.
+- tests/detection/issue_571_co_adaptation_detection.rs:261 — still true because the legacy entry point keeps its signature, and these fixtures stay well under both caps.
+- tests/detection/issue_571_co_adaptation_detection.rs:293 — still true because the legacy entry point keeps its signature, and these fixtures stay well under both caps.
+
+README.md and docs/ have no hits for these terms outside the updated files.
 
 **Security self-check:**
 
@@ -187,9 +167,9 @@ Branch outcomes:
   `tests/issue_2348_co_adaptation_scan_bounds.rs::eligible_neurons_beyond_the_cap_are_skipped_and_recorded`
   (296 neurons → `eligible_skipped == 40`, `pairs_evaluated == 32640`).
   Dropping the truncate went red.
-- `src/analysis/detection/co_adaptation.rs:177` — `eligible_skipped` is
+- `src/analysis/detection/co_adaptation.rs:179` — `eligible_skipped` is
   recorded. Reached by the same test. Forcing it to 0 went red.
-- `src/analysis/detection/co_adaptation.rs:177` — under the cap →
+- `src/analysis/detection/co_adaptation.rs:179` — under the cap →
   `eligible_skipped == 0`. Reached by
   `tests/issue_2348_co_adaptation_scan_bounds.rs::under_cap_scan_records_no_skip`.
 - `src/analysis/detection/co_adaptation.rs:205` — 256 candidates emitted →
@@ -198,7 +178,7 @@ Branch outcomes:
   and
   `tests/issue_2348_co_adaptation_scan_bounds.rs::identical_neurons_stop_at_the_candidate_ceiling`.
   Dropping the ceiling went red.
-- `src/analysis/detection/co_adaptation.rs:143,166` — fewer than 2 hidden or
+- `src/analysis/detection/co_adaptation.rs:144,167` — fewer than 2 hidden or
   eligible neurons → empty scan. Both returns already exist on base and are
   only re-shaped to return `CoAdaptationScan`. Removing them stays green
   because they are equivalent mutants: with fewer than 2 neurons the pair loop
@@ -213,6 +193,6 @@ Branch outcomes:
   With a future deadline the result is `Some`, reached by
   `src/analysis/module_dispatch_specs/mod.rs::co_adaptation_spec_detects_pairs_before_the_deadline`.
   Passing `&None` went red.
-- `src/analysis/module_dispatch_specs/neuron_specs.rs:206,214` — the `warn!`
+- `src/analysis/module_dispatch_specs/neuron_specs.rs:207,215` — the `warn!`
   branches. These are logging only, with no behavioural outcome, and no test
   reaches them.
