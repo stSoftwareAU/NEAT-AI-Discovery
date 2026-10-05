@@ -13,6 +13,48 @@ use super::super::detection::{
     weight_polarity_flip,
 };
 use super::super::{cache, discovery_dispatch};
+use crate::types::SharedRecords;
+
+/// Run the symmetric-cancellation pair scan for the production dispatch
+/// closure (Issue #2347) and return the resulting candidates. Extracted from
+/// the `discovery_spec!` closure so the deadline-forwarding and
+/// partial-scan-detection logic are independently testable; a regression that
+/// silently drops `deadline` (e.g. passing `&None` instead) would otherwise
+/// only be caught by the absence of a timeout in production.
+fn run_symmetric_cancellation(
+    creature: &crate::CreatureJson,
+    records: &[(String, SharedRecords)],
+    topo: &CreatureTopologyCache,
+    deadline: &Option<SystemTime>,
+) -> Vec<weight_coherence::SymmetricCancellationCandidate> {
+    let config = weight_coherence::WeightCoherenceConfig::default();
+    let scan = weight_coherence::detect_symmetric_cancellation_with_deadline(
+        creature,
+        records,
+        &config,
+        Some(topo),
+        deadline,
+    );
+    if symmetric_cancellation_scan_is_partial(&scan) {
+        tracing::warn!(
+            reason = ?scan.truncation,
+            returned = scan.candidates.len(),
+            skipped_high_fanin_targets = scan.skipped_high_fanin_targets,
+            "Symmetric cancellation scan stopped early or skipped high fan-in targets; returning partial candidates."
+        );
+    }
+    scan.candidates
+}
+
+/// True when a [`weight_coherence::SymmetricCancellationScan`] stopped before
+/// visiting every target, or skipped a target entirely for exceeding the
+/// fan-in cap — i.e. the candidates returned are a partial result, not the
+/// complete scan.
+fn symmetric_cancellation_scan_is_partial(
+    scan: &weight_coherence::SymmetricCancellationScan,
+) -> bool {
+    scan.truncation.is_some() || scan.skipped_high_fanin_targets > 0
+}
 
 /// Append synapse-focused discovery module specs to the provided vector.
 ///
@@ -73,25 +115,7 @@ pub(crate) fn append_synapse_specs(
     discovery_spec!(modules, "symmetric cancellation detection", "symmetric_cancellation_detection",
         cache = shared_cache, creature = creature, topo = topo =>
         records: cache.load_records_for_all_neurons(&creature),
-        detect: |records| {
-            let config = weight_coherence::WeightCoherenceConfig::default();
-            let scan = weight_coherence::detect_symmetric_cancellation_with_deadline(
-                &creature,
-                &records,
-                &config,
-                Some(&topo),
-                &deadline,
-            );
-            if scan.truncation.is_some() || scan.skipped_high_fanin_targets > 0 {
-                tracing::warn!(
-                    reason = ?scan.truncation,
-                    returned = scan.candidates.len(),
-                    skipped_high_fanin_targets = scan.skipped_high_fanin_targets,
-                    "Symmetric cancellation scan stopped early or skipped high fan-in targets; returning partial candidates."
-                );
-            }
-            scan.candidates
-        },
+        detect: |records| run_symmetric_cancellation(&creature, &records, &topo, &deadline),
         convert: |detected| weight_coherence::symmetric_cancellation_to_coordinated_candidates(&detected),
     );
 
@@ -129,4 +153,174 @@ pub(crate) fn append_synapse_specs(
         detect: |records| weight_polarity_flip::detect_weight_polarity_flip_candidates(&creature, &records),
         convert: |detected| weight_polarity_flip::polarity_flip_candidates_to_coordinated(&detected),
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::analysis::recommendation::epistatic::ScanTruncation;
+    use crate::types::DiscoverRecord;
+    use crate::{CreatureJson, NeuronJson, SynapseJson};
+
+    /// A single target ("target-1") with two opposite-sign, equal-magnitude
+    /// incoming weights from perfectly correlated sources — the only pattern
+    /// `detect_symmetric_cancellation_with_deadline` flags.
+    fn cancellation_fixture() -> (Arc<CreatureJson>, Arc<CreatureTopologyCache>) {
+        let creature = CreatureJson {
+            neurons: vec![
+                NeuronJson {
+                    uuid: "target-1".to_string(),
+                    neuron_type: "output".to_string(),
+                    squash: "IDENTITY".to_string(),
+                    bias: 0.0,
+                },
+                NeuronJson {
+                    uuid: "input-0".to_string(),
+                    neuron_type: "input".to_string(),
+                    squash: "IDENTITY".to_string(),
+                    bias: 0.0,
+                },
+                NeuronJson {
+                    uuid: "input-1".to_string(),
+                    neuron_type: "input".to_string(),
+                    squash: "IDENTITY".to_string(),
+                    bias: 0.0,
+                },
+            ],
+            synapses: vec![
+                SynapseJson {
+                    from_uuid: "input-0".to_string(),
+                    to_uuid: "target-1".to_string(),
+                    weight: 5.0,
+                    synapse_type: None,
+                },
+                SynapseJson {
+                    from_uuid: "input-1".to_string(),
+                    to_uuid: "target-1".to_string(),
+                    weight: -5.0,
+                    synapse_type: None,
+                },
+            ],
+            input: 2,
+            output: 1,
+        };
+        let creature = Arc::new(creature);
+        let topo = Arc::new(CreatureTopologyCache::new(&creature));
+        (creature, topo)
+    }
+
+    /// Every neuron shares the same 25-sample activation pattern, so the two
+    /// opposite-weighted sources above are perfectly correlated.
+    #[allow(clippy::cast_precision_loss)] // Test fixture only; precision is irrelevant here.
+    fn cancellation_cache() -> cache::RecordCache {
+        cache::RecordCache::with_loader(
+            "test.parquet",
+            Arc::new(
+                |_file: &str, uuid: &str| -> anyhow::Result<Vec<DiscoverRecord>> {
+                    Ok((0..25u32)
+                        .map(|idx| {
+                            let activation = ((idx as f32) * 0.1).sin().tanh();
+                            DiscoverRecord::new(
+                                idx,
+                                uuid.to_string(),
+                                Some(activation),
+                                activation,
+                                vec![0.1],
+                            )
+                        })
+                        .collect())
+                },
+            ),
+        )
+    }
+
+    /// Issue #2347: the "symmetric cancellation detection" spec must stop
+    /// before finding any candidate when the deadline has already elapsed —
+    /// proving `deadline` (not `&None`) is actually forwarded into the scan.
+    #[test]
+    fn symmetric_cancellation_spec_returns_none_when_deadline_already_elapsed() {
+        let (creature, topo) = cancellation_fixture();
+        let hidden: Arc<Vec<(String, String, f32)>> = Arc::new(vec![]);
+        let shared_cache = Arc::new(cancellation_cache());
+
+        let mut modules = Vec::new();
+        append_synapse_specs(
+            &mut modules,
+            &creature,
+            &hidden,
+            &shared_cache,
+            &topo,
+            Some(SystemTime::UNIX_EPOCH),
+        );
+        let spec = modules
+            .into_iter()
+            .find(|s| s.module_name == "symmetric cancellation detection")
+            .expect("symmetric cancellation detection spec must be present");
+        let result = (spec.detect_fn)();
+        assert!(
+            result.is_none(),
+            "an already-elapsed deadline must stop the scan before any candidate is \
+             produced; the spec is dropping the deadline it was given"
+        );
+    }
+
+    /// Same fixture, no deadline: the scan must run to completion and find
+    /// the symmetric-cancellation candidate, so the elapsed-deadline
+    /// assertion above can actually fail when the deadline is dropped.
+    #[test]
+    fn symmetric_cancellation_spec_returns_candidates_without_deadline() {
+        let (creature, topo) = cancellation_fixture();
+        let hidden: Arc<Vec<(String, String, f32)>> = Arc::new(vec![]);
+        let shared_cache = Arc::new(cancellation_cache());
+
+        let mut modules = Vec::new();
+        append_synapse_specs(&mut modules, &creature, &hidden, &shared_cache, &topo, None);
+        let spec = modules
+            .into_iter()
+            .find(|s| s.module_name == "symmetric cancellation detection")
+            .expect("symmetric cancellation detection spec must be present");
+        let result = (spec.detect_fn)();
+        assert!(
+            result.is_some(),
+            "fixture is a symmetric-cancellation pattern and must be detected when \
+             nothing bounds the scan"
+        );
+        assert!(result.unwrap().detected_count > 0);
+    }
+
+    fn complete_scan() -> weight_coherence::SymmetricCancellationScan {
+        weight_coherence::SymmetricCancellationScan {
+            candidates: Vec::new(),
+            truncation: None,
+            skipped_high_fanin_targets: 0,
+            pairs_correlated: 0,
+            activation_maps_built: 0,
+        }
+    }
+
+    #[test]
+    fn scan_is_not_partial_when_complete() {
+        assert!(!symmetric_cancellation_scan_is_partial(&complete_scan()));
+    }
+
+    #[test]
+    fn scan_is_partial_when_deadline_passed() {
+        let mut scan = complete_scan();
+        scan.truncation = Some(ScanTruncation::DeadlinePassed);
+        assert!(symmetric_cancellation_scan_is_partial(&scan));
+    }
+
+    #[test]
+    fn scan_is_partial_when_candidate_ceiling_hit() {
+        let mut scan = complete_scan();
+        scan.truncation = Some(ScanTruncation::CandidateCeiling);
+        assert!(symmetric_cancellation_scan_is_partial(&scan));
+    }
+
+    #[test]
+    fn scan_is_partial_when_high_fanin_targets_skipped() {
+        let mut scan = complete_scan();
+        scan.skipped_high_fanin_targets = 1;
+        assert!(symmetric_cancellation_scan_is_partial(&scan));
+    }
 }
