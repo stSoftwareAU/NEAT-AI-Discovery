@@ -40,16 +40,82 @@ pub fn gpu_batch_size_override() -> Option<usize> {
     })
 }
 
+/// Maximum accepted value for `NEAT_AI_DISCOVERY_GPU_RETRY_LIMIT` (Issue #2364).
+const MAX_GPU_RETRY_LIMIT: u32 = 10;
+
+/// Resolve the GPU retry limit for device-lost recovery from a raw env value
+/// (Issue #2364).
+///
+/// Pure function for testability (no environment access).
+///
+/// - `None` (variable unset): returns
+///   [`DEFAULT_GPU_RETRY_LIMIT`](crate::analysis::gpu::queue::recovery::DEFAULT_GPU_RETRY_LIMIT)
+///   with no log — the unset case is normal operation, not misconfiguration.
+/// - Unparsable (including empty): emits one `WARN` naming the variable and
+///   the raw value, and returns the default.
+/// - Above [`MAX_GPU_RETRY_LIMIT`]: emits one `WARN` naming the variable, the
+///   requested value and the maximum, and returns the default.
+/// - `0`: emits one `WARN` noting that device-lost recovery is disabled, and
+///   returns `0` (the operator's explicit choice is honoured, just surfaced).
+/// - `1..=10`: returned as-is, no log.
+#[must_use]
+pub fn resolve_gpu_retry_limit(raw: Option<&str>) -> u32 {
+    use crate::analysis::gpu::queue::recovery::{DEFAULT_GPU_RETRY_LIMIT, GPU_RETRY_LIMIT_ENV};
+
+    let Some(s) = raw else {
+        return DEFAULT_GPU_RETRY_LIMIT;
+    };
+
+    match s.trim().parse::<u32>() {
+        Ok(0) => {
+            tracing::warn!(
+                env = GPU_RETRY_LIMIT_ENV,
+                "{GPU_RETRY_LIMIT_ENV}=0: device-lost recovery is disabled, so the first \
+                 device-lost error fails the GPU pass"
+            );
+            0
+        }
+        Ok(n) if n > MAX_GPU_RETRY_LIMIT => {
+            tracing::warn!(
+                env = GPU_RETRY_LIMIT_ENV,
+                value = n,
+                max = MAX_GPU_RETRY_LIMIT,
+                default = DEFAULT_GPU_RETRY_LIMIT,
+                "{GPU_RETRY_LIMIT_ENV}={n} is above the maximum of {MAX_GPU_RETRY_LIMIT}; using \
+                 the default of {DEFAULT_GPU_RETRY_LIMIT}"
+            );
+            DEFAULT_GPU_RETRY_LIMIT
+        }
+        Ok(n) => n,
+        Err(_) => {
+            tracing::warn!(
+                env = GPU_RETRY_LIMIT_ENV,
+                value = %s,
+                default = DEFAULT_GPU_RETRY_LIMIT,
+                "{GPU_RETRY_LIMIT_ENV}={s:?} is not a valid unsigned integer; using the default \
+                 of {DEFAULT_GPU_RETRY_LIMIT}"
+            );
+            DEFAULT_GPU_RETRY_LIMIT
+        }
+    }
+}
+
 /// Get the GPU retry limit for device-lost recovery (cached).
 ///
-/// Set `NEAT_AI_DISCOVERY_GPU_RETRY_LIMIT` to a value 0–10.
-/// Default: 3.
+/// Set `NEAT_AI_DISCOVERY_GPU_RETRY_LIMIT` to a value 0–10. Default: 3. An
+/// unparsable value or a value above 10 logs a `WARN` naming the variable and
+/// falls back to the default; `0` logs a `WARN` noting that device-lost
+/// recovery is disabled (Issue #2364). The value is read once per process.
 pub fn gpu_retry_limit() -> u32 {
+    use crate::analysis::gpu::queue::recovery::GPU_RETRY_LIMIT_ENV;
+
     static VAL: OnceLock<u32> = OnceLock::new();
     *VAL.get_or_init(|| {
-        parse_env::<u32>("NEAT_AI_DISCOVERY_GPU_RETRY_LIMIT")
-            .filter(|&n| n <= 10)
-            .unwrap_or(crate::analysis::gpu::queue::recovery::DEFAULT_GPU_RETRY_LIMIT)
+        resolve_gpu_retry_limit(
+            std::env::var_os(GPU_RETRY_LIMIT_ENV)
+                .map(|v| v.to_string_lossy().into_owned())
+                .as_deref(),
+        )
     })
 }
 
