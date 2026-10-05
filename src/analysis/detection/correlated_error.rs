@@ -332,7 +332,7 @@ pub fn detect_correlated_error_patterns_with_deadline(
                 deadline,
             ) else {
                 skip = Some(CorrelatedErrorSkip::DeadlinePassed);
-                break;
+                continue;
             };
             predictive_inputs
         };
