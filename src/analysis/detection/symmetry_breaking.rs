@@ -411,3 +411,7 @@ pub fn symmetric_neurons_to_coordinated_candidates(
 
     results
 }
+
+#[cfg(test)]
+#[path = "symmetry_breaking_deadline_tests.rs"]
+mod deadline_tests;

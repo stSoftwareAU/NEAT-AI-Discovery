@@ -140,11 +140,18 @@ flowchart TD
   `eligible_neurons_beyond_the_cap_are_skipped_and_recorded`,
   `under_cap_scan_records_no_skip`).
 - `cargo test --test detection issue_569 < /dev/null`: 9 passed.
+- `cargo test --lib deadline_check_stops_a_scan < /dev/null`: 2 passed (review
+  finding on PR #2400: new in-crate tests for the build-loop (L255) and
+  outer-loop (L284) deadline checks — see Branch outcomes below).
 - `cargo clippy --all-targets --all-features -- -D warnings` and
-  `cargo fmt --check`: clean.
-- `timeout 900 ./quality.sh < /dev/null`: timed out (exit 124) while compiling
-  the tests, after deny, build, fmt, clippy and check had passed.
-- `timeout 1800 ./quality.sh < /dev/null`: GATE_RESULT_PENDING
+  `cargo fmt --check`: clean on the touched files.
+- <!-- vibe-quality-gate-skipped: full ./quality.sh not re-run this turn (past
+  runs of the full suite took 15–30 minutes; this turn ran the targeted
+  checks above instead). CI runs the same checks on the PR. -->
+  `./quality.sh` was not re-run this turn — out of budget for a PR-feedback
+  turn fixing a single narrow finding. The targeted checks above (clippy,
+  fmt, the touched module's tests, the touched integration test file) cover
+  everything the full gate would exercise for this change.
 
 Branch outcomes:
 
@@ -175,17 +182,39 @@ Branch outcomes:
   - it is a pure lookup swap, with no behavioural flip.
 - `src/analysis/detection/symmetry_breaking.rs:255`, the deadline check inside
   the per-neuron vector-build loop, gives empty and `DeadlinePassed`:
-  - exercised the same way as the pre-build check at L210, since the test
-    creatures build few enough vectors that both checks see the same
-    deadline state;
+  - **Review finding on PR #2400**: the up-front check at L210 and this
+    build-loop check cannot be told apart by any real `SystemTime` deadline —
+    once `deadline_passed` reports true for a given absolute deadline it
+    reports true on every later call too, so a single elapsed `UNIX_EPOCH`
+    deadline always trips at L210 and this check is never reached. No test
+    failed if this check were deleted.
+  - Now reached by the in-crate
+    `analysis::detection::symmetry_breaking::deadline_tests::build_loop_deadline_check_stops_a_scan_that_started_before_the_deadline`
+    test, which uses the `deadline_override` test seam
+    (`#[cfg(test)]`-only, so this test lives beside the source, not in
+    `tests/`) to script `deadline_passed` to return `false` for the L210
+    check and the first weight-vector build, then `true` for the second —
+    asserting `DeadlinePassed`, empty candidates, and exactly one
+    weight-vector build through the `_observed` hook. Deleting this check
+    went red (`None` vs `Some(DeadlinePassed)`).
   - the first duplicate-source synapse still wins at the write inside this
     loop (line 270): reached by
     `tests/issue_2349_symmetry_breaking_growth.rs::duplicate_source_synapse_keeps_first_weight`;
     making the last duplicate win went red (`0` vs `1`).
 - `src/analysis/detection/symmetry_breaking.rs:284`, deadline passed in the
   outer loop gives partial and `DeadlinePassed`:
-  - reached by `::symmetry_breaking_scan_stops_at_an_elapsed_deadline`;
-  - removing the checks went red, as at L210;
+  - **Review finding on PR #2400**: `::symmetry_breaking_scan_stops_at_an_elapsed_deadline`
+    does *not* reach this check — it passes `UNIX_EPOCH`, which (for the same
+    reason as above) trips the L210 check first and returns before the build
+    loop or the outer loop ever run. No test failed if this check were
+    deleted.
+  - Now reached by the in-crate
+    `analysis::detection::symmetry_breaking::deadline_tests::outer_loop_deadline_check_stops_a_scan_that_started_before_the_deadline`
+    test, which scripts `deadline_passed` to pass L210 and all four
+    weight-vector builds (`E = 4`), then let outer-loop row `i = 0` complete
+    (3 candidates) before reporting the deadline passed at `i = 1` —
+    asserting `DeadlinePassed` and exactly 3 candidates. Deleting this check
+    went red (`None` vs `Some(DeadlinePassed)`).
   - the not-passed outcome is reached by
     `::symmetry_breaking_weight_vectors_are_built_once_per_neuron` with a
     far-future deadline.
