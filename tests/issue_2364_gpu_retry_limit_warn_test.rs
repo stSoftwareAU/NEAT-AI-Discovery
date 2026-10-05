@@ -20,7 +20,6 @@ use neat_ai_discovery::config::{gpu_retry_limit, resolve_gpu_retry_limit};
 struct CapturedEvent {
     level: String,
     message: String,
-    #[allow(dead_code)]
     fields: HashMap<String, String>,
 }
 
@@ -129,6 +128,34 @@ fn unparsable_value_warns_and_uses_default() {
             "NEAT_AI_DISCOVERY_GPU_RETRY_LIMIT",
             "using the default of 3",
         ],
+    );
+}
+
+#[test]
+fn unparsable_value_field_escapes_control_characters() {
+    let events = capture_events(|| {
+        let limit = resolve_gpu_retry_limit(Some("5\nFORGED: injected"));
+        assert_eq!(limit, 3);
+    });
+    let warnings: Vec<&CapturedEvent> = events.iter().filter(|e| e.level == "WARN").collect();
+    assert_eq!(
+        warnings.len(),
+        1,
+        "expected exactly one WARN event, got {}: {:?}",
+        warnings.len(),
+        events
+    );
+    let value_field = warnings[0]
+        .fields
+        .get("value")
+        .expect("expected a `value` field on the WARN event");
+    assert!(
+        !value_field.contains('\n'),
+        "value field must not contain a raw newline: {value_field:?}"
+    );
+    assert!(
+        value_field.contains("\\n"),
+        "value field must contain the escaped newline sequence: {value_field:?}"
     );
 }
 

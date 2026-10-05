@@ -90,7 +90,7 @@ pub fn resolve_gpu_retry_limit(raw: Option<&str>) -> u32 {
         Err(_) => {
             tracing::warn!(
                 env = GPU_RETRY_LIMIT_ENV,
-                value = %s,
+                value = ?s,
                 default = DEFAULT_GPU_RETRY_LIMIT,
                 "{GPU_RETRY_LIMIT_ENV}={s:?} is not a valid unsigned integer; using the default \
                  of {DEFAULT_GPU_RETRY_LIMIT}"
