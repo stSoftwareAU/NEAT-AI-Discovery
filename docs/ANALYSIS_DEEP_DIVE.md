@@ -279,7 +279,10 @@ this analysis identifies shared causes and recommends a single structural change
 4. **Predictive input identification**: Finds input neuron activations that predict the shared error
 
 **Skip optimisation**: This analysis is skipped when there is only one output neuron, since
-there is nothing to correlate.
+there is nothing to correlate. It is also skipped (Issue #2346) when more than
+`MAX_CORRELATED_ERROR_OUTPUTS` (1,000) outputs are eligible, because the matrix is O(n²).
+The predictive-input search is skipped above `MAX_CORRELATED_ERROR_INPUTS` (10,000) inputs,
+and both loops stop at the shared analysis deadline.
 
 **Output**: Correlated error groups appear in `coordinatedStructuralCandidates` with
 `addNeuron` and `addSynapse` operations.

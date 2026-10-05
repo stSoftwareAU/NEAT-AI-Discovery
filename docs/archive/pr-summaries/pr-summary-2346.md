@@ -56,13 +56,14 @@ flowchart TD
     H -- no --> R[groups returned]
 ```
 
-**Docs sweep:**
+**Docs sweep** — grep: `detect_correlated_error_patterns`, `find_predictive_inputs`, `CorrelatedError`, "correlation matrix", "correlated error", `append_structural_specs` (README.md, `docs/` excluding `docs/archive/`, `*/README.md`); section: `docs/discoveries/correlated-error.md#-how-we-detect-it`, `docs/DISCOVERY_TYPES.md#correlated-error-pattern-detection`, `docs/ANALYSIS_DEEP_DIVE.md#-correlated-error-pattern-detection-issue-344`; updated: `docs/discoveries/correlated-error.md`, `docs/DISCOVERY_TYPES.md`, `docs/ANALYSIS_DEEP_DIVE.md`
 
 - `docs/discoveries/correlated-error.md` and `docs/DISCOVERY_TYPES.md` each gain a new Bounds section.
+- `docs/ANALYSIS_DEEP_DIVE.md:281` — the "Skip optimisation" note listed only the single-output skip. It now also names the output ceiling, the input ceiling and the deadline stop.
 - `docs/ANALYSIS_DEEP_DIVE.md:276` — still true, because the matrix description holds below the ceiling.
 - `docs/DISCOVERY_TYPES.md:1096` — still true, because the step description is unchanged.
 - `docs/COST_FUNCTION_NOTES.md:124,125,331` — still true, because how errors are consumed is unchanged.
-- `docs/discoveries/README.md:188` — still true, because it only names the module.
+- `docs/discoveries/README.md:143,188` — still true, because they only name the module.
 - `tests/issue_940_unwrap_removal.rs` and `tests/detection/issue_344_correlated_error_detection.rs` — still true, because the legacy wrapper's signature is unchanged.
 
 ## Acceptance Criteria
@@ -136,7 +137,7 @@ Checked with no violation: version bump, Key Invariants, dependency discipline, 
 - `cargo test --test issue_2346_correlated_error_matrix_guard_test`: 6 passed.
 - `cargo test --lib correlated_error`: 1 passed.
 - `cargo test --test detection correlated`: 16 passed.
-- `./quality.sh`: QUALITY_PLACEHOLDER
+- `./quality.sh`: passed (exit 0, "All quality checks passed!") on the branch head, with the docs-sweep edits applied.
 
 ## Guards kept and call sites checked
 
