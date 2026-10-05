@@ -437,6 +437,63 @@ fn test_activation_monotonicity_estimated_improvement_positive() {
     }
 }
 
+/// Test 11 (Issue #2350): a candidate whose neuron has no synapses at all
+/// misses both the `outgoing_by_uuid` and `incoming_by_uuid` lookup maps
+/// built once per call by `non_monotonic_neurons_to_coordinated_candidates`.
+/// `.map_or(&[], Vec::as_slice)` must yield an empty slice for the miss,
+/// driving the function down the `ChangeSquash` branch (the `AddNeuron`
+/// branch requires both a non-empty `outgoing` and `incoming`).
+#[test]
+fn test_lookup_miss_drives_change_squash_branch() {
+    // `hidden-isolated` is a real hidden neuron (present in `squash_by_uuid`)
+    // but has no synapses referencing it, so it is absent from both
+    // `outgoing_by_uuid` and `incoming_by_uuid`.
+    let creature = make_creature(
+        vec![
+            neuron("input-1", "input", "IDENTITY"),
+            neuron("hidden-isolated", "hidden", "LOGISTIC"),
+            neuron("output-1", "output", "IDENTITY"),
+        ],
+        vec![synapse("input-1", "output-1", 0.5)],
+    );
+
+    let candidate = MonotonicityCandidate {
+        neuron_uuid: "hidden-isolated".to_string(),
+        monotonicity_score: 0.05,
+        sample_count: 250,
+        estimated_improvement: 0.009,
+    };
+
+    let coordinated = non_monotonic_neurons_to_coordinated_candidates(&[candidate], &creature);
+
+    assert_eq!(
+        coordinated.len(),
+        1,
+        "Exactly one coordinated candidate should be produced"
+    );
+
+    let c = &coordinated[0];
+    assert_eq!(
+        c.operations.len(),
+        1,
+        "ChangeSquash branch should produce exactly one operation, got {:?}",
+        c.operations
+    );
+
+    match &c.operations[0] {
+        neat_ai_discovery::CoordinatedStructuralOpJson::ChangeSquash { neuron_uuid, squash } => {
+            assert_eq!(neuron_uuid, "hidden-isolated");
+            assert_eq!(
+                squash, "TANH",
+                "LOGISTIC's complementary squash should be TANH"
+            );
+        }
+        other => panic!(
+            "Expected a ChangeSquash operation on lookup-map miss, got: {other:?}"
+        ),
+    }
+}
+
 /// Test 10: Empty records produce no detections.
 #[test]
 fn test_activation_monotonicity_empty_records_no_detections() {
