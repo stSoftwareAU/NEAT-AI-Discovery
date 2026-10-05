@@ -97,7 +97,17 @@ jobs:
 
       - name: Upload coverage to Codecov
         # Pinned to a 40-char commit SHA (Issue #1216).
+        #
+        # `fail_ci_if_error: false` only suppresses errors the action's
+        # own upload logic catches; a raw network exception (e.g. a TLS
+        # handshake failure reaching Codecov's CDN — codecov/codecov-
+        # action#1975, still open upstream) crashes the step before that
+        # logic runs, so the step still exits non-zero and fails the job.
+        # `continue-on-error: true` makes the step non-blocking regardless
+        # of how it fails, honouring the workflow's existing intent that a
+        # coverage-upload failure must never block CI (PR #2389).
         uses: codecov/codecov-action@0f8570b1a125f4937846a11fcfa3bcd548bd8c97 # v4.6.0
+        continue-on-error: true
         with:
           files: lcov.info
           token: ${{ secrets.CODECOV_TOKEN }}
