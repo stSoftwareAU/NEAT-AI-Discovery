@@ -17,8 +17,9 @@ The scan is now bounded:
   on every iteration;
 - the candidate list stops at `MAX_SYMMETRIC_PAIR_CANDIDATES` (256).
 
-A new `detect_symmetric_neurons_with_deadline` returns a `BoundedScan` that
-records why a scan stopped early. The production dispatch path
+A new `detect_symmetric_neurons_with_deadline` returns a `SymmetricPairScan`
+that records why a scan stopped early and how many otherwise-eligible hidden
+neurons were skipped by the cap. The production dispatch path
 (`neuron_specs.rs`) uses it, forwards the dispatch deadline and logs a warning
 on truncation. The legacy `detect_symmetric_neurons` keeps its signature and is
 still capped.
@@ -36,17 +37,21 @@ Closes #2349
 
 ### Essential Design Decisions
 
-- The scan reuses the existing `BoundedScan` / `ScanTruncation` types from
-  `recommendation::epistatic`, the same shape other bounded scans return,
-  rather than adding a new result type.
+- The scan reuses the existing `ScanTruncation` type from
+  `recommendation::epistatic`, but returns a new `SymmetricPairScan` result
+  type (carrying `eligible_skipped` alongside `candidates` and `truncation`),
+  rather than the generic `BoundedScan<T>` shape other bounded scans return —
+  `BoundedScan<T>` has no field for a skipped-neuron count.
 - `detect_symmetric_neurons_observed` takes an `FnMut()` hook that fires once
   per weight-vector build. This is the test seam that proves vectors are built
   once per neuron. Production passes a no-op.
 - When a source has duplicate synapses into the same neuron, the first one in
   `creature.synapses` order still wins, as with the legacy `find`. The vector
   is filled in reverse so the first occurrence is written last.
-- The deadline is checked once before the vector build and once per outer
-  iteration, not per pair. This bounds overshoot to one row of comparisons.
+- The deadline is checked once before the vector build, once per eligible
+  neuron inside the build loop (bounding overshoot on a capped-but-still-large
+  `A`), and once per outer iteration — never per pair. This bounds overshoot
+  to one row of comparisons.
 
 ### Undiscoverable Facts
 
@@ -117,8 +122,9 @@ flowchart TD
     declaration.
   - `src/analysis/module_dispatch_specs/neuron_specs.rs:6`, `:15` — still true
     because they are a module doc and imports.
-  - `src/analysis/detection/symmetry_breaking.rs:313`, `:343` — still true
-    because the candidate converter is unchanged.
+  - `src/analysis/detection/symmetry_breaking.rs:370`, `:399` — still true
+    (shifted from `:313`/`:343` by the insertions above) because the candidate
+    converter is unchanged.
   - `tests/detection/issue_569_symmetry_breaking.rs:16-17`, `:101`, `:167`,
     `:221` — still true because they call the legacy `detect_symmetric_neurons`,
     whose signature is unchanged.
@@ -129,7 +135,10 @@ flowchart TD
 
 ## Test Plan
 
-- `cargo test --test issue_2349_symmetry_breaking_growth < /dev/null`: 5 passed.
+- `cargo test --test issue_2349_symmetry_breaking_growth < /dev/null`: 7 passed
+  (two added for the eligible-neuron cap:
+  `eligible_neurons_beyond_the_cap_are_skipped_and_recorded`,
+  `under_cap_scan_records_no_skip`).
 - `cargo test --test detection issue_569 < /dev/null`: 9 passed.
 - `cargo clippy --all-targets --all-features -- -D warnings` and
   `cargo fmt --check`: clean.
@@ -139,35 +148,48 @@ flowchart TD
 
 Branch outcomes:
 
-- `src/analysis/detection/symmetry_breaking.rs:137`, fewer than 2 hidden
+- `src/analysis/detection/symmetry_breaking.rs:173`, fewer than 2 hidden
   neurons gives empty and no truncation: an existing branch (refactored),
   reached by `tests/detection/issue_569_symmetry_breaking.rs` (the
   single-hidden-neuron case).
-- `src/analysis/detection/symmetry_breaking.rs:157`, fewer than 2 eligible
+- `src/analysis/detection/symmetry_breaking.rs:194`, fewer than 2 eligible
   neurons gives empty and no truncation: an existing branch, reached by
   `tests/detection/issue_569_symmetry_breaking.rs` (the insufficient-samples
   case).
-- `src/analysis/detection/symmetry_breaking.rs:164`, deadline passed before the
+- `src/analysis/detection/symmetry_breaking.rs:205-208`, the eligible-neuron
+  cap: otherwise-eligible hidden neurons beyond
+  `MAX_SYMMETRY_ELIGIBLE_NEURONS` are counted into `eligible_skipped` and
+  truncated out before the vector build:
+  - skipped-and-recorded reached by
+    `::eligible_neurons_beyond_the_cap_are_skipped_and_recorded`;
+  - the under-cap (zero-skipped) outcome reached by
+    `::under_cap_scan_records_no_skip`.
+- `src/analysis/detection/symmetry_breaking.rs:210`, deadline passed before the
   build gives empty and `DeadlinePassed`:
   - reached by `tests/issue_2349_symmetry_breaking_growth.rs::symmetry_breaking_scan_stops_at_an_elapsed_deadline`;
   - removing the deadline checks went red (`None` vs `Some(DeadlinePassed)`).
-- `src/analysis/detection/symmetry_breaking.rs:178`, membership hit or miss:
+- `src/analysis/detection/symmetry_breaking.rs:225`, membership hit or miss:
   - hit reached by every detection test;
   - miss (a synapse into a non-hidden neuron) reached by the growth-test
     creature's output synapses;
   - it is a pure lookup swap, with no behavioural flip.
-- `src/analysis/detection/symmetry_breaking.rs:213`, the first duplicate-source
-  synapse wins:
-  - reached by `tests/issue_2349_symmetry_breaking_growth.rs::duplicate_source_synapse_keeps_first_weight`;
-  - making the last duplicate win went red (`0` vs `1`).
-- `src/analysis/detection/symmetry_breaking.rs:228`, deadline passed in the
+- `src/analysis/detection/symmetry_breaking.rs:255`, the deadline check inside
+  the per-neuron vector-build loop, gives empty and `DeadlinePassed`:
+  - exercised the same way as the pre-build check at L210, since the test
+    creatures build few enough vectors that both checks see the same
+    deadline state;
+  - the first duplicate-source synapse still wins at the write inside this
+    loop (line 270): reached by
+    `tests/issue_2349_symmetry_breaking_growth.rs::duplicate_source_synapse_keeps_first_weight`;
+    making the last duplicate win went red (`0` vs `1`).
+- `src/analysis/detection/symmetry_breaking.rs:284`, deadline passed in the
   outer loop gives partial and `DeadlinePassed`:
   - reached by `::symmetry_breaking_scan_stops_at_an_elapsed_deadline`;
-  - removing the checks went red, as at L164;
+  - removing the checks went red, as at L210;
   - the not-passed outcome is reached by
     `::symmetry_breaking_weight_vectors_are_built_once_per_neuron` with a
     far-future deadline.
-- `src/analysis/detection/symmetry_breaking.rs:275`, ceiling reached gives
+- `src/analysis/detection/symmetry_breaking.rs:331`, ceiling reached gives
   partial and `CandidateCeiling`:
   - reached by `::symmetry_breaking_scan_stops_at_the_candidate_ceiling`;
   - removing the ceiling went red (`None` vs `Some(CandidateCeiling)`);
@@ -176,18 +198,19 @@ Branch outcomes:
 - Per-pair rebuild vs build-once:
   - reached by `::symmetry_breaking_weight_vectors_are_built_once_per_neuron`;
   - restoring a per-pair rebuild went red (`16` vs `4`).
-- `src/analysis/module_dispatch_specs/neuron_specs.rs:196`, truncation gives a
-  `warn!`. There is no direct test: dispatch checks the deadline before running
-  the closure, so an elapsed deadline cannot reach this branch
-  deterministically. The truncation values it reads are covered by the scan
-  tests above.
+- `src/analysis/module_dispatch_specs/neuron_specs.rs:200`, truncation gives a
+  `warn!` (line 196 is now the doc comment above it, after the eligible-skipped
+  warning block was added). There is no direct test: dispatch checks the
+  deadline before running the closure, so an elapsed deadline cannot reach this
+  branch deterministically. The truncation values it reads are covered by the
+  scan tests above.
 
 Entry points checked:
 
 - `append_neuron_specs` and `module_dispatch_specs/mod.rs` now forward the
   dispatch deadline to the scan.
 - Reverting to the deadline-free call is not observable through dispatch, for
-  the same reason as the `neuron_specs.rs:196` branch above. This is noted, not
+  the same reason as the `neuron_specs.rs:200` branch above. This is noted, not
   hidden.
 
 Removed assertions: none.
