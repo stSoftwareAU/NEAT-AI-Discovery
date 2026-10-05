@@ -20,6 +20,7 @@ pub(crate) fn append_synapse_specs(
     hidden_neurons: &Arc<Vec<(String, String, f32)>>,
     shared_cache: &Arc<cache::RecordCache>,
     topo: &Arc<CreatureTopologyCache>,
+    deadline: Option<std::time::SystemTime>,
 ) {
     // Issue #359: Dormant synapse detection
     discovery_spec!(modules, "dormant synapse detection", "dormant_synapse_detection",
@@ -90,12 +91,28 @@ pub(crate) fn append_synapse_specs(
     );
 
     // Issue #641: Fan-in weight polarity conflict detection
+    // Issue #2350: thread `deadline` into the conversion scan, which can now
+    // stop mid-candidate once it passes rather than always scanning to completion.
     discovery_spec!(modules, "fan-in polarity conflict detection", "fanin_polarity_conflict_detection",
         cache = shared_cache, hidden = hidden_neurons, creature = creature =>
-        guard: hidden,
-        records: cache.load_records_for_all_neurons(&creature),
-        detect: |records| fanin_polarity_conflict::detect_fanin_polarity_conflicts(&creature, &records),
-        convert: |detected| fanin_polarity_conflict::fanin_polarity_conflicts_to_coordinated_candidates(&detected, &creature),
+        custom: move || {
+            if hidden.is_empty() {
+                return None;
+            }
+            let records = cache.load_records_for_all_neurons(&creature);
+            let detected = fanin_polarity_conflict::detect_fanin_polarity_conflicts(&creature, &records);
+            if detected.is_empty() {
+                return None;
+            }
+            let candidates = fanin_polarity_conflict::fanin_polarity_conflicts_to_coordinated_candidates_with_deadline(&detected, &creature, &deadline);
+            if candidates.is_empty() {
+                return None;
+            }
+            Some(discovery_dispatch::DiscoveryDetectionResult {
+                detected_count: detected.len(),
+                candidates,
+            })
+        },
     );
 
     // Issue #644: Weight polarity flip detection (gradient-weight sign disagreement)

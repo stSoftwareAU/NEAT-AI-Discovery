@@ -46,6 +46,8 @@ use super::{
 /// Issue #2183: `deadline` is captured by the recommendation-core scans
 /// (multi-hop, fan-in, gradient) so each stops mid-scan once it passes.
 /// Issue #2348: it is also captured by the co-adaptation pairwise scan.
+/// Issue #2350: it is also captured by the fan-in polarity conflict converter,
+/// which stops mid-candidate once it passes.
 pub(crate) fn build_discovery_module_specs(
     creature: &Arc<crate::CreatureJson>,
     hidden_neurons: &Arc<Vec<(String, String, f32)>>,
@@ -66,7 +68,14 @@ pub(crate) fn build_discovery_module_specs(
         cost_hint,
         deadline,
     );
-    synapse_specs::append_synapse_specs(&mut modules, creature, hidden_neurons, shared_cache, topo);
+    synapse_specs::append_synapse_specs(
+        &mut modules,
+        creature,
+        hidden_neurons,
+        shared_cache,
+        topo,
+        deadline,
+    );
     structural_specs::append_structural_specs(
         &mut modules,
         creature,
@@ -969,6 +978,160 @@ mod tests {
         assert!(
             (spec.detect_fn)().is_none(),
             "an elapsed deadline must stop the scan before any pair is evaluated"
+        );
+    }
+
+    /// Issue #2350: a hidden neuron `h-0` with five `+2.0` incoming synapses
+    /// and three `-2.0` incoming synapses has strong fan-in polarity conflict
+    /// (conflict score well above `MIN_CONFLICT_SCORE`), feeding the fan-in
+    /// polarity conflict detection dispatched by `build_discovery_module_specs`.
+    fn fanin_polarity_creature() -> CreatureJson {
+        let mut neurons: Vec<NeuronJson> = (0..8)
+            .map(|i| NeuronJson {
+                uuid: format!("in-{i}"),
+                neuron_type: "input".to_string(),
+                squash: "IDENTITY".to_string(),
+                bias: 0.0,
+            })
+            .collect();
+        neurons.push(NeuronJson {
+            uuid: "h-0".to_string(),
+            neuron_type: "hidden".to_string(),
+            squash: "TANH".to_string(),
+            bias: 0.0,
+        });
+        neurons.push(NeuronJson {
+            uuid: "out-0".to_string(),
+            neuron_type: "output".to_string(),
+            squash: "IDENTITY".to_string(),
+            bias: 0.0,
+        });
+
+        let mut synapses: Vec<SynapseJson> = Vec::new();
+        for i in 0..5 {
+            synapses.push(SynapseJson {
+                from_uuid: format!("in-{i}"),
+                to_uuid: "h-0".to_string(),
+                weight: 2.0,
+                synapse_type: None,
+            });
+        }
+        for i in 5..8 {
+            synapses.push(SynapseJson {
+                from_uuid: format!("in-{i}"),
+                to_uuid: "h-0".to_string(),
+                weight: -2.0,
+                synapse_type: None,
+            });
+        }
+        synapses.push(SynapseJson {
+            from_uuid: "h-0".to_string(),
+            to_uuid: "out-0".to_string(),
+            weight: 1.0,
+            synapse_type: None,
+        });
+
+        CreatureJson {
+            neurons,
+            synapses,
+            input: 8,
+            output: 1,
+        }
+    }
+
+    /// Every neuron gets 30 records (comfortably above `MIN_DISCOVERY_SAMPLE_COUNT`
+    /// of 20) — the detector only consults the sample count, not the content.
+    fn fanin_polarity_cache() -> cache::RecordCache {
+        cache::RecordCache::with_loader(
+            "test.parquet",
+            Arc::new(
+                |_file: &str, uuid: &str| -> anyhow::Result<Vec<DiscoverRecord>> {
+                    Ok((0..30)
+                        .map(|i| {
+                            DiscoverRecord::new(i, uuid.to_string(), Some(0.1), 0.1, vec![0.0])
+                        })
+                        .collect())
+                },
+            ),
+        )
+    }
+
+    /// Issue #2350: the dispatch closure for `fanin_polarity_conflict_detection`
+    /// must thread the dispatch deadline into
+    /// `fanin_polarity_conflicts_to_coordinated_candidates_with_deadline`. A
+    /// deadline an hour in the future must not stop the conversion from
+    /// producing the `h-0` candidate.
+    #[test]
+    fn fanin_polarity_spec_detects_conflicts_before_the_deadline() {
+        let creature = Arc::new(fanin_polarity_creature());
+        let hidden: Arc<Vec<(String, String, f32)>> =
+            Arc::new(vec![("h-0".to_string(), "TANH".to_string(), 0.0)]);
+        let cache = Arc::new(fanin_polarity_cache());
+        let topo = Arc::new(
+            super::super::detection::topology_cache::CreatureTopologyCache::new(&creature),
+        );
+        let deadline = Some(std::time::SystemTime::now() + std::time::Duration::from_secs(3_600));
+
+        let specs = build_discovery_module_specs(
+            &creature,
+            &hidden,
+            &cache,
+            &topo,
+            CostFunctionHint::Unknown,
+            TaskDescriptor::neutral(),
+            deadline,
+        );
+
+        let spec = specs
+            .into_iter()
+            .find(|s| s.phase_name == "fanin_polarity_conflict_detection")
+            .expect("fan-in polarity conflict detection must be registered as a discovery module");
+
+        let result = (spec.detect_fn)()
+            .expect("a live deadline must let the conversion produce the conflicted candidate");
+        assert!(
+            result.detected_count >= 1,
+            "expected at least one fan-in polarity conflict, got {}",
+            result.detected_count
+        );
+        assert!(
+            !result.candidates.is_empty(),
+            "expected the conversion to emit at least one coordinated candidate"
+        );
+    }
+
+    /// Issue #2350: an already-elapsed deadline must stop the conversion scan
+    /// before any candidate is converted, proving the dispatch closure
+    /// actually threads `deadline` through rather than passing `&None`.
+    #[test]
+    fn fanin_polarity_spec_honours_an_elapsed_deadline() {
+        let creature = Arc::new(fanin_polarity_creature());
+        let hidden: Arc<Vec<(String, String, f32)>> =
+            Arc::new(vec![("h-0".to_string(), "TANH".to_string(), 0.0)]);
+        let cache = Arc::new(fanin_polarity_cache());
+        let topo = Arc::new(
+            super::super::detection::topology_cache::CreatureTopologyCache::new(&creature),
+        );
+        let deadline = Some(std::time::SystemTime::UNIX_EPOCH);
+
+        let specs = build_discovery_module_specs(
+            &creature,
+            &hidden,
+            &cache,
+            &topo,
+            CostFunctionHint::Unknown,
+            TaskDescriptor::neutral(),
+            deadline,
+        );
+
+        let spec = specs
+            .into_iter()
+            .find(|s| s.phase_name == "fanin_polarity_conflict_detection")
+            .expect("fan-in polarity conflict detection must be registered as a discovery module");
+
+        assert!(
+            (spec.detect_fn)().is_none(),
+            "an elapsed deadline must stop the conversion before any candidate is produced"
         );
     }
 }

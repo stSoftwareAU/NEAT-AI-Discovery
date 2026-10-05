@@ -265,12 +265,11 @@ pub fn fanin_polarity_conflicts_to_coordinated_candidates_with_deadline(
             continue;
         }
 
-        // Determine the activation function from the original neuron
-        let squash = creature
-            .neurons
-            .iter()
-            .find(|n| n.uuid == c.neuron_uuid)
-            .map_or_else(|| "TANH".to_string(), |n| n.squash.clone());
+        // Determine the activation function from the original neuron (Issue #2350:
+        // O(1) map lookup rather than a per-candidate linear scan of `creature.neurons`).
+        let squash = squash_by_uuid
+            .get(c.neuron_uuid.as_str())
+            .map_or_else(|| "TANH".to_string(), |s| (*s).to_string());
 
         // Generate a deterministic UUID for the new neuron
         let new_neuron_uuid = format!("fanin-split-{}", c.neuron_uuid);
