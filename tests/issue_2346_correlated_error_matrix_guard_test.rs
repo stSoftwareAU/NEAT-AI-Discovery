@@ -1,8 +1,8 @@
-//! Regression test for Issue #2346 (CWE-789: unbounded n_outputs^2 correlation
+//! Regression test for Issue #2346 (CWE-789: unbounded `n_outputs^2` correlation
 //! matrix and uncancellable pair scan in `detect_correlated_error_patterns`).
 //!
-//! `detect_correlated_error_patterns` builds an O(n_outputs^2) correlation
-//! matrix and an O(n_inputs) predictive-input scan per group with no bound on
+//! `detect_correlated_error_patterns` builds an `O(n_outputs^2)` correlation
+//! matrix and an `O(n_inputs)` predictive-input scan per group with no bound on
 //! `n_outputs` or `n_inputs`, and no deadline check inside the pairwise loop.
 //! A pathological creature with a very large number of eligible output
 //! neurons (or input neurons) could make the scan run unbounded work with no
@@ -81,7 +81,10 @@ fn synapse(from: &str, to: &str, weight: f32) -> SynapseJson {
 /// Each output gets exactly `MIN_DISCOVERY_SAMPLE_COUNT` (20) records with a
 /// one-element errors vec, to keep generated record counts small and the
 /// test fast even for large `n_outputs`/`n_inputs`.
-fn make_fixture(n_outputs: usize, n_inputs: usize) -> (CreatureJson, Vec<(String, Vec<DiscoverRecord>)>) {
+fn make_fixture(
+    n_outputs: usize,
+    n_inputs: usize,
+) -> (CreatureJson, Vec<(String, Vec<DiscoverRecord>)>) {
     const SAMPLES: u32 = 20; // == MIN_DISCOVERY_SAMPLE_COUNT
 
     let mut neurons = Vec::with_capacity(n_outputs + n_inputs);
@@ -131,8 +134,7 @@ fn rejects_output_count_above_ceiling_without_building_the_matrix() {
     let n_outputs = MAX_CORRELATED_ERROR_OUTPUTS + 1;
     let (creature, neuron_records) = make_fixture(n_outputs, 1);
 
-    let scan =
-        detect_correlated_error_patterns_with_deadline(&creature, &neuron_records, &None);
+    let scan = detect_correlated_error_patterns_with_deadline(&creature, &neuron_records, &None);
 
     assert!(
         scan.groups.is_empty(),
@@ -160,8 +162,7 @@ fn rejects_output_count_above_ceiling_without_building_the_matrix() {
 fn small_correlated_output_set_is_not_skipped() {
     let (creature, neuron_records) = make_fixture(3, 1);
 
-    let scan =
-        detect_correlated_error_patterns_with_deadline(&creature, &neuron_records, &None);
+    let scan = detect_correlated_error_patterns_with_deadline(&creature, &neuron_records, &None);
 
     assert!(
         !scan.groups.is_empty(),
@@ -200,8 +201,7 @@ fn input_count_above_ceiling_skips_predictive_search() {
     let n_inputs = MAX_CORRELATED_ERROR_INPUTS + 1;
     let (creature, neuron_records) = make_fixture(3, n_inputs);
 
-    let scan =
-        detect_correlated_error_patterns_with_deadline(&creature, &neuron_records, &None);
+    let scan = detect_correlated_error_patterns_with_deadline(&creature, &neuron_records, &None);
 
     assert!(
         !scan.groups.is_empty(),
@@ -231,8 +231,7 @@ fn input_count_above_ceiling_skips_predictive_search() {
 fn predictive_input_found_below_input_ceiling() {
     let (creature, neuron_records) = make_fixture(3, 1);
 
-    let scan =
-        detect_correlated_error_patterns_with_deadline(&creature, &neuron_records, &None);
+    let scan = detect_correlated_error_patterns_with_deadline(&creature, &neuron_records, &None);
 
     assert!(
         !scan.groups.is_empty(),
@@ -249,5 +248,39 @@ fn predictive_input_found_below_input_ceiling() {
             .contains(&"input-0".to_string()),
         "input-0 should be identified as predictive, got: {:?}",
         group.predictive_input_uuids
+    );
+}
+
+/// Test 6: with no input neurons at all, `find_predictive_inputs` never checks
+/// the deadline (its loop iterates zero times), so only the per-matrix-row
+/// deadline check can stop the scan. First confirm the fixture produces
+/// groups with no deadline, then confirm an elapsed deadline reports
+/// `DeadlinePassed` with no groups.
+#[test]
+fn elapsed_deadline_stops_matrix_build_with_no_input_neurons() {
+    let (creature, neuron_records) = make_fixture(3, 0);
+
+    let scan = detect_correlated_error_patterns_with_deadline(&creature, &neuron_records, &None);
+    assert!(
+        !scan.groups.is_empty(),
+        "Fixture with no input neurons should still produce at least one group"
+    );
+    assert_eq!(
+        scan.skip, None,
+        "No skip reason should be reported for a small, well-formed fixture"
+    );
+
+    let deadline = Some(SystemTime::UNIX_EPOCH);
+    let scan =
+        detect_correlated_error_patterns_with_deadline(&creature, &neuron_records, &deadline);
+
+    assert!(
+        scan.groups.is_empty(),
+        "Groups should be empty once the deadline has passed, even with no input neurons"
+    );
+    assert_eq!(
+        scan.skip,
+        Some(CorrelatedErrorSkip::DeadlinePassed),
+        "Skip reason should report the elapsed deadline via the per-matrix-row check"
     );
 }

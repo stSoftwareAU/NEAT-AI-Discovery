@@ -1108,7 +1108,7 @@ eligible outputs (≥ 20 error records) are at or below `MAX_CORRELATED_ERROR_OU
 `MAX_CORRELATED_ERROR_INPUTS` (10,000) eligible inputs, the predictive-input
 search is skipped per group (`InputCeilingExceeded`), so groups are still
 emitted with empty `predictive_input_uuids`. The deadline-aware entry point
-checks the shared analysis deadline per matrix row, per group and per input.
+checks the shared analysis deadline per matrix row and per input.
 
 **Recommended actions**:
 

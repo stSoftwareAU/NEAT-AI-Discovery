@@ -106,7 +106,7 @@ groups and logs `OutputCeilingExceeded`. Within a group, the predictive-input
 search is skipped once eligible inputs exceed `MAX_CORRELATED_ERROR_INPUTS`
 (10,000) — groups are still emitted, with empty `predictive_input_uuids`, and
 `InputCeilingExceeded` is logged. `detect_correlated_error_patterns_with_deadline`
-also checks the shared analysis deadline per matrix row, per group and per
+also checks the shared analysis deadline per matrix row and per
 input, returning any groups completed so far (or none, if the deadline passed
 during matrix construction) on `DeadlinePassed`.
 

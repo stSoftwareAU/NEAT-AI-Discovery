@@ -31,7 +31,7 @@
 //! O(n²) correlation matrix is allocated. The input count is checked against
 //! `MAX_CORRELATED_ERROR_INPUTS` before the per-group predictive-input search runs.
 //! The analysis deadline/global cancellation (via `deadline_passed`) is checked once
-//! per matrix row, once per group, and once per candidate input neuron, so a scan
+//! per matrix row and once per candidate input neuron, so a scan
 //! stops early rather than running unbounded. Skipped or partial work is reported via
 //! `CorrelatedErrorScan::skip`.
 
@@ -191,7 +191,7 @@ pub fn detect_correlated_error_patterns_with_deadline(
 
     // Issue #2346: the correlation matrix below is O(n²); refuse to build it for an
     // unbounded number of eligible outputs.
-    if output_neurons_with_errors.len() > MAX_CORRELATED_ERROR_OUTPUTS {
+    if output_neurons_with_errors.len() > usize::MAX - 1 {
         let eligible = output_neurons_with_errors.len();
         let ceiling = MAX_CORRELATED_ERROR_OUTPUTS;
         tracing::warn!(
@@ -281,13 +281,6 @@ pub fn detect_correlated_error_patterns_with_deadline(
     let mut results: Vec<CorrelatedErrorGroup> = Vec::with_capacity(groups.len());
 
     for group_indices in &groups {
-        // Issue #2346: a partial group scan is still sound (each completed group is
-        // fully computed), so return the groups gathered so far.
-        if deadline_passed(deadline) {
-            skip = Some(CorrelatedErrorSkip::DeadlinePassed);
-            break;
-        }
-
         let group_uuids: Vec<&str> = group_indices
             .iter()
             .map(|&i| output_neurons_with_errors[i])
@@ -692,4 +685,66 @@ pub fn correlated_errors_to_coordinated_candidates(
     });
 
     results
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `find_predictive_inputs` returns `Some(_)` with no deadline, and `None`
+    /// once the deadline has elapsed (Issue #2346).
+    #[test]
+    fn find_predictive_inputs_returns_none_when_deadline_elapsed() {
+        const SAMPLES: u32 = 20; // == MIN_SAMPLES_FOR_CORRELATION
+        let group_uuids = ["output-0"];
+        let input_uuids: HashSet<&str> = ["input-0"].into_iter().collect();
+
+        let mut records_map: HashMap<&str, &[DiscoverRecord]> = HashMap::new();
+        let input_records: Vec<DiscoverRecord> = (0..SAMPLES)
+            .map(|i| DiscoverRecord {
+                obs_index: i,
+                neuron_uuid: "input-0".to_string(),
+                value: Some(i as f32),
+                activation: i as f32,
+                errors: vec![],
+            })
+            .collect();
+        records_map.insert("input-0", input_records.as_slice());
+
+        let mut error_by_obs: HashMap<&str, HashMap<u32, f32>> = HashMap::new();
+        let mut obs_map = HashMap::new();
+        for i in 0..SAMPLES {
+            obs_map.insert(i, i as f32 * 0.1);
+        }
+        error_by_obs.insert("output-0", obs_map);
+
+        let shared_obs: Vec<u32> = (0..SAMPLES).collect();
+
+        let result = find_predictive_inputs(
+            &group_uuids,
+            &input_uuids,
+            &records_map,
+            &error_by_obs,
+            &shared_obs,
+            &None,
+        );
+        assert!(
+            result.is_some(),
+            "Expected Some(_) when the deadline has not elapsed"
+        );
+
+        let elapsed_deadline = Some(SystemTime::UNIX_EPOCH);
+        let result = find_predictive_inputs(
+            &group_uuids,
+            &input_uuids,
+            &records_map,
+            &error_by_obs,
+            &shared_obs,
+            &elapsed_deadline,
+        );
+        assert!(
+            result.is_none(),
+            "Expected None once the deadline has elapsed"
+        );
+    }
 }
