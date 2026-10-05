@@ -8,14 +8,18 @@
 //!   against the module (#2391, #2392);
 //! * the section records a disposition for every probe run, including the
 //!   re-verification of #1906 and #1902;
-//! * the "Re-verified remediations" table carries exactly one live row each
+//! * the "Re-verified remediations" region carries exactly one live row each
 //!   for #1906 and #1902;
-//! * the "Filesystem mutation sites" table cites the #1902 `Drop` site and
+//! * the "Filesystem mutation sites" region cites the #1902 `Drop` site and
 //!   states `discovery_history.rs` has no site of its own;
 //! * every `file.rs::symbol` the section cites still exists, and no citation
 //!   uses a line number (Issue #1942);
 //! * every unit test the ledger names by name still exists in its source
 //!   file.
+//!
+//! Issue #2254 removed the tables' `<!-- section: -->` markers at
+//! finalisation, once no more concurrent slices remained to disambiguate; a
+//! section's "region" of a table is now the whole table.
 
 mod common;
 

@@ -1,6 +1,6 @@
 //! Finalisation contract for the chunk 11 sweep record (Issue #2254).
 //!
-//! Issues #2234 (11a), #2251 (11b), #2252 (11c) and #2253 (11c-2) each swept
+//! Issues #2234 (11a), #2251 (11b), #2252 (11c-1) and #2253 (11c-2) each swept
 //! one slice of a shared record; #2254 reconciled the tables below against a
 //! fresh grep inventory and wrote the `## Outcome` and `## Issues filed`
 //! sections. This file pins the finished state, so the ledger cannot quietly
@@ -192,7 +192,7 @@ fn files_swept_lists_every_chunk_11_file_with_a_reasoned_outcome() {
     let doc = read(RECORD);
     let body = section(&doc, "## Files swept");
 
-    let mut rows: Vec<(String, String)> = table_rows(body)
+    let rows: Vec<(String, String)> = table_rows(body)
         .into_iter()
         .filter_map(|line| {
             let cells: Vec<&str> = line.trim().trim_matches('|').split('|').collect();
@@ -219,7 +219,7 @@ fn files_swept_lists_every_chunk_11_file_with_a_reasoned_outcome() {
         "no `## Files swept` table cell may read `pending`"
     );
 
-    for (path, outcome) in &mut rows {
+    for (path, outcome) in &rows {
         assert!(
             !outcome.contains("pending"),
             "{path} still reads `pending` — the chunk is not finished: {outcome}"
