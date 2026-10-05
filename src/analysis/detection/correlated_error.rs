@@ -191,7 +191,7 @@ pub fn detect_correlated_error_patterns_with_deadline(
 
     // Issue #2346: the correlation matrix below is O(n²); refuse to build it for an
     // unbounded number of eligible outputs.
-    if output_neurons_with_errors.len() > usize::MAX - 1 {
+    if output_neurons_with_errors.len() > MAX_CORRELATED_ERROR_OUTPUTS {
         let eligible = output_neurons_with_errors.len();
         let ceiling = MAX_CORRELATED_ERROR_OUTPUTS;
         tracing::warn!(
