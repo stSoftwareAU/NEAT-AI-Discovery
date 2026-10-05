@@ -79,7 +79,7 @@ fleet nodes, so a human needs to capture it after rollout.
 
 - "`rust-version` declared" — reviewer: met
 - "an MSRV CI job that would have failed on #2387" — reviewer: met
-- "A quoted GRQ node-log line from one previously failing host showing
+- "A quoted node-log line from one previously failing production host showing
   `neat_ai_discovery` compiled after the gate updated the toolchain, followed
   by a sampler run that passes `ensure_neat_ai_discovery`" — reviewer: missing
   — reason: the sandboxed container cannot reach fleet nodes, so a human
