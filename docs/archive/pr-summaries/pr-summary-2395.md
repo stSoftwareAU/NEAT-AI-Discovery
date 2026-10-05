@@ -43,6 +43,11 @@ flowchart LR
   `rust-version`. Raising one without the other fails the test suite.
 - **`scripts/runlib.sh` is untouched.** It is family-synced, and it already
   reads the crate's own `rust-version`.
+- **No `rust-toolchain.toml` (a maintainer suggested `channel = "1.98.0"`).**
+  The issue's Fix section asks for `rust-version = "1.95"`, and the same
+  comment agrees that this alone unblocks the fleet. A toolchain file would
+  change the toolchain of every job in `ci.yml`, and AGENTS.md requires
+  approval for that. The family-wide pin is tracked in NEAT-AI-core#747.
 
 ### Undiscoverable Facts
 
@@ -68,22 +73,42 @@ showing a successful build after the gate upgraded can only come from a fleet
 host after this merges and is released. The sandboxed container cannot reach
 fleet nodes, so a human needs to capture it after rollout.
 
+## Acceptance Criteria
+
+<!-- vibe-spec-review inputs="diff+issue-body" -->
+
+- "`rust-version` declared" — reviewer: met
+- "an MSRV CI job that would have failed on #2387" — reviewer: met
+- "A quoted GRQ node-log line from one previously failing host showing
+  `neat_ai_discovery` compiled after the gate updated the toolchain, followed
+  by a sampler run that passes `ensure_neat_ai_discovery`" — reviewer: missing
+  — reason: the sandboxed container cannot reach fleet nodes, so a human
+  captures the line after release and rollout
+
+## Standards Review
+
+<!-- vibe-standards-review inputs="diff+CODING-STANDARDS.md" -->
+
+This repository has no `CODING-STANDARDS.md`, so the review used its
+canonical standards in `CONTRIBUTING.md` and `AGENTS.md`.
+
+- violations: none
+- optional: the comment above `rust-version` at `Cargo.toml:5` is long. This
+  is stylistic only and was left as it is.
+
 ## Evidence
 
-**Docs sweep** — grep: `rust-version`, `toolchain`, `MSRV`, `rustup`, `msrv.yml`; section: `README.md#minimum-system-requirements`, `CONTRIBUTING.md#ci-pipeline`, `CONTRIBUTING.md#-prerequisites`; updated: `README.md`, `CONTRIBUTING.md`, `.github/actions/setup-rust/action.yml`
+**Docs sweep** — grep: `rust-version`, `MSRV`; section: `README.md#minimum-system-requirements`, `CONTRIBUTING.md#ci-pipeline`; updated: `README.md`, `CONTRIBUTING.md`, `.github/actions/setup-rust/action.yml`
 
-- **Docs sweep detail:** the Minimum System Requirements table gains the Rust
-  toolchain row and the CI Pipeline list gains the `MSRV` bullet.
-  The Prerequisites section's "Rust (latest stable version)" was read through
-  and is still true, since latest stable is above the 1.95 floor. These other
-  hits are also still true after this change:
-  - `README.md:75` — still true because it describes the generic rustup-init bootstrap, not a version.
-  - `README.md:422,464,466,472,475` — still true because they cover the nightly toolchain for cargo-fuzz, which is unrelated to the MSRV.
-  - `CONTRIBUTING.md:63,64,82` — still true because they describe the generic `$CARGO_HOME`/rustup-init bootstrap.
-  - `CONTRIBUTING.md:280,282` — still true because they describe `install-rust-toolchain.sh` arguments and the dtolnay history.
-  - `CONTRIBUTING.md:512` — still true because it describes which scripts own the toolchain bootstrap.
-  - `scripts/runlib.sh:677-680` — still true because they say the crate's `rust-version` alone "is not the requirement", and the gate still takes the max of the crate and the dependency graph.
-  - `docs/audits/security-sweep-chunk-16-build-scripts.md` (multiple lines) — still true because it is a point-in-time audit that asserts no MSRV value.
+- **Docs sweep detail:** the sweep used
+  `git grep -n -i -E 'rust-version|msrv' -- . ':!docs/archive'` on the final
+  head. The Minimum System Requirements table gains the Rust toolchain row, and
+  the CI Pipeline list gains the `MSRV` bullet. These hits outside the diff are
+  still true:
+  - `docs/audits/security-sweep-chunk-16-build-scripts.md:274` — still true because it is a point-in-time audit of how non-numeric `rust-version` values are parsed, and asserts no MSRV value.
+  - `scripts/runlib.sh:63,283,592,674,677,680,686,702,713,737,746,923,965,1023` — still true because the gate still takes the max of the crate's own `rust-version` and the dependency graph's, still reads the crate field, and `_runlib_check_msrv` is unchanged.
+  - `tests/issue_2072_canonical_runlib.rs:78` — still true because it is a `1.92` fixture value in a runlib test, unrelated to this crate's declared MSRV.
+  - `tests/test_cargo_toml_validation.sh:6,74,75,117,118` — still true because they are field-matching fixtures (`1.70`) for the Cargo.toml validator, unrelated to the declared MSRV.
 - **Related existing rules checked:**
   - AGENTS.md "Do Not Modify CI Without Approval": `ci.yml` is untouched and the MSRV job lives in a new workflow.
   - AGENTS.md "Version Bumps": the bump is left to CI's `version-increment` job.
@@ -96,7 +121,8 @@ fleet nodes, so a human needs to capture it after rollout.
 - `npx markdownlint-cli2`: 0 issues.
 - Red run 1: removing `rust-version` from `Cargo.toml` makes `cargo_toml_declares_rust_version_at_or_above_the_try_update_floor` and `msrv_workflow_toolchain_matches_cargo_toml_rust_version` fail. Restored, and the suite is 10/10.
 - Red run 2: setting the `msrv.yml` toolchain to `"1.94"` makes `msrv_workflow_toolchain_matches_cargo_toml_rust_version` fail (left `1.94`, right `1.95`). Restored, and the suite passes again.
-- `./quality.sh`: see the PR comment and CI for the full-gate result.
+- `timeout 900 ./quality.sh < /dev/null`: exit 0, "✅ All quality checks passed!".
+- Named tests checked with `git ls-files` from the repository root: all five suites above are tracked.
 
 **Branch outcomes:** none added in production code. The diff changes only the
 manifest, a workflow, docs and tests. The test helpers' own branches are
