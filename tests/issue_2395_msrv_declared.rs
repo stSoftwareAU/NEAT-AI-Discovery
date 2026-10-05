@@ -3,7 +3,7 @@
 //! left `scripts/runlib.sh`'s toolchain gate — which upgrades a host to the
 //! max of the crate's own `rust-version` and the dependency graph's — with
 //! nothing to read, so hosts still on an older rustc (then 1.93.1) never
-//! upgraded and the build broke on the whole GRQ fleet.
+//! upgraded and the build broke on every consuming host.
 //!
 //! This test parses `Cargo.toml` and `.github/workflows/msrv.yml` as plain
 //! text (no YAML/TOML parser is pulled in just for this) and asserts:
