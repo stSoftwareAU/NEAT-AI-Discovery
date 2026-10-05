@@ -60,11 +60,79 @@ flowchart TD
 
 - `docs/discoveries/correlated-error.md` and `docs/DISCOVERY_TYPES.md` each gain a new Bounds section.
 - `docs/ANALYSIS_DEEP_DIVE.md:281` — the "Skip optimisation" note listed only the single-output skip. It now also names the output ceiling, the input ceiling and the deadline stop.
-- `docs/ANALYSIS_DEEP_DIVE.md:276` — still true, because the matrix description holds below the ceiling.
-- `docs/DISCOVERY_TYPES.md:1096` — still true, because the step description is unchanged.
-- `docs/COST_FUNCTION_NOTES.md:124,125,331` — still true, because how errors are consumed is unchanged.
-- `docs/discoveries/README.md:143,188` — still true, because they only name the module.
-- `tests/issue_940_unwrap_removal.rs` and `tests/detection/issue_344_correlated_error_detection.rs` — still true, because the legacy wrapper's signature is unchanged.
+
+Every other line the grep terms hit at the head was read and is still true:
+
+- docs/COST_FUNCTION_NOTES.md:124 — still true because it audits how the function reads `errors` (presence / first residual), which this change does not touch.
+- docs/COST_FUNCTION_NOTES.md:125 — still true because it audits how the function reads `errors` (presence / first residual), which this change does not touch.
+- docs/COST_FUNCTION_NOTES.md:331 — still true because it audits how the function reads `errors` (presence / first residual), which this change does not touch.
+- docs/ANALYSIS_DEEP_DIVE.md:176 — still true because it describes redundant-path anti-correlated gradients, a different module this change does not touch.
+- docs/ANALYSIS_DEEP_DIVE.md:268 — still true because it names or describes the correlated-error module or its output, which this change does not alter.
+- docs/ANALYSIS_DEEP_DIVE.md:276 — still true because the matrix is still built pairwise over all eligible outputs at or below the new ceiling; the ceiling is documented in the adjacent Bounds/Skip text.
+- docs/ANALYSIS_DEEP_DIVE.md:287 — still true because it names or describes the correlated-error module or its output, which this change does not alter.
+- docs/DISCOVERY_TYPES.md:44 — still true because it names or describes the correlated-error module or its output, which this change does not alter.
+- docs/DISCOVERY_TYPES.md:193 — still true because it names or describes the correlated-error module or its output, which this change does not alter.
+- docs/DISCOVERY_TYPES.md:1085 — still true because it names or describes the correlated-error module or its output, which this change does not alter.
+- docs/DISCOVERY_TYPES.md:1089 — still true because it names or describes the correlated-error module or its output, which this change does not alter.
+- docs/DISCOVERY_TYPES.md:1096 — still true because the matrix is still built pairwise over all eligible outputs at or below the new ceiling; the ceiling is documented in the adjacent Bounds/Skip text.
+- docs/DISCOVERY_TYPES.md:1172 — still true because it describes redundant-path anti-correlated gradients, a different module this change does not touch.
+- docs/PRIOR_ART.md:114 — still true because it names or describes the correlated-error module or its output, which this change does not alter.
+- docs/PRIOR_ART.md:202 — still true because it names or describes the correlated-error module or its output, which this change does not alter.
+- docs/discoveries/output-conflict.md:151 — still true because it names or describes the correlated-error module or its output, which this change does not alter.
+- docs/discoveries/README.md:143 — still true because it names or describes the correlated-error module or its output, which this change does not alter.
+- docs/discoveries/README.md:188 — still true because it names or describes the correlated-error module or its output, which this change does not alter.
+- docs/discoveries/correlated-error.md:1 — still true because it names or describes the correlated-error module or its output, which this change does not alter.
+- docs/discoveries/correlated-error.md:9 — still true because it names or describes the correlated-error module or its output, which this change does not alter.
+- docs/discoveries/correlated-error.md:32 — still true because it names or describes the correlated-error module or its output, which this change does not alter.
+- docs/discoveries/correlated-error.md:45 — still true because it names or describes the correlated-error module or its output, which this change does not alter.
+- docs/discoveries/correlated-error.md:63 — still true because it names or describes the correlated-error module or its output, which this change does not alter.
+- docs/discoveries/correlated-error.md:177 — still true because it names or describes the correlated-error module or its output, which this change does not alter.
+- docs/discoveries/correlated-error.md:214 — still true because it names or describes the correlated-error module or its output, which this change does not alter.
+- benches/cache_locality.rs:49 — still true because it is a test/bench fixture comment describing generated data or test intent, unaffected by the ceilings and deadline checks.
+- benches/sample_locality.rs:50 — still true because it is a test/bench fixture comment describing generated data or test intent, unaffected by the ceilings and deadline checks.
+- src/analysis/constants/sample_thresholds.rs:23 — still true because it names or describes the correlated-error module or its output, which this change does not alter.
+- src/analysis/detection/correlated_error.rs:1 — still true because it names or describes the correlated-error module or its output, which this change does not alter.
+- src/analysis/detection/correlated_error.rs:3 — still true because it names or describes the correlated-error module or its output, which this change does not alter.
+- src/analysis/detection/correlated_error.rs:7 — still true because it names or describes the correlated-error module or its output, which this change does not alter.
+- src/analysis/detection/correlated_error.rs:11 — still true because the matrix is still built pairwise over all eligible outputs at or below the new ceiling; the ceiling is documented in the adjacent Bounds/Skip text.
+- src/analysis/detection/correlated_error.rs:21 — still true because it names or describes the correlated-error module or its output, which this change does not alter.
+- src/analysis/detection/correlated_error.rs:90 — still true because it names or describes the correlated-error module or its output, which this change does not alter.
+- src/analysis/detection/correlated_error.rs:107 — still true because the legacy wrapper keeps its signature and still returns sorted `CorrelatedErrorGroup`s.
+- src/analysis/detection/correlated_error.rs:119 — still true because the legacy wrapper keeps its signature and still returns sorted `CorrelatedErrorGroup`s.
+- src/analysis/detection/correlated_error.rs:224 — still true because the matrix is still built pairwise over all eligible outputs at or below the new ceiling; the ceiling is documented in the adjacent Bounds/Skip text.
+- src/analysis/detection/correlated_error.rs:591 — still true because it names or describes the correlated-error module or its output, which this change does not alter.
+- src/analysis/detection/correlated_error.rs:597 — still true because it names or describes the correlated-error module or its output, which this change does not alter.
+- src/analysis/module_dispatch_specs/structural_specs.rs:30 — still true because the closure still pre-checks `output_count < 2` before loading records.
+- src/analysis/detection/redundant_path.rs:13 — still true because it describes redundant-path anti-correlated gradients, a different module this change does not touch.
+- src/analysis/detection/redundant_path.rs:157 — still true because it describes redundant-path anti-correlated gradients, a different module this change does not touch.
+- src/analysis/detection/redundant_path.rs:241 — still true because it describes redundant-path anti-correlated gradients, a different module this change does not touch.
+- tests/integration.rs:841 — still true because it is a test/bench fixture comment describing generated data or test intent, unaffected by the ceilings and deadline checks.
+- tests/integration.rs:892 — still true because it is a test/bench fixture comment describing generated data or test intent, unaffected by the ceilings and deadline checks.
+- tests/integration.rs:944 — still true because it is a test/bench fixture comment describing generated data or test intent, unaffected by the ceilings and deadline checks.
+- tests/integration.rs:951 — still true because it is a test/bench fixture comment describing generated data or test intent, unaffected by the ceilings and deadline checks.
+- tests/integration.rs:1169 — still true because it is a test/bench fixture comment describing generated data or test intent, unaffected by the ceilings and deadline checks.
+- tests/integration.rs:1176 — still true because it is a test/bench fixture comment describing generated data or test intent, unaffected by the ceilings and deadline checks.
+- tests/issue_2182_recommendation_core_non_finite_gain_ranking.rs:249 — still true because it is a test/bench fixture comment describing generated data or test intent, unaffected by the ceilings and deadline checks.
+- tests/analysis/issue_340_discovery_categories.rs:20 — still true because it is a test/bench fixture comment describing generated data or test intent, unaffected by the ceilings and deadline checks.
+- tests/analysis/issue_221_sample_locality.rs:106 — still true because it is a test/bench fixture comment describing generated data or test intent, unaffected by the ceilings and deadline checks.
+- tests/analysis/issue_221_sample_locality.rs:439 — still true because it is a test/bench fixture comment describing generated data or test intent, unaffected by the ceilings and deadline checks.
+- tests/analysis/target_map_optimization.rs:52 — still true because it is a test/bench fixture comment describing generated data or test intent, unaffected by the ceilings and deadline checks.
+- tests/detection/issue_343_bottleneck_neuron_detection.rs:240 — still true because it is a test/bench fixture comment describing generated data or test intent, unaffected by the ceilings and deadline checks.
+- tests/detection/issue_344_correlated_error_detection.rs:1 — still true because it is a test/bench fixture comment describing generated data or test intent, unaffected by the ceilings and deadline checks.
+- tests/detection/issue_344_correlated_error_detection.rs:5 — still true because it is a test/bench fixture comment describing generated data or test intent, unaffected by the ceilings and deadline checks.
+- tests/detection/issue_344_correlated_error_detection.rs:9 — still true because it is a test/bench fixture comment describing generated data or test intent, unaffected by the ceilings and deadline checks.
+- tests/detection/issue_344_correlated_error_detection.rs:66 — still true because it is a test/bench fixture comment describing generated data or test intent, unaffected by the ceilings and deadline checks.
+- tests/detection/issue_344_correlated_error_detection.rs:87 — still true because it is a test/bench fixture comment describing generated data or test intent, unaffected by the ceilings and deadline checks.
+- tests/detection/issue_344_correlated_error_detection.rs:230 — still true because it is a test/bench fixture comment describing generated data or test intent, unaffected by the ceilings and deadline checks.
+- tests/detection/issue_344_correlated_error_detection.rs:339 — still true because it is a test/bench fixture comment describing generated data or test intent, unaffected by the ceilings and deadline checks.
+- tests/issue_940_unwrap_removal.rs:109 — still true because it is a test/bench fixture comment describing generated data or test intent, unaffected by the ceilings and deadline checks.
+- tests/issue_940_unwrap_removal.rs:112 — still true because it is a test/bench fixture comment describing generated data or test intent, unaffected by the ceilings and deadline checks.
+- tests/issue_940_unwrap_removal.rs:146 — still true because it is a test/bench fixture comment describing generated data or test intent, unaffected by the ceilings and deadline checks.
+- tests/detection/issue_360_opposing_synapse_detection.rs:1175 — still true because it is a test/bench fixture comment describing generated data or test intent, unaffected by the ceilings and deadline checks.
+- tests/gpu/gpu_activation_shaders.rs:230 — still true because it is a test/bench fixture comment describing generated data or test intent, unaffected by the ceilings and deadline checks.
+- tests/infrastructure/issue_196_cache_locality_benchmark.rs:113 — still true because it is a test/bench fixture comment describing generated data or test intent, unaffected by the ceilings and deadline checks.
+- tests/recommendation/issue_1249_categorical_error_sse_gating.rs:225 — still true because it is a test/bench fixture comment describing generated data or test intent, unaffected by the ceilings and deadline checks.
+- tests/regression/regression_v0_1_123.rs:89 — still true because it is a test/bench fixture comment describing generated data or test intent, unaffected by the ceilings and deadline checks.
 
 ## Acceptance Criteria
 
