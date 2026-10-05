@@ -36,6 +36,7 @@ pub const REQUIRED_TOOLS: &[&str] = &[
     "mktemp",
     "sha256sum",
     "ldd",
+    "tee",
 ];
 
 /// The shared-library basename `runlib.sh` installs for `crate` on this
