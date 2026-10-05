@@ -146,6 +146,7 @@ therefore 27 Rust files and 7 WGSL shaders, still 34.
 | `src/analysis/gpu/queue/fake_evaluator.rs` | 308 | audited, test-only — declared under `#[cfg(test)]` (`mod.rs:58`–`:59` at the baseline); its `Mutex` (L31, L94) and `.lock().expect` (L107–L108, L171–L172) never compile into the library |
 | `src/analysis/gpu/queue/wedge_tests.rs` | 489 | audited, test-only — declared under `#[cfg(test)]` (`mod.rs:63`–`:64` at the baseline); every `expect`/`expect_err` (L145–L470) is a test assertion |
 | `src/analysis/gpu/queue/empty_vs_zero_tests.rs` | 439 | audited, test-only — declared under `#[cfg(test)]` (`queue/mod.rs:58`–`:59` at `3f103b9`); drives the production `run_work_loop` with `FakeGpuEvaluator`; its `Box::leak` of one `GpuCircuitBreaker` per harness (L66, as in `wedge_tests.rs:93`) and every `.expect` are test-only, and `stop` (L85–L93) joins the worker thread; the evidence for #2243 check 1; read at `3f103b9` |
+| `src/analysis/gpu/queue/send_phase_test.rs` | 407 | audited, test-only — declared under `#[cfg(test)]` (`queue/mod.rs:67`–`:68`, added after the baseline); every breaker and heartbeat is test-owned, never the process-wide singleton, bar one `Box::leak` (L370) that `GpuFuture::breaker`'s `&'static` bound forces, mirroring `wedge_tests.rs:93`; the evidence for the #2339 send-phase shared-deadline fix |
 
 ### queue-lifecycle
 
@@ -1759,6 +1760,7 @@ that region; pinned by `tests/issue_2249_chunk9_ledger_complete.rs`.
 - [x] `src/analysis/gpu/queue/fake_evaluator.rs` — queue-core — audited, test-only
 - [x] `src/analysis/gpu/queue/wedge_tests.rs` — queue-core — audited, test-only
 - [x] `src/analysis/gpu/queue/empty_vs_zero_tests.rs` — queue-core — audited, test-only (gap, #2249)
+- [x] `src/analysis/gpu/queue/send_phase_test.rs` — queue-core — audited, test-only
 - [x] `src/analysis/gpu/queue/recovery.rs` — queue-lifecycle — finding filed — #2363, #2364, #2365
 - [x] `src/analysis/gpu/queue/staleness.rs` — queue-lifecycle — audited, no finding
 - [x] `src/analysis/gpu/heartbeat.rs` — queue-lifecycle — audited, no finding
