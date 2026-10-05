@@ -537,14 +537,10 @@ pub fn detect_symmetric_cancellation_with_deadline(
 
                 // Issue #2347: build each source's activation map once, on
                 // first use, rather than once per pair.
-                if !activation_maps.contains_key(*source1_uuid) {
-                    activation_maps.insert(*source1_uuid, build_activation_map(records1));
-                    scan.activation_maps_built += 1;
-                }
-                if !activation_maps.contains_key(*source2_uuid) {
-                    activation_maps.insert(*source2_uuid, build_activation_map(records2));
-                    scan.activation_maps_built += 1;
-                }
+                activation_maps.insert(*source1_uuid, build_activation_map(records1));
+                scan.activation_maps_built += 1;
+                activation_maps.insert(*source2_uuid, build_activation_map(records2));
+                scan.activation_maps_built += 1;
                 let map1 = &activation_maps[*source1_uuid];
                 let map2 = &activation_maps[*source2_uuid];
 
