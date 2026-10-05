@@ -356,14 +356,9 @@ fn re_verified_remediations_carries_exactly_one_sound_row_per_issue() {
     }
 }
 
-#[test]
-fn issues_filed_and_outcome_agree_on_which_findings_exist() {
-    let doc = read(RECORD);
-    let filed = section(&doc, "## Issues filed");
-    let outcome = section(&doc, "## Outcome");
-
-    let findings: Vec<String> = filed
-        .lines()
+/// The `#N` of every line starting `- #<digits>` in a section body.
+fn finding_lines(body: &str) -> Vec<String> {
+    body.lines()
         .filter_map(|line| {
             let trimmed = line.trim_start();
             if !trimmed.starts_with("- #") {
@@ -376,7 +371,16 @@ fn issues_filed_and_outcome_agree_on_which_findings_exist() {
             let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
             Some(format!("#{digits}"))
         })
-        .collect();
+        .collect()
+}
+
+#[test]
+fn issues_filed_and_outcome_agree_on_which_findings_exist() {
+    let doc = read(RECORD);
+    let filed = section(&doc, "## Issues filed");
+    let outcome = section(&doc, "## Outcome");
+
+    let findings = finding_lines(filed);
 
     if findings.is_empty() {
         assert!(
@@ -386,6 +390,10 @@ fn issues_filed_and_outcome_agree_on_which_findings_exist() {
         assert!(
             outcome.contains("negative-result"),
             "`## Outcome` must also read `negative-result` when no finding was filed"
+        );
+        assert!(
+            finding_lines(outcome).is_empty(),
+            "`## Outcome` must carry no `- #N` bullet when `## Issues filed` lists no finding"
         );
     } else {
         assert!(
@@ -402,6 +410,14 @@ fn issues_filed_and_outcome_agree_on_which_findings_exist() {
                 "`## Outcome` must mention {finding}, which `## Issues filed` lists"
             );
         }
+        let mut filed_findings = findings;
+        filed_findings.sort();
+        let mut outcome_findings = finding_lines(outcome);
+        outcome_findings.sort();
+        assert_eq!(
+            outcome_findings, filed_findings,
+            "`## Outcome`'s `- #N` bullets must match `## Issues filed`'s exactly"
+        );
     }
 
     assert!(
