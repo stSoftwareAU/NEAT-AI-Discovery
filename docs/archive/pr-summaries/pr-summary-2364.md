@@ -1,0 +1,147 @@
+# PR Summary — Issue #2364: warn on invalid or zero `NEAT_AI_DISCOVERY_GPU_RETRY_LIMIT`
+
+Closes #2364
+
+- [x] Extract pure `resolve_gpu_retry_limit(raw: Option<&str>) -> u32` in
+  `src/config/user_facing.rs`
+- [x] Warn (naming the variable) on unparsable or above-10 values, stating the
+  default used
+- [x] Warn on `0`, stating that device-lost recovery is disabled
+- [x] `gpu_retry_limit()` accessor delegates to the new resolver with no
+  behaviour change
+- [x] Regression test `tests/issue_2364_gpu_retry_limit_warn_test.rs`
+- [x] Docs: `docs/CONFIGURATION.md` row updated
+
+## Spec
+
+### Intent and Rationale
+
+`NEAT_AI_DISCOVERY_GPU_RETRY_LIMIT` was parsed silently: `""`, `"abc"` and
+`"999999"` fell back to the default of 3 with no log, and `"0"` silently
+disabled the #647 device-lost recovery guard (CWE-778,
+SEC-c01db5943e3c). An operator tuning this lever during an incident had no
+signal that their value was ignored, or that `0` turned recovery off.
+
+### Essential Design Decisions
+
+- **A pure resolver taking `Option<&str>`.** `resolve_gpu_retry_limit` does no
+  environment access, so tests exercise every branch without fighting the
+  process-wide `OnceLock` behind the accessor.
+- **`MAX_GPU_RETRY_LIMIT: u32 = 10` constant** replaces the inline `10` that
+  used to live in the accessor's `.filter(|&n| n <= 10)`.
+- **No behaviour change beyond the logging.** The returned values are
+  identical to the base
+  (`parse_env::<u32>(..).filter(|&n| n <= 10).unwrap_or(DEFAULT)`).
+- **`0` is still honoured.** It is a legitimate operator choice, so the
+  resolver still returns `0` — it just now announces the consequence.
+
+### Undiscoverable Facts
+
+- `parse_env` trims whitespace and treats an empty string as unparsable.
+- The accessor is memoised, so only one in-process test may touch it:
+  `accessor_routes_env_through_resolver`, marked `#[serial]`, uses the value
+  `"abc"`.
+- `tests/issue_2006_numeric_env_override_trim.rs:15-18` documents the same
+  `OnceLock` limitation for this accessor.
+
+## Evidence
+
+- Security regression test paragraph, used here verbatim as required by the
+  security-fix gate: "The regression test
+  `tests/issue_2364_gpu_retry_limit_warn_test.rs::zero_warns_that_recovery_is_disabled`
+  (with its siblings `empty_value_warns_and_uses_default`,
+  `unparsable_value_warns_and_uses_default`, `above_maximum_warns_and_uses_default`
+  and `accessor_routes_env_through_resolver`) reproduces the original trigger:
+  it fails against the unfixed code and passes after the fix. The original
+  trigger is closed with no trivial bypass — every value of the variable
+  reaches the resolver through the single accessor, and each non-honoured or
+  recovery-disabling value now warns."
+- Baseline red: with every warn removed from the resolver, 5 tests FAILED
+  (`empty_value_warns_and_uses_default`, `above_maximum_warns_and_uses_default`,
+  `unparsable_value_warns_and_uses_default`, `accessor_routes_env_through_resolver`,
+  `zero_warns_that_recovery_is_disabled`); `unset_does_not_warn` and
+  `valid_values_do_not_warn` passed. With the fix: 7 passed.
+- Quality gate: GATE_RESULT_PLACEHOLDER
+- Docs sweep — grep for `GPU_RETRY_LIMIT|gpu_retry_limit|get_gpu_retry_limit`
+  re-run on the head; updated: `docs/CONFIGURATION.md:42`,
+  `src/analysis/gpu/queue/recovery.rs:88-91`, and the doc comment on
+  `gpu_retry_limit()` in `src/config/user_facing.rs`. Remaining hits, each
+  "file:line — still true because …":
+  - `CHANGELOG.md:151` — historical #2006 entry listing `gpu_retry_limit` among
+    the accessors that lost the trim before that fix.
+  - `src/analysis/gpu/mod.rs:84-85` — re-exports only.
+  - `src/analysis/gpu/queue/execution.rs:10`, `:283` — env var configures the
+    limit, default 3; the resolver change does not alter the wording.
+  - `src/analysis/gpu/queue/execution.rs:30`, `:311` — call `get_gpu_retry_limit`.
+  - `src/analysis/gpu/queue/recovery.rs:10`, `:17` — `DEFAULT_GPU_RETRY_LIMIT`
+    and `GPU_RETRY_LIMIT_ENV` constants are unchanged.
+  - `src/analysis/gpu/queue/recovery.rs:46-48` — "Delegates to
+    `crate::config::gpu_retry_limit()`" still true.
+  - `src/analysis/gpu/queue/recovery.rs:95` — asserts the env var name.
+  - `src/analysis/gpu/queue/stale_skip_tests.rs:236`, `:283` — default and
+    accessor call.
+  - `src/analysis/gpu/queue/staleness.rs:7` — retried that many times.
+  - `src/config/mod.rs:15` — table row "(0–10)" still accurate;
+    `docs/CONFIGURATION.md` is the single source for the warn behaviour detail.
+  - `tests/gpu/issue_647_gpu_device_lost_recovery.rs:9-10`, `:91`, `:96` —
+    constant asserts.
+  - `tests/issue_1684_doc_dedup.rs:89` — env var name list.
+  - `tests/issue_2006_numeric_env_override_trim.rs:15-18` — the `OnceLock`
+    accessor cannot be exercised for the trim test; still true — the new test
+    reaches it once under `#[serial]` and covers the logic through the pure
+    resolver instead.
+  - `docs/archive/pr-summaries/pr-summary-647.md:7`,
+    `docs/archive/pr-summaries/pr-summary-1684.md:28` — archive records.
+
+## Acceptance Criteria
+
+<!-- vibe-spec-review inputs="diff+issue-body" -->
+
+1. Warn naming the variable when unparsable or above 10, stating the
+   default — reviewer: MET — `src/config/user_facing.rs`, the `Ok(n) if n >
+   MAX_GPU_RETRY_LIMIT` and `Err(_)` arms of `resolve_gpu_retry_limit`.
+2. Warn on `0` stating device-lost recovery is disabled — reviewer: MET —
+   `src/config/user_facing.rs`, the `Ok(0)` arm.
+3. `tests/issue_2364_gpu_retry_limit_warn_test.rs` captures warns for `""`,
+   `"abc"`, `"0"`, `"999999"` and fails at baseline — reviewer: MET — see
+   Evidence above.
+4. `docs/CONFIGURATION.md:42` updated — reviewer: MET.
+
+No scope creep found; the resolver extraction is justified for testability.
+
+## Standards Review
+
+<!-- vibe-standards-review inputs="diff+CODING-STANDARDS.md" -->
+
+Verdict: no violations.
+
+Optional notes not actioned:
+
+- `MAX_GPU_RETRY_LIMIT` could live beside `DEFAULT_GPU_RETRY_LIMIT` in
+  `recovery.rs`; kept in `config` next to its only reader instead.
+- `src/config/mod.rs:15` row could mention the warns, but CONTRIBUTING's
+  one-source rule names `docs/CONFIGURATION.md` as the detailed reference.
+
+## Test Plan
+
+- `cargo test --test issue_2364_gpu_retry_limit_warn_test` — 7 passed.
+- Branch outcomes, checked against `src/config/user_facing.rs` on this head:
+  - `src/config/user_facing.rs:65` unset → default, no warn —
+    `unset_does_not_warn` — flipped (returned 0) went red.
+  - `src/config/user_facing.rs:70` `Ok(0)` → warn + 0 —
+    `zero_warns_that_recovery_is_disabled` — flipped (default, no warn) went
+    red.
+  - `src/config/user_facing.rs:78` above max → warn + default —
+    `above_maximum_warns_and_uses_default` — flipped (arm removed) went red.
+  - `src/config/user_facing.rs:89` valid → value, no warn —
+    `valid_values_do_not_warn` — flipped (returned default) went red.
+  - `src/config/user_facing.rs:90` `Err` → warn + default —
+    `empty_value_warns_and_uses_default`, `unparsable_value_warns_and_uses_default`,
+    `accessor_routes_env_through_resolver` — flipped (no warn) went red.
+- Entry points checked: `gpu_retry_limit()` accessor →
+  `accessor_routes_env_through_resolver`; reverting to the old inline parse
+  makes it go red, as the baseline run showed.
+- Security self-check: no new external input surface beyond the existing env
+  read; the logged value is the operator's own env value, Debug-formatted
+  (`{s:?}`) so control characters are escaped; no secrets.
+- Deno regression avoided: N/A (Rust repository).
