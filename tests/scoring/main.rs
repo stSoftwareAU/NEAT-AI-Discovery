@@ -8,6 +8,7 @@ mod issue_1056_logistic_prediction_calibration;
 mod issue_1112_saturation_prediction_discount;
 mod issue_1247_categorical_error_hardening;
 mod issue_192_error_distribution_analysis;
+mod issue_2343_pearson_hashmaps_overflow_test;
 mod issue_486_neuron_error_distribution;
 mod issue_506_score_prediction_pessimism_discount;
 mod issue_527_confidence_metrics;

@@ -117,7 +117,9 @@ pub fn pearson_correlation_samples(
 /// Compute Pearson correlation between two `HashMap<u32, f32>` maps.
 ///
 /// Pairs values by shared keys (typically `obs_index`). Returns `0.0` when
-/// the number of shared entries is below `min_samples` or variance is near zero.
+/// the number of shared entries is below `min_samples` or variance is near
+/// zero, and is never non-finite: an `f32` covariance or variance overflow
+/// from finite inputs returns `0.0` (Issue #2343).
 pub fn pearson_correlation_hashmaps(
     map_a: &HashMap<u32, f32>,
     map_b: &HashMap<u32, f32>,
@@ -153,7 +155,9 @@ pub fn pearson_correlation_hashmaps(
         return 0.0;
     }
 
-    cov / denom
+    // An f32 overflow from finite inputs makes the quotient NaN or ±inf (Issue #2343).
+    let corr = cov / denom;
+    if corr.is_finite() { corr } else { 0.0 }
 }
 
 /// Compute fractional ranks for a slice of f32 values.
