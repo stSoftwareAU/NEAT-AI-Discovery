@@ -64,6 +64,21 @@ flowchart TD
 
 Requires at least 2 hidden neurons in the network.
 
+### 🚧 Scan Bounds
+
+The pairwise comparison is bounded so a creature with many hidden neurons
+cannot make the scan run away:
+
+| Bound | Limit | Behaviour when hit |
+|-------|-------|---------------------|
+| Eligible neurons compared | First 256 (creature evaluation order, ≥ 20 samples each) | At most 32,640 pairs are compared; the number of skipped neurons is recorded and logged with a warning |
+| Co-adapted pairs found | 256 | The scan stops early once reached, reported as a candidate-ceiling truncation |
+| Scan duration | Discovery deadline (checked before each outer row) | The scan returns its partial pairs and logs a warning; the global cancellation flag is honoured the same way |
+
+A creature with 256 or fewer eligible hidden neurons, fewer than 256
+co-adapted pairs, and a scan that finishes within the discovery deadline is
+unaffected by these bounds.
+
 ---
 
 ## 🛠️ How We Fix It

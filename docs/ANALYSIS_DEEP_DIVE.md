@@ -695,11 +695,14 @@ Identifies pairs of hidden neurons with highly correlated activations,
 indicating functional redundancy even when weight configurations differ.
 
 **Algorithm**:
-1. Compute Pearson correlation between activation patterns for each pair
-   of hidden neurons across training samples.
+1. Compute Pearson correlation between activation patterns for each pair of
+   eligible hidden neurons (≥ 20 samples), comparing at most the first 256 in
+   evaluation order.
 2. If correlation ≥ 0.9, flag the pair as co-adapted.
 3. Propose removing the weaker neuron and rescaling the survivor's weights
    via `removeNeuron` and `setWeight`.
+4. The scan stops once 256 co-adapted pairs are found, and checks the
+   discovery deadline and cancellation flag before each outer row (Issue #2348).
 
 #### Output Conflict Detection (Issue #639)
 
