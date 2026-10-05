@@ -164,6 +164,26 @@ fn passes_the_components_input_through_to_rustup() {
 }
 
 #[test]
+fn an_empty_toolchain_input_installs_the_rust_toolchain_toml_pin() {
+    // #2395 / NEAT-AI-core#747: CI must build with the pinned (declared
+    // minimum) compiler, not whatever `stable` is that day.
+    let pin = fs::read_to_string(repo_root().join("rust-toolchain.toml")).expect("read pin");
+    let channel = pin
+        .lines()
+        .find_map(|l| l.trim().strip_prefix("channel = \""))
+        .and_then(|rest| rest.strip_suffix('"'))
+        .expect("rust-toolchain.toml names a channel");
+    let sandbox = Sandbox::new();
+    let out = sandbox.run_action("", "");
+    assert!(out.status.success(), "action failed: {}", stderr_of(&out));
+    let log = sandbox.log();
+    assert!(
+        log.contains(&format!("toolchain install {channel} --profile minimal")),
+        "pinned toolchain {channel} not installed:\n{log}"
+    );
+}
+
+#[test]
 fn honours_a_non_default_toolchain_input() {
     let sandbox = Sandbox::new();
     let out = sandbox.run_action("nightly", "");

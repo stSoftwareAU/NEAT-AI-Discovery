@@ -30,6 +30,6 @@ jobs:
       - name: Install Rust toolchain (declared MSRV)
         uses: ./.github/actions/setup-rust
         with:
-          toolchain: "1.95"
+          toolchain: "1.99"
       - name: Build every target with the declared MSRV
         run: cargo check --locked --all-targets --all-features
