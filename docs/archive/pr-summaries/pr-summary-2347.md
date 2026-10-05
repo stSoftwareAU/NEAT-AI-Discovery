@@ -118,13 +118,27 @@ flowchart TD
     C -- no --> T
 ```
 
-**Docs sweep.**
+**Docs sweep** — grep: `symmetric cancellation`, `detect_symmetric_cancellation`, `calculate_correlation`, `fan-in`, `MAX_FANIN_FOR_CANCELLATION_SCAN`; section: `docs/discoveries/weight-coherence.md#-3-symmetric-cancellation`, `docs/DISCOVERY_TYPES.md` (Detection criteria — Symmetric cancellation), `docs/ANALYSIS_DEEP_DIVE.md` (Symmetric cancellation); updated: `docs/discoveries/weight-coherence.md`, `docs/DISCOVERY_TYPES.md`, `docs/ANALYSIS_DEEP_DIVE.md`
 
-- Grep terms: `symmetric cancellation`, `detect_symmetric_cancellation`,
-  `calculate_correlation`, `fan-in`, `MAX_FANIN_FOR_CANCELLATION_SCAN`.
-- Sections: `docs/discoveries/weight-coherence.md#-how-we-detect-it`,
-  `docs/DISCOVERY_TYPES.md`, `docs/ANALYSIS_DEEP_DIVE.md`.
-- Updated: all three, to describe the fan-in cap, the candidate ceiling, the
-  deadline check and the per-source map cache.
+## Test Plan
+
+- No assertion was removed from an existing test. The test file
+  `tests/issue_2347_symmetric_cancellation_growth_test.rs` is new in this
+  diff. The three unit tests in `src/analysis/detection/weight_coherence.rs`
+  that called the removed `calculate_correlation` now call
+  `correlation_from_maps(&build_activation_map(..), &build_activation_map(..), 10)`.
+  Only the call site changed, and every assertion in them is kept unchanged.
+- `cargo test --test issue_2347_symmetric_cancellation_growth_test` passes
+  all 9 tests at the head.
+
+**Branch outcomes:**
+- `src/analysis/detection/weight_coherence.rs:489` — deadline elapsed (stop, `DeadlinePassed`) — `tests/issue_2347_symmetric_cancellation_growth_test.rs::elapsed_deadline_stops_the_scan_before_any_pair_work` — flipped to never stop, test went red
+- `src/analysis/detection/weight_coherence.rs:489` — no deadline / deadline not reached (scan continues, no truncation) — `tests/issue_2347_symmetric_cancellation_growth_test.rs::no_deadline_does_not_truncate_and_finds_candidates`, `tests/issue_2347_symmetric_cancellation_growth_test.rs::far_future_deadline_behaves_like_no_deadline` — flipped to always stop, both tests went red
+- `src/analysis/detection/weight_coherence.rs:507` — fan-in over the cap (target skipped and counted) — `tests/issue_2347_symmetric_cancellation_growth_test.rs::fanin_at_the_cap_is_scanned_fanin_over_the_cap_is_skipped`, `tests/issue_2347_symmetric_cancellation_growth_test.rs::symmetric_cancellation_work_grows_no_faster_than_the_cap_allows` — flipped to never skip, both tests went red
+- `src/analysis/detection/weight_coherence.rs:507` — fan-in exactly at the cap (target scanned) — `tests/issue_2347_symmetric_cancellation_growth_test.rs::fanin_at_the_cap_is_scanned_fanin_over_the_cap_is_skipped` — flipped `>` to `>=`, test went red
+- `src/analysis/detection/weight_coherence.rs:541` — source map not yet cached (build once and count it) vs. already cached (reuse) — `tests/issue_2347_symmetric_cancellation_growth_test.rs::activation_maps_are_cached_across_pairs_not_rebuilt_per_pair` — flipped to rebuild every pair, test went red
+- `src/analysis/detection/weight_coherence.rs:577` — candidate ceiling reached (stop, `CandidateCeiling`) — `tests/issue_2347_symmetric_cancellation_growth_test.rs::symmetric_cancellation_stops_at_the_candidate_ceiling_and_reports_it` — flipped to never stop, test went red
+- `src/analysis/detection/weight_coherence.rs:577` — below the ceiling (scan completes, no truncation) — `tests/issue_2347_symmetric_cancellation_growth_test.rs::candidate_ceiling_not_reported_when_the_scan_completes` — flipped to always stop, test went red
+- `src/analysis/module_dispatch_specs/synapse_specs.rs:85` — truncated or skipping scan (`warn!` logged, partial candidates returned) vs. complete scan (no log) — not reached by any test. The branch only emits a log line, and the returned `scan.candidates` is the same on both sides, so no test can observe a flip without capturing tracing output. Not flipped.
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
