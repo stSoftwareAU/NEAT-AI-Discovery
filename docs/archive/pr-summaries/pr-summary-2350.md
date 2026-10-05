@@ -142,6 +142,19 @@ cost drops to `O(1)`:
 
 ## Docs sweep
 
+**Docs sweep** — grep: `feeds_downstream_aggregate`, `fanin_polarity_conflicts_to_coordinated_candidates`, `append_synapse_specs`, `module_dispatch_specs`, "fan-in polarity", "deadline"; section: `docs/DOMINATED_BRANCH_COLLAPSE_EXTENT.md` (G3 row), `docs/ANALYSIS_DEEP_DIVE.md#fan-in-polarity-conflict-detection-issue-641`, `docs/DISCOVERY_TYPES.md#fan-in-polarity-conflict-detection`, `docs/FFI_API.md` (analysis-deadline behaviour, line 128); updated: `docs/DOMINATED_BRANCH_COLLAPSE_EXTENT.md`
+
+The two fan-in polarity sections describe only the detection algorithm,
+criteria and emitted operations — none of which this diff changes — and say
+nothing about lookup cost or deadline handling, so no sentence in them became
+false. `docs/FFI_API.md:128` ("Detection modules abort early when the deadline
+is reached") remains true and is now also honoured by the fan-in polarity
+conversion stage. The other six converters (bottleneck, monotonicity,
+operating point, restricted range, output range compression, sentinel
+gating) changed only their internal lookup structures. A grep of their
+function names across `README.md`, `docs/` (excluding `docs/archive/`) and
+`*/README.md` found no documentation that describes those internals.
+
 `grep -rn "feeds_downstream_aggregate\b" --include='*.md' --include='*.rs' .`
 found three hits besides this file: `docs/DOMINATED_BRANCH_COLLAPSE_EXTENT.md:222`
 (updated in this diff to name `feeds_downstream_aggregate_set`, built once
