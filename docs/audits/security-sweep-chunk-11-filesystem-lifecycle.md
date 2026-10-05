@@ -173,7 +173,7 @@ Probe dispositions (Issue #2251):
 | --- | --- | --- |
 | `src/watchdog.rs` | 364 | audited — no PID, process-spawn or filesystem surface (it only raises SIGUSR1 at its own process and aborts); the uncapped abort delay and the stall-timeout truncation are already tracked by open #2259 under #2122, so nothing new is filed |
 | `src/tracking_alloc.rs` | 234 | audited — the `GlobalAlloc` hooks cannot panic, allocate or recurse; the counter wraps only on a caller layout mismatch, which is undefined behaviour; neither consumer of `tracking_alloc.rs::TrackingAlloc::allocated` can spuriously cancel or return early |
-| `src/discovery_history.rs` | 626 | pending |
+| `src/discovery_history.rs` | 626 | audited — no filesystem I/O, and its JSON arrives only as the `get_calibration_summary` FFI string; #1906 holds on that path; two findings filed: #2391 (`record_attempt` overflows `u32` at the ceiling, Rust API only) and #2392 (finite observations yield non-finite calibration metrics, returned as `null` under `success: true`) |
 
 Probe dispositions (Issue #2252):
 
@@ -256,6 +256,85 @@ Probe dispositions (Issue #2252):
   for `.allocated()` finds only the sites above (benches and tests would be
   out of scope anyway).
 
+Probe dispositions (Issue #2253):
+
+- **Filesystem — none; one FFI entry point.** A grep of
+  `src/discovery_history.rs` for `fs::`, `File`, `OpenOptions`, `Command`,
+  `remove_`, `std::io` and `Path` has no hit: the module only computes and
+  (de)serialises. Its one FFI entry is
+  `ffi/utilities.rs::get_calibration_summary` →
+  `ffi_internal/analysis.rs::get_calibration_summary_internal`, which parses
+  the caller's `discoveryHistory` string with `serde_json::from_str` into a
+  `DiscoveryHistory` (a parse error is returned as `InvalidInput`) and calls
+  only `DiscoveryHistory::calibration_summary`. The scoring reader,
+  `focus/ranking/mod.rs::rank_focus_neurons_with_history`, has no caller in
+  `src/` outside the `focus` module, so
+  `NeuronDiscoveryHistory::bayesian_score` is reached only through the
+  public Rust API.
+- **#1906 — re-verified, holds on the live path.** `NeuronDiscoveryHistory`
+  carries `#[serde(try_from = "NeuronDiscoveryHistoryWire")]`, so every
+  deserialise — each map entry of a `DiscoveryHistory` included — runs
+  `discovery_history.rs::NeuronDiscoveryHistory::try_from`, which rejects
+  `successes > attempts`; no other `Deserialize` path builds the type.
+  `discovery_history.rs::NeuronDiscoveryHistory::bayesian_score` computes
+  failures as `attempts.saturating_sub(successes)`. The regression tests
+  `test_deserialize_rejects_successes_exceeding_attempts`,
+  `test_bayesian_score_invalid_counts_saturates` and
+  `test_deserialize_accepts_valid_counts` exist and pass.
+- **`record_attempt` overflow — reachable through the Rust API only, finding
+  filed (#2391).** `discovery_history.rs::NeuronDiscoveryHistory::record_attempt`
+  adds with a plain `+= 1`. `try_from` accepts
+  `attempts == successes == u32::MAX`; one more failed attempt then panics in
+  debug (`attempt to add with overflow`) or, with `[profile.release]` leaving
+  `overflow-checks` off, wraps `attempts` to 0 while `successes` stays at
+  `u32::MAX`, so the saved history fails its next load. No FFI path reaches
+  it: nothing in `src/` calls `DiscoveryHistory::record`, and the FFI entry
+  above never records. Pinned by the ignored failing-first unit test
+  `test_record_attempt_keeps_successes_within_attempts_at_u32_max`.
+- **Calibration NaN/inf — reaches the FFI summary, finding filed (#2392).**
+  JSON carries no NaN or inf literal, and serde_json refuses an out-of-range
+  number such as `1e400` (pinned by the passing unit test
+  `test_deserialize_rejects_non_finite_json_numbers`), but finite values
+  overflow in the arithmetic. `predicted = 1.7e308, actual = -1.7e308` makes
+  the mean absolute error in `CalibrationTracker::calibration_summary` `inf`,
+  and adding the opposite pair makes its bias NaN. Two ratios of
+  `±1e308 / 1e-9` make `discovery_history.rs::compute_calibration_factor` sum
+  `+inf` and `-inf` to NaN, which `f64::clamp` passes through, so
+  `DiscoveryHistory::calibration_factor` and the summary's factor leave the
+  documented `[0.1, 10.0]`. serde_json writes a non-finite `f64` as `null`, so
+  the FFI answers `success: true` with `null` metrics.
+  `DiscoveryHistory::record_calibration` also stores NaN or inf from a Rust
+  caller unchecked. Pinned by the ignored failing-first unit tests
+  `test_calibration_summary_stays_finite_for_extreme_finite_observations` and
+  `test_calibration_factor_is_never_nan_for_finite_observations`.
+- **`record_calibration` bound — unbounded, no finding.**
+  `CalibrationTracker::record_prediction` pushes onto a `Vec` with no cap,
+  and `DiscoveryHistory::prune` never trims calibration. Nothing in `src/`
+  calls `record_calibration`, so on the FFI path the list is exactly what the
+  caller's own JSON carried: memory and the single pass in
+  `calibration_summary` are linear in that input, and the response holds one
+  entry per key the caller supplied — no amplification. A Rust host that
+  records without end grows only its own history.
+- **`prune` — no finding.** `discovery_history.rs::DiscoveryHistory::prune`
+  collects the current UUIDs into a `HashSet<&str>` and `retain`s the map
+  entries whose key is in it: duplicate UUIDs are harmless, an empty slice
+  removes every entry (no neuron is current), and nothing in it can panic.
+  Observation only: deserialisation does not check that a map key matches
+  its entry's `uuid` field, but `prune`, `get` and `bayesian_score_for` all
+  key on the map key, and nothing in `src/` outside the module's tests reads
+  `NeuronDiscoveryHistory::uuid`, so a mismatch changes no decision.
+- **Calibration key — observation only.** `calibration_key` joins module and
+  candidate type with `::` and `parse_calibration_key` splits at the first
+  `::`, so module `a::b` with type `c` and module `a` with type `b::c` share
+  one bucket. Nothing in `src/` records calibration, and on the FFI path the
+  caller writes the keys itself, so this is noted, not filed.
+- **#1902 — re-verified, holds on the live path.** The guard lives in
+  `src/streaming.rs`: `streaming.rs::finish_session` sets
+  `preserve_tmp_on_drop` after its `records_written == 0` exit and before
+  both `writer.finish()` and `fs::rename`, and `streaming.rs::Drop::drop`
+  returns before `fs::remove_file` when the flag is set. See its rows in
+  "Filesystem mutation sites" and "Re-verified remediations".
+
 ## Defect classes probed
 
 - Symlink following — a mutation or read that resolves an attacker-placed
@@ -299,6 +378,8 @@ Probe dispositions (Issue #2252):
 
 <!-- section: watchdog + tracking_alloc + discovery_history -->
 | none — `src/watchdog.rs`, `src/tracking_alloc.rs` (Issue #2252) | no filesystem operation or process spawn: a grep for `fs::`, `File`, `remove`, `OpenOptions`, `Command`, `pid` and `process::id` hits only a test-module `remove_var` | n/a | n/a — no path is touched; `src/discovery_history.rs` is swept by 11c-2 |
+| none — `src/discovery_history.rs` (Issue #2253) | no filesystem operation or process spawn: a grep for `fs::`, `File`, `OpenOptions`, `Command`, `remove_`, `std::io` and `Path` has no hit | n/a — the history arrives as an FFI string | n/a — no path is touched |
+| `streaming.rs::Drop::drop` (`impl Drop for RecordingSession`, cited for #1902) | `fs::remove_file("<parquet_path>.tmp")`; skipped when `finished` or `preserve_tmp_on_drop` is set; `NotFound` ignored, any other error logged at WARNING | `<temp_dir>/discovery_data.parquet.tmp`, under the session's caller-supplied `temp_dir` | yes for the final component — `remove_file` unlinks a symlink rather than its target; intermediate components resolve under the caller-owned `temp_dir` |
 
 ## Re-verified remediations
 
@@ -312,6 +393,8 @@ Probe dispositions (Issue #2252):
 | #1904 | `RUNTIME_DIR_MODE` (`0700`) and `prepare_runtime_dir` in `src/analysis/utils/platform.rs`: create owner-only, re-apply the mode past the umask, refuse a pre-existing world-writable directory or a symlink | `platform.rs::prepare_runtime_dir`, pinned by its `xdg_runtime_dir_*` unit tests; the sampler only mirrors the pattern in `sample_dir.rs::create_private_dir` and does not call it | yes on Linux (`platform.rs::ensure_xdg_runtime_dir`); not on the sampler path — no `src/debug*` file references it |
 
 <!-- section: watchdog + tracking_alloc + discovery_history -->
+| #1906 | `successes > attempts` refused on every deserialise; the failure count saturates when scoring | `discovery_history.rs::NeuronDiscoveryHistory::try_from` (the `TryFrom<NeuronDiscoveryHistoryWire>` impl behind `#[serde(try_from)]`), `discovery_history.rs::NeuronDiscoveryHistory::bayesian_score`; regression tests `test_deserialize_rejects_successes_exceeding_attempts`, `test_bayesian_score_invalid_counts_saturates` and `test_deserialize_accepts_valid_counts` in `src/discovery_history.rs` | yes — FFI `ffi/utilities.rs::get_calibration_summary` → `ffi_internal/analysis.rs::get_calibration_summary_internal` → `serde_json::from_str` into `DiscoveryHistory` runs `try_from` per entry, and a corrupt entry fails the call as `InvalidInput`. `bayesian_score` is off the FFI path (Rust API only). The invariant holds on the way in, but `record_attempt` can break it at the `u32` ceiling (#2391) |
+| #1902 | `preserve_tmp_on_drop` set before `writer.finish()` and the rename, so `Drop` keeps the complete `.tmp` after a failed finalise | `streaming.rs::finish_session` (sets the flag), `streaming.rs::Drop::drop` (returns before `fs::remove_file` when it is set); regression tests `test_failed_finish_preserves_tmp` and `test_empty_session_finish_removes_tmp` in the `src/streaming.rs` tests module | yes — FFI `ffi/recording.rs::finish_discovery_session` → `streaming.rs::finish_session`; the flag is set after the `records_written == 0` exit (an empty recording is still deleted, by design) and before both fallible steps |
 
 ## Outcome
 
