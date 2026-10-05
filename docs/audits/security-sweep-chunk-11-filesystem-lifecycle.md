@@ -9,7 +9,7 @@ Ledger rules: [`README.md`](README.md). Index entry:
 - **Human name:** Filesystem lifecycle — `src/discovery_cleanup.rs`,
   `src/debug.rs` + `src/debug/`, `src/watchdog.rs`, `src/tracking_alloc.rs`,
   `src/discovery_history.rs`.
-- **Sweep date:** `2026-09-27`
+- **Sweep date:** `2026-10-05`
 - **Baseline commit:** `b85a551ed2521ed327469b20eb88aeda828357d2`
 - **Exposure:** `local`
 - **Swept by:** Issue #2095 (chunk 11 of the #2083 overflow tracker), split
@@ -17,13 +17,9 @@ Ledger rules: [`README.md`](README.md). Index entry:
   (11d); scaffolded by Issue #2233.
 - **Tracker issue:** `#2095`
 
-### Sweep status — IN PROGRESS
+### Sweep status — COMPLETE
 
-This record is a scaffold. Every file row below reads `pending` until its
-owning audit sub-issue sweeps it; the index's `last_swept` date marks when the
-scaffold was cut, not a finished sweep. Each sub-issue edits only its own `###`
-section and its own marked region of the two finding tables below, so
-concurrent PRs do not conflict.
+All 8 files in this chunk have been swept, across four slices: #2234 (PR #2257), #2251 (PR #2268), #2252 (PR #2287) and #2253 (PR #2394). Issue #2254 then reconciled the tables below against a fresh grep inventory of the chunk and wrote the `## Outcome` and `## Issues filed` sections. The index's `last_swept` date now marks this finished sweep.
 
 ### Why the finding tables cite symbols, not line numbers
 
@@ -355,54 +351,131 @@ Probe dispositions (Issue #2253):
 
 | Site (`file.rs::symbol`) | Operation | Path root | Symlink-safe (yes/no/why) |
 | --- | --- | --- | --- |
-<!-- section: discovery_cleanup -->
-| `discovery_cleanup.rs::assert_is_discovery_dir` | `path.join(LOCK_FILE_NAME).exists()` and `path.join(DISCOVERY_DATA_FILE_NAME).exists()` — read-only gate | caller-supplied `temp_dir` after the empty and `..` checks, or a swept `<base_dir>/<child>` via `cleanup_orphaned_discovery_dir` | follows symlinks — yes, read-only: a followed link can only admit a path, and `remove_discovery_dir` refuses a symlinked `temp_dir` next |
+| `discovery_cleanup.rs::assert_is_discovery_dir` | `LOCK_FILE_NAMES.iter().any(\|name\| path.join(name).exists())` (both `discovery.lock` and the host's `.discovery.lock`, Issue #2256) combined with `path.join(DISCOVERY_DATA_FILE_NAME).exists()` — read-only gate | caller-supplied `temp_dir` after the empty and `..` checks, or a swept `<base_dir>/<child>` via `remove_discovery_dir` | follows symlinks — yes, read-only: a followed link can only admit a path, and `remove_discovery_dir` refuses a symlinked `temp_dir` next |
 | `discovery_cleanup.rs::remove_discovery_dir` | `fs::symlink_metadata(path)` | caller-supplied `temp_dir`, or a swept `<base_dir>/<child>`, after `assert_is_discovery_dir` | yes — does not follow the final component; a symlink is refused (`InvalidInput`) and so is a non-directory. Intermediate components resolve, which probe (a) accepts for a caller-owned root |
 | `discovery_cleanup.rs::remove_discovery_dir` | `fs::canonicalize(path)` — audit log only | caller-supplied `temp_dir`, or a swept `<base_dir>/<child>`, after `assert_is_discovery_dir` | follows symlinks — yes, log only: the resolved path is never acted on, and an error falls back to the raw path |
 | `discovery_cleanup.rs::remove_discovery_dir` | `fs::remove_dir_all(path)` | caller-supplied `temp_dir`, or a swept `<base_dir>/<child>`, after `assert_is_discovery_dir` and the `symlink_metadata` refusal | yes — std does not follow a top-level symlink nor symlinks within the tree (probe b); only intermediate components resolve (probe a) |
-| `discovery_cleanup.rs::is_directory_orphaned` | `fs::symlink_metadata(dir.join(LOCK_FILE_NAME))` | a swept child of `base_dir`, or `temp_dir` during the #1903 re-check | yes — the lock itself is not followed; fails closed on any error but `NotFound` (probe d) |
+| `discovery_cleanup.rs::is_directory_orphaned` | `LOCK_FILE_NAMES.iter().all(\|name\| ...)` probing each lock spelling with `fs::symlink_metadata(dir.join(name))` (Issue #2256) | a swept child of `base_dir`, or `temp_dir` during the #1903 re-check | yes — the lock itself is not followed; fails closed on any error but `NotFound` for every name (probe d) |
 | `discovery_cleanup.rs::directory_touched_since` | `fs::symlink_metadata(dir)?.modified()` | a swept child of `base_dir` after the marker gate | yes — reads the entry's own mtime, not a link target's; errors propagate |
 | `discovery_cleanup.rs::clean_orphaned_discovery_dirs_since` | `base_path.exists()` | `base_dir` after the marker gate | follows a symlinked root — accepted, probe (a): the root is caller-owned |
 | `discovery_cleanup.rs::clean_orphaned_discovery_dirs_since` | `base_path.is_dir()` | `base_dir` after the marker gate | follows a symlinked root — accepted, probe (a) |
 | `discovery_cleanup.rs::clean_orphaned_discovery_dirs_since` | `fs::read_dir(base_path)` | `base_dir` after the marker gate | follows a symlinked root — accepted, probe (a); yields single-component names only (probe c) |
 | `discovery_cleanup.rs::clean_orphaned_discovery_dirs_since` | `entry.file_type()` | a child of `base_dir` | yes — `DirEntry::file_type` does not follow; a symlinked child is skipped |
 | `discovery_cleanup.rs::clean_orphaned_discovery_dirs_since` | `path.is_dir()` | a child of `base_dir`, already known not to be a symlink | follows, but only after the `file_type()` symlink skip; a later swap is caught by `remove_discovery_dir`'s re-probe (probe b) |
-| `discovery_cleanup.rs::clean_orphaned_discovery_dirs_since` | `cleanup_orphaned_discovery_dir(&path.display().to_string())` | a child of `base_dir` | **no — finding #2255**: the lossy string can name a different, literal-U+FFFD sibling that skipped the age floor |
-
-<!-- section: debug + sampler -->
+| `discovery_cleanup.rs::clean_orphaned_discovery_dirs_since` | `remove_discovery_dir(&path, LockRecheck::Enforce)` | a child of `base_dir` | yes — fixed by #2255: the `Path` is passed through unchanged, `display()` is used only for logging, and `remove_discovery_dir` re-probes the exact entry with `symlink_metadata` rather than a lossy re-rendered string |
 | `sample_dir.rs::create_private_dir` | `DirBuilder` with `mode(0o700)` and `recursive(false)`, then `set_permissions(0o700)` (unix); a mode-less non-recursive `create` elsewhere | `std::env::temp_dir()` joined with the per-invocation name from `SampleDir::create` | yes — `mkdir` does not follow the final component, so a planted symlink or any existing entry fails with `AlreadyExists`; `set_permissions` runs only on the directory this call just created |
 | `sample_dir.rs::SampleDir::create` | up to `MAX_CREATE_ATTEMPTS` (8) calls to `create_private_dir` on `neat_ai_discovery.sample.<pid>.<nanos>.<seq>.<attempt>.d` | `std::env::temp_dir()` | yes — every attempt is exclusive; a co-tenant squatting all eight names only denies the capture, which is reported (WARNING, manual hint, `NoBacktraces`) |
 | `sample_dir.rs::Drop::drop` | `fs::remove_dir_all(dir)`; `NotFound` ignored, any other error printed as a WARNING | the directory `SampleDir::create` made | yes — std does not follow a top-level symlink nor symlinks within the tree, and the directory is euid-owned `0700`, so no other uid can plant inside it; a same-uid swap inside it is the same principal deleting its own files, not a boundary crossing |
 | `sample_dir.rs::read_guarded` | `fs::symlink_metadata(path)`, refuse a non-regular file (`InvalidData`) or a uid other than the euid (`PermissionDenied`), then `fs::read_to_string(path)` | `<SampleDir>/sample.txt` | yes — the final component is not followed; the stat→read TOCTOU is refuted because the parent is the euid-owned `0700` directory |
 | `sample_capture.rs::run_external_command_with_timeout` | process spawn: `Command::new(program)` with the argv `[pid, "1", "-mayDie", "-file", <capture path>]` and null stdout/stderr; killed after 5 s plus a 500 ms grace | the sampler writes `<SampleDir>/sample.txt` | yes — no shell; the output path is inside the private directory, and the program comes only from the process's own env or `PATH` (same uid) |
-
-<!-- section: watchdog + tracking_alloc + discovery_history -->
 | none — `src/watchdog.rs`, `src/tracking_alloc.rs` (Issue #2252) | no filesystem operation or process spawn: a grep for `fs::`, `File`, `remove`, `OpenOptions`, `Command`, `pid` and `process::id` hits only a test-module `remove_var` | n/a | n/a — no path is touched; `src/discovery_history.rs` is swept by 11c-2 |
 | none — `src/discovery_history.rs` (Issue #2253) | no filesystem operation or process spawn: a grep for `fs::`, `File`, `OpenOptions`, `Command`, `remove_`, `std::io` and `Path` has no hit | n/a — the history arrives as an FFI string | n/a — no path is touched |
 | `streaming.rs::Drop::drop` (`impl Drop for RecordingSession`, cited for #1902) | `fs::remove_file("<parquet_path>.tmp")`; skipped when `finished` or `preserve_tmp_on_drop` is set; `NotFound` ignored, any other error logged at WARNING | `<temp_dir>/discovery_data.parquet.tmp`, under the session's caller-supplied `temp_dir` | yes for the final component — `remove_file` unlinks a symlink rather than its target; intermediate components resolve under the caller-owned `temp_dir` |
+
+**Grep reconciliation.** Chunk 11's non-test code was re-grepped for
+every filesystem- or process-mutating verb, with each file cut at its
+top-level `#[cfg(test)] mod tests` before the search:
+
+```
+rg -n 'remove_(file|dir_all)|create_dir|rename|symlink|canonicalize|set_permissions|\.exists\(\)|Command::new' src/discovery_cleanup.rs src/discovery_history.rs src/debug.rs src/debug/ src/watchdog.rs src/tracking_alloc.rs
+```
+
+- Every hit that mutates the filesystem or spawns a process already has a row
+  in the table above:
+  `discovery_cleanup.rs::remove_discovery_dir` (`fs::remove_dir_all`);
+  `sample_dir.rs::Drop::drop` (`remove_dir_all`);
+  `sample_dir.rs::create_private_dir` (bare `set_permissions`);
+  `sample_capture.rs::run_external_command_with_timeout` (`Command::new`).
+- Every other hit is a read-only probe, a doc comment or an unrelated word
+  match, grouped by file below:
+  - **src/discovery_cleanup.rs:**
+    - `assert_is_discovery_dir` — the `.exists()` marker probe is a read-only
+      precondition.
+    - Doc and comment text in `cleanup_discovery_dir`, `remove_discovery_dir`,
+      `is_directory_orphaned` and `clean_orphaned_discovery_dirs_since` —
+      prose only.
+    - `remove_discovery_dir` — the `fs::symlink_metadata` probe plus the
+      `is_symlink()` refusal are a read-only guard. The `fs::canonicalize`
+      call resolves the path for the log line only.
+    - `is_directory_orphaned` — the `fs::symlink_metadata` lock probe is a
+      read.
+    - `directory_touched_since` — the `fs::symlink_metadata(..).modified()`
+      mtime read.
+    - `clean_orphaned_discovery_dirs_since` — the `base_path.exists()` early
+      return is a read, and the `ft.is_symlink()` skip refuses to follow a
+      symlink.
+  - **src/discovery_history.rs:** six `#[serde(rename_all = "camelCase")]`
+    attributes. This is serde field renaming, with no filesystem use.
+  - **src/debug/sample_capture.rs:** the doc comment on `write_manual_hint`
+    (the word "symlink").
+  - **src/debug/sample_dir.rs:**
+    - The module doc (`//!`) — prose.
+    - The `use std::fs::{DirBuilder, Permissions, set_permissions};` import
+      inside `create_private_dir` — not a call. The call is covered by the
+      row above.
+    - `read_guarded` — its doc comment and its `std::fs::symlink_metadata`
+      probe are a read-only refusal guard.
+    - `describe` — `metadata.is_symlink()` only labels the refusal message.
+  - **src/debug.rs, src/debug/process_state.rs, src/watchdog.rs,
+    src/tracking_alloc.rs:** no production hits.
+- **Bare-call blind spot.** The regex matches verb text, so it catches an
+  imported verb called bare only when the verb's own name is in the regex —
+  e.g. `set_permissions`, imported in `debug/sample_dir.rs` via
+  `use std::fs::{DirBuilder, Permissions, set_permissions};` and called bare
+  as `set_permissions(dir, ...)`, is caught. An imported or bare-called verb
+  the regex does not name slips past:
+  `DirBuilder::new().mode(..).create(dir)` right beside it in
+  `sample_dir.rs::create_private_dir` does not match, nor would
+  `File::create`, `OpenOptions::open`, `fs::write`, or any verb imported under
+  a `use … as` alias. The slice full-file audits (#2234, #2251, #2252, #2253)
+  read every line of their files rather than relying on the grep, so they
+  cover this gap — the `create_private_dir` row above already records the
+  `DirBuilder` create.
 
 ## Re-verified remediations
 
 | Issue | Guard | Citing site (`file.rs::symbol`) | On live path? |
 | --- | --- | --- | --- |
-<!-- section: discovery_cleanup -->
-| #1903 | lock re-read immediately before removal (`LockRecheck::Enforce` → `CleanupOutcome::Claimed`); fail-closed lock probe (only `NotFound` means "no lock"); age floor (a child touched at or after `scan_started` is counted `claimed`) | `discovery_cleanup.rs::remove_discovery_dir` (re-check), `discovery_cleanup.rs::is_directory_orphaned` (fail-closed probe), `discovery_cleanup.rs::directory_touched_since` and the age-floor match in `discovery_cleanup.rs::clean_orphaned_discovery_dirs_since`; regression surface `tests/issue_1903_orphan_sweep_lock_recheck.rs` | yes — FFI `ffi/utilities.rs::clean_orphaned_discovery_dirs` → `discovery_cleanup.rs::clean_orphaned_discovery_dirs` → `clean_orphaned_discovery_dirs_since` → `cleanup_orphaned_discovery_dir` (`LockRecheck::Enforce`). Holds for UTF-8 names; #2255 bypasses the age floor for a non-UTF-8 entry, and #2256 means the guard keys on a name the known host never writes |
-
-<!-- section: debug + sampler -->
-| #1905 | owner-only per-invocation capture directory removed on `Drop` on every exit path, including kill-on-timeout; a symlink or foreign-owned file at the capture path is refused, not followed; guard test `tests/issue_1905_sample_temp_dir.rs` | `sample_dir.rs::SampleDir::create`, `sample_dir.rs::create_private_dir`, `sample_dir.rs::Drop::drop`, `sample_dir.rs::read_guarded` (via `sample_capture.rs::read_capture`); fallback-text surface `tests/issue_1934_sample_fallback.rs` | yes — SIGUSR1 → `debug.rs::dump_all_threads` → `debug.rs::render_thread_dump` → `sample_capture.rs::capture`. The manual fallback hint still names `/tmp/sample.txt` (#2266) |
+| #1903 | lock re-read immediately before removal (`LockRecheck::Enforce` → `CleanupOutcome::Claimed`); fail-closed lock probe (only `NotFound` means "no lock"); age floor (a child touched at or after `scan_started` is counted `claimed`) | `discovery_cleanup.rs::remove_discovery_dir` (re-check), `discovery_cleanup.rs::is_directory_orphaned` (fail-closed probe), `discovery_cleanup.rs::directory_touched_since` and the age-floor match in `discovery_cleanup.rs::clean_orphaned_discovery_dirs_since`; regression surface `tests/issue_1903_orphan_sweep_lock_recheck.rs` | yes — FFI `ffi/utilities.rs::clean_orphaned_discovery_dirs` → `discovery_cleanup.rs::clean_orphaned_discovery_dirs` → `clean_orphaned_discovery_dirs_since` → `remove_discovery_dir` (`LockRecheck::Enforce`). Holds for UTF-8 names; this sweep found #2255 (the age floor could be bypassed for a non-UTF-8 entry) and #2256 (the guard keyed on a name the known host never writes), both since fixed: #2255 by commit 2ef5eba, #2256 by PR #2269 |
+| #1905 | owner-only per-invocation capture directory removed on `Drop` on every exit path, including kill-on-timeout; a symlink or foreign-owned file at the capture path is refused, not followed; guard test `tests/issue_1905_sample_temp_dir.rs` | `sample_dir.rs::SampleDir::create`, `sample_dir.rs::create_private_dir`, `sample_dir.rs::Drop::drop`, `sample_dir.rs::read_guarded` (via `sample_capture.rs::read_capture`); fallback-text surface `tests/issue_1934_sample_fallback.rs` | yes — SIGUSR1 → `debug.rs::dump_all_threads` → `debug.rs::render_thread_dump` → `sample_capture.rs::capture`. The manual fallback hint named `/tmp/sample.txt` (#2266), since fixed by PR #2275: `sample_capture.rs::write_manual_hint` now prints `"$(mktemp -d)/sample.txt"` |
 | #1904 | `RUNTIME_DIR_MODE` (`0700`) and `prepare_runtime_dir` in `src/analysis/utils/platform.rs`: create owner-only, re-apply the mode past the umask, refuse a pre-existing world-writable directory or a symlink | `platform.rs::prepare_runtime_dir`, pinned by its `xdg_runtime_dir_*` unit tests; the sampler only mirrors the pattern in `sample_dir.rs::create_private_dir` and does not call it | yes on Linux (`platform.rs::ensure_xdg_runtime_dir`); not on the sampler path — no `src/debug*` file references it |
-
-<!-- section: watchdog + tracking_alloc + discovery_history -->
 | #1906 | `successes > attempts` refused on every deserialise; the failure count saturates when scoring | `discovery_history.rs::NeuronDiscoveryHistory::try_from` (the `TryFrom<NeuronDiscoveryHistoryWire>` impl behind `#[serde(try_from)]`), `discovery_history.rs::NeuronDiscoveryHistory::bayesian_score`; regression tests `test_deserialize_rejects_successes_exceeding_attempts`, `test_bayesian_score_invalid_counts_saturates` and `test_deserialize_accepts_valid_counts` in `src/discovery_history.rs` | yes — FFI `ffi/utilities.rs::get_calibration_summary` → `ffi_internal/analysis.rs::get_calibration_summary_internal` → `serde_json::from_str` into `DiscoveryHistory` runs `try_from` per entry, and a corrupt entry fails the call as `InvalidInput`. `bayesian_score` is off the FFI path (Rust API only). The invariant holds on the way in, but `record_attempt` can break it at the `u32` ceiling (#2391) |
 | #1902 | `preserve_tmp_on_drop` set before `writer.finish()` and the rename, so `Drop` keeps the complete `.tmp` after a failed finalise | `streaming.rs::finish_session` (sets the flag), `streaming.rs::Drop::drop` (returns before `fs::remove_file` when it is set); regression tests `test_failed_finish_preserves_tmp` and `test_empty_session_finish_removes_tmp` in the `src/streaming.rs` tests module | yes — FFI `ffi/recording.rs::finish_discovery_session` → `streaming.rs::finish_session`; the flag is set after the `records_written == 0` exit (an empty recording is still deleted, by design) and before both fallible steps |
 
 ## Outcome
 
-Pending — written by the finalisation sub-issue, #2120.
+The five 2025-era remediations #1902–#1906 hold on their live paths. Five
+findings were filed:
+
+- #2255 (CLOSED, fixed) — the lossy-path orphan sweep bypassed the #1903 age
+  floor for a non-UTF-8 directory name.
+- #2256 (CLOSED, fixed) — the liveness probe keyed on an unwritten lock name.
+- #2266 (CLOSED, fixed) — the manual thread-dump hint re-taught the
+  predictable `/tmp/sample.txt` path.
+- #2391 (OPEN) — `record_attempt` can overflow `u32` at the ceiling #1906
+  accepts.
+- #2392 (OPEN) — non-finite calibration metrics can reach the FFI under
+  `success: true`.
+
+Two of the five findings remain open.
 
 ## Issues filed
 
-Placeholder — this list is finalised by #2120.
+- #2255 — Orphan sweep removes a lossy-rendered path, bypassing the #1903 age
+  floor for non-UTF-8 entries (src/discovery_cleanup.rs::clean_orphaned_discovery_dirs_since)
+  (CLOSED, fixed by commit 2ef5eba)
+- #2256 — Orphan sweep liveness keys on discovery.lock, which nothing in-tree
+  writes and NEAT-AI spells .discovery.lock
+  (src/discovery_cleanup.rs::is_directory_orphaned) (CLOSED, fixed by PR #2269)
+- #2266 — Thread-dump manual hint re-teaches the predictable /tmp/sample.txt
+  path #1905 removed (src/debug/sample_capture.rs::write_manual_hint) (CLOSED,
+  fixed by PR #2275)
+- #2391 — NeuronDiscoveryHistory::record_attempt overflows u32 at the ceiling
+  the #1906 guard accepts, breaking successes <= attempts
+  (src/discovery_history.rs::NeuronDiscoveryHistory::record_attempt) (OPEN)
+- #2392 — Calibration metrics go non-finite from finite inputs and reach the
+  get_calibration_summary FFI as null under success: true
+  (src/discovery_history.rs::compute_calibration_factor) (OPEN)
 
 ## Related remediations (not sweep coverage)
 
@@ -428,3 +501,18 @@ git diff b85a551ed2521ed327469b20eb88aeda828357d2..HEAD -- \
 ```
 
 An empty diff means this record still describes the current code.
+
+On 2026-10-05 this diff is not empty — `git diff --stat
+b85a551ed2521ed327469b20eb88aeda828357d2..HEAD -- src/discovery_cleanup.rs
+src/debug.rs src/debug/sample_capture.rs src/debug/sample_dir.rs
+src/debug/process_state.rs src/watchdog.rs src/tracking_alloc.rs
+src/discovery_history.rs` shows three files touched — but the conclusions
+above still hold. `src/discovery_cleanup.rs` changed for the #2255 and #2256
+fixes: the orphan sweep now threads the `Path` itself through
+`remove_discovery_dir`, and `LOCK_FILE_NAMES` is probed with
+`fs::symlink_metadata` for both lock spellings rather than one, still
+fail-closed. `src/debug/sample_capture.rs` changed for the #2266 fix:
+`write_manual_hint` now prints `"$(mktemp -d)/sample.txt"` instead of a
+predictable path. `src/discovery_history.rs` carries only a test-only hunk —
+the #2253 regression tests — with no production code changed. None of these
+hunks weakens a guard this record relies on.

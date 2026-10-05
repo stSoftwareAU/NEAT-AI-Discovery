@@ -1,5 +1,5 @@
-//! Generic Markdown ledger helpers (section lookup, marker-region slicing,
-//! table-row extraction), used today by
+//! Generic Markdown ledger helpers (section lookup, table-row extraction),
+//! used today by
 //! `tests/issue_2253_chunk_11c2_discovery_history_test.rs` (Issue #2253).
 //! They take the section name as a parameter rather than a file-specific
 //! constant, so another ledger test can call them too.
@@ -49,20 +49,6 @@ pub fn section<'a>(doc: &'a str, heading: &str) -> &'a str {
         cursor = at;
     };
     &doc[body_start..end]
-}
-
-/// A section's marked region of a finding table: from its `<!-- section:
-/// <section_name> -->` marker to the next `<!-- section:` marker.
-pub fn marker_region<'a>(table: &'a str, section_name: &str) -> &'a str {
-    let marker = format!("<!-- section: {section_name} -->");
-    let start = table
-        .find(&marker)
-        .unwrap_or_else(|| panic!("the table must carry `{marker}`"))
-        + marker.len();
-    let end = table[start..]
-        .find("<!-- section:")
-        .map_or(table.len(), |offset| start + offset);
-    &table[start..end]
 }
 
 /// The `|`-prefixed table rows within a section body.

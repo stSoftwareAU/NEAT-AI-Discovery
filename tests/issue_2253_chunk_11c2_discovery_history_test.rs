@@ -16,10 +16,14 @@
 //!   uses a line number (Issue #1942);
 //! * every unit test the ledger names by name still exists in its source
 //!   file.
+//!
+//! Issue #2254 removed the tables' `<!-- section: -->` markers at
+//! finalisation, once no more concurrent slices remained to disambiguate; a
+//! section's "region" of a table is now the whole table.
 
 mod common;
 
-use common::ledger::{marker_region, read, section, table_rows};
+use common::ledger::{read, section, table_rows};
 
 const RECORD: &str = "docs/audits/security-sweep-chunk-11-filesystem-lifecycle.md";
 const SECTION: &str = "watchdog + tracking_alloc + discovery_history";
@@ -187,7 +191,9 @@ fn the_section_records_a_verdict_for_each_probe() {
 #[test]
 fn re_verified_region_has_one_live_row_each_for_1906_and_1902() {
     let doc = read(RECORD);
-    let region = marker_region(section(&doc, "## Re-verified remediations"), SECTION);
+    // Issue #2254 removed the `<!-- section: -->` markers; the whole table
+    // is this section's region now that no concurrent slice remains.
+    let region = section(&doc, "## Re-verified remediations");
     for issue in ["#1906", "#1902"] {
         let matches: Vec<&str> = table_rows(region)
             .into_iter()
@@ -215,7 +221,9 @@ fn re_verified_region_has_one_live_row_each_for_1906_and_1902() {
 #[test]
 fn the_mutation_region_cites_the_1902_drop_site_and_discovery_history_has_none() {
     let doc = read(RECORD);
-    let region = marker_region(section(&doc, "## Filesystem mutation sites"), SECTION);
+    // Issue #2254 removed the `<!-- section: -->` markers; the whole table
+    // is this section's region now that no concurrent slice remains.
+    let region = section(&doc, "## Filesystem mutation sites");
     let rows = table_rows(region);
 
     let drop_row = rows
@@ -241,8 +249,10 @@ fn the_mutation_region_cites_the_1902_drop_site_and_discovery_history_has_none()
 fn every_cited_symbol_exists_and_no_citation_uses_a_line_number() {
     let doc = read(RECORD);
     let body = section(section(&doc, "## Files swept"), &format!("### {SECTION}"));
-    let mutation_region = marker_region(section(&doc, "## Filesystem mutation sites"), SECTION);
-    let reverified_region = marker_region(section(&doc, "## Re-verified remediations"), SECTION);
+    // Issue #2254 removed the `<!-- section: -->` markers; the whole tables
+    // are this section's regions now that no concurrent slice remains.
+    let mutation_region = section(&doc, "## Filesystem mutation sites");
+    let reverified_region = section(&doc, "## Re-verified remediations");
     let combined = format!("{body}\n{mutation_region}\n{reverified_region}");
 
     for (site, file, definition) in CITED {
@@ -272,8 +282,10 @@ fn every_cited_symbol_exists_and_no_citation_uses_a_line_number() {
 fn every_unit_test_the_ledger_names_exists() {
     let doc = read(RECORD);
     let body = section(section(&doc, "## Files swept"), &format!("### {SECTION}"));
-    let mutation_region = marker_region(section(&doc, "## Filesystem mutation sites"), SECTION);
-    let reverified_region = marker_region(section(&doc, "## Re-verified remediations"), SECTION);
+    // Issue #2254 removed the `<!-- section: -->` markers; the whole tables
+    // are this section's regions now that no concurrent slice remains.
+    let mutation_region = section(&doc, "## Filesystem mutation sites");
+    let reverified_region = section(&doc, "## Re-verified remediations");
     let combined = format!("{body}\n{mutation_region}\n{reverified_region}");
 
     for (file, name) in NAMED_TESTS {
