@@ -6,7 +6,8 @@
 # together with its rationale comment. Adding a required rustup component meant
 # five identical edits, and missing one silently left that job on the old
 # toolchain. The invocation lives here now; the call sites carry only what
-# differs.
+# differs. msrv.yml (msrv) has since joined them, passing `toolchain:` to pin
+# the declared MSRV (Issue #2395).
 #
 # The checkout deliberately stays in each calling job. GitHub loads a local
 # action (`uses: ./…`) from the runner's workspace, so the repository must
@@ -22,7 +23,7 @@ description: >-
 
 inputs:
   toolchain:
-    description: Toolchain to install, e.g. stable or nightly.
+    description: Toolchain to install, e.g. stable, nightly, or 1.95.
     required: false
     default: stable
   components:

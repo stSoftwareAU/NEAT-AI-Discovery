@@ -345,8 +345,12 @@ fn setup_rust_action() -> String {
     fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()))
 }
 
-const WORKFLOWS_WITH_TOOLCHAIN: [(&str, usize); 3] =
-    [("ci.yml", 3), ("security.yml", 1), ("cargo-quality.yml", 1)];
+const WORKFLOWS_WITH_TOOLCHAIN: [(&str, usize); 4] = [
+    ("ci.yml", 3),
+    ("security.yml", 1),
+    ("cargo-quality.yml", 1),
+    ("msrv.yml", 1),
+];
 
 #[test]
 fn no_workflow_downloads_the_rust_toolchain_action() {

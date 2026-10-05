@@ -143,6 +143,7 @@ discovery phase. This is by design:
 | **Total RAM** | 4 GB | GPU operations require memory for staging buffers |
 | **Available RAM** | 0.5 GB (macOS) / 1 GB (Linux) | Prevents hangs from memory pressure/swap thrashing |
 | **GPU** | Metal (macOS) or Vulkan (Linux) | Required for compute shaders |
+| **Rust toolchain** (building from source) | 1.95 | `rust-version` in `Cargo.toml`; `AtomicUsize::try_update` needs it (Issue #2395) |
 
 When requirements aren't met, `check_gpu_available()` returns `gpuAvailable: false`
 with a descriptive `reason` plus a structured capability verdict — `errorKind`
