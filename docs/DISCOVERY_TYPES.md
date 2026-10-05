@@ -1103,12 +1103,14 @@ treating each output independently.
    the shared error pattern.
 
 **Bounds** (Issue #2346): the n_outputs² correlation matrix is only built when
-eligible outputs (≥ 20 error records) are at or below `MAX_CORRELATED_ERROR_OUTPUTS`
-(1,000); above it the scan returns no groups (`OutputCeilingExceeded`). Above
-`MAX_CORRELATED_ERROR_INPUTS` (10,000) eligible inputs, the predictive-input
-search is skipped per group (`InputCeilingExceeded`), so groups are still
-emitted with empty `predictive_input_uuids`. The deadline-aware entry point
-checks the shared analysis deadline per matrix row and per input.
+eligible outputs (output neurons with at least 20 records, at least one
+carrying errors) are at or below `MAX_CORRELATED_ERROR_OUTPUTS` (1,000); above
+it the scan returns no groups (`OutputCeilingExceeded`). Above
+`MAX_CORRELATED_ERROR_INPUTS` (10,000) input-typed neurons, the
+predictive-input search is skipped per group (`InputCeilingExceeded`), so
+groups are still emitted with empty `predictive_input_uuids`. The
+deadline-aware entry point checks the shared analysis deadline per matrix row
+and per input.
 
 **Recommended actions**:
 

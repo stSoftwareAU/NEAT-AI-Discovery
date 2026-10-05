@@ -154,3 +154,7 @@ pub(crate) fn append_structural_specs(
         convert: |detected| compound_degradation::compound_degradations_to_coordinated_candidates(&detected),
     );
 }
+
+#[cfg(test)]
+#[path = "structural_specs_issue_2346_tests.rs"]
+mod structural_specs_issue_2346_tests;

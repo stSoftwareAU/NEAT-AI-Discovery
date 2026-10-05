@@ -747,4 +747,155 @@ mod tests {
             "Expected None once the deadline has elapsed"
         );
     }
+
+    /// A deadline that elapses mid-way through the per-group search keeps the
+    /// groups already pushed to `results` rather than discarding them, and
+    /// reports `DeadlinePassed` (Issue #2346).
+    ///
+    /// The fixture has two independent correlated output pairs (o0/o1 and
+    /// o2/o3) and exactly one input neuron, so `input_uuids` has a single
+    /// member and each of the two `find_predictive_inputs` calls makes
+    /// exactly one `deadline_passed` call (one per candidate input). Combined
+    /// with the one `deadline_passed` call per correlation-matrix row (4
+    /// outputs ⇒ 4 rows), the override sequence below needs exactly 4 + 1 + 1
+    /// = 6 entries: 4 `false` for the matrix build, `false` for the first
+    /// group's single input (lets it complete), then `true` for the second
+    /// group's single input (stops the scan there).
+    #[test]
+    fn deadline_during_group_search_keeps_completed_groups() {
+        const SAMPLES: u32 = 20; // == MIN_SAMPLES_FOR_CORRELATION
+
+        let neurons = vec![
+            crate::NeuronJson {
+                uuid: "input-0".to_string(),
+                neuron_type: "input".to_string(),
+                squash: "IDENTITY".to_string(),
+                bias: 0.0,
+            },
+            crate::NeuronJson {
+                uuid: "output-0".to_string(),
+                neuron_type: "output".to_string(),
+                squash: "IDENTITY".to_string(),
+                bias: 0.0,
+            },
+            crate::NeuronJson {
+                uuid: "output-1".to_string(),
+                neuron_type: "output".to_string(),
+                squash: "IDENTITY".to_string(),
+                bias: 0.0,
+            },
+            crate::NeuronJson {
+                uuid: "output-2".to_string(),
+                neuron_type: "output".to_string(),
+                squash: "IDENTITY".to_string(),
+                bias: 0.0,
+            },
+            crate::NeuronJson {
+                uuid: "output-3".to_string(),
+                neuron_type: "output".to_string(),
+                squash: "IDENTITY".to_string(),
+                bias: 0.0,
+            },
+        ];
+        let synapses = vec![
+            crate::SynapseJson {
+                from_uuid: "input-0".to_string(),
+                to_uuid: "output-0".to_string(),
+                weight: 0.5,
+                synapse_type: None,
+            },
+            crate::SynapseJson {
+                from_uuid: "input-0".to_string(),
+                to_uuid: "output-2".to_string(),
+                weight: 0.5,
+                synapse_type: None,
+            },
+        ];
+        let creature = CreatureJson {
+            neurons,
+            synapses,
+            input: 1,
+            output: 4,
+        };
+
+        // output-0 / output-1: errors increase with obs_index (perfectly
+        // correlated, all positive). output-2 / output-3: errors decrease
+        // with obs_index (perfectly correlated with each other, all
+        // positive, but anti-correlated with the first pair, so they do not
+        // merge into the same group).
+        let mut neuron_records: Vec<(String, Vec<DiscoverRecord>)> = Vec::new();
+        for uuid in ["output-0", "output-1"] {
+            let records: Vec<DiscoverRecord> = (0..SAMPLES)
+                .map(|i| DiscoverRecord {
+                    obs_index: i,
+                    neuron_uuid: uuid.to_string(),
+                    value: Some((i + 1) as f32 * 0.1),
+                    activation: 0.5,
+                    errors: vec![(i + 1) as f32 * 0.1],
+                })
+                .collect();
+            neuron_records.push((uuid.to_string(), records));
+        }
+        for uuid in ["output-2", "output-3"] {
+            let records: Vec<DiscoverRecord> = (0..SAMPLES)
+                .map(|i| DiscoverRecord {
+                    obs_index: i,
+                    neuron_uuid: uuid.to_string(),
+                    value: Some((SAMPLES - i) as f32 * 0.1),
+                    activation: 0.5,
+                    errors: vec![(SAMPLES - i) as f32 * 0.1],
+                })
+                .collect();
+            neuron_records.push((uuid.to_string(), records));
+        }
+        let input_records: Vec<DiscoverRecord> = (0..SAMPLES)
+            .map(|i| DiscoverRecord {
+                obs_index: i,
+                neuron_uuid: "input-0".to_string(),
+                value: Some(i as f32),
+                activation: i as f32,
+                errors: vec![],
+            })
+            .collect();
+        neuron_records.push(("input-0".to_string(), input_records));
+
+        // Precondition: with no override, both groups are found and nothing
+        // is skipped — this proves the fixture reaches the per-group
+        // predictive-input search for both groups before the override is
+        // introduced.
+        let scan =
+            detect_correlated_error_patterns_with_deadline(&creature, &neuron_records, &None);
+        assert_eq!(
+            scan.groups.len(),
+            2,
+            "Expected two independent correlated groups with no deadline override, got: {:?}",
+            scan.groups
+        );
+        assert_eq!(
+            scan.skip, None,
+            "No skip reason should be reported with no deadline override"
+        );
+
+        // 4 matrix rows (4 outputs), then one deadline check per group's
+        // single candidate input: let the first group's search complete,
+        // then stop during the second group's search.
+        let _guard =
+            crate::analysis::utils::deadline_override::DeadlineOverrideGuard::with_sequence(vec![
+                false, false, false, false, false, true,
+            ]);
+        let scan =
+            detect_correlated_error_patterns_with_deadline(&creature, &neuron_records, &None);
+
+        assert_eq!(
+            scan.groups.len(),
+            1,
+            "The group completed before the deadline fired should be kept, got: {:?}",
+            scan.groups
+        );
+        assert_eq!(
+            scan.skip,
+            Some(CorrelatedErrorSkip::DeadlinePassed),
+            "Skip reason should report the deadline that fired mid-way through the group search"
+        );
+    }
 }

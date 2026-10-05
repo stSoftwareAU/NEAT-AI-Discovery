@@ -100,10 +100,11 @@ flowchart LR
 ### 🛡️ Bounds (Issue #2346)
 
 The error-correlation matrix is O(n_outputs²), so it is only built when the
-number of eligible outputs (output neurons with ≥ 20 error records) is at or
-below `MAX_CORRELATED_ERROR_OUTPUTS` (1,000); above that the scan returns no
-groups and logs `OutputCeilingExceeded`. Within a group, the predictive-input
-search is skipped once eligible inputs exceed `MAX_CORRELATED_ERROR_INPUTS`
+number of eligible outputs (output neurons with at least 20 records, at least
+one carrying errors) is at or below `MAX_CORRELATED_ERROR_OUTPUTS` (1,000);
+above that the scan returns no groups and logs `OutputCeilingExceeded`. Within
+a group, the predictive-input search is skipped once the count of
+input-typed neurons exceeds `MAX_CORRELATED_ERROR_INPUTS`
 (10,000) — groups are still emitted, with empty `predictive_input_uuids`, and
 `InputCeilingExceeded` is logged. `detect_correlated_error_patterns_with_deadline`
 also checks the shared analysis deadline per matrix row and per
