@@ -30,8 +30,7 @@ The new `detect_symmetric_cancellation_with_deadline` returns a
 deterministic work counters. The old `detect_symmetric_cancellation` is now a
 thin no-deadline wrapper. Production dispatch (`synapse_specs.rs`) forwards the
 discovery deadline and logs a `warn!` when the scan was truncated or skipped
-targets, so a partial result is never shown as complete. The version is bumped
-0.74.275 → 0.74.276.
+targets, so a partial result is never shown as complete.
 
 Closes #2347
 
@@ -84,6 +83,14 @@ passes after the fix:
   `the over-cap target must be skipped entirely, not partially scanned`
   (`left: 0, right: 1`), because the work grows quadratically.
 
+The production entry point is covered too:
+
+- `src/analysis/module_dispatch_specs/synapse_specs.rs::tests::symmetric_cancellation_spec_returns_none_when_deadline_already_elapsed`
+  proves that dispatch forwards the discovery deadline.
+- `src/analysis/module_dispatch_specs/synapse_specs.rs::tests::scan_is_partial_when_high_fanin_targets_skipped`,
+  together with its siblings, proves that a partial scan is reported and not
+  shown as complete.
+
 These tests cover the other bounds:
 
 - `tests/issue_2347_symmetric_cancellation_growth_test.rs::activation_maps_are_cached_across_pairs_not_rebuilt_per_pair`
@@ -118,27 +125,54 @@ flowchart TD
     C -- no --> T
 ```
 
-**Docs sweep** — grep: `symmetric cancellation`, `detect_symmetric_cancellation`, `calculate_correlation`, `fan-in`, `MAX_FANIN_FOR_CANCELLATION_SCAN`; section: `docs/discoveries/weight-coherence.md#-3-symmetric-cancellation`, `docs/DISCOVERY_TYPES.md` (Detection criteria — Symmetric cancellation), `docs/ANALYSIS_DEEP_DIVE.md` (Symmetric cancellation); updated: `docs/discoveries/weight-coherence.md`, `docs/DISCOVERY_TYPES.md`, `docs/ANALYSIS_DEEP_DIVE.md`
+**Docs sweep** — grep: `detect_symmetric_cancellation`, `MAX_FANIN_FOR_CANCELLATION_SCAN`, `MAX_SYMMETRIC_CANCELLATION_CANDIDATES`, `calculate_correlation`, `SymmetricCancellationScan`; section: `docs/discoveries/weight-coherence.md#-3-symmetric-cancellation`, `docs/DISCOVERY_TYPES.md` (Detection criteria — Symmetric cancellation), `docs/ANALYSIS_DEEP_DIVE.md` (Symmetric cancellation); updated: `docs/discoveries/weight-coherence.md`, `docs/DISCOVERY_TYPES.md`, `docs/ANALYSIS_DEEP_DIVE.md`
+
+Every remaining hit on the head:
+
+- `docs/DISCOVERY_TYPES.md:990`, `docs/DISCOVERY_TYPES.md:992` — still true because this diff wrote these lines to describe the fan-in cap, the candidate ceiling and the deadline.
+- `docs/ANALYSIS_DEEP_DIVE.md:607`, `docs/ANALYSIS_DEEP_DIVE.md:608` — still true because this diff wrote these lines to describe the bounded scan.
+- `docs/discoveries/weight-coherence.md:60`, `docs/discoveries/weight-coherence.md:62` — still true because this diff wrote these lines to describe the bounds and the skip count.
+- `src/analysis/detection/weight_coherence.rs:27`, `:31`, `:33` — still true because they are the new module doc for the scan bounds.
+- `src/analysis/detection/weight_coherence.rs:74`, `:78` — still true because they define the two constants.
+- `src/analysis/detection/weight_coherence.rs:178`, `:185` — still true because they are the new result struct and its `skipped_high_fanin_targets` doc.
+- `src/analysis/detection/weight_coherence.rs:406`, `:409`, `:419`, `:425` — still true because the legacy wrapper still exists, still calls the bounded scan with no deadline, and its doc says production uses the deadline entry point.
+- `src/analysis/detection/weight_coherence.rs:434`, `:446`, `:448`, `:454`, `:455` — still true because they are the new bounded function's doc and signature.
+- `src/analysis/detection/weight_coherence.rs:507`, `:577` — still true because they are the cap and ceiling checks.
+- `src/analysis/detection/weight_coherence.rs:729` — still true because the `correlation_from_maps` doc states, as history, that the removed `calculate_correlation` rebuilt both maps on every call.
+- `src/analysis/module_dispatch_specs/synapse_specs.rs:31`, `:49`, `:54`, `:167`, `:291`, `:292` — still true because they are the production call into the bounded scan, the partial-scan helper and its doc, and the test fixtures for it.
+- `tests/detection/issue_437_weight_coherence_validation.rs:22`, `:289`, `:365` — still true because they call the legacy wrapper, which keeps its signature and results.
+- `tests/detection/issue_770_weight_coherence_topology_cache.rs:11`, `:158`, `:184`, `:185` — still true because the wrapper still honours the topology cache.
+- `tests/infrastructure/issue_776_hashset_hashmap_iteration.rs:9`, `:98`, `:125`, `:163` — still true because the wrapper is kept and still produces correct results.
+- `tests/issue_2347_symmetric_cancellation_growth_test.rs` (lines 2, 14, 15, 80, 84, 97, 120, 121, 137, 138, 166, 191, 204, 215, 237, 240, 243, 252, 255, 268, 270) — still true because this diff adds the file, and its hits are the module doc, imports and calls to the bounded scan.
 
 ## Test Plan
 
-- No assertion was removed from an existing test. The test file
-  `tests/issue_2347_symmetric_cancellation_growth_test.rs` is new in this
-  diff. The three unit tests in `src/analysis/detection/weight_coherence.rs`
-  that called the removed `calculate_correlation` now call
-  `correlation_from_maps(&build_activation_map(..), &build_activation_map(..), 10)`.
-  Only the call site changed, and every assertion in them is kept unchanged.
-- `cargo test --test issue_2347_symmetric_cancellation_growth_test` passes
-  all 9 tests at the head.
+- **Tests added:**
+  - `tests/issue_2347_symmetric_cancellation_growth_test.rs`, with 9 tests.
+  - In `src/analysis/module_dispatch_specs/synapse_specs.rs::tests`:
+    - `symmetric_cancellation_spec_returns_none_when_deadline_already_elapsed`
+    - `symmetric_cancellation_spec_returns_candidates_without_deadline`
+    - `scan_is_not_partial_when_complete`
+    - `scan_is_partial_when_deadline_passed`
+    - `scan_is_partial_when_candidate_ceiling_hit`
+    - `scan_is_partial_when_high_fanin_targets_skipped`
+- **Tests modified:** the three unit tests in `src/analysis/detection/weight_coherence.rs` that called the removed `calculate_correlation` now call `correlation_from_maps(&build_activation_map(..), &build_activation_map(..), 10)`. Only the call site changed.
+- **Removed assertions:** none. Every existing assertion is kept unchanged.
+- **Results:**
+  - `cargo test --test issue_2347_symmetric_cancellation_growth_test` → `test result: ok. 9 passed; 0 failed`
+  - `cargo test --lib module_dispatch_specs` → `test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 1626 filtered out`
+  - `./quality.sh < /dev/null` → QUALITY_RESULT
 
 **Branch outcomes:**
 - `src/analysis/detection/weight_coherence.rs:489` — deadline elapsed (stop, `DeadlinePassed`) — `tests/issue_2347_symmetric_cancellation_growth_test.rs::elapsed_deadline_stops_the_scan_before_any_pair_work` — flipped to never stop, test went red
-- `src/analysis/detection/weight_coherence.rs:489` — no deadline / deadline not reached (scan continues, no truncation) — `tests/issue_2347_symmetric_cancellation_growth_test.rs::no_deadline_does_not_truncate_and_finds_candidates`, `tests/issue_2347_symmetric_cancellation_growth_test.rs::far_future_deadline_behaves_like_no_deadline` — flipped to always stop, both tests went red
+- `src/analysis/detection/weight_coherence.rs:489` — no deadline, or deadline not reached (scan continues, no truncation) — `tests/issue_2347_symmetric_cancellation_growth_test.rs::no_deadline_does_not_truncate_and_finds_candidates`, `tests/issue_2347_symmetric_cancellation_growth_test.rs::far_future_deadline_behaves_like_no_deadline` — flipped to always stop, both tests went red
 - `src/analysis/detection/weight_coherence.rs:507` — fan-in over the cap (target skipped and counted) — `tests/issue_2347_symmetric_cancellation_growth_test.rs::fanin_at_the_cap_is_scanned_fanin_over_the_cap_is_skipped`, `tests/issue_2347_symmetric_cancellation_growth_test.rs::symmetric_cancellation_work_grows_no_faster_than_the_cap_allows` — flipped to never skip, both tests went red
 - `src/analysis/detection/weight_coherence.rs:507` — fan-in exactly at the cap (target scanned) — `tests/issue_2347_symmetric_cancellation_growth_test.rs::fanin_at_the_cap_is_scanned_fanin_over_the_cap_is_skipped` — flipped `>` to `>=`, test went red
-- `src/analysis/detection/weight_coherence.rs:541` — source map not yet cached (build once and count it) vs. already cached (reuse) — `tests/issue_2347_symmetric_cancellation_growth_test.rs::activation_maps_are_cached_across_pairs_not_rebuilt_per_pair` — flipped to rebuild every pair, test went red
+- `src/analysis/detection/weight_coherence.rs:543` — source map not yet cached (build it once and count it) vs. already cached (reuse it) — `tests/issue_2347_symmetric_cancellation_growth_test.rs::activation_maps_are_cached_across_pairs_not_rebuilt_per_pair` — flipped to rebuild on every pair, test went red
 - `src/analysis/detection/weight_coherence.rs:577` — candidate ceiling reached (stop, `CandidateCeiling`) — `tests/issue_2347_symmetric_cancellation_growth_test.rs::symmetric_cancellation_stops_at_the_candidate_ceiling_and_reports_it` — flipped to never stop, test went red
 - `src/analysis/detection/weight_coherence.rs:577` — below the ceiling (scan completes, no truncation) — `tests/issue_2347_symmetric_cancellation_growth_test.rs::candidate_ceiling_not_reported_when_the_scan_completes` — flipped to always stop, test went red
-- `src/analysis/module_dispatch_specs/synapse_specs.rs:85` — truncated or skipping scan (`warn!` logged, partial candidates returned) vs. complete scan (no log) — not reached by any test. The branch only emits a log line, and the returned `scan.candidates` is the same on both sides, so no test can observe a flip without capturing tracing output. Not flipped.
+- `src/analysis/module_dispatch_specs/synapse_specs.rs:38` / `:56` — partial scan (truncated or skipped targets, so `warn!` is logged) — `src/analysis/module_dispatch_specs/synapse_specs.rs::tests::scan_is_partial_when_deadline_passed`, `src/analysis/module_dispatch_specs/synapse_specs.rs::tests::scan_is_partial_when_candidate_ceiling_hit`, `src/analysis/module_dispatch_specs/synapse_specs.rs::tests::scan_is_partial_when_high_fanin_targets_skipped` — forced `symmetric_cancellation_scan_is_partial` to always return false, all three tests went red
+- `src/analysis/module_dispatch_specs/synapse_specs.rs:38` / `:56` — complete scan (no log) — `src/analysis/module_dispatch_specs/synapse_specs.rs::tests::scan_is_not_partial_when_complete` — forced it to always return true, test went red
+- `src/analysis/module_dispatch_specs/synapse_specs.rs:118` — production dispatch forwards the discovery deadline — `src/analysis/module_dispatch_specs/synapse_specs.rs::tests::symmetric_cancellation_spec_returns_none_when_deadline_already_elapsed` (paired with `src/analysis/module_dispatch_specs/synapse_specs.rs::tests::symmetric_cancellation_spec_returns_candidates_without_deadline`) — reverted `&deadline` to `&None`, the elapsed-deadline test went red
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
