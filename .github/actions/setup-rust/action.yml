@@ -23,9 +23,12 @@ description: >-
 
 inputs:
   toolchain:
-    description: Toolchain to install, e.g. stable, nightly, or 1.95.
+    description: >-
+      Toolchain to install, e.g. stable, nightly or 1.99. Empty (the default) installs
+      the channel pinned in rust-toolchain.toml (#2395, NEAT-AI-core#747), so CI
+      builds with the same compiler the crate declares as its minimum.
     required: false
-    default: stable
+    default: ""
   components:
     description: >-
       Extra rustup components as a comma-separated list, e.g. "rustfmt, clippy".
@@ -56,4 +59,11 @@ runs:
         COMPONENTS: ${{ inputs.components }}
       run: |
         set -euo pipefail
+        if [[ -z "$TOOLCHAIN" ]]; then
+          TOOLCHAIN="$(sed -n 's/^channel *= *"\([^"]*\)".*/\1/p' rust-toolchain.toml)"
+          if [[ -z "$TOOLCHAIN" ]]; then
+            echo "::error::setup-rust: no toolchain input and no channel in rust-toolchain.toml" >&2
+            exit 1
+          fi
+        fi
         ./scripts/install-rust-toolchain.sh "$TOOLCHAIN" ${COMPONENTS:+"$COMPONENTS"}
