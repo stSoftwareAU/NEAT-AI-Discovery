@@ -1821,7 +1821,11 @@ verdict is in its region under `## Audit sections`.
 
 This is the chunk-wide view: one severity-sorted list across all five regions,
 where `## Ledger` sorts only within each region. Issue state is as at
-2026-10-05. The ledger's `status` cells record each verdict as filed.
+2026-10-05. A ledger `status` cell reading `open — #N` records the verdict
+when that issue was filed, and the per-slice sweep tests pin that wording, so
+seven rows still read `open` although their issues have since closed; the
+trailing `open` or `closed` on each item below is the issue's state on that
+date.
 
 1. **medium** — #2313 — `SEC-d3bf886bc1d3` (CWE-248) — readback: the
    `map_async` callback `.expect` panics after a timed-out map wait, and aborts
