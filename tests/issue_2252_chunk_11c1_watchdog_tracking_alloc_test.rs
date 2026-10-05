@@ -14,6 +14,10 @@
 //!   mutation site;
 //! * every `file.rs::symbol` the section cites still exists, and no citation
 //!   uses a line number (Issue #1942).
+//!
+//! Issue #2254 removed the tables' `<!-- section: -->` markers at
+//! finalisation, once no more concurrent slices remained to disambiguate; a
+//! section's "region" of a table is now the whole table.
 
 use std::path::PathBuf;
 
@@ -134,20 +138,6 @@ fn section<'a>(doc: &'a str, heading: &str) -> &'a str {
     &doc[body_start..end]
 }
 
-/// This section's marked region of a finding table: from its marker to the
-/// next `<!-- section:` marker.
-fn marker_region(table: &str) -> &str {
-    let marker = format!("<!-- section: {SECTION} -->");
-    let start = table
-        .find(&marker)
-        .unwrap_or_else(|| panic!("the table must carry `{marker}`"))
-        + marker.len();
-    let end = table[start..]
-        .find("<!-- section:")
-        .map_or(table.len(), |offset| start + offset);
-    &table[start..end]
-}
-
 fn table_rows(body: &str) -> Vec<&str> {
     body.lines()
         .filter(|line| line.trim_start().starts_with('|'))
@@ -212,7 +202,9 @@ fn the_section_records_the_signal_verdict_cross_references_and_consumers() {
 #[test]
 fn the_mutation_region_states_neither_file_has_a_site() {
     let doc = read(RECORD);
-    let region = marker_region(section(&doc, "## Filesystem mutation sites"));
+    // Issue #2254 removed the `<!-- section: -->` markers; the whole table
+    // is this section's region now that no concurrent slice remains.
+    let region = section(&doc, "## Filesystem mutation sites");
     let row = table_rows(region)
         .into_iter()
         .find(|row| row.contains("`src/watchdog.rs`") && row.contains("`src/tracking_alloc.rs`"))

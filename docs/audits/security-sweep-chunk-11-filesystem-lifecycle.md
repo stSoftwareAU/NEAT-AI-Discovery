@@ -418,25 +418,25 @@ rg -n 'remove_(file|dir_all)|create_dir|rename|symlink|canonicalize|set_permissi
     - `describe` — `metadata.is_symlink()` only labels the refusal message.
   - **src/debug.rs, src/debug/process_state.rs, src/watchdog.rs,
     src/tracking_alloc.rs:** no production hits.
-- **Bare-call blind spot.** An imported verb called bare slips past the
-  regex because the regex keys on the verb text, and the module-qualified
-  form (`fs::write`, `std::process::Command::new`) is what a reader expects.
-  Example: `set_permissions` in `debug/sample_dir.rs`, imported via
-  `use std::fs::{DirBuilder, Permissions, set_permissions};` and then called
-  as `set_permissions(dir, ...)` — it matched the grep only because the same
-  import line spelt the verb out. A bare call such as
-  `DirBuilder::new().mode(..).create(dir)`, `File::create`, `OpenOptions` or a
-  re-exported `fs::write` called through an unqualified alias would not match
-  this regex at all; in fact `DirBuilder::create` is used right beside
-  `set_permissions` in `sample_dir.rs::create_private_dir` and does not match
-  it. The slice full-file audits (#2234, #2251, #2252, #2253) read every line
-  of their files rather than relying on the grep, and cover this gap.
+- **Bare-call blind spot.** The regex matches verb text, so it catches an
+  imported verb called bare only when the verb's own name is in the regex —
+  e.g. `set_permissions`, imported in `debug/sample_dir.rs` via
+  `use std::fs::{DirBuilder, Permissions, set_permissions};` and called bare
+  as `set_permissions(dir, ...)`, is caught. An imported or bare-called verb
+  the regex does not name slips past:
+  `DirBuilder::new().mode(..).create(dir)` right beside it in
+  `sample_dir.rs::create_private_dir` does not match, nor would
+  `File::create`, `OpenOptions::open`, `fs::write`, or any verb imported under
+  a `use … as` alias. The slice full-file audits (#2234, #2251, #2252, #2253)
+  read every line of their files rather than relying on the grep, so they
+  cover this gap — the `create_private_dir` row above already records the
+  `DirBuilder` create.
 
 ## Re-verified remediations
 
 | Issue | Guard | Citing site (`file.rs::symbol`) | On live path? |
 | --- | --- | --- | --- |
-| #1903 | lock re-read immediately before removal (`LockRecheck::Enforce` → `CleanupOutcome::Claimed`); fail-closed lock probe (only `NotFound` means "no lock"); age floor (a child touched at or after `scan_started` is counted `claimed`) | `discovery_cleanup.rs::remove_discovery_dir` (re-check), `discovery_cleanup.rs::is_directory_orphaned` (fail-closed probe), `discovery_cleanup.rs::directory_touched_since` and the age-floor match in `discovery_cleanup.rs::clean_orphaned_discovery_dirs_since`; regression surface `tests/issue_1903_orphan_sweep_lock_recheck.rs` | yes — FFI `ffi/utilities.rs::clean_orphaned_discovery_dirs` → `discovery_cleanup.rs::clean_orphaned_discovery_dirs` → `clean_orphaned_discovery_dirs_since` → `cleanup_orphaned_discovery_dir` (`LockRecheck::Enforce`). Holds for UTF-8 names; this sweep found #2255 (the age floor could be bypassed for a non-UTF-8 entry) and #2256 (the guard keyed on a name the known host never writes), both since fixed: #2255 by commit 2ef5eba, #2256 by PR #2269 |
+| #1903 | lock re-read immediately before removal (`LockRecheck::Enforce` → `CleanupOutcome::Claimed`); fail-closed lock probe (only `NotFound` means "no lock"); age floor (a child touched at or after `scan_started` is counted `claimed`) | `discovery_cleanup.rs::remove_discovery_dir` (re-check), `discovery_cleanup.rs::is_directory_orphaned` (fail-closed probe), `discovery_cleanup.rs::directory_touched_since` and the age-floor match in `discovery_cleanup.rs::clean_orphaned_discovery_dirs_since`; regression surface `tests/issue_1903_orphan_sweep_lock_recheck.rs` | yes — FFI `ffi/utilities.rs::clean_orphaned_discovery_dirs` → `discovery_cleanup.rs::clean_orphaned_discovery_dirs` → `clean_orphaned_discovery_dirs_since` → `remove_discovery_dir` (`LockRecheck::Enforce`). Holds for UTF-8 names; this sweep found #2255 (the age floor could be bypassed for a non-UTF-8 entry) and #2256 (the guard keyed on a name the known host never writes), both since fixed: #2255 by commit 2ef5eba, #2256 by PR #2269 |
 | #1905 | owner-only per-invocation capture directory removed on `Drop` on every exit path, including kill-on-timeout; a symlink or foreign-owned file at the capture path is refused, not followed; guard test `tests/issue_1905_sample_temp_dir.rs` | `sample_dir.rs::SampleDir::create`, `sample_dir.rs::create_private_dir`, `sample_dir.rs::Drop::drop`, `sample_dir.rs::read_guarded` (via `sample_capture.rs::read_capture`); fallback-text surface `tests/issue_1934_sample_fallback.rs` | yes — SIGUSR1 → `debug.rs::dump_all_threads` → `debug.rs::render_thread_dump` → `sample_capture.rs::capture`. The manual fallback hint named `/tmp/sample.txt` (#2266), since fixed by PR #2275: `sample_capture.rs::write_manual_hint` now prints `"$(mktemp -d)/sample.txt"` |
 | #1904 | `RUNTIME_DIR_MODE` (`0700`) and `prepare_runtime_dir` in `src/analysis/utils/platform.rs`: create owner-only, re-apply the mode past the umask, refuse a pre-existing world-writable directory or a symlink | `platform.rs::prepare_runtime_dir`, pinned by its `xdg_runtime_dir_*` unit tests; the sampler only mirrors the pattern in `sample_dir.rs::create_private_dir` and does not call it | yes on Linux (`platform.rs::ensure_xdg_runtime_dir`); not on the sampler path — no `src/debug*` file references it |
 | #1906 | `successes > attempts` refused on every deserialise; the failure count saturates when scoring | `discovery_history.rs::NeuronDiscoveryHistory::try_from` (the `TryFrom<NeuronDiscoveryHistoryWire>` impl behind `#[serde(try_from)]`), `discovery_history.rs::NeuronDiscoveryHistory::bayesian_score`; regression tests `test_deserialize_rejects_successes_exceeding_attempts`, `test_bayesian_score_invalid_counts_saturates` and `test_deserialize_accepts_valid_counts` in `src/discovery_history.rs` | yes — FFI `ffi/utilities.rs::get_calibration_summary` → `ffi_internal/analysis.rs::get_calibration_summary_internal` → `serde_json::from_str` into `DiscoveryHistory` runs `try_from` per entry, and a corrupt entry fails the call as `InvalidInput`. `bayesian_score` is off the FFI path (Rust API only). The invariant holds on the way in, but `record_attempt` can break it at the `u32` ceiling (#2391) |
