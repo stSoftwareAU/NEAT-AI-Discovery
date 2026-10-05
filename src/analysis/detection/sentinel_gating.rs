@@ -36,7 +36,7 @@
 //! (Issue #2042).
 
 #![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use crate::types::DiscoverRecord;
 use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson, CreatureJson};
@@ -227,14 +227,22 @@ pub fn sentinel_gating_to_coordinated_candidates(
 ) -> Vec<CoordinatedStructuralCandidateJson> {
     let mut results = Vec::with_capacity(candidates.len());
 
+    // Build the from_uuid -> downstream targets lookup once rather than
+    // rescanning all synapses per candidate (Issue #2350).
+    let mut downstream_by_from: HashMap<&str, Vec<(&str, f32)>> = HashMap::new();
+    for s in &creature.synapses {
+        downstream_by_from
+            .entry(s.from_uuid.as_str())
+            .or_default()
+            .push((s.to_uuid.as_str(), s.weight));
+    }
+
     for c in candidates {
         // Find downstream targets: neurons that receive a synapse from this observation
-        let downstream_targets: Vec<(&str, f32)> = creature
-            .synapses
-            .iter()
-            .filter(|s| s.from_uuid == c.neuron_uuid)
-            .map(|s| (s.to_uuid.as_str(), s.weight))
-            .collect();
+        let downstream_targets: Vec<(&str, f32)> = downstream_by_from
+            .get(c.neuron_uuid.as_str())
+            .cloned()
+            .unwrap_or_default();
 
         if downstream_targets.is_empty() {
             continue;

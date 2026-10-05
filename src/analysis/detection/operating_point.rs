@@ -236,6 +236,16 @@ pub fn operating_point_to_coordinated_candidates(
 ) -> Vec<CoordinatedStructuralCandidateJson> {
     let mut results = Vec::new();
 
+    // Build the incoming-synapse index once per call instead of per candidate (Issue #2350)
+    let mut synapses_by_to_uuid: std::collections::HashMap<&str, Vec<&crate::SynapseJson>> =
+        std::collections::HashMap::new();
+    for s in &creature.synapses {
+        synapses_by_to_uuid
+            .entry(s.to_uuid.as_str())
+            .or_default()
+            .push(s);
+    }
+
     for issue in detected {
         let base_improvement = (1.0 - issue.dynamic_range_utilisation) * 0.005;
 
@@ -285,11 +295,10 @@ pub fn operating_point_to_coordinated_candidates(
         });
 
         // Candidate 3: setWeight — scale incoming weights to expand range into active zone
-        let incoming_synapses: Vec<&crate::SynapseJson> = creature
-            .synapses
-            .iter()
-            .filter(|s| s.to_uuid == issue.neuron_uuid)
-            .collect();
+        let empty: Vec<&crate::SynapseJson> = Vec::new();
+        let incoming_synapses = synapses_by_to_uuid
+            .get(issue.neuron_uuid.as_str())
+            .unwrap_or(&empty);
 
         if !incoming_synapses.is_empty() {
             let observed_range = (issue.value_max - issue.value_min).abs().max(0.001);
@@ -299,7 +308,7 @@ pub fn operating_point_to_coordinated_candidates(
             let scale_factor = target_range / observed_range;
 
             let mut weight_ops: Vec<CoordinatedStructuralOpJson> = Vec::new();
-            for s in &incoming_synapses {
+            for s in incoming_synapses {
                 weight_ops.push(CoordinatedStructuralOpJson::SetWeight {
                     from_neuron_uuid: s.from_uuid.clone(),
                     to_neuron_uuid: s.to_uuid.clone(),

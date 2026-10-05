@@ -23,6 +23,8 @@
 //! is approximately preserved.
 
 #![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
+use std::collections::{HashMap, HashSet};
+
 use crate::activations::{apply_scalar_squash, is_aggregate_squash};
 use crate::analysis::constants::MIN_DISCOVERY_SAMPLE_COUNT as MIN_SAMPLES;
 use crate::types::DiscoverRecord;
@@ -65,8 +67,10 @@ const RESCALE_CANDIDATES: &[f32] = &[
 /// likelihood of immediate benefit.
 const COORDINATED_BOOST: f32 = 1.5;
 
-/// Returns true if the candidate neuron's output feeds a downstream aggregate
-/// (MAX/MIN/IF/MEAN/HYPOT) selection neuron (Issue #1713).
+/// Builds the set of neuron uuids whose output feeds a downstream aggregate
+/// (MAX/MIN/IF/MEAN/HYPOT) selection neuron (Issue #1713), in a single pass
+/// over `creature.synapses` and `creature.neurons` rather than per-candidate
+/// rescans (Issue #2350).
 ///
 /// The expected-error-reduction estimator simulates each candidate neuron in
 /// isolation as `f(x)` and compares MAE against that neuron's *own* target. That
@@ -78,17 +82,23 @@ const COORDINATED_BOOST: f32 = 1.5;
 /// systematically mispredicts the gain (e.g. SELU→ABSOLUTE predicted `+4.2e-10`
 /// but measured `−8.7e-4`). Until a proper propagation model exists, gate such
 /// candidates out rather than emit a misleading estimate.
-fn feeds_downstream_aggregate(creature: &CreatureJson, neuron_uuid: &str) -> bool {
-    creature
-        .synapses
-        .iter()
-        .filter(|s| s.from_uuid == neuron_uuid)
-        .any(|s| {
-            creature
-                .neurons
-                .iter()
-                .any(|n| n.uuid == s.to_uuid && is_aggregate_squash(&n.squash))
-        })
+fn feeds_downstream_aggregate_set(creature: &CreatureJson) -> HashSet<&str> {
+    // A uuid may label more than one neuron; the original semantics treat the
+    // target as aggregate if ANY neuron with that uuid is an aggregate squash.
+    let mut aggregate_neuron_uuids: HashSet<&str> = HashSet::new();
+    for n in &creature.neurons {
+        if is_aggregate_squash(&n.squash) {
+            aggregate_neuron_uuids.insert(n.uuid.as_str());
+        }
+    }
+
+    let mut feeds_aggregate: HashSet<&str> = HashSet::new();
+    for s in &creature.synapses {
+        if aggregate_neuron_uuids.contains(s.to_uuid.as_str()) {
+            feeds_aggregate.insert(s.from_uuid.as_str());
+        }
+    }
+    feeds_aggregate
 }
 
 /// A detected squash + weight rescale candidate.
@@ -204,6 +214,24 @@ pub fn detect_squash_weight_rescale_candidates(
 ) -> Vec<SquashWeightRescaleCandidate> {
     let mut candidates = Vec::with_capacity(hidden_neurons.len());
 
+    // Build lookup maps once rather than rescanning per candidate (Issue #2350).
+    let feeds_aggregate = feeds_downstream_aggregate_set(creature);
+
+    let mut incoming_by_to: HashMap<&str, Vec<(&str, f32)>> = HashMap::new();
+    for s in &creature.synapses {
+        incoming_by_to
+            .entry(s.to_uuid.as_str())
+            .or_default()
+            .push((s.from_uuid.as_str(), s.weight));
+    }
+
+    let mut records_by_uuid: HashMap<&str, &[DiscoverRecord]> = HashMap::new();
+    for (u, records) in neuron_records {
+        records_by_uuid
+            .entry(u.as_str())
+            .or_insert_with(|| records.as_ref());
+    }
+
     for (uuid, current_squash, _bias) in hidden_neurons {
         // Skip aggregate squashes — they cannot be simulated as f(x)
         if is_aggregate_squash(current_squash) {
@@ -214,14 +242,13 @@ pub fn detect_squash_weight_rescale_candidates(
         // selection (MAX/MIN/IF/…). The local f(x) estimate cannot model how a
         // changed activation range alters which branch the aggregate selects,
         // so it systematically mispredicts the whole-creature gain (Issue #1713).
-        if feeds_downstream_aggregate(creature, uuid) {
+        if feeds_aggregate.contains(uuid.as_str()) {
             continue;
         }
 
-        let Some((_id, records)) = neuron_records.iter().find(|(u, _)| u == uuid) else {
+        let Some(records) = records_by_uuid.get(uuid.as_str()).copied() else {
             continue;
         };
-        let records = records.as_ref();
 
         if records.len() < MIN_SAMPLES {
             continue;
@@ -245,12 +272,10 @@ pub fn detect_squash_weight_rescale_candidates(
         }
 
         // Find incoming synapses for this neuron
-        let incoming_synapses: Vec<(&str, f32)> = creature
-            .synapses
-            .iter()
-            .filter(|s| s.to_uuid == *uuid)
-            .map(|s| (s.from_uuid.as_str(), s.weight))
-            .collect();
+        let incoming_synapses: Vec<(&str, f32)> = incoming_by_to
+            .get(uuid.as_str())
+            .cloned()
+            .unwrap_or_default();
 
         if incoming_synapses.is_empty() {
             continue;

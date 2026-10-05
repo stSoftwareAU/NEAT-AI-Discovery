@@ -237,6 +237,17 @@ pub fn bottleneck_neurons_to_coordinated_candidates(
 
     let mut results = Vec::with_capacity(candidates.len() * 2);
 
+    // Issue #2350: build the uuid → squash lookup once instead of a per-candidate
+    // linear scan over creature.neurons (O(C·N) -> O(C+N)). `or_insert` keeps the
+    // first neuron with a duplicate uuid, matching the prior `find` behaviour.
+    let mut squash_by_uuid: std::collections::HashMap<&str, &str> =
+        std::collections::HashMap::with_capacity(creature.neurons.len());
+    for n in &creature.neurons {
+        squash_by_uuid
+            .entry(n.uuid.as_str())
+            .or_insert(n.squash.as_str());
+    }
+
     for c in candidates {
         // Candidate 1: Add parallel neuron
         // Create a new hidden neuron that receives a subset of the bottleneck's inputs
@@ -248,11 +259,10 @@ pub fn bottleneck_neurons_to_coordinated_candidates(
             let new_uuid = bottleneck_parallel_neuron_uuid(&c.neuron_uuid, 0);
 
             // Find the bottleneck neuron's squash function (borrow, not clone)
-            let squash_ref = creature
-                .neurons
-                .iter()
-                .find(|n| n.uuid == c.neuron_uuid)
-                .map_or("TANH", |n| n.squash.as_str());
+            let squash_ref = squash_by_uuid
+                .get(c.neuron_uuid.as_str())
+                .copied()
+                .unwrap_or("TANH");
 
             // Build comment before moving squash into operations
             let comment = format!(

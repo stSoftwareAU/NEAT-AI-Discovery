@@ -35,6 +35,7 @@ use crate::types::DiscoverRecord;
 use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson, CreatureJson};
 
 use crate::analysis::constants::MIN_DISCOVERY_SAMPLE_COUNT;
+use crate::analysis::utils::deadline_passed;
 
 /// Minimum conflict score to flag a neuron (ratio of minority to majority group).
 /// 0.4 means the smaller-magnitude group is at least 40% of the larger group.
@@ -187,9 +188,28 @@ pub fn detect_fanin_polarity_conflicts(
 /// Each candidate proposes splitting the conflicting fan-in by adding a new hidden
 /// neuron to handle the negative-polarity pathway, rewiring the negative incoming
 /// synapses to the new neuron, and connecting the new neuron to the original target.
+///
+/// Issue #2350: no deadline — equivalent to calling
+/// [`fanin_polarity_conflicts_to_coordinated_candidates_with_deadline`] with a
+/// `None` deadline.
 pub fn fanin_polarity_conflicts_to_coordinated_candidates(
     candidates: &[FaninPolarityConflictCandidate],
     creature: &CreatureJson,
+) -> Vec<CoordinatedStructuralCandidateJson> {
+    fanin_polarity_conflicts_to_coordinated_candidates_with_deadline(candidates, creature, &None)
+}
+
+/// Deadline-aware variant of [`fanin_polarity_conflicts_to_coordinated_candidates`]
+/// (Issue #2350).
+///
+/// Builds the target-uuid → squash lookup once up front (rather than scanning
+/// `creature.neurons` per candidate) and checks `deadline` once per candidate
+/// so a hung or oversized conversion can be stopped mid-flight, returning the
+/// coordinated candidates built so far.
+pub fn fanin_polarity_conflicts_to_coordinated_candidates_with_deadline(
+    candidates: &[FaninPolarityConflictCandidate],
+    creature: &CreatureJson,
+    deadline: &Option<std::time::SystemTime>,
 ) -> Vec<CoordinatedStructuralCandidateJson> {
     // Build incoming synapses lookup: target_uuid -> Vec<(from_uuid, weight)>
     let mut incoming_synapses: HashMap<&str, Vec<(&str, f32)>> = HashMap::new();
@@ -200,9 +220,24 @@ pub fn fanin_polarity_conflicts_to_coordinated_candidates(
             .push((synapse.from_uuid.as_str(), synapse.weight));
     }
 
+    // Issue #2350: build the uuid -> squash lookup once rather than scanning
+    // `creature.neurons` per candidate (was O(C·N)). `entry(..).or_insert(..)`
+    // preserves the original `find`'s first-match semantics when several
+    // neurons share a uuid.
+    let mut squash_by_uuid: HashMap<&str, &str> = HashMap::new();
+    for n in &creature.neurons {
+        squash_by_uuid
+            .entry(n.uuid.as_str())
+            .or_insert(n.squash.as_str());
+    }
+
     let mut results = Vec::with_capacity(candidates.len());
 
     for c in candidates {
+        if deadline_passed(deadline) {
+            break;
+        }
+
         // Determine which group is the minority (to be split off)
         let split_negative = c.negative_weight_sum <= c.positive_weight_sum;
 

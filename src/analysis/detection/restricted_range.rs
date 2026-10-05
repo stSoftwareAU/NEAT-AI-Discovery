@@ -218,6 +218,16 @@ pub fn restricted_range_to_coordinated_candidates(
 ) -> Vec<CoordinatedStructuralCandidateJson> {
     let mut results = Vec::new();
 
+    // Build the incoming-synapse index once per call instead of per candidate (Issue #2350)
+    let mut synapses_by_to_uuid: std::collections::HashMap<&str, Vec<&crate::SynapseJson>> =
+        std::collections::HashMap::new();
+    for s in &creature.synapses {
+        synapses_by_to_uuid
+            .entry(s.to_uuid.as_str())
+            .or_default()
+            .push(s);
+    }
+
     for n in detected {
         let base_improvement = (1.0 - n.range_utilisation) * 0.005;
 
@@ -270,11 +280,10 @@ pub fn restricted_range_to_coordinated_candidates(
 
         // Candidate 3: Scale incoming weights to expand the operating range
         // Find all synapses targeting this neuron and compute a scale factor
-        let incoming_synapses: Vec<&crate::SynapseJson> = creature
-            .synapses
-            .iter()
-            .filter(|s| s.to_uuid == n.neuron_uuid)
-            .collect();
+        let empty: Vec<&crate::SynapseJson> = Vec::new();
+        let incoming_synapses = synapses_by_to_uuid
+            .get(n.neuron_uuid.as_str())
+            .unwrap_or(&empty);
 
         if !incoming_synapses.is_empty() {
             // Scale factor: we want the observed range to expand to fill more of the
@@ -283,7 +292,7 @@ pub fn restricted_range_to_coordinated_candidates(
             let scale_factor = target_utilisation / n.range_utilisation.max(0.01);
 
             let mut weight_ops: Vec<CoordinatedStructuralOpJson> = Vec::new();
-            for s in &incoming_synapses {
+            for s in incoming_synapses {
                 weight_ops.push(CoordinatedStructuralOpJson::SetWeight {
                     from_neuron_uuid: s.from_uuid.clone(),
                     to_neuron_uuid: s.to_uuid.clone(),

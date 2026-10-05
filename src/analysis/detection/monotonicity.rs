@@ -172,27 +172,50 @@ pub fn non_monotonic_neurons_to_coordinated_candidates(
 ) -> Vec<CoordinatedStructuralCandidateJson> {
     let mut results = Vec::with_capacity(candidates.len());
 
+    // Issue #2350: build the lookup maps once instead of per-candidate linear
+    // scans over creature.neurons / creature.synapses (O(C·N) -> O(C+N)).
+    // `or_insert` keeps the first neuron with a duplicate uuid, matching the
+    // prior `find` behaviour. Synapses are appended in iteration order so each
+    // per-key vector preserves the original order (callers use index `[0]`).
+    let mut squash_by_uuid: std::collections::HashMap<&str, &str> =
+        std::collections::HashMap::with_capacity(creature.neurons.len());
+    for n in &creature.neurons {
+        squash_by_uuid
+            .entry(n.uuid.as_str())
+            .or_insert(n.squash.as_str());
+    }
+
+    let mut outgoing_by_uuid: std::collections::HashMap<&str, Vec<&crate::SynapseJson>> =
+        std::collections::HashMap::new();
+    let mut incoming_by_uuid: std::collections::HashMap<&str, Vec<&crate::SynapseJson>> =
+        std::collections::HashMap::new();
+    for s in &creature.synapses {
+        outgoing_by_uuid
+            .entry(s.from_uuid.as_str())
+            .or_default()
+            .push(s);
+        incoming_by_uuid
+            .entry(s.to_uuid.as_str())
+            .or_default()
+            .push(s);
+    }
+
     for c in candidates {
         // Find the neuron's current squash function
-        let current_squash = creature
-            .neurons
-            .iter()
-            .find(|n| n.uuid == c.neuron_uuid)
-            .map_or("LOGISTIC", |n| n.squash.as_str());
+        let current_squash = squash_by_uuid
+            .get(c.neuron_uuid.as_str())
+            .copied()
+            .unwrap_or("LOGISTIC");
 
         // Find synapses going out of this neuron
-        let outgoing: Vec<&crate::SynapseJson> = creature
-            .synapses
-            .iter()
-            .filter(|s| s.from_uuid == c.neuron_uuid)
-            .collect();
+        let outgoing: &[&crate::SynapseJson] = outgoing_by_uuid
+            .get(c.neuron_uuid.as_str())
+            .map_or(&[], Vec::as_slice);
 
         // Find synapses coming into this neuron
-        let incoming: Vec<&crate::SynapseJson> = creature
-            .synapses
-            .iter()
-            .filter(|s| s.to_uuid == c.neuron_uuid)
-            .collect();
+        let incoming: &[&crate::SynapseJson] = incoming_by_uuid
+            .get(c.neuron_uuid.as_str())
+            .map_or(&[], Vec::as_slice);
 
         // Strategy: if the neuron has outgoing connections, add a parallel neuron
         // to split the workload. Otherwise, try changing the activation function.

@@ -210,6 +210,16 @@ pub fn output_range_compression_to_coordinated_candidates(
 ) -> Vec<CoordinatedStructuralCandidateJson> {
     let mut results = Vec::new();
 
+    // Build the incoming-synapse index once per call instead of per candidate (Issue #2350)
+    let mut synapses_by_to_uuid: std::collections::HashMap<&str, Vec<&crate::SynapseJson>> =
+        std::collections::HashMap::new();
+    for s in &creature.synapses {
+        synapses_by_to_uuid
+            .entry(s.to_uuid.as_str())
+            .or_default()
+            .push(s);
+    }
+
     for n in detected {
         let base_improvement = (1.0 - n.range_utilisation) * 0.005;
 
@@ -234,11 +244,10 @@ pub fn output_range_compression_to_coordinated_candidates(
         });
 
         // Candidate 2: Coordinated setBias + setWeight to recentre and rescale
-        let incoming_synapses: Vec<&crate::SynapseJson> = creature
-            .synapses
-            .iter()
-            .filter(|s| s.to_uuid == n.neuron_uuid)
-            .collect();
+        let empty: Vec<&crate::SynapseJson> = Vec::new();
+        let incoming_synapses = synapses_by_to_uuid
+            .get(n.neuron_uuid.as_str())
+            .unwrap_or(&empty);
 
         if !incoming_synapses.is_empty() {
             let observed_centre = (n.activation_min + n.activation_max) / 2.0;
@@ -255,7 +264,7 @@ pub fn output_range_compression_to_coordinated_candidates(
             let mut ops: Vec<CoordinatedStructuralOpJson> = Vec::new();
 
             // Rescale incoming weights
-            for s in &incoming_synapses {
+            for s in incoming_synapses {
                 ops.push(CoordinatedStructuralOpJson::SetWeight {
                     from_neuron_uuid: s.from_uuid.clone(),
                     to_neuron_uuid: s.to_uuid.clone(),
