@@ -1802,12 +1802,12 @@ baseline (#2290: one finding, #2308) and `mod.rs`, `pipeline_builder.rs` and
 and harmful halves (#2237: two findings, #2313 and #2314) and the bias, relu and
 activation halves (#2238: no new finding, relu and activation widen #2313
 and #2314, and the unreachable GPU bias path is #2316). The device slice
-recorded
-the `SEC-fe0b268a3799` disposition (remediated by #1873), the CPU-fallback
-cross-check (#2240: one finding, #2318), the entry-point `None → Err` sweep
-(#2241: no finding) and the per-file sweep of `analyzer.rs`, `budget.rs`,
-`breaker.rs` and `device.rs` (#2242: one finding, #2332). The queue-core slice
-swept `submission.rs` and `execution.rs` (#2243: one finding, #2339) and
+recorded the `SEC-fe0b268a3799` disposition (remediated by #1873), the
+CPU-fallback cross-check (#2240: one finding, #2318), the entry-point
+`None → Err` sweep (#2241: no finding) and the per-file sweep of
+`analyzer.rs`, `budget.rs`, `breaker.rs` and `device.rs` (#2242: one
+finding, #2332). The queue-core slice swept `submission.rs` and
+`execution.rs` (#2243: one finding, #2339) and
 `scheduling.rs`, `executor.rs` and `mod.rs` with the test-only
 `fake_evaluator.rs` and `wedge_tests.rs` (#2244: one finding, #2361). The
 queue-lifecycle slice swept `recovery.rs` and the retry loop it feeds (#2245:
