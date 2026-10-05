@@ -43,7 +43,7 @@ signal that their value was ignored, or that `0` turned recovery off.
 - The accessor is memoised, so only one in-process test may touch it:
   `accessor_routes_env_through_resolver`, marked `#[serial]`, uses the value
   `"abc"`.
-- `tests/issue_2006_numeric_env_override_trim.rs:15-18` documents the same
+- `tests/issue_2006_numeric_env_override_trim.rs:15-19` documents the same
   `OnceLock` limitation for this accessor.
 
 ## Evidence
@@ -81,7 +81,7 @@ signal that their value was ignored, or that `0` turned recovery off.
   `--test issue_1684_doc_dedup` and `--test issue_2006_numeric_env_override_trim`
   (14 passed each). CI builds on the pinned 1.99.0.
 
-**Docs sweep** — grep: `GPU_RETRY_LIMIT`, `gpu_retry_limit`, `get_gpu_retry_limit`, "Accepted range `0–10`"; section: `docs/CONFIGURATION.md#gpu`; updated: `docs/CONFIGURATION.md`, `src/analysis/gpu/queue/recovery.rs`, `src/config/user_facing.rs`
+**Docs sweep** — grep: `GPU_RETRY_LIMIT`, `gpu_retry_limit`, `get_gpu_retry_limit`, "Accepted range `0–10`"; section: `docs/CONFIGURATION.md#gpu`; updated: `docs/CONFIGURATION.md`, `src/analysis/gpu/queue/recovery.rs`, `src/config/user_facing.rs`, `tests/issue_2006_numeric_env_override_trim.rs`; still true: src/analysis/gpu/queue/execution.rs:10 — still true because the env var still configures the device-lost retry limit with a default of 3, and this change only adds warnings; src/analysis/gpu/queue/execution.rs:283 — still true because the loop still retries up to the configured limit, default 3, which the resolver returns unchanged; src/analysis/gpu/queue/recovery.rs:46 — still true because `get_gpu_retry_limit()` still delegates to `crate::config::gpu_retry_limit()`; src/analysis/gpu/queue/stale_skip_tests.rs:236 — still true because the test still compares against `DEFAULT_GPU_RETRY_LIMIT`, whose value is unchanged; src/analysis/gpu/queue/staleness.rs:7 — still true because the device-lost path still retries the configured number of times; src/config/mod.rs:15 — still true because the type, default `3` and range `0–10` are unchanged, and `docs/CONFIGURATION.md` carries the warn detail
 
 - Docs sweep detail: I read the `## GPU` table in `docs/CONFIGURATION.md`
   through. Its `NEAT_AI_DISCOVERY_GPU_RETRY_LIMIT` row (line 42) now states the
@@ -109,10 +109,10 @@ signal that their value was ignored, or that `0` turned recovery off.
   - `tests/gpu/issue_647_gpu_device_lost_recovery.rs:9-10`, `:91`, `:96` —
     constant asserts.
   - `tests/issue_1684_doc_dedup.rs:89` — env var name list.
-  - `tests/issue_2006_numeric_env_override_trim.rs:15-18` — the `OnceLock`
-    accessor cannot be exercised for the trim test; still true — the new test
-    reaches it once under `#[serial]` and covers the logic through the pure
-    resolver instead.
+  - `tests/issue_2006_numeric_env_override_trim.rs:15-19` — updated in this
+    diff: it said `gpu_retry_limit`'s trim was covered by the shared helper's
+    tests, but the trim now lives in `resolve_gpu_retry_limit`, covered by
+    `valid_values_do_not_warn` (`" 7 "`).
   - `docs/archive/pr-summaries/pr-summary-647.md:7`,
     `docs/archive/pr-summaries/pr-summary-1684.md:28`,
     `docs/archive/pr-summaries/pr-summary-1469.md:29`,
