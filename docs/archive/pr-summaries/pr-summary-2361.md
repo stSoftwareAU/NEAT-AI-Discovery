@@ -39,6 +39,11 @@ The GPU thread body now runs inside a panic guard. On panic the guard:
 - `src/analysis/gpu/queue/fake_evaluator.rs`: adds `WedgeBehaviour::Panics`.
 - `src/analysis/gpu/queue/worker_panic_test.rs`: the regression tests (new).
 - `src/analysis/gpu/queue/mod.rs`: registers `worker_panic_test`.
+- `docs/GPU_GUIDE.md`: adds the panic guard to the breaker trip-condition
+  table and the breaker state diagram, adds `Panics` to the fake-GPU behaviour
+  table, and lists `worker_panic_test.rs` among the wedge tests.
+
+**Docs sweep** — grep: `GpuTripReason`, `HeartbeatStall`, `WorkerPanicked`, `WedgeBehaviour`, `wedge_tests`, "panic", "wedged", "Trip condition"; section: `docs/GPU_GUIDE.md#️-gpu-timeout-errors` (the process-wide circuit breaker trip-condition table and state diagram) and `docs/GPU_GUIDE.md#how-the-wedged-gpu-defences-are-tested-issue-1935`; updated: `docs/GPU_GUIDE.md`
 
 ```mermaid
 flowchart TD
