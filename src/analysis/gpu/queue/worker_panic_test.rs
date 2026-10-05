@@ -200,8 +200,26 @@ fn panicking_worker_with_empty_queue_still_trips_the_breaker() {
         "the panicking request's own response channel must disconnect, got: {outcome:?}"
     );
 
+    // Issue #2361 follow-up: unlike the paired test above (where the second
+    // request's typed error is only sent *after* `trip()`, so observing it
+    // serialises the main thread behind the trip), this channel's disconnect
+    // and the breaker's trip are two independent writes on the panicking
+    // worker thread with no synchronisation between them beyond program
+    // order there: the drop that disconnects `response_rx` happens, by
+    // construction, during the panic unwind that precedes the `trip()`
+    // call. The main thread can therefore observe the disconnect a few
+    // instructions before the trip actually lands. Poll briefly for it
+    // rather than asserting instantaneously — bounded by the same
+    // `DETECTION_CAP` backstop the test already uses to fail loudly on a
+    // genuine regression.
+    let poll_deadline = Instant::now() + DETECTION_CAP;
+    let mut trip_reason = breaker.trip_reason();
+    while trip_reason.is_none() && Instant::now() < poll_deadline {
+        std::thread::yield_now();
+        trip_reason = breaker.trip_reason();
+    }
     assert_eq!(
-        breaker.trip_reason(),
+        trip_reason,
         Some(GpuTripReason::WorkerPanicked),
         "a worker panic must trip the breaker even with nothing queued behind it"
     );
