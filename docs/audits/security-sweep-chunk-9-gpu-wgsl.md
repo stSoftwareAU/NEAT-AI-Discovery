@@ -1615,11 +1615,7 @@ column keeps the `status` header that
 `tests/issue_2288_chunk_09_ledger_scaffold.rs` pins, and carries each row's
 `#N` link.
 
-Finding-issue audit (Issue #2250, 2026-10-05): all 11 finding issues — #2308,
-#2311, #2313, #2314, #2318, #2332, #2339, #2361, #2363, #2364 and #2365 —
-carry `security`, `lang:rust`, exactly one `severity:*` matching their row and
-exactly one `confidence:*`, and their bodies link this record, so no body edit
-was needed. `SEC-fe0b268a3799` predates the sweep and has no chunk-9 issue.
+Finding-issue audit (Issue #2250, 2026-10-05): all 11 finding issues, namely #2308, #2311, #2313, #2314, #2318, #2332, #2339, #2361, #2363, #2364 and #2365, carry `security`, `lang:rust`, exactly one `severity:*` matching their row and exactly one `confidence:*`, and their bodies link this record, so no body edit was needed. `SEC-fe0b268a3799` predates the sweep and has no chunk-9 issue.
 
 | finding-id | file:line | CWE | severity | status |
 | --- | --- | --- | --- | --- |
@@ -1804,8 +1800,9 @@ Per slice: the shaders slice swept the 10 `src/shaders/*.wgsl` kernels at the
 baseline (#2290: one finding, #2308) and `mod.rs`, `pipeline_builder.rs` and
 `shaders.rs` (#2291: one finding, #2311). The evaluation slice swept the helpful
 and harmful halves (#2237: two findings, #2313 and #2314) and the bias, relu and
-activation halves (#2238: no new finding, relu and activation widen #2313 and
-#2314, and the unreachable GPU bias path is #2316). The device slice recorded
+activation halves (#2238: no new finding, relu and activation widen #2313
+and #2314, and the unreachable GPU bias path is #2316). The device slice
+recorded
 the `SEC-fe0b268a3799` disposition (remediated by #1873), the CPU-fallback
 cross-check (#2240: one finding, #2318), the entry-point `None → Err` sweep
 (#2241: no finding) and the per-file sweep of `analyzer.rs`, `budget.rs`,
