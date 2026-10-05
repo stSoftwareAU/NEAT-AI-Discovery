@@ -53,10 +53,15 @@ flowchart LR
 
 ## Reproduction
 
-Status: **partial**. The failure needs a host on rustc older than 1.95, and
-this container has 1.98 and no rustup. The regression test
-`tests/issue_2395_msrv_declared.rs` reproduces the root cause, the missing
-declaration: it fails against the base `Cargo.toml` and passes with the fix.
+- **symptom** — on a host whose rustc is older than 1.95, `./scripts/runlib.sh`
+  never upgrades the toolchain (the gate only sees the dependency graph's 1.93.1
+  floor because `Cargo.toml` declares no `rust-version`), so the build fails
+  with `E0658` on `AtomicUsize::try_update` in `src/cancellation.rs`
+- **status** — `partial` — reason: this container has rustc 1.98 and no rustup,
+  so the `E0658` build failure on an older rustc could not be run here; the
+  regression test reproduces the root cause (the missing declaration) instead,
+  and was observed failing against the base `Cargo.toml` and passing with the fix
+- **regression test** — `tests/issue_2395_msrv_declared.rs::cargo_toml_declares_rust_version_at_or_above_the_try_update_floor`
 
 **Definition-of-done item missing: the fleet node-log line.** A node log line
 showing a successful build after the gate upgraded can only come from a fleet
@@ -65,8 +70,13 @@ fleet nodes, so a human needs to capture it after rollout.
 
 ## Evidence
 
-- **Docs sweep:** these hits (grep `rust-version|toolchain|MSRV|rustup`) are
-  still true after this change:
+**Docs sweep** — grep: `rust-version`, `toolchain`, `MSRV`, `rustup`, `msrv.yml`; section: `README.md#minimum-system-requirements`, `CONTRIBUTING.md#ci-pipeline`, `CONTRIBUTING.md#-prerequisites`; updated: `README.md`, `CONTRIBUTING.md`, `.github/actions/setup-rust/action.yml`
+
+- **Docs sweep detail:** the Minimum System Requirements table gains the Rust
+  toolchain row and the CI Pipeline list gains the `MSRV` bullet.
+  The Prerequisites section's "Rust (latest stable version)" was read through
+  and is still true, since latest stable is above the 1.95 floor. These other
+  hits are also still true after this change:
   - `README.md:75` — still true because it describes the generic rustup-init bootstrap, not a version.
   - `README.md:422,464,466,472,475` — still true because they cover the nightly toolchain for cargo-fuzz, which is unrelated to the MSRV.
   - `CONTRIBUTING.md:63,64,82` — still true because they describe the generic `$CARGO_HOME`/rustup-init bootstrap.
