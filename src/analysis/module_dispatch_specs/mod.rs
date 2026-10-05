@@ -804,4 +804,171 @@ mod tests {
             );
         }
     }
+
+    /// Issue #2348: a forward-only creature with two hidden neurons whose
+    /// activations are perfectly correlated, feeding the co-adaptation
+    /// pairwise scan dispatched by `build_discovery_module_specs`.
+    fn co_adaptation_creature() -> CreatureJson {
+        CreatureJson {
+            neurons: vec![
+                NeuronJson {
+                    uuid: "in-0".to_string(),
+                    neuron_type: "input".to_string(),
+                    squash: "IDENTITY".to_string(),
+                    bias: 0.0,
+                },
+                NeuronJson {
+                    uuid: "h1".to_string(),
+                    neuron_type: "hidden".to_string(),
+                    squash: "TANH".to_string(),
+                    bias: 0.0,
+                },
+                NeuronJson {
+                    uuid: "h2".to_string(),
+                    neuron_type: "hidden".to_string(),
+                    squash: "TANH".to_string(),
+                    bias: 0.0,
+                },
+                NeuronJson {
+                    uuid: "o1".to_string(),
+                    neuron_type: "output".to_string(),
+                    squash: "TANH".to_string(),
+                    bias: 0.0,
+                },
+            ],
+            synapses: vec![
+                SynapseJson {
+                    from_uuid: "in-0".to_string(),
+                    to_uuid: "h1".to_string(),
+                    weight: 1.0,
+                    synapse_type: None,
+                },
+                SynapseJson {
+                    from_uuid: "in-0".to_string(),
+                    to_uuid: "h2".to_string(),
+                    weight: 1.0,
+                    synapse_type: None,
+                },
+                SynapseJson {
+                    from_uuid: "h1".to_string(),
+                    to_uuid: "o1".to_string(),
+                    weight: 0.5,
+                    synapse_type: None,
+                },
+                SynapseJson {
+                    from_uuid: "h2".to_string(),
+                    to_uuid: "o1".to_string(),
+                    weight: 0.5,
+                    synapse_type: None,
+                },
+            ],
+            input: 1,
+            output: 1,
+        }
+    }
+
+    /// `h1` and `h2` carry identical, varying-over-`obs_index` activations —
+    /// perfectly correlated and comfortably above `MIN_DISCOVERY_SAMPLE_COUNT`
+    /// (20).
+    #[allow(clippy::cast_precision_loss)] // synthetic activation waveform over tiny indices (Issue #2348)
+    fn co_adaptation_cache() -> cache::RecordCache {
+        cache::RecordCache::with_loader(
+            "test.parquet",
+            Arc::new(
+                |_file: &str, _uuid: &str| -> anyhow::Result<Vec<DiscoverRecord>> {
+                    Ok((0..40)
+                        .map(|i| {
+                            let activation = (i as f32 * 0.37).sin();
+                            DiscoverRecord::new(
+                                i,
+                                "shared".to_string(),
+                                Some(0.0),
+                                activation,
+                                vec![0.0],
+                            )
+                        })
+                        .collect())
+                },
+            ),
+        )
+    }
+
+    /// Issue #2348: the dispatch closure for `co_adaptation_detection` must
+    /// thread the dispatch deadline into
+    /// `co_adaptation::detect_co_adapted_neurons_with_deadline`. A deadline an
+    /// hour in the future must not stop the pairwise scan from finding the
+    /// co-adapted `h1`/`h2` pair.
+    #[test]
+    fn co_adaptation_spec_detects_pairs_before_the_deadline() {
+        let creature = Arc::new(co_adaptation_creature());
+        let hidden: Arc<Vec<(String, String, f32)>> = Arc::new(vec![
+            ("h1".to_string(), "TANH".to_string(), 0.0),
+            ("h2".to_string(), "TANH".to_string(), 0.0),
+        ]);
+        let cache = Arc::new(co_adaptation_cache());
+        let topo = Arc::new(
+            super::super::detection::topology_cache::CreatureTopologyCache::new(&creature),
+        );
+        let deadline = Some(std::time::SystemTime::now() + std::time::Duration::from_secs(3_600));
+
+        let specs = build_discovery_module_specs(
+            &creature,
+            &hidden,
+            &cache,
+            &topo,
+            CostFunctionHint::Unknown,
+            TaskDescriptor::neutral(),
+            deadline,
+        );
+
+        let spec = specs
+            .into_iter()
+            .find(|s| s.phase_name == "co_adaptation_detection")
+            .expect("co-adaptation detection must be registered as a discovery module");
+
+        let result = (spec.detect_fn)()
+            .expect("a live deadline must let the pairwise scan find the correlated pair");
+        assert!(
+            result.detected_count >= 1,
+            "expected at least one co-adapted pair, got {}",
+            result.detected_count
+        );
+    }
+
+    /// Issue #2348: an already-elapsed deadline must stop the pairwise scan
+    /// before any pair is evaluated, proving the dispatch closure actually
+    /// threads `deadline` through rather than passing `&None`.
+    #[test]
+    fn co_adaptation_spec_honours_an_elapsed_deadline() {
+        let creature = Arc::new(co_adaptation_creature());
+        let hidden: Arc<Vec<(String, String, f32)>> = Arc::new(vec![
+            ("h1".to_string(), "TANH".to_string(), 0.0),
+            ("h2".to_string(), "TANH".to_string(), 0.0),
+        ]);
+        let cache = Arc::new(co_adaptation_cache());
+        let topo = Arc::new(
+            super::super::detection::topology_cache::CreatureTopologyCache::new(&creature),
+        );
+        let deadline = Some(std::time::SystemTime::UNIX_EPOCH);
+
+        let specs = build_discovery_module_specs(
+            &creature,
+            &hidden,
+            &cache,
+            &topo,
+            CostFunctionHint::Unknown,
+            TaskDescriptor::neutral(),
+            deadline,
+        );
+
+        let spec = specs
+            .into_iter()
+            .find(|s| s.phase_name == "co_adaptation_detection")
+            .expect("co-adaptation detection must be registered as a discovery module");
+
+        assert!(
+            (spec.detect_fn)().is_none(),
+            "an elapsed deadline must stop the scan before any pair is evaluated"
+        );
+    }
 }
