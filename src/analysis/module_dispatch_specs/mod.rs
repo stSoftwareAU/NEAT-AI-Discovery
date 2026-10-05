@@ -45,6 +45,7 @@ use super::{
 ///
 /// Issue #2183: `deadline` is captured by the recommendation-core scans
 /// (multi-hop, fan-in, gradient) so each stops mid-scan once it passes.
+/// Issue #2348: it is also captured by the co-adaptation pairwise scan.
 pub(crate) fn build_discovery_module_specs(
     creature: &Arc<crate::CreatureJson>,
     hidden_neurons: &Arc<Vec<(String, String, f32)>>,
@@ -63,6 +64,7 @@ pub(crate) fn build_discovery_module_specs(
         shared_cache,
         topo,
         cost_hint,
+        deadline,
     );
     synapse_specs::append_synapse_specs(&mut modules, creature, hidden_neurons, shared_cache, topo);
     structural_specs::append_structural_specs(
