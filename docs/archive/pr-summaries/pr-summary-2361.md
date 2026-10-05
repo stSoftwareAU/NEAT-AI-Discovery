@@ -43,7 +43,12 @@ The GPU thread body now runs inside a panic guard. On panic the guard:
   table and the breaker state diagram, adds `Panics` to the fake-GPU behaviour
   table, and lists `worker_panic_test.rs` among the wedge tests.
 
-**Docs sweep** — grep: `GpuTripReason`, `HeartbeatStall`, `WorkerPanicked`, `WedgeBehaviour`, `wedge_tests`, "panic", "wedged", "Trip condition"; section: `docs/GPU_GUIDE.md#️-gpu-timeout-errors` (the process-wide circuit breaker trip-condition table and state diagram) and `docs/GPU_GUIDE.md#how-the-wedged-gpu-defences-are-tested-issue-1935`; updated: `docs/GPU_GUIDE.md`
+**Docs sweep** — grep (on the head, `git grep -nE` over `*.md` excluding `docs/archive/**`): `WorkerPanicked`, `run_guarded_gpu_thread`, `join_gpu_thread`, `GpuTripReason`, `InitTimeout`, `HeartbeatStall`, `handle\.join`, `WedgeBehaviour`, `worker_panic_test`, `always signal exit`; section: `docs/GPU_GUIDE.md#️-gpu-timeout-errors` (breaker trip-condition table and state diagram) and `docs/GPU_GUIDE.md#how-the-wedged-gpu-defences-are-tested-issue-1935` (fake-GPU behaviour table and test-file list); updated: `docs/GPU_GUIDE.md`; remaining hits:
+
+- `docs/GPU_GUIDE.md:405` — still true because it is the trip-condition row this change added, and it describes `run_guarded_gpu_thread` as shipped.
+- `docs/GPU_GUIDE.md:568` — still true because it names `worker_panic_test.rs`, the test file this change added.
+
+No doc lists the `GpuTripReason` variants by name, and `docs/FFI_API.md` and `docs/CONFIGURATION.md` have no hits, so neither needs a change. The module doc in `src/analysis/gpu/breaker.rs` that lists the explicit trip sites now names the panic guard.
 
 ```mermaid
 flowchart TD
@@ -138,18 +143,16 @@ fix.
 - The unfixed-guard experiment above was run and then reverted. It is not
   committed.
 
-Branch outcomes:
+Branch outcomes (each flip was applied alone, run with the targeted command above, then reverted):
 
-- `scheduling.rs` `run_guarded_gpu_thread`, panic → trip, drain, answer.
-  Reached by
-  `src/analysis/gpu/queue/worker_panic_test.rs::queued_request_fails_promptly_when_the_gpu_thread_panics`
-  and `scheduling.rs::tests::run_guarded_gpu_thread_drains_shutdown_without_panicking`.
-- `run_guarded_gpu_thread`, clean body → no trip, no drain. Reached by
-  `scheduling.rs::tests::run_guarded_gpu_thread_ok_body_leaves_queue_and_breaker_untouched`.
-- `panic_payload_message`, `&str` / `String` / other payloads. Reached by the
-  three `panic_payload_message_handles_*` tests.
-- `fail_queued_request` `HelpfulBatch` arm. Reached by the regression test.
-  `Shutdown` is reached by the drain unit test. The other arms are identical
-  send-an-`Err` lines and no test reaches them.
-- `join_gpu_thread` `Err(payload)` arm. This is logging only, and no test
-  reaches it because the guard catches every panic from the body.
+- `src/analysis/gpu/queue/scheduling.rs:34` — panic caught → log, trip, drain, answer. Reached by `src/analysis/gpu/queue/worker_panic_test.rs::queued_request_fails_promptly_when_the_gpu_thread_panics`, `src/analysis/gpu/queue/worker_panic_test.rs::panicking_worker_with_empty_queue_still_trips_the_breaker` and `src/analysis/gpu/queue/scheduling.rs::tests::run_guarded_gpu_thread_drains_shutdown_without_panicking`. Flipping it (bare `body()`, no `catch_unwind`) went red: all three failed, the regression test with `Stalled { idle: 319ms, window: 300ms }`.
+- `src/analysis/gpu/queue/scheduling.rs:34` — clean body → no trip, no drain. Reached by `src/analysis/gpu/queue/scheduling.rs::tests::run_guarded_gpu_thread_ok_body_leaves_queue_and_breaker_untouched`. Flipping it (trip unconditionally) went red: "a clean body must not trip the breaker".
+- `src/analysis/gpu/queue/scheduling.rs:41` — each drained request is answered. Reached by the regression test. Flipping it (`drop(request)` instead of `fail_queued_request`) went red: the outcome became `Disconnected`.
+- `src/analysis/gpu/queue/scheduling.rs:60` — `HelpfulBatch` arm sends `Err` naming the panic. Reached by the regression test. Flipping it (`drop(response_tx)`) went red: the outcome became `Disconnected`.
+- `src/analysis/gpu/queue/scheduling.rs:68`–`:99` — `HarmfulBatch`, `ReluEval`, `ActivationEval`, `ActivationBatchEval` arms. Identical send-an-`Err` bodies; no test reaches them, so no flip was claimed.
+- `src/analysis/gpu/queue/scheduling.rs:100` — `Shutdown` arm, a no-op. Reached by `run_guarded_gpu_thread_drains_shutdown_without_panicking`; it has no observable effect to flip.
+- `src/analysis/gpu/queue/scheduling.rs:44` — `failed > 0` summary log. Logging only; no test asserts on it, so no flip was claimed.
+- `src/analysis/gpu/queue/scheduling.rs:110` — `&str` payload. Reached by `src/analysis/gpu/queue/scheduling.rs::tests::panic_payload_message_handles_str_payload` and the regression test. Flipping it (return `"x"`) went red in both.
+- `src/analysis/gpu/queue/scheduling.rs:112` — `String` payload. Reached by `src/analysis/gpu/queue/scheduling.rs::tests::panic_payload_message_handles_string_payload`. Flipping it went red.
+- `src/analysis/gpu/queue/scheduling.rs:115` — non-string fallback. Reached by `src/analysis/gpu/queue/scheduling.rs::tests::panic_payload_message_handles_non_string_payload`. Flipping the literal went red.
+- `src/analysis/gpu/queue/scheduling.rs:293` — `join_gpu_thread` `Err(payload)` arm. Logging only, and unreachable from the guarded body because the guard catches every panic it raises; no test reaches it, so no flip was claimed.

@@ -333,7 +333,10 @@ mod tests {
             // Body returns normally — no panic.
         });
 
-        assert!(!breaker.is_tripped(), "a clean body must not trip the breaker");
+        assert!(
+            !breaker.is_tripped(),
+            "a clean body must not trip the breaker"
+        );
         assert_eq!(
             work_rx.len(),
             1,
