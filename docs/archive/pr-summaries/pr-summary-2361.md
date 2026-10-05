@@ -143,7 +143,9 @@ fix.
 - The unfixed-guard experiment above was run and then reverted. It is not
   committed.
 
-Branch outcomes (each flip was applied alone, run with the targeted command above, then reverted):
+**Branch outcomes:**
+
+Each flip was applied alone, run with the targeted command above (`cargo test --lib -- <test>`), then reverted.
 
 - `src/analysis/gpu/queue/scheduling.rs:34` — panic caught → log, trip, drain, answer. Reached by `src/analysis/gpu/queue/worker_panic_test.rs::queued_request_fails_promptly_when_the_gpu_thread_panics`, `src/analysis/gpu/queue/worker_panic_test.rs::panicking_worker_with_empty_queue_still_trips_the_breaker` and `src/analysis/gpu/queue/scheduling.rs::tests::run_guarded_gpu_thread_drains_shutdown_without_panicking`. Flipping it (bare `body()`, no `catch_unwind`) went red: all three failed, the regression test with `Stalled { idle: 319ms, window: 300ms }`.
 - `src/analysis/gpu/queue/scheduling.rs:34` — clean body → no trip, no drain. Reached by `src/analysis/gpu/queue/scheduling.rs::tests::run_guarded_gpu_thread_ok_body_leaves_queue_and_breaker_untouched`. Flipping it (trip unconditionally) went red: "a clean body must not trip the breaker".
@@ -156,3 +158,9 @@ Branch outcomes (each flip was applied alone, run with the targeted command abov
 - `src/analysis/gpu/queue/scheduling.rs:112` — `String` payload. Reached by `src/analysis/gpu/queue/scheduling.rs::tests::panic_payload_message_handles_string_payload`. Flipping it went red.
 - `src/analysis/gpu/queue/scheduling.rs:115` — non-string fallback. Reached by `src/analysis/gpu/queue/scheduling.rs::tests::panic_payload_message_handles_non_string_payload`. Flipping the literal went red.
 - `src/analysis/gpu/queue/scheduling.rs:293` — `join_gpu_thread` `Err(payload)` arm. Logging only, and unreachable from the guarded body because the guard catches every panic it raises; no test reaches it, so no flip was claimed.
+- `src/analysis/gpu/queue/scheduling.rs:61` — error (caller already gone, `send` fails) → `trace!` and carry on. Same shape in every request arm. Logging only; no test drops a queued caller's receiver before the drain, so no flip was claimed.
+- `src/analysis/gpu/breaker.rs:84` — success (`WorkerPanicked` → code 5). Reached by `src/analysis/gpu/breaker.rs::tests::reason_codes_round_trip`. Flipping it (return `REASON_HEARTBEAT_STALL`) went red: the round-trip assertion at `breaker.rs:463` failed.
+- `src/analysis/gpu/breaker.rs:95` — success (code 5 → `Some(WorkerPanicked)`). Reached by `src/analysis/gpu/breaker.rs::tests::reason_codes_round_trip`. Flipping it (return `None`, the unknown-code fallback) went red at `breaker.rs:463`.
+- `src/analysis/gpu/breaker.rs:111` — success (`WorkerPanicked` description). Reached by `src/analysis/gpu/breaker.rs::tests::reason_codes_round_trip`. Flipping it (empty string) went red at the non-empty assertion, `breaker.rs:464`.
+- `src/analysis/gpu/queue/fake_evaluator.rs:224` — `WedgeBehaviour::Panics` arm panics on the first request. Reached by `src/analysis/gpu/queue/worker_panic_test.rs::queued_request_fails_promptly_when_the_gpu_thread_panics` and `src/analysis/gpu/queue/worker_panic_test.rs::panicking_worker_with_empty_queue_still_trips_the_breaker`. Flipping it (return `Err` instead of panicking) went red: both tests failed.
+- `src/analysis/gpu/queue/mod.rs:70` — `#[cfg(test)] mod worker_panic_test;` registration. It adds no branch.
