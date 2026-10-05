@@ -68,12 +68,16 @@ flowchart TD
     E -- yes --> R[corr]
 ```
 
-**Docs sweep:**
-- I grepped `pearson_correlation_hashmaps`, `never non-finite`, `Issue #2182`
-  and `Compute Pearson correlation` across `src/`, `tests/`, `docs/`,
-  `README.md` and `CONTRIBUTING.md`.
-- I updated the function's doc comment, `src/analysis/detection/stats.rs:117-122`.
-- These remaining hits are still true:
+**Docs sweep** — grep: `pearson_correlation_hashmaps`, `Pearson`, "never non-finite", `NaN`, `overflow`, `Issue #2182`; section: `docs/discoveries/correlated-error.md#-how-we-detect-it`, `docs/discoveries/multi-hop.md#-how-we-detect-it`, `docs/discoveries/weight-coherence.md#-how-we-detect-it`; updated: none — every manual hit was read through and is still true (no manual describes NaN or overflow behaviour), the only stale text was the function's own doc comment at `src/analysis/detection/stats.rs:117-122`, updated in this diff
+
+- The grep scope was `README.md`, `CONTRIBUTING.md`, every `*/README.md`, and
+  `docs/` excluding `docs/archive/`, plus `src/` and `tests/`.
+- The manual hits in `docs/discoveries/*.md`, `docs/DISCOVERY_TYPES.md` and
+  `docs/ANALYSIS_DEEP_DIVE.md` only state Pearson thresholds (≥ 0.3, 0.4,
+  0.7, 0.8, 0.85, 0.9, 0.999). An overflow now reads as `0.0`, which is below
+  every threshold. Before the fix NaN also failed every threshold, so each
+  sentence stays true.
+- These code hits are still true:
   - `src/analysis/detection/correlated_error.rs:245` and `:415`, still true
     because they only say "Compute Pearson correlation…", with no claim about
     non-finite results.
