@@ -294,7 +294,7 @@ Probe dispositions (Issue #2253):
 - **Calibration NaN/inf — reaches the FFI summary, finding filed (#2392).**
   JSON carries no NaN or inf literal, and serde_json refuses an out-of-range
   number such as `1e400` (pinned by the passing unit test
-  `test_deserialize_rejects_non_finite_json_numbers`), but finite values
+  `test_deserialise_rejects_non_finite_json_numbers`), but finite values
   overflow in the arithmetic. `predicted = 1.7e308, actual = -1.7e308` makes
   the mean absolute error in `CalibrationTracker::calibration_summary` `inf`,
   and adding the opposite pair makes its bias NaN. Two ratios of

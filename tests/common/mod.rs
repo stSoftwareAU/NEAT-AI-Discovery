@@ -6,7 +6,10 @@
 //! - **Record helpers** — `record()` for creating `DiscoverRecord` instances
 //! - **runlib sandbox primitives** — [`runlib_support`], shared by the
 //!   `scripts/runlib.sh` tests (Issue #2072)
+//! - **ledger-doc helpers** — [`ledger`], generic Markdown ledger helpers
+//!   used today by the chunk 11c-2 audit test (Issue #2253)
 
+pub mod ledger;
 pub mod runlib_support;
 
 #[allow(dead_code)]

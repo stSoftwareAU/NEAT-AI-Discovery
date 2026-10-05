@@ -652,16 +652,19 @@ mod tests {
     /// Every input is a finite JSON number, yet `predicted - actual` overflows
     /// to +/-inf and the sum to NaN. (Issue #2253)
     /// Failing-first for finding #2392; its fix removes the `#[ignore]`.
+    ///
+    /// Also checks through the shipped FFI entry point
+    /// `get_calibration_summary_internal`, because `serde_json` writes a
+    /// non-finite `f64` as `null` under `success: true`.
     #[test]
     #[ignore = "finding #2392: fails until calibration metrics stay finite"]
     fn test_calibration_summary_stays_finite_for_extreme_finite_observations() {
-        let history: DiscoveryHistory = serde_json::from_str(
-            r#"{"neurons":{},"calibration":{"observations":{"saturation::addSynapse":[
+        let history_json = r#"{"neurons":{},"calibration":{"observations":{"saturation::addSynapse":[
                 {"predicted":1.7e308,"actual":-1.7e308},
                 {"predicted":-1.7e308,"actual":1.7e308}
-            ]}}}"#,
-        )
-        .expect("extreme but finite JSON numbers must deserialise");
+            ]}}}"#;
+        let history: DiscoveryHistory = serde_json::from_str(history_json)
+            .expect("extreme but finite JSON numbers must deserialise");
 
         let summary = history.calibration_summary();
         assert_eq!(summary.len(), 1, "expected a single summary entry");
@@ -689,6 +692,29 @@ mod tests {
             "serde_json writes non-finite f64 as null, which the FFI would \
              return under success: true; got {serialised}"
         );
+
+        // Check the same thing through the shipped FFI entry point: the
+        // response must claim success while still reporting finite metrics,
+        // rather than silently serialising a non-finite f64 as null.
+        let input = serde_json::json!({ "discoveryHistory": history_json }).to_string();
+        let response = crate::ffi_internal::get_calibration_summary_internal(&input)
+            .expect("the FFI entry point must return a JSON string");
+        let value: serde_json::Value =
+            serde_json::from_str(&response).expect("FFI response must be valid JSON");
+
+        assert_eq!(
+            value["success"], true,
+            "expected success: true, got {value}"
+        );
+
+        let ffi_entry = &value["calibrationSummary"][0];
+        for field in ["meanAbsoluteError", "bias", "calibrationFactor"] {
+            let metric = &ffi_entry[field];
+            assert!(
+                metric.is_number(),
+                "FFI field {field} must be a finite JSON number, got {metric} in {value}"
+            );
+        }
     }
 
     /// The two ratios overflow to +inf and -inf, their sum is NaN, and
@@ -714,7 +740,7 @@ mod tests {
     /// number, so a non-finite metric can only come from arithmetic on
     /// finite values. (Issue #2253)
     #[test]
-    fn test_deserialize_rejects_non_finite_json_numbers() {
+    fn test_deserialise_rejects_non_finite_json_numbers() {
         let result = serde_json::from_str::<DiscoveryHistory>(
             r#"{"neurons":{},"calibration":{"observations":{"m::t":[{"predicted":1e400,"actual":1.0}]}}}"#,
         );
