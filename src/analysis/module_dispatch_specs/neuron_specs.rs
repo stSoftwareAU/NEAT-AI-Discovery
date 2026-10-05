@@ -191,11 +191,20 @@ pub(crate) fn append_neuron_specs(
         guard_min: hidden 2,
         records: cache.load_records_for_hidden(&hidden),
         detect: |records| {
-            // Issue #2349: the O(E²) pair scan stops at the deadline, on
-            // cancellation or at the candidate ceiling; a partial scan is logged.
+            // Issue #2349 (eligible-neuron cap hardened per review of PR
+            // #2400): the O(E²) pair scan stops at the deadline, on
+            // cancellation or at the candidate ceiling; a partial scan is
+            // logged, as is a capped eligible-neuron count.
             let scan = symmetry_breaking::detect_symmetric_neurons_with_deadline(&creature, &records, &deadline);
             if let Some(reason) = scan.truncation {
                 tracing::warn!(reason = ?reason, returned = scan.candidates.len(), "Symmetry-breaking scan stopped early; returning partial candidates.");
+            }
+            if scan.eligible_skipped > 0 {
+                tracing::warn!(
+                    skipped = scan.eligible_skipped,
+                    cap = symmetry_breaking::MAX_SYMMETRY_ELIGIBLE_NEURONS,
+                    "Symmetry-breaking scan capped eligible hidden neurons; skipped neurons were not compared."
+                );
             }
             scan.candidates
         },

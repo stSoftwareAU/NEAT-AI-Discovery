@@ -18,11 +18,13 @@
 //! work done, not by timing it. An elapsed deadline is `UNIX_EPOCH`, a live
 //! one is a day ahead — no sleeps and no timing thresholds.
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for per-neuron bias offsets (Issue #873)
+
 use std::time::{Duration, SystemTime};
 
 use neat_ai_discovery::analysis::detection::symmetry_breaking::{
-    MAX_SYMMETRIC_PAIR_CANDIDATES, detect_symmetric_neurons, detect_symmetric_neurons_observed,
-    detect_symmetric_neurons_with_deadline,
+    MAX_SYMMETRIC_PAIR_CANDIDATES, MAX_SYMMETRY_ELIGIBLE_NEURONS, detect_symmetric_neurons,
+    detect_symmetric_neurons_observed, detect_symmetric_neurons_with_deadline,
 };
 use neat_ai_discovery::analysis::recommendation::epistatic::ScanTruncation;
 use neat_ai_discovery::types::DiscoverRecord;
@@ -95,6 +97,46 @@ fn identical_creature(n: usize) -> (CreatureJson, Vec<(String, Vec<DiscoverRecor
 
 fn far_future_deadline() -> Option<SystemTime> {
     Some(SystemTime::now() + Duration::from_secs(24 * 60 * 60))
+}
+
+/// Like `identical_creature`, but every hidden neuron's bias is offset by
+/// 1.0 from its neighbours — comfortably beyond `BIAS_TOLERANCE` (0.5) — so
+/// no pair ever qualifies as symmetric. This isolates the eligible-neuron
+/// cap from the candidate ceiling: with zero candidates possible, any
+/// truncation observed can only come from the eligible-neuron cap.
+fn creature_with_no_symmetric_pairs(
+    n: usize,
+) -> (CreatureJson, Vec<(String, Vec<DiscoverRecord>)>) {
+    let inputs = ["input-0", "input-1", "input-2"];
+    let weights = [0.5_f32, -0.3, 0.8];
+
+    let mut neurons: Vec<NeuronJson> = inputs.iter().map(|u| neuron(u, "input")).collect();
+    neurons.push(neuron("output-0", "output"));
+
+    let mut synapses = Vec::new();
+    let mut records = Vec::with_capacity(n);
+
+    for h in 0..n {
+        let uuid = format!("hidden-{h}");
+        neurons.push(NeuronJson {
+            uuid: uuid.clone(),
+            neuron_type: "hidden".to_string(),
+            squash: "LOGISTIC".to_string(),
+            bias: h as f32,
+        });
+        for (input, weight) in inputs.iter().zip(weights.iter()) {
+            synapses.push(synapse(input, &uuid, *weight));
+        }
+        records.push(records_for(&uuid));
+    }
+
+    let creature = CreatureJson {
+        neurons,
+        synapses,
+        input: inputs.len(),
+        output: 1,
+    };
+    (creature, records)
 }
 
 #[test]
@@ -215,4 +257,46 @@ fn duplicate_source_synapse_keeps_first_weight() {
         "the duplicated-source pair must still be detected as symmetric"
     );
     assert!((scan.candidates[0].cosine_similarity - 1.0).abs() < 1e-6);
+}
+
+/// Review finding on PR #2400 (Issue #2349 follow-up): eligible hidden
+/// neurons beyond `MAX_SYMMETRY_ELIGIBLE_NEURONS` must be skipped (and the
+/// skip recorded), rather than driving an unbounded `E x A` weight-vector
+/// build. No pair is symmetric here, so the candidate ceiling never fires —
+/// isolating the eligible-neuron cap. The weight-vector build count is
+/// capped at `MAX_SYMMETRY_ELIGIBLE_NEURONS`, proving the fix: before this
+/// cap existed, this test would build `extra` more vectors than it does now.
+#[test]
+fn eligible_neurons_beyond_the_cap_are_skipped_and_recorded() {
+    let extra = 40_usize;
+    let hidden_count = MAX_SYMMETRY_ELIGIBLE_NEURONS + extra;
+
+    let (creature, records) = creature_with_no_symmetric_pairs(hidden_count);
+
+    let mut build_count = 0;
+    let scan = detect_symmetric_neurons_observed(&creature, &records, &None, || build_count += 1);
+
+    assert_eq!(scan.eligible_skipped, extra);
+    assert_eq!(
+        build_count, MAX_SYMMETRY_ELIGIBLE_NEURONS,
+        "the weight-vector build must stop at the eligible-neuron cap, not build one per hidden neuron"
+    );
+    assert!(
+        scan.candidates.is_empty(),
+        "no pair is symmetric by construction, so no candidate ceiling can fire"
+    );
+    assert_eq!(
+        scan.truncation, None,
+        "the eligible-neuron cap alone is not reported as a scan truncation"
+    );
+}
+
+/// Under the eligible-neuron cap, no neurons are skipped.
+#[test]
+fn under_cap_scan_records_no_skip() {
+    let (creature, records) = creature_with_no_symmetric_pairs(10);
+
+    let scan = detect_symmetric_neurons_with_deadline(&creature, &records, &None);
+
+    assert_eq!(scan.eligible_skipped, 0);
 }
