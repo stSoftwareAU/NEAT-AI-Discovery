@@ -1,0 +1,35 @@
+name: MSRV
+
+# Builds with exactly the toolchain Cargo.toml declares as `rust-version`, so
+# code needing a newer rustc than declared fails on the PR instead of on the
+# fleet (Issue #2395). The `toolchain:` value below must equal Cargo.toml's
+# `rust-version`; tests/issue_2395_msrv_declared.rs enforces that they stay
+# in lockstep.
+
+on:
+  pull_request:
+    branches: ["*", "milestone/*"]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  msrv:
+    name: Build with declared MSRV
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Install Rust toolchain (declared MSRV)
+        uses: ./.github/actions/setup-rust
+        with:
+          toolchain: "1.95"
+      - name: Build every target with the declared MSRV
+        run: cargo check --locked --all-targets --all-features
