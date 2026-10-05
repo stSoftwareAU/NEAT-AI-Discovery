@@ -481,16 +481,17 @@ fn test_lookup_miss_drives_change_squash_branch() {
     );
 
     match &c.operations[0] {
-        neat_ai_discovery::CoordinatedStructuralOpJson::ChangeSquash { neuron_uuid, squash } => {
+        neat_ai_discovery::CoordinatedStructuralOpJson::ChangeSquash {
+            neuron_uuid,
+            squash,
+        } => {
             assert_eq!(neuron_uuid, "hidden-isolated");
             assert_eq!(
                 squash, "TANH",
                 "LOGISTIC's complementary squash should be TANH"
             );
         }
-        other => panic!(
-            "Expected a ChangeSquash operation on lookup-map miss, got: {other:?}"
-        ),
+        other => panic!("Expected a ChangeSquash operation on lookup-map miss, got: {other:?}"),
     }
 }
 
