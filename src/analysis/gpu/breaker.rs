@@ -14,7 +14,10 @@
 //! The breaker keys off explicit trip sites — [`GpuTripReason`] — never off
 //! error-message matching. `is_device_lost_error()` does not recognise the
 //! batch-timeout wording ("The GPU may be unresponsive"), so string matching
-//! would silently miss the very failure this exists to stop.
+//! would silently miss the very failure this exists to stop. The explicit
+//! trip sites include the shutdown-timeout `Drop` path, the batch-submission
+//! and init-timeout waits, the heartbeat-stall detector, and the GPU thread's
+//! panic guard in `queue/scheduling.rs` (Issue #2361).
 //!
 //! Recovery is deliberately out of scope: nothing here restarts the process.
 //! That stays with the external supervisor. The breaker is one-way for the life
@@ -58,6 +61,8 @@ pub enum GpuTripReason {
     /// The GPU thread published no progress for the configured stall window
     /// while a submitter was waiting on it (Issue #1933).
     HeartbeatStall,
+    /// The GPU thread panicked, so the queue it served is dead (Issue #2361).
+    WorkerPanicked,
 }
 
 /// Sentinel for "not tripped".
@@ -66,6 +71,7 @@ const REASON_ABANDONED_THREAD: u8 = 1;
 const REASON_BATCH_TIMEOUT: u8 = 2;
 const REASON_INIT_TIMEOUT: u8 = 3;
 const REASON_HEARTBEAT_STALL: u8 = 4;
+const REASON_WORKER_PANICKED: u8 = 5;
 
 impl GpuTripReason {
     /// Stable discriminant used for the atomic representation.
@@ -75,6 +81,7 @@ impl GpuTripReason {
             Self::BatchTimeout => REASON_BATCH_TIMEOUT,
             Self::InitTimeout => REASON_INIT_TIMEOUT,
             Self::HeartbeatStall => REASON_HEARTBEAT_STALL,
+            Self::WorkerPanicked => REASON_WORKER_PANICKED,
         }
     }
 
@@ -85,6 +92,7 @@ impl GpuTripReason {
             REASON_BATCH_TIMEOUT => Some(Self::BatchTimeout),
             REASON_INIT_TIMEOUT => Some(Self::InitTimeout),
             REASON_HEARTBEAT_STALL => Some(Self::HeartbeatStall),
+            REASON_WORKER_PANICKED => Some(Self::WorkerPanicked),
             _ => None,
         }
     }
@@ -100,6 +108,7 @@ impl GpuTripReason {
             Self::HeartbeatStall => {
                 "the GPU thread stopped publishing progress while a submitter waited"
             }
+            Self::WorkerPanicked => "the GPU thread panicked",
         }
     }
 }
@@ -448,6 +457,8 @@ mod tests {
             GpuTripReason::AbandonedThread,
             GpuTripReason::BatchTimeout,
             GpuTripReason::InitTimeout,
+            GpuTripReason::HeartbeatStall,
+            GpuTripReason::WorkerPanicked,
         ] {
             assert_eq!(GpuTripReason::from_code(reason.code()), Some(reason));
             assert!(!reason.as_str().is_empty());
