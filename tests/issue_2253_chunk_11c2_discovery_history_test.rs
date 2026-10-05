@@ -202,7 +202,9 @@ fn discovery_history_row_is_audited_and_links_both_findings() {
     let (_, outcome) = rows
         .iter()
         .find(|(path, _)| path == "src/discovery_history.rs")
-        .unwrap_or_else(|| panic!("the {SECTION} section must carry a src/discovery_history.rs row"));
+        .unwrap_or_else(|| {
+            panic!("the {SECTION} section must carry a src/discovery_history.rs row")
+        });
     let Some((verdict, reason)) = outcome.split_once(" — ") else {
         panic!("src/discovery_history.rs must read `audited — <reason>`, got: {outcome}");
     };
@@ -235,7 +237,10 @@ fn the_section_records_a_verdict_for_each_probe() {
         "#1906",
         "#1902",
     ] {
-        assert!(body.contains(term), "the {SECTION} section must mention `{term}`");
+        assert!(
+            body.contains(term),
+            "the {SECTION} section must mention `{term}`"
+        );
     }
 }
 
@@ -284,7 +289,9 @@ fn the_mutation_region_cites_the_1902_drop_site_and_discovery_history_has_none()
 
     let none_row = rows
         .iter()
-        .find(|row| row.contains("`src/discovery_history.rs`") && row.trim_start().starts_with("| none"))
+        .find(|row| {
+            row.contains("`src/discovery_history.rs`") && row.trim_start().starts_with("| none")
+        })
         .unwrap_or_else(|| {
             panic!("the mutation region must carry a `none` row for src/discovery_history.rs")
         });
@@ -300,7 +307,10 @@ fn every_cited_symbol_exists_and_no_citation_uses_a_line_number() {
     let combined = format!("{body}\n{mutation_region}\n{reverified_region}");
 
     for (site, file, definition) in CITED {
-        assert!(combined.contains(site), "the ledger text must cite `{site}`");
+        assert!(
+            combined.contains(site),
+            "the ledger text must cite `{site}`"
+        );
         // Issue #1942: a symbol citation is only worth something while the
         // symbol still exists.
         assert!(
