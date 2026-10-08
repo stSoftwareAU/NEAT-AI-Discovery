@@ -46,6 +46,8 @@ use super::{
 /// Issue #2183: `deadline` is captured by the recommendation-core scans
 /// (multi-hop, fan-in, gradient) so each stops mid-scan once it passes.
 /// Issue #2348: it is also captured by the co-adaptation pairwise scan.
+/// Issue #2349: `deadline` is also forwarded to the symmetry-breaking pair
+/// scan, so it stops at the deadline or on global cancellation too.
 pub(crate) fn build_discovery_module_specs(
     creature: &Arc<crate::CreatureJson>,
     hidden_neurons: &Arc<Vec<(String, String, f32)>>,
