@@ -18,15 +18,59 @@
 //! - `SetBias` — shift one neuron's bias to break symmetry
 //! - `SetWeight` — scale one neuron's incoming synapse weights
 //! - `ChangeSquash` — change one neuron's activation function (if suitable)
+//!
+//! ## Bounded scan (Issue #2349, hardened per review of PR #2400)
+//!
+//! The pair scan is inherently O(E²) in the number of eligible hidden
+//! neurons. Several changes keep it from being an uncancellable,
+//! super-linear cost centre:
+//! - [`MAX_SYMMETRY_ELIGIBLE_NEURONS`] caps the eligible hidden neurons
+//!   compared *before* the weight-vector matrix is built, keeping the first
+//!   MAX in creature evaluation order (matching
+//!   `co_adaptation::MAX_CO_ADAPTATION_ELIGIBLE_NEURONS`). Without this cap,
+//!   the dense `E x A` matrix (`A` = distinct synapse sources) is allocated
+//!   up front regardless of how many pairs ever get compared.
+//! - Each eligible neuron's incoming-weight vector is built exactly **once**
+//!   (`O(E · (A + F))` total), rather than being rebuilt from scratch for
+//!   both sides of every pair via a linear `find` (`O(E² · A · F)`), and the
+//!   build loop itself checks the deadline before each vector so a capped
+//!   but still expensive build (large `A`) can be cancelled mid-flight.
+//! - The pair scan itself checks the discovery deadline / global
+//!   cancellation flag before every outer iteration, and stops once
+//!   [`MAX_SYMMETRIC_PAIR_CANDIDATES`] candidates have been emitted. Every
+//!   stop reports its reason via [`SymmetricPairScan::truncation`] (and the
+//!   eligible-neuron cap via [`SymmetricPairScan::eligible_skipped`]) so a
+//!   truncated scan is never presented as a complete one.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::time::SystemTime;
 
+use crate::analysis::recommendation::epistatic::ScanTruncation;
+use crate::analysis::utils::deadline_passed;
 use crate::types::DiscoverRecord;
 use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson, CreatureJson};
 
 use crate::analysis::constants::MIN_DISCOVERY_SAMPLE_COUNT;
 
 use super::helpers::build_record_map;
+
+/// Ceiling on emitted symmetric-pair candidates (Issue #2349).
+///
+/// Without a ceiling, a creature with many identical neurons yields
+/// `E(E-1)/2` candidates, each cloning neuron B's fan-in weights — a cost
+/// that grows quadratically with no bound.
+pub const MAX_SYMMETRIC_PAIR_CANDIDATES: usize = 256;
+
+/// Ceiling on eligible hidden neurons compared in the symmetry-breaking pair
+/// scan (review finding on PR #2400, Issue #2349 follow-up).
+///
+/// Without this cap, the weight-vector build allocates a dense `E x A`
+/// matrix (`A` = distinct synapse sources) before the first pair is ever
+/// compared — e.g. 30,000 eligible neurons each fed by a unique input
+/// allocates 30,000 x 30,000 x 4 B = 3.6 GB, and a failed allocation aborts
+/// the host process. Matches `co_adaptation::MAX_CO_ADAPTATION_ELIGIBLE_NEURONS`,
+/// bounding pairs to 256·255/2 = 32,640 regardless of creature size.
+pub const MAX_SYMMETRY_ELIGIBLE_NEURONS: usize = 256;
 
 /// Minimum cosine similarity to consider two weight vectors as symmetric.
 const COSINE_SIMILARITY_THRESHOLD: f32 = 0.95;
@@ -64,7 +108,26 @@ pub struct SymmetricPairCandidate {
     pub estimated_improvement: f32,
 }
 
+/// Result of a deadline-, cancellation- and eligible-neuron-bounded
+/// symmetry-breaking scan (review finding on PR #2400, Issue #2349
+/// follow-up).
+#[derive(Debug, Clone)]
+pub struct SymmetricPairScan {
+    /// Candidates found before the scan finished or stopped, sorted by
+    /// cosine similarity (highest first).
+    pub candidates: Vec<SymmetricPairCandidate>,
+    /// `Some` when the scan stopped before visiting every pair.
+    pub truncation: Option<ScanTruncation>,
+    /// Number of otherwise-eligible hidden neurons skipped because
+    /// [`MAX_SYMMETRY_ELIGIBLE_NEURONS`] was exceeded.
+    pub eligible_skipped: usize,
+}
+
 /// Detect symmetric neuron pairs in the creature's hidden layer.
+///
+/// Unbounded by deadline — use [`detect_symmetric_neurons_with_deadline`] on
+/// the discovery hot path. Still capped by [`MAX_SYMMETRIC_PAIR_CANDIDATES`]
+/// and [`MAX_SYMMETRY_ELIGIBLE_NEURONS`].
 ///
 /// # Arguments
 /// * `creature` - The creature's network topology (neurons and synapses).
@@ -77,6 +140,29 @@ pub fn detect_symmetric_neurons(
     creature: &CreatureJson,
     neuron_records: &[(String, impl AsRef<[DiscoverRecord]>)],
 ) -> Vec<SymmetricPairCandidate> {
+    detect_symmetric_neurons_with_deadline(creature, neuron_records, &None).candidates
+}
+
+/// [`detect_symmetric_neurons`] that stops at `deadline` or on global
+/// cancellation, and reports why it stopped via
+/// [`SymmetricPairScan::truncation`] (Issue #2349).
+pub fn detect_symmetric_neurons_with_deadline(
+    creature: &CreatureJson,
+    neuron_records: &[(String, impl AsRef<[DiscoverRecord]>)],
+    deadline: &Option<SystemTime>,
+) -> SymmetricPairScan {
+    detect_symmetric_neurons_observed(creature, neuron_records, deadline, || {})
+}
+
+/// [`detect_symmetric_neurons_with_deadline`] with `on_weight_vector_build`
+/// called once per weight vector built, so a test can assert on how the work
+/// grows without timing it (Issue #2349).
+pub fn detect_symmetric_neurons_observed(
+    creature: &CreatureJson,
+    neuron_records: &[(String, impl AsRef<[DiscoverRecord]>)],
+    deadline: &Option<SystemTime>,
+    mut on_weight_vector_build: impl FnMut(),
+) -> SymmetricPairScan {
     // Collect hidden neurons
     let hidden_neurons: Vec<&crate::NeuronJson> = creature
         .neurons
@@ -85,14 +171,18 @@ pub fn detect_symmetric_neurons(
         .collect();
 
     if hidden_neurons.len() < 2 {
-        return Vec::new();
+        return SymmetricPairScan {
+            candidates: Vec::new(),
+            truncation: None,
+            eligible_skipped: 0,
+        };
     }
 
     // Build records lookup for minimum sample count filtering
     let records_map = build_record_map(neuron_records);
 
     // Filter to neurons with sufficient samples
-    let eligible_neurons: Vec<&&crate::NeuronJson> = hidden_neurons
+    let mut eligible_neurons: Vec<&&crate::NeuronJson> = hidden_neurons
         .iter()
         .filter(|n| {
             records_map
@@ -102,13 +192,37 @@ pub fn detect_symmetric_neurons(
         .collect();
 
     if eligible_neurons.len() < 2 {
-        return Vec::new();
+        return SymmetricPairScan {
+            candidates: Vec::new(),
+            truncation: None,
+            eligible_skipped: 0,
+        };
     }
 
-    // Build incoming weight vectors for each hidden neuron
+    // Review finding on PR #2400 (Issue #2349 follow-up): cap the eligible
+    // hidden neurons compared, keeping the first MAX in creature evaluation
+    // order, before the O(E x A) weight-vector matrix is built.
+    let eligible_skipped = eligible_neurons
+        .len()
+        .saturating_sub(MAX_SYMMETRY_ELIGIBLE_NEURONS);
+    eligible_neurons.truncate(MAX_SYMMETRY_ELIGIBLE_NEURONS);
+
+    if deadline_passed(deadline) {
+        return SymmetricPairScan {
+            candidates: Vec::new(),
+            truncation: Some(ScanTruncation::DeadlinePassed),
+            eligible_skipped,
+        };
+    }
+
+    // Build incoming weight vectors for each hidden neuron. Issue #2349: use
+    // a HashSet for the hidden-neuron membership test instead of `.any(..)`
+    // over the whole hidden-neuron list for every synapse.
+    let hidden_uuids: HashSet<&str> = hidden_neurons.iter().map(|n| n.uuid.as_str()).collect();
+
     let mut incoming_weights: HashMap<&str, Vec<(&str, f32)>> = HashMap::new();
     for synapse in &creature.synapses {
-        if hidden_neurons.iter().any(|n| n.uuid == synapse.to_uuid) {
+        if hidden_uuids.contains(synapse.to_uuid.as_str()) {
             incoming_weights
                 .entry(synapse.to_uuid.as_str())
                 .or_default()
@@ -124,10 +238,53 @@ pub fn detect_symmetric_neurons(
     all_sources.sort();
     all_sources.dedup();
 
+    let source_index: HashMap<&str, usize> = all_sources
+        .iter()
+        .enumerate()
+        .map(|(idx, src)| (*src, idx))
+        .collect();
+
+    // Issue #2349: build each eligible neuron's weight vector exactly once,
+    // instead of rebuilding both sides of every pair via a linear `find`.
+    // Review finding on PR #2400: checked as an explicit loop (not `.map`) so
+    // the deadline is re-checked before every vector — the eligible-neuron
+    // cap above bounds E, but A (distinct synapse sources) is uncapped, so a
+    // capped-but-still-large build can still be cancelled mid-flight.
+    let mut vectors: Vec<Vec<f32>> = Vec::with_capacity(eligible_neurons.len());
+    for neuron in &eligible_neurons {
+        if deadline_passed(deadline) {
+            return SymmetricPairScan {
+                candidates: Vec::new(),
+                truncation: Some(ScanTruncation::DeadlinePassed),
+                eligible_skipped,
+            };
+        }
+        on_weight_vector_build();
+        let mut vector = vec![0.0f32; all_sources.len()];
+        if let Some(weights) = incoming_weights.get(neuron.uuid.as_str()) {
+            // Preserve the legacy `find`-based semantics: the FIRST
+            // synapse (in `creature.synapses` order) for a duplicated
+            // source wins. Scattering in reverse and overwriting
+            // unconditionally means the write for the first original
+            // occurrence happens last, so it is the one left standing.
+            for (src, weight) in weights.iter().rev() {
+                if let Some(&idx) = source_index.get(src) {
+                    vector[idx] = *weight;
+                }
+            }
+        }
+        vectors.push(vector);
+    }
+
     let mut candidates = Vec::with_capacity(eligible_neurons.len());
+    let mut truncation = None;
 
     // Compare all pairs of eligible hidden neurons
-    for i in 0..eligible_neurons.len() {
+    'outer: for i in 0..eligible_neurons.len() {
+        if deadline_passed(deadline) {
+            truncation = Some(ScanTruncation::DeadlinePassed);
+            break 'outer;
+        }
         for j in (i + 1)..eligible_neurons.len() {
             let neuron_a = eligible_neurons[i];
             let neuron_b = eligible_neurons[j];
@@ -144,10 +301,7 @@ pub fn detect_symmetric_neurons(
             }
 
             // Criterion 1: Cosine similarity of incoming weight vectors
-            let weights_a = build_weight_vector(&neuron_a.uuid, &incoming_weights, &all_sources);
-            let weights_b = build_weight_vector(&neuron_b.uuid, &incoming_weights, &all_sources);
-
-            let similarity = cosine_similarity(&weights_a, &weights_b);
+            let similarity = cosine_similarity(&vectors[i], &vectors[j]);
             if similarity < COSINE_SIMILARITY_THRESHOLD {
                 continue;
             }
@@ -173,32 +327,22 @@ pub fn detect_symmetric_neurons(
                 neuron_b_incoming_weights: b_incoming,
                 estimated_improvement,
             });
+
+            if candidates.len() >= MAX_SYMMETRIC_PAIR_CANDIDATES {
+                truncation = Some(ScanTruncation::CandidateCeiling);
+                break 'outer;
+            }
         }
     }
 
     // Sort by cosine similarity (most symmetric first — highest improvement potential)
     candidates.sort_by(|a, b| b.cosine_similarity.total_cmp(&a.cosine_similarity));
 
-    candidates
-}
-
-/// Build a weight vector for a neuron, ordered by `all_sources`.
-///
-/// Missing sources get weight 0.0 so both vectors have the same dimensionality.
-fn build_weight_vector(
-    neuron_uuid: &str,
-    incoming_weights: &HashMap<&str, Vec<(&str, f32)>>,
-    all_sources: &[&str],
-) -> Vec<f32> {
-    let weights = incoming_weights.get(neuron_uuid);
-    all_sources
-        .iter()
-        .map(|src| {
-            weights
-                .and_then(|ws| ws.iter().find(|(s, _)| s == src).map(|(_, w)| *w))
-                .unwrap_or(0.0)
-        })
-        .collect()
+    SymmetricPairScan {
+        candidates,
+        truncation,
+        eligible_skipped,
+    }
 }
 
 /// Compute cosine similarity between two vectors.
@@ -267,3 +411,7 @@ pub fn symmetric_neurons_to_coordinated_candidates(
 
     results
 }
+
+#[cfg(test)]
+#[path = "symmetry_breaking_deadline_tests.rs"]
+mod deadline_tests;

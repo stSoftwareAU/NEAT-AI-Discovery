@@ -6,6 +6,7 @@
 //! symmetry breaking, and co-adaptation detection.
 
 use std::sync::Arc;
+use std::time::SystemTime;
 
 use super::super::cost_function_hint::CostFunctionHint;
 use super::super::detection::{
@@ -23,8 +24,9 @@ use super::super::{cache, discovery_dispatch, merge_redundant_neuron};
 /// guard: linear-residual costs enable the high-error squash exploration
 /// detector, non-linear-residual costs (and neutral / absent) gate it off.
 ///
-/// `deadline` (Issue #2348) is captured by the co-adaptation pairwise scan so
-/// it stops mid-scan once it passes.
+/// `deadline` (Issues #2348, #2349) is forwarded into both the
+/// symmetry-breaking and co-adaptation pairwise scans so each stops at the
+/// discovery deadline or on global cancellation.
 pub(crate) fn append_neuron_specs(
     modules: &mut Vec<discovery_dispatch::DiscoveryModuleSpec>,
     creature: &Arc<crate::CreatureJson>,
@@ -32,7 +34,7 @@ pub(crate) fn append_neuron_specs(
     shared_cache: &Arc<cache::RecordCache>,
     topo: &Arc<CreatureTopologyCache>,
     cost_hint: CostFunctionHint,
-    deadline: Option<std::time::SystemTime>,
+    deadline: Option<SystemTime>,
 ) {
     // Issue #342: Saturated neuron detection
     discovery_spec!(modules, "saturation detection", "saturation_detection",
@@ -188,7 +190,24 @@ pub(crate) fn append_neuron_specs(
         cache = shared_cache, hidden = hidden_neurons, creature = creature =>
         guard_min: hidden 2,
         records: cache.load_records_for_hidden(&hidden),
-        detect: |records| symmetry_breaking::detect_symmetric_neurons(&creature, &records),
+        detect: |records| {
+            // Issue #2349 (eligible-neuron cap hardened per review of PR
+            // #2400): the O(E²) pair scan stops at the deadline, on
+            // cancellation or at the candidate ceiling; a partial scan is
+            // logged, as is a capped eligible-neuron count.
+            let scan = symmetry_breaking::detect_symmetric_neurons_with_deadline(&creature, &records, &deadline);
+            if let Some(reason) = scan.truncation {
+                tracing::warn!(reason = ?reason, returned = scan.candidates.len(), "Symmetry-breaking scan stopped early; returning partial candidates.");
+            }
+            if scan.eligible_skipped > 0 {
+                tracing::warn!(
+                    skipped = scan.eligible_skipped,
+                    cap = symmetry_breaking::MAX_SYMMETRY_ELIGIBLE_NEURONS,
+                    "Symmetry-breaking scan capped eligible hidden neurons; skipped neurons were not compared."
+                );
+            }
+            scan.candidates
+        },
         convert: |detected| symmetry_breaking::symmetric_neurons_to_coordinated_candidates(&detected),
     );
 
