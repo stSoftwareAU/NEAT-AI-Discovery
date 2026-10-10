@@ -402,6 +402,7 @@ The first sign that the GPU is wedged now trips a one-way, process-wide breaker:
 | A batch submission timed out — the queue never accepted it, or the GPU never answered | every `submit_*`/`evaluate_*` entry point |
 | The GPU thread published no progress for `NEAT_AI_DISCOVERY_GPU_STALL_WINDOW_SECS` while a submitter waited | the bounded submitter wait (Issue #1933) |
 | GPU initialisation timed out after `GPU_INIT_TIMEOUT_SECS` | `GpuWorkQueue::new()` |
+| The GPU thread panicked — the payload is logged at `error` and every request still queued is answered at once with `Err("GPU thread panicked: <payload>")` instead of waiting out the stall window | the GPU thread's panic guard, `run_guarded_gpu_thread` (Issue #2361) |
 | The GPU capability probe (adapter/device request) timed out after `GPU_INIT_TIMEOUT_SECS` — the stuck probe thread is leaked | `check_gpu_availability()` / `get_adapter_info_internal()` (Issue #2332) |
 
 Once tripped, for the rest of the process: `GpuWorkQueue::new()` returns an error
@@ -442,6 +443,7 @@ stateDiagram-v2
     Closed --> Tripped: thread abandoned after shutdown timeout
     Closed --> Tripped: batch send/response timeout
     Closed --> Tripped: init timeout
+    Closed --> Tripped: GPU thread panicked
     Closed --> Closed: GPU work proceeds normally
     Tripped --> Tripped: new()/submit_* return the breaker error at once (debug log)
     note right of Tripped
@@ -548,6 +550,7 @@ about three seconds.
 | `BeatsWithoutCompleting` | progress forever, no answer | the absolute timeout is still the backstop (#1933) |
 | `NeverAnswers` | the Issue #1926 wedge | the stall verdict trips the breaker (#1930, #1932, #1933) |
 | `WedgesUntilBudgetExpires` | a wedged device with budgeted inner waits | the worker gives up before its caller (#1928) |
+| `Panics` | a GPU-thread bug | the panic guard trips the breaker and fails queued requests promptly (#2361) |
 
 ```mermaid
 flowchart LR
@@ -561,7 +564,8 @@ flowchart LR
 
 The tests live beside the code they guard —
 `src/analysis/gpu/queue/fake_evaluator.rs` (the double),
-`src/analysis/gpu/queue/wedge_tests.rs` (loop and wait behaviour) and
+`src/analysis/gpu/queue/wedge_tests.rs` (loop and wait behaviour),
+`src/analysis/gpu/queue/worker_panic_test.rs` (the panic guard) and
 `tests/issue_1935_wedged_gpu_harness.rs` (the sequence through the public API).
 Two invariants keep them honest:
 
