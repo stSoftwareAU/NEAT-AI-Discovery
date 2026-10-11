@@ -1,6 +1,6 @@
 [package]
 name = "neat_ai_discovery"
-version = "0.74.282"
+version = "0.74.283"
 edition = "2024"
 # NEAT-AI family floor 1.99 (NEAT-AI-core#747). AtomicUsize::try_update
 # (src/cancellation.rs) needs >= 1.95 (Issue #2395). Keep equal to the
