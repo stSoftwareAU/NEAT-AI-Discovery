@@ -150,6 +150,52 @@ pub fn analyze_neurons_with_cache(
     analyze_neurons_with_cache_and_gpu_queue(input, cache, gpu_queue)
 }
 
+/// Mark the pre-analysis filtered neurons in the diagnostics so they appear
+/// with the correct reason instead of misleading reasons like
+/// `NoEligibleSources`.
+///
+/// Shared by production and the Issue #2352 regression harness so the two
+/// cannot diverge.
+pub(crate) fn mark_skipped_filters(
+    prep: &preparation::NeuronPreparation<'_>,
+    diagnostics: &NeuronDiagnostics,
+) {
+    for input_uuid in &prep.skipped_input {
+        diagnostics.mark_input_filtered(input_uuid);
+    }
+    for hidden_uuid in &prep.skipped_hidden {
+        diagnostics.mark_hidden_filtered(hidden_uuid);
+    }
+    for constant_uuid in &prep.skipped_constant {
+        diagnostics.mark_constant_filtered(constant_uuid);
+    }
+}
+
+/// Load a focus target's own records from the cache (Issue #2352).
+///
+/// On failure the error is logged at `warn` level in every build profile, the
+/// failure is recorded in the diagnostics (so `no_candidate_summaries` reports
+/// `TargetRecordLoadFailed` rather than `NoEligibleSources`), and `None` is
+/// returned.
+pub(crate) fn load_target_records(
+    cache: &RecordCache,
+    diagnostics: &NeuronDiagnostics,
+    target_uuid: &str,
+) -> Option<Arc<Vec<crate::types::DiscoverRecord>>> {
+    match cache.get(target_uuid) {
+        Ok(records) => Some(records),
+        Err(err) => {
+            tracing::warn!(
+                target_uuid = %target_uuid,
+                error = %err,
+                "Failed to load target neuron records"
+            );
+            diagnostics.record_target_load_failure(target_uuid);
+            None
+        }
+    }
+}
+
 /// Neuron analysis with a shared GPU work queue (Issue #1002).
 ///
 /// This variant accepts an externally created `GpuWorkQueue`, allowing the
@@ -174,13 +220,18 @@ pub fn analyze_neurons_with_cache_and_gpu_queue(
         return Ok(early_return);
     }
 
-    let mut focus_order = prep.focus_order;
+    let mut focus_order = prep.focus_order.clone();
 
     let helpful_map = Arc::new(Mutex::new(HashMap::<u64, CandidateNeuronJson>::new()));
 
     // Issue #216: NeuronDiagnostics uses DashMap internally for lock-free concurrent access.
     // No Mutex wrapper needed - the struct handles concurrency internally.
     let diagnostics = Arc::new(NeuronDiagnostics::new(&prep.unique_focus));
+
+    // Mark skipped neurons in diagnostics so they appear with the correct reason
+    // instead of misleading reasons like NoEligibleSources.
+    // Issue #216: Direct method calls - no lock needed with DashMap-based diagnostics.
+    mark_skipped_filters(&prep, &diagnostics);
 
     // GPU timing collector (Issue #195)
     // Only collects timing data when NEAT_AI_DISCOVERY_GPU_TIMING=1 is set
@@ -199,19 +250,6 @@ pub fn analyze_neurons_with_cache_and_gpu_queue(
     }
     let gpu_used = true;
     let analysis_timed_out = Arc::new(AtomicBool::new(false));
-
-    // Mark skipped neurons in diagnostics so they appear with the correct reason
-    // instead of misleading reasons like NoEligibleSources.
-    // Issue #216: Direct method calls - no lock needed with DashMap-based diagnostics.
-    for input_uuid in &prep.skipped_input {
-        diagnostics.mark_input_filtered(input_uuid);
-    }
-    for hidden_uuid in &prep.skipped_hidden {
-        diagnostics.mark_hidden_filtered(hidden_uuid);
-    }
-    for constant_uuid in &prep.skipped_constant {
-        diagnostics.mark_constant_filtered(constant_uuid);
-    }
 
     // Log threshold-crossing neurons for visibility
     if verbose_enabled() && !prep.threshold_targets.is_empty() {
@@ -312,14 +350,11 @@ pub fn analyze_neurons_with_cache_and_gpu_queue(
             // This eliminates device creation overhead and improves GPU utilisation.
             let gpu = &*gpu_queue;
 
-            let target_records_arc = match cache.get(target_uuid.as_str()) {
-                Ok(records) => records,
-                Err(err) => {
-                    if cfg!(debug_assertions) {
-                        tracing::error!(target_uuid = %target_uuid, error = %err, "Failed to load target neuron records");
-                    }
-                    return Ok(error_acc);
-                }
+            // Issue #2352: a failed target load is recorded in the diagnostics so
+            // it is not misreported as `NoEligibleSources`.
+            let Some(target_records_arc) = load_target_records(&cache, &diagnostics, target_uuid)
+            else {
+                return Ok(error_acc);
             };
             if target_records_arc.is_empty() {
                 diagnostics.set_target_record_count(target_uuid, 0);

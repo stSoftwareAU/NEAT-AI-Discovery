@@ -64,7 +64,7 @@ fn aggregate_neuron_rejection_breakdown(neu: &mut AnalyzeNeuronsResult) {
         REJECTION_BELOW_THRESHOLD, REJECTION_CONSTANT_NEURON_FILTERED,
         REJECTION_HIDDEN_NEURON_FILTERED, REJECTION_INPUT_NEURON_FILTERED,
         REJECTION_NO_DIAGNOSTICS, REJECTION_NO_ELIGIBLE_SOURCES, REJECTION_NO_SAMPLES,
-        top_level_summary,
+        REJECTION_TARGET_RECORD_LOAD_FAILED, top_level_summary,
     };
     use super::shared::NeuronNoCandidateReason;
 
@@ -81,6 +81,7 @@ fn aggregate_neuron_rejection_breakdown(neu: &mut AnalyzeNeuronsResult) {
             NeuronNoCandidateReason::HiddenNeuronFiltered => REJECTION_HIDDEN_NEURON_FILTERED,
             NeuronNoCandidateReason::InputNeuronFiltered => REJECTION_INPUT_NEURON_FILTERED,
             NeuronNoCandidateReason::ConstantNeuronFiltered => REJECTION_CONSTANT_NEURON_FILTERED,
+            NeuronNoCandidateReason::TargetRecordLoadFailed => REJECTION_TARGET_RECORD_LOAD_FAILED,
         };
         neu.metadata.rejection_breakdown.record(reason_name);
     }

@@ -1,6 +1,6 @@
 [package]
 name = "neat_ai_discovery"
-version = "0.74.283"
+version = "0.74.284"
 edition = "2024"
 # NEAT-AI family floor 1.99 (NEAT-AI-core#747). AtomicUsize::try_update
 # (src/cancellation.rs) needs >= 1.95 (Issue #2395). Keep equal to the
@@ -58,6 +58,14 @@ naga = { version = "30", features = ["wgsl-in"] }  # WGSL parse/validate for sha
 # compile the target with an unresolved-import error.
 [[test]]
 name = "production_discovery_regression"
+required-features = ["regression-harness"]
+
+# Issue #2352: drives the GPU-free neuron target-load harness, which only exists
+# when `regression-harness` is on. Without this, a default-feature `cargo test`
+# fails to compile the target with an unresolved-import error.
+[[test]]
+name = "issue_2352_neuron_target_load_failure_surfaced"
+path = "tests/issue_2352_neuron_target_load_failure_surfaced.rs"
 required-features = ["regression-harness"]
 
 [[bench]]
