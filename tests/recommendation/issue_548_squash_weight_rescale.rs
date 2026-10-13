@@ -434,3 +434,69 @@ fn test_squash_weight_rescale_insufficient_samples_no_candidates() {
         "Insufficient samples should produce no candidates"
     );
 }
+
+// =============================================================================
+// 8. Neuron without incoming synapses emits no candidate
+// =============================================================================
+
+#[test]
+fn test_neuron_without_incoming_synapses_emits_no_candidate() {
+    let hidden_neurons: Vec<(String, String, f32)> =
+        vec![("hidden-1".to_string(), "RELU".to_string(), 0.0)];
+
+    // Error is well above the minimum error threshold, so the only thing that
+    // can stop a candidate is the missing incoming synapses.
+    let neuron_records: Vec<(String, Vec<DiscoverRecord>)> = vec![(
+        "hidden-1".to_string(),
+        (0..40)
+            .map(|i| {
+                let value = (i as f32 - 20.0) / 10.0;
+                let activation = value.max(0.0);
+                let error = 0.15 + (i as f32 * 0.002).sin() * 0.02;
+                make_record("hidden-1", i, value, activation, error)
+            })
+            .collect(),
+    )];
+
+    // Companion: with incoming synapses, a candidate is produced.
+    let with_synapses = make_creature(
+        vec![
+            input_neuron("input-1"),
+            input_neuron("input-2"),
+            hidden_neuron("hidden-1", "RELU"),
+            output_neuron("output-1", "TANH"),
+        ],
+        vec![
+            synapse("input-1", "hidden-1", 1.5),
+            synapse("input-2", "hidden-1", -0.8),
+            synapse("hidden-1", "output-1", 1.0),
+        ],
+    );
+    let companion =
+        detect_squash_weight_rescale_candidates(&with_synapses, &hidden_neurons, &neuron_records);
+    assert!(
+        !companion.is_empty(),
+        "Companion with incoming synapses must produce a candidate"
+    );
+
+    // Same records and neuron, but the incoming synapses are removed.
+    let without_synapses = make_creature(
+        vec![
+            input_neuron("input-1"),
+            input_neuron("input-2"),
+            hidden_neuron("hidden-1", "RELU"),
+            output_neuron("output-1", "TANH"),
+        ],
+        vec![synapse("hidden-1", "output-1", 1.0)],
+    );
+    let candidates = detect_squash_weight_rescale_candidates(
+        &without_synapses,
+        &hidden_neurons,
+        &neuron_records,
+    );
+    assert!(
+        candidates.is_empty(),
+        "Neuron with no incoming synapses must emit no candidate, got: {}",
+        candidates.len()
+    );
+}

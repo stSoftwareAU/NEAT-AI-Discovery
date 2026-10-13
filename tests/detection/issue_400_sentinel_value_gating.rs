@@ -494,3 +494,80 @@ fn test_uses_error_correlation_for_detection() {
         "Should not gate sentinel when it has higher error variance (is informative)"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Test 11: A sentinel neuron with no outgoing synapses emits no candidate.
+// ---------------------------------------------------------------------------
+#[test]
+fn test_sentinel_neuron_without_downstream_emits_no_candidate() {
+    // Sentinel-bearing records for "input-obs": 40% at -1.0 with constant low
+    // error, 60% in the useful range with varied error.
+    let build_records = || {
+        let mut records: Vec<DiscoverRecord> = Vec::new();
+        for i in 0..40 {
+            records.push(record_with_error("input-obs", i, -1.0, 0.01));
+        }
+        for i in 40..100 {
+            let useful_val = 0.1 + 0.7 * ((i - 40) as f32 / 60.0);
+            records.push(record_with_error(
+                "input-obs",
+                i,
+                useful_val,
+                0.5 - useful_val,
+            ));
+        }
+        records
+    };
+
+    // Without an outgoing synapse from "input-obs": only an unrelated
+    // synapse exists, so the downstream lookup misses for the candidate.
+    let creature_without_downstream = make_creature(
+        vec![
+            neuron("input-obs", "input", "IDENTITY"),
+            neuron("input-other", "input", "IDENTITY"),
+            output("output-1", "IDENTITY"),
+        ],
+        vec![synapse("input-other", "output-1", 0.3)],
+    );
+    let detected = detect_sentinel_gating_candidates(
+        &creature_without_downstream,
+        &[("input-obs".to_string(), build_records())],
+    );
+    assert_eq!(
+        detected.len(),
+        1,
+        "Detection itself should still flag the sentinel neuron"
+    );
+    let coordinated =
+        sentinel_gating_to_coordinated_candidates(&detected, &creature_without_downstream);
+    assert!(
+        coordinated.is_empty(),
+        "A sentinel neuron with no downstream targets must emit no coordinated candidate, got {}",
+        coordinated.len()
+    );
+
+    // Same fixture plus one outgoing synapse: exactly one candidate is
+    // emitted, so the empty-downstream branch is the deciding factor.
+    let creature_with_downstream = make_creature(
+        vec![
+            neuron("input-obs", "input", "IDENTITY"),
+            neuron("input-other", "input", "IDENTITY"),
+            output("output-1", "IDENTITY"),
+        ],
+        vec![
+            synapse("input-other", "output-1", 0.3),
+            synapse("input-obs", "output-1", 0.5),
+        ],
+    );
+    let detected = detect_sentinel_gating_candidates(
+        &creature_with_downstream,
+        &[("input-obs".to_string(), build_records())],
+    );
+    let coordinated =
+        sentinel_gating_to_coordinated_candidates(&detected, &creature_with_downstream);
+    assert_eq!(
+        coordinated.len(),
+        1,
+        "Adding an outgoing synapse should yield exactly one candidate"
+    );
+}

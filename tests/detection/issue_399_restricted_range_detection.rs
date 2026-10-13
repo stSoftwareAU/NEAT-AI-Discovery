@@ -491,13 +491,14 @@ fn test_neuron_without_incoming_synapses_emits_no_set_weight() {
     );
     assert_eq!(detected.len(), 1, "h1 should be detected as restricted");
 
-    let has_set_weight = |candidates: &[neat_ai_discovery::CoordinatedStructuralCandidateJson]| {
-        candidates.iter().any(|c| {
-            c.operations
-                .iter()
-                .any(|op| matches!(op, CoordinatedStructuralOpJson::SetWeight { .. }))
-        })
-    };
+    let has_set_weight =
+        |candidates: &[neat_ai_discovery::CoordinatedStructuralCandidateJson]| {
+            candidates.iter().any(|c| {
+                c.operations
+                    .iter()
+                    .any(|op| matches!(op, CoordinatedStructuralOpJson::SetWeight { .. }))
+            })
+        };
 
     // Hit path: with the incoming synapse, a setWeight candidate is emitted.
     let with_incoming = restricted_range_to_coordinated_candidates(&detected, &detected_creature);
