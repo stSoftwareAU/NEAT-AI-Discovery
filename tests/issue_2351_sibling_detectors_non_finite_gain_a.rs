@@ -6,6 +6,8 @@
 //! (NaN comparisons are false), so candidates with a non-finite
 //! `estimated_improvement` were emitted. Each detector below must fail closed.
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts for test fixtures (Issue #873)
+
 use neat_ai_discovery::analysis::detection::activation_mismatch::detect_activation_mismatches;
 use neat_ai_discovery::analysis::detection::bias_perturbation::detect_bias_perturbation_candidates;
 use neat_ai_discovery::analysis::detection::bottleneck::detect_bottleneck_neurons;

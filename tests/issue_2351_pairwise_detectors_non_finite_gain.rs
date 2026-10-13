@@ -6,6 +6,8 @@
 //! so a gate of the form `x < threshold => continue` fails open and the
 //! candidate escapes with a non-finite gain.
 
+#![allow(clippy::cast_precision_loss)] // Intentional numeric casts in test data (Issue #873)
+
 use neat_ai_discovery::analysis::detection::fanin_polarity_conflict::detect_fanin_polarity_conflicts;
 use neat_ai_discovery::analysis::detection::output_conflict::{
     detect_output_conflict_neurons, output_conflicts_to_coordinated_candidates,
@@ -44,7 +46,9 @@ fn creature(neurons: Vec<NeuronJson>, synapses: Vec<SynapseJson>, output: usize)
     }
 }
 
-fn records(uuid: &str, errors: &[f32]) -> Vec<(String, Vec<DiscoverRecord>)> {
+type NeuronRecords = Vec<(String, Vec<DiscoverRecord>)>;
+
+fn records(uuid: &str, errors: &[f32]) -> NeuronRecords {
     records_with(uuid, |_| errors.to_vec())
 }
 
@@ -232,7 +236,7 @@ fn overflowing_output_errors_emit_no_non_finite_output_conflict() {
     let wide = output_creature(70);
     let mut wide_errs = vec![6e36_f32; 70];
     wide_errs[0] = -0.5;
-    let cases: Vec<(&str, &CreatureJson, Vec<(String, Vec<DiscoverRecord>)>)> = vec![
+    let cases: Vec<(&str, &CreatureJson, NeuronRecords)> = vec![
         ("inf error", &c, records("h-0", &[-0.5, f32::INFINITY, 0.0])),
         (
             "accumulation overflow",

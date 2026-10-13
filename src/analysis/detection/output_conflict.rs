@@ -181,7 +181,7 @@ pub fn detect_output_conflict_neurons(
         let harmful_mean: f32 = mean_errors.iter().filter(|&&e| e > 0.0).sum::<f32>()
             / mean_errors.iter().filter(|&&e| e > 0.0).count().max(1) as f32;
         // Issue #2351: finite means can still overflow when summed.
-        if false {
+        if !harmful_mean.is_finite() {
             continue;
         }
         let estimated_improvement = harmful_mean * 0.1; // conservative 10% capture

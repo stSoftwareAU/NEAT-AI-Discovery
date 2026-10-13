@@ -6,6 +6,8 @@
 //! public detector with such input and assert that no emitted candidate carries
 //! a non-finite gain, bias or weight.
 
+#![allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)] // Tiny test indices.
+
 use neat_ai_discovery::analysis::detection::bimodal_neuron::{
     bimodal_neurons_to_coordinated_candidates, detect_bimodal_neurons,
 };

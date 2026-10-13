@@ -181,7 +181,7 @@ fn evaluate_neuron(
 
     // Aggregate / unsimulable current squash yields +inf MAE; reject it so the
     // reduction fraction cannot become NaN (Issue #2351).
-    if current_mae < MIN_MEAN_ERROR_THRESHOLD {
+    if !current_mae.is_finite() || current_mae < MIN_MEAN_ERROR_THRESHOLD {
         return None;
     }
 

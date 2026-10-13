@@ -361,8 +361,7 @@ fn combine_corrections(
             let combined_improvement =
                 bias_corr.estimated_improvement + weight_corr.estimated_improvement * 0.7;
 
-            // Issue #2351: reject a non-finite combined gain (NaN fails `<= 0.0`).
-            if !combined_improvement.is_finite() || combined_improvement <= 0.0 {
+            if combined_improvement <= 0.0 {
                 continue;
             }
 
