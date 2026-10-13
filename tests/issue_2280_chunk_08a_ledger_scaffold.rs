@@ -271,7 +271,8 @@ fn each_in_scope_file_has_exactly_one_row_under_its_owning_section() {
             let entry = entry.unwrap_or_else(|e| panic!("failed to read a {dir} entry: {e}"));
             let name = entry.file_name();
             let name = name.to_string_lossy();
-            if name.ends_with(".rs") {
+            // `*_tests.rs` files are `#[cfg(test)]`-only siblings, not production code.
+            if name.ends_with(".rs") && !name.ends_with("_tests.rs") {
                 on_disk.push(format!("{dir}/{name}"));
             }
         }

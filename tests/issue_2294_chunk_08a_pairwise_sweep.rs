@@ -28,6 +28,35 @@ const SWEPT: &[&str] = &[
     "src/analysis/detection/sentinel_cluster.rs",
 ];
 
+/// Files whose pairwise loops were bounded and given a per-row deadline check
+/// after the audit HEAD (Issues #2348, #2349). Their traversal rows record
+/// `yes — …` in the Cancellation-checked? cell instead of `no (module-level
+/// only)`, and `FIXED_TRAVERSAL` pins each of them.
+const CANCELLING: &[&str] = &[
+    "src/analysis/detection/co_adaptation.rs",
+    "src/analysis/detection/symmetry_breaking.rs",
+];
+
+/// (source path, function name, qualifier) for the rows in `CANCELLING`
+/// files that carry a `yes — …` Cancellation-checked? cell.
+const FIXED_TRAVERSAL: &[(&str, &str, &str)] = &[
+    (
+        "src/analysis/detection/co_adaptation.rs",
+        "detect_co_adapted_neurons",
+        "i<j loop over `eligible`",
+    ),
+    (
+        "src/analysis/detection/symmetry_breaking.rs",
+        "detect_symmetric_neurons",
+        "i<j loop over `eligible_neurons`",
+    ),
+    (
+        "src/analysis/detection/symmetry_breaking.rs",
+        "detect_symmetric_neurons",
+        "build loop for `vectors`",
+    ),
+];
+
 /// One entry per traversal / pairwise-loop row this sweep added to
 /// `## Capacity and traversal table`: (source path, function name, qualifier
 /// text as written in the row's Symbol cell parentheses).
@@ -56,26 +85,6 @@ const TRAVERSAL: &[(&str, &str, &str)] = &[
         "src/analysis/detection/weight_coherence.rs",
         "detect_symmetric_cancellation",
         "per-`topo.fan_in`-target i<j loop over `incoming_synapses`",
-    ),
-    (
-        "src/analysis/detection/co_adaptation.rs",
-        "detect_co_adapted_neurons",
-        "i<j loop over `eligible`",
-    ),
-    (
-        "src/analysis/detection/symmetry_breaking.rs",
-        "detect_symmetric_neurons",
-        "`hidden_neurons.iter().any` per synapse",
-    ),
-    (
-        "src/analysis/detection/symmetry_breaking.rs",
-        "detect_symmetric_neurons",
-        "i<j loop over `eligible_neurons`",
-    ),
-    (
-        "src/analysis/detection/symmetry_breaking.rs",
-        "build_weight_vector",
-        "linear `find` per source, twice per pair",
     ),
     (
         "src/analysis/detection/fanin_polarity_conflict.rs",
@@ -436,8 +445,38 @@ fn every_traversal_symbol_has_a_row_marked_module_level_only() {
 }
 
 #[test]
+fn fixed_pairwise_loops_record_their_deadline_check() {
+    let doc = read(RECORD);
+    let capacity_region = section(&doc, "## Capacity and traversal table");
+    let rows = table_rows(capacity_region);
+
+    for (path, name, qualifier) in FIXED_TRAVERSAL {
+        assert!(
+            production_source(path).contains("deadline_passed("),
+            "{path} is recorded as checking `deadline_passed`, but no call remains"
+        );
+        let symbol_needle = format!("`{}::{name}`", basename(path));
+        let qualifier_needle = format!("({qualifier})");
+        let found = rows.iter().any(|row| {
+            let symbol = row.first().map(String::as_str).unwrap_or_default();
+            let cancellation = row.get(4).map(String::as_str).unwrap_or_default();
+            symbol.contains(&symbol_needle)
+                && symbol.contains(&qualifier_needle)
+                && cancellation.starts_with("yes — ")
+        });
+        assert!(
+            found,
+            "`## Capacity and traversal table` must carry a row for `{}::{name}` ({qualifier}) \
+             whose Cancellation-checked? cell starts `yes — `, because the loop now checks the \
+             deadline",
+            basename(path)
+        );
+    }
+}
+
+#[test]
 fn no_swept_file_checks_cancellation_itself() {
-    for path in SWEPT {
+    for path in SWEPT.iter().filter(|p| !CANCELLING.contains(p)) {
         let source = read(path);
         assert!(
             !source.contains("deadline_passed") && !source.contains("is_cancelled"),

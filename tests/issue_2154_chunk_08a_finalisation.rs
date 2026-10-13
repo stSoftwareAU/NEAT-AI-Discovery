@@ -110,7 +110,11 @@ fn rust_files_under(root: &str) -> Vec<String> {
     let mut found: Vec<String> = entries
         .filter_map(|entry| {
             let path = entry.expect("directory entry must be readable").path();
-            (path.is_file() && path.extension().is_some_and(|e| e == "rs")).then(|| {
+            // `*_tests.rs` files are `#[cfg(test)]`-only siblings, not production code.
+            (path.is_file()
+                && path.extension().is_some_and(|e| e == "rs")
+                && !path.to_string_lossy().ends_with("_tests.rs"))
+            .then(|| {
                 path.strip_prefix(&base)
                     .expect("walked path sits under the repo root")
                     .to_string_lossy()
