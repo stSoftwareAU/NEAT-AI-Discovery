@@ -1,0 +1,102 @@
+# PR Summary — Issue #2355
+
+## Summary
+
+`assess_sentinel_cluster` (`src/analysis/detection/sentinel_cluster.rs`) built
+the non-sentinel indices with `(0..n).filter(|i| !sentinel_indices.contains(i))`.
+That is a linear `Vec::contains` for every sample, and the density rule
+guarantees k ≥ 0.15·n sentinels, so the partition was O(n²) with no
+cancellation point (CWE-407).
+
+Both halves of the partition are now built in one `enumerate` pass, so the
+cost is O(n). The accept/reject rule (density, separation, error
+decorrelation) is unchanged, and both index lists stay in ascending order, so
+the output is identical.
+
+Closes #2355
+
+## Spec
+
+### Intent and Rationale
+
+- The sentinel partition must cost O(n), not O(n·k), so a large observation
+  cannot pin a worker inside an uncancellable loop.
+- Behaviour is unchanged: the same samples are classified the same way, in the
+  same order.
+
+### Essential Design Decisions
+
+- One loop pushes each index into `sentinel_indices` or
+  `non_sentinel_indices`. This replaces the `HashSet` alternative, which would
+  have cost an extra allocation and hashing for no benefit.
+- The regression test uses `std::time::Instant` for a **ratio** check (N=4000
+  vs N=16000, best of 5, fail at ratio ≥ 10). CONTRIBUTING.md's testing section
+  discourages timing assertions in unit tests. This test departs from that
+  because the issue names this ratio test explicitly. It compares two readings
+  of the same work, never a reading against a constant, so a slow host inflates
+  both and stays green.
+
+### Undiscoverable Facts
+
+- The sibling partition in `observation_range.rs:164` looks the same but is
+  already O(1) per lookup, because its `sentinel_indices` is a
+  `HashSet<usize>`.
+
+## Evidence
+
+- **Regression test:**
+  `tests/issue_2355_sentinel_cluster_quadratic.rs::assess_sentinel_cluster_grows_linearly`
+  (new file in this diff).
+  - **Red against the unfixed code:**
+    `assess_sentinel_cluster grew super-linearly: N=4000 took 30968500ns,
+    N=16000 took 491187584ns, ratio 15.86 (linear ~4, quadratic ~16)
+    (Issue #2355)`
+  - **Green after the fix:** N=4000 took 156,916 ns and N=16000 took
+    627,208 ns, a ratio of 4.00.
+- **Behaviour pin:**
+  `tests/issue_2355_sentinel_cluster_quadratic.rs::assess_sentinel_cluster_partitions_every_sample_once`.
+  For n in {101, 10, 5}, it asserts that sentinels are exactly the even
+  indices, non-sentinels are exactly the odd indices, together they cover
+  `0..n` once in ascending order, and the reported fraction matches.
+- **No trivial bypass:** the trigger was the only `Vec::contains` partition in
+  `sentinel_cluster.rs`, and the file now has no `contains` call.
+  `sentinel_gating.rs:98` uses `contains` on an unrelated `input_uuids` check.
+- **Existing behaviour:** `cargo test --test detection` gave 503 passed and
+  0 failed. This includes the #2042 sentinel tests.
+- **Docs sweep:**
+  - grep terms: `assess_sentinel_cluster`, `sentinel_indices`,
+    `non_sentinel_indices`, `contains(`.
+  - section: n/a (no rule or prompt text changed).
+  - siblings: `sentinel_indices`, `non_sentinel_indices`.
+  - files updated: none needed. The function's name, signature and contract
+    are unchanged.
+  - remaining hits:
+    - `src/analysis/detection/observation_range.rs:164` — still true because
+      that `sentinel_indices` is a `HashSet`, so each lookup is O(1).
+    - `docs/archive/pr-summaries/pr-summary-2042.md:20,41,91,93` — still true
+      because these are historical notes on the rule, which is unchanged.
+    - No hits in README.md, CONTRIBUTING.md or `docs/` reference docs.
+
+## Test Plan
+
+- [x] `cargo test --test issue_2355_sentinel_cluster_quadratic`. The ratio test
+      fails on the unfixed code (ratio 15.86) and passes after the fix (4.00).
+- [x] `cargo test --test detection`: 503 passed.
+- [x] `cargo clippy --all-targets --all-features -- -D warnings`: clean.
+- [x] `./quality.sh`.
+- Version bumped from 0.74.283 to 0.74.284 (`Cargo.toml`, `Cargo.lock`).
+
+Branch outcomes:
+
+- `src/analysis/detection/sentinel_cluster.rs` loop `if` (sentinel arm) is
+  reached by `assess_sentinel_cluster_partitions_every_sample_once` (the even
+  indices). Swapping the arms turns it red.
+- The same loop's `else` (non-sentinel arm) is reached by the same test (the
+  odd indices) and by `assess_sentinel_cluster_grows_linearly`.
+
+The `if`/`else` replaces the old filter predicate one for one. It adds no new
+accept or reject outcome.
+
+Related: #2042: 🟠 Diverged sentinel-detection logic makes the error-variance
+check a no-op in one copy. #873: Enable additional pedantic clippy lints for
+numeric safety and code clarity.
