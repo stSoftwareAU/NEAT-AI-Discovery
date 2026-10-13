@@ -500,3 +500,64 @@ fn test_neuron_without_incoming_synapses_emits_no_candidate() {
         candidates.len()
     );
 }
+
+// =============================================================================
+// 9. Neuron without any records emits no candidate
+// =============================================================================
+
+#[test]
+fn test_neuron_without_records_emits_no_candidate() {
+    let creature = make_creature(
+        vec![
+            input_neuron("input-1"),
+            input_neuron("input-2"),
+            hidden_neuron("hidden-1", "RELU"),
+            output_neuron("output-1", "TANH"),
+        ],
+        vec![
+            synapse("input-1", "hidden-1", 1.5),
+            synapse("input-2", "hidden-1", -0.8),
+            synapse("hidden-1", "output-1", 1.0),
+        ],
+    );
+
+    let hidden_neurons: Vec<(String, String, f32)> =
+        vec![("hidden-1".to_string(), "RELU".to_string(), 0.0)];
+
+    let make_records = |uuid: &str| -> Vec<DiscoverRecord> {
+        (0..40)
+            .map(|i| {
+                let value = (i as f32 - 20.0) / 10.0;
+                let activation = value.max(0.0);
+                let error = 0.15 + (i as f32 * 0.002).sin() * 0.02;
+                make_record(uuid, i, value, activation, error)
+            })
+            .collect()
+    };
+
+    // Companion: with records for the neuron, a candidate is produced.
+    let with_records: Vec<(String, Vec<DiscoverRecord>)> =
+        vec![("hidden-1".to_string(), make_records("hidden-1"))];
+    let companion =
+        detect_squash_weight_rescale_candidates(&creature, &hidden_neurons, &with_records);
+    assert!(
+        !companion.is_empty(),
+        "Companion with records must produce a candidate"
+    );
+
+    // Records exist only for a different uuid, so the neuron has none.
+    let other_only: Vec<(String, Vec<DiscoverRecord>)> =
+        vec![("other-neuron".to_string(), make_records("other-neuron"))];
+    let candidates =
+        detect_squash_weight_rescale_candidates(&creature, &hidden_neurons, &other_only);
+    assert!(
+        candidates.is_empty(),
+        "Neuron with no records must emit no candidate, got: {}",
+        candidates.len()
+    );
+
+    // Entirely empty records slice.
+    let empty: Vec<(String, Vec<DiscoverRecord>)> = Vec::new();
+    let candidates = detect_squash_weight_rescale_candidates(&creature, &hidden_neurons, &empty);
+    assert!(candidates.is_empty());
+}

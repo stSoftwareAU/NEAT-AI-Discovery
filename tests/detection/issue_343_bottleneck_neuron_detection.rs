@@ -498,6 +498,42 @@ fn test_bottleneck_candidates_produce_coordinated_operations() {
     );
 }
 
+/// Issue #2350: a candidate whose neuron is absent from the creature falls back
+/// to a TANH parallel neuron (the squash lookup misses).
+#[test]
+fn test_missing_neuron_falls_back_to_tanh_parallel_neuron() {
+    let candidate = BottleneckNeuronCandidate {
+        neuron_uuid: "not-in-creature".to_string(),
+        fan_in: 5,
+        fan_out: 2,
+        error_contribution_ratio: 0.45,
+        bottleneck_score: 0.8,
+        estimated_improvement: 0.02,
+        recommended_actions: vec!["addParallelNeuron".to_string()],
+        upstream_uuids: vec!["input-0".to_string(), "input-1".to_string()],
+        downstream_uuids: vec!["output-0".to_string()],
+    };
+
+    let creature = bottleneck_creature();
+    let coordinated = bottleneck_neurons_to_coordinated_candidates(&[candidate], &creature, None);
+    assert!(
+        !coordinated.is_empty(),
+        "Should produce a coordinated candidate for a missing neuron"
+    );
+
+    let c = &coordinated[0];
+    let ops_json = serde_json::to_string(&c.operations).unwrap();
+    assert!(
+        ops_json.contains("\"squash\":\"TANH\""),
+        "AddNeuron should fall back to TANH squash, got: {ops_json}"
+    );
+    let comment = c.comment.as_deref().unwrap_or_default();
+    assert!(
+        comment.contains("TANH neuron"),
+        "Comment should mention TANH neuron, got: {comment}"
+    );
+}
+
 /// Test 7: Bottleneck score is higher for neurons with higher fan-in ratio.
 #[test]
 fn test_higher_fan_in_ratio_scores_higher() {
