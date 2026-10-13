@@ -79,7 +79,7 @@ Closes #2355
 - [x] `cargo test --test detection`: 503 passed.
 - [x] `cargo clippy --all-targets --all-features -- -D warnings`: clean.
 - [x] `./quality.sh`: all checks passed, `cargo doc -D warnings` included.
-- Version bumped from 0.74.283 to 0.74.284 (`Cargo.toml`, `Cargo.lock`).
+- Version bumped to 0.74.286 (`Cargo.toml`, `Cargo.lock`), one patch above the base branch's 0.74.285.
 
 Branch outcomes:
 

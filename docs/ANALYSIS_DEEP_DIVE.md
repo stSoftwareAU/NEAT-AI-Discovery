@@ -946,6 +946,8 @@ and constant neurons are filtered out from the focus list:
 | **input** | Yes | Observation sources, not computation nodes | `input_neuron_filtered` |
 | **constant** | Yes | Don't receive inputs - always output fixed value | `constant_neuron_filtered` |
 
+A focus target that survives these filters but whose own records fail to load is reported as `target_record_load_failed` ("target neuron records failed to load"). This is checked after the input, hidden and constant reasons and before `no_eligible_sources`.
+
 ---
 
 ## 📊 Error Distribution Analysis (Issue #192)
