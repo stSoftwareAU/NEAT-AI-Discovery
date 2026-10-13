@@ -63,6 +63,12 @@ Closes #2355
   `sentinel_gating.rs:98` uses `contains` on an unrelated `input_uuids` check.
 - **Existing behaviour:** `cargo test --test detection` gave 503 passed and
   0 failed. This includes the #2042 sentinel tests.
+- **Base-branch gate fix:** `./quality.sh` failed at `cargo doc` on Develop
+  itself (`public documentation for resolve_gpu_retry_limit links to private
+  item MAX_GPU_RETRY_LIMIT --> src/config/user_facing.rs:56:15`).
+  `src/config/user_facing.rs:56` now names the private const in plain backticks
+  instead of an intra-doc link. This is a doc-only change, needed for the gate to
+  pass.
 - **Docs sweep:**
   - grep terms: `assess_sentinel_cluster`, `sentinel_indices`,
     `non_sentinel_indices`, `contains(`.
@@ -83,7 +89,7 @@ Closes #2355
       fails on the unfixed code (ratio 15.86) and passes after the fix (4.00).
 - [x] `cargo test --test detection`: 503 passed.
 - [x] `cargo clippy --all-targets --all-features -- -D warnings`: clean.
-- [x] `./quality.sh`.
+- [x] `./quality.sh`: all checks passed, `cargo doc -D warnings` included.
 - Version bumped from 0.74.283 to 0.74.284 (`Cargo.toml`, `Cargo.lock`).
 
 Branch outcomes:
