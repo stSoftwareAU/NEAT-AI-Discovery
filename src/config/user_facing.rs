@@ -53,7 +53,7 @@ const MAX_GPU_RETRY_LIMIT: u32 = 10;
 ///   with no log — the unset case is normal operation, not misconfiguration.
 /// - Unparsable (including empty): emits one `WARN` naming the variable and
 ///   the raw value, and returns the default.
-/// - Above [`MAX_GPU_RETRY_LIMIT`]: emits one `WARN` naming the variable, the
+/// - Above `MAX_GPU_RETRY_LIMIT`: emits one `WARN` naming the variable, the
 ///   requested value and the maximum, and returns the default.
 /// - `0`: emits one `WARN` noting that device-lost recovery is disabled, and
 ///   returns `0` (the operator's explicit choice is honoured, just surfaced).
