@@ -18,7 +18,8 @@ logged at `warn` in every build profile, and surfaced as a new
 - [x] Unconditional `tracing::warn!`
 - [x] Wire the reason through orchestration, FFI responses, starvation classification
 - [x] Regression test, unit tests, docs
-- [x] `Cargo.toml` patch bump 0.74.283 → 0.74.284
+- [x] Distinguish a `RecordCache::get` deadline/cancellation bail (typed `AnalysisDeadlineExceeded`) from a real load failure (PR #2407 review)
+- [x] `Cargo.toml` patch bump 0.74.283 → 0.74.285
 
 ```mermaid
 flowchart TD
@@ -53,6 +54,7 @@ precedent `SynapseNoCandidateReason::NoTargetRecords` (Issue #1101).
   `NeuronDiagnostics::new`, so the filter reasons are recorded before any early
   return from a failed load. This is a small reordering beyond the issue text
   and is needed for the precedence above to hold on the failure path.
+- `RecordCache::get` returns the typed `AnalysisDeadlineExceeded` on its deadline poll; `load_target_records` returns `TargetLoad::{Loaded, Failed, DeadlineExceeded}` and a deadline bail is neither warned about nor counted — the neuron loop sets `analysis_timed_out` instead, so a normal timeout is not attributed to the record store.
 - `target_record_load_failed` is added to `UPSTREAM_REJECTION_REASONS` in
   `candidate_starvation.rs`, since it is not a candidate-quality signal.
 
@@ -92,12 +94,15 @@ borrow `prep`.
   - `neuron_target_load_failure_is_not_reported_as_no_eligible_sources`
   - `neuron_target_load_failure_is_counted`
   - `successful_target_load_is_not_reported_as_failed` (control)
+  - `deadline_bail_on_target_load_is_not_reported_as_load_failure` (PR #2407 review)
 - Unit tests in `src/analysis/implementation_tests/diagnostics_tests.rs`; `--lib diagnostics` 69 passed, `--test analysis` 652 passed, `--test infrastructure` 223 passed (includes doc contract tests).
 - Red-check: with `diagnostics.record_target_load_failure(...)` removed from the `Err` arm, the two behavioural tests fail (`left: NoEligibleSources, right: TargetRecordLoadFailed`) and the control still passes; line restored.
 
 Branch outcomes:
 - `src/analysis/neuron/mod.rs` `load_target_records` Ok → `Some(records)`: `successful_target_load_is_not_reported_as_failed`; forcing the failure branch makes it red.
-- `src/analysis/neuron/mod.rs` `load_target_records` Err → warn + record + `None`: `neuron_target_load_failure_is_counted` and `neuron_target_load_failure_is_not_reported_as_no_eligible_sources`; removing the record call turned both red.
+- `src/analysis/neuron/mod.rs` `load_target_records` non-deadline Err → warn + record + `None`: `neuron_target_load_failure_is_counted` and `neuron_target_load_failure_is_not_reported_as_no_eligible_sources`; removing the record call turned both red.
+- `src/analysis/neuron/mod.rs` `load_target_records` `AnalysisDeadlineExceeded` → `DeadlineExceeded`, no warn/count: `deadline_bail_on_target_load_is_not_reported_as_load_failure`; making the arm unreachable turned it red.
+- `src/analysis/neuron/mod.rs` loop `TargetLoad::DeadlineExceeded` → `analysis_timed_out.store(true)`: exempt (untestable): needs a GPU queue to reach the loop (searched `tests/` for `analyze_neurons_with_cache_and_gpu_queue` callers; all require `GpuAnalyzer::gpu_is_available`).
 - `src/analysis/diagnostics/neuron_tracking.rs` `no_candidate_summaries` `target_load_failed` → `TargetRecordLoadFailed`: `neuron_target_load_failure_is_not_reported_as_no_eligible_sources`; dropping the check turned it red.
 - `src/analysis/diagnostics/neuron_tracking.rs` `emit_logs` `target_load_failed` warn branch: exempt (untestable): log output emission only, tracing capture is not staged in the suite (searched `tests/` and `src/analysis/implementation_tests/` for `emit_logs` callers).
 

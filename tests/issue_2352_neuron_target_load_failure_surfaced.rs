@@ -7,6 +7,7 @@
 #![allow(clippy::cast_precision_loss)] // Intentional numeric casts for test data generation
 
 use std::sync::Arc;
+use std::time::{Duration, SystemTime};
 
 use neat_ai_discovery::analysis::cache::RecordCache;
 use neat_ai_discovery::analysis::neuron_target_load_harness::{
@@ -125,6 +126,32 @@ fn neuron_target_load_failure_is_counted() {
 #[test]
 fn successful_target_load_is_not_reported_as_failed() {
     let outcome = run(false);
+    assert!(outcome.target_load_failed.is_empty());
+    assert!(outcome.deadline_exceeded.is_empty());
+    assert!(outcome.load_failures.iter().all(|(_, n)| *n == 0));
+    assert!(
+        outcome
+            .summaries
+            .iter()
+            .all(|s| s.reason != NeuronNoCandidateReason::TargetRecordLoadFailed)
+    );
+}
+
+/// PR #2407 review: a deadline bail from `RecordCache::get` is a timeout, not a
+/// record-store fault, so it must not be reported as `TargetRecordLoadFailed`.
+#[test]
+fn deadline_bail_on_target_load_is_not_reported_as_load_failure() {
+    let cache = Arc::new(RecordCache::with_loader_and_deadline(
+        "unused.parquet",
+        Arc::new(|_file: &str, uuid: &str| Ok(records_for(uuid))),
+        Some(SystemTime::now() - Duration::from_secs(1)),
+    ));
+    let outcome = run_target_load_pass(&input(), &cache).expect("harness pass");
+
+    assert!(
+        outcome.deadline_exceeded.iter().any(|u| u == OUTPUT),
+        "the deadline bail must be reported as a deadline, not a load failure"
+    );
     assert!(outcome.target_load_failed.is_empty());
     assert!(outcome.load_failures.iter().all(|(_, n)| *n == 0));
     assert!(

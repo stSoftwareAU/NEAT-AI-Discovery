@@ -37,7 +37,7 @@ use crate::analysis::diagnostics::{NeuronDiagnostics, TargetMap, require_unique_
 use crate::analysis::gpu::{GpuAnalyzer, GpuWorkQueue};
 
 // Import RecordCache from cache module (Issue #185)
-use super::cache::RecordCache;
+use super::cache::{AnalysisDeadlineExceeded, RecordCache};
 
 // Import shared helper functions from synapse module
 use super::synapse::{
@@ -171,19 +171,35 @@ pub(crate) fn mark_skipped_filters(
     }
 }
 
+/// Outcome of loading a focus target's own records (Issue #2352).
+pub(crate) enum TargetLoad {
+    /// The target's records were loaded.
+    Loaded(Arc<Vec<crate::types::DiscoverRecord>>),
+    /// The record cache failed to load the target's records.
+    Failed,
+    /// The analysis deadline passed (or cancellation was requested) before the
+    /// lookup — a normal timeout, not a record-store fault.
+    DeadlineExceeded,
+}
+
 /// Load a focus target's own records from the cache (Issue #2352).
 ///
-/// On failure the error is logged at `warn` level in every build profile, the
-/// failure is recorded in the diagnostics (so `no_candidate_summaries` reports
-/// `TargetRecordLoadFailed` rather than `NoEligibleSources`), and `None` is
-/// returned.
+/// A real loader failure is logged at `warn` level in every build profile and
+/// recorded in the diagnostics (so `no_candidate_summaries` reports
+/// `TargetRecordLoadFailed` rather than `NoEligibleSources`). A deadline or
+/// cancellation bail from `RecordCache::get` is a timeout, not a record-store
+/// fault: it is neither warned about nor counted, and the caller marks the
+/// analysis as timed out (PR #2407 review).
 pub(crate) fn load_target_records(
     cache: &RecordCache,
     diagnostics: &NeuronDiagnostics,
     target_uuid: &str,
-) -> Option<Arc<Vec<crate::types::DiscoverRecord>>> {
+) -> TargetLoad {
     match cache.get(target_uuid) {
-        Ok(records) => Some(records),
+        Ok(records) => TargetLoad::Loaded(records),
+        Err(err) if err.downcast_ref::<AnalysisDeadlineExceeded>().is_some() => {
+            TargetLoad::DeadlineExceeded
+        }
         Err(err) => {
             tracing::warn!(
                 target_uuid = %target_uuid,
@@ -191,7 +207,7 @@ pub(crate) fn load_target_records(
                 "Failed to load target neuron records"
             );
             diagnostics.record_target_load_failure(target_uuid);
-            None
+            TargetLoad::Failed
         }
     }
 }
@@ -352,9 +368,13 @@ pub fn analyze_neurons_with_cache_and_gpu_queue(
 
             // Issue #2352: a failed target load is recorded in the diagnostics so
             // it is not misreported as `NoEligibleSources`.
-            let Some(target_records_arc) = load_target_records(&cache, &diagnostics, target_uuid)
-            else {
-                return Ok(error_acc);
+            let target_records_arc = match load_target_records(&cache, &diagnostics, target_uuid) {
+                TargetLoad::Loaded(records) => records,
+                TargetLoad::Failed => return Ok(error_acc),
+                TargetLoad::DeadlineExceeded => {
+                    analysis_timed_out.store(true, Ordering::Relaxed);
+                    return Ok(error_acc);
+                }
             };
             if target_records_arc.is_empty() {
                 diagnostics.set_target_record_count(target_uuid, 0);

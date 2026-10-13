@@ -18,7 +18,7 @@ use crate::AnalyzeNeuronsInput;
 use crate::analysis::cache::RecordCache;
 use crate::analysis::diagnostics::NeuronDiagnostics;
 use crate::analysis::neuron::preparation::prepare_neuron_analysis;
-use crate::analysis::neuron::{load_target_records, mark_skipped_filters};
+use crate::analysis::neuron::{TargetLoad, load_target_records, mark_skipped_filters};
 use crate::analysis::shared::NeuronNoCandidateSummary;
 use crate::analysis::synapse::build_ordered_neurons;
 
@@ -31,6 +31,8 @@ pub struct NeuronTargetLoadOutcome {
     pub load_failures: Vec<(String, u32)>,
     /// Targets whose own records failed to load.
     pub target_load_failed: Vec<String>,
+    /// Targets skipped because the analysis deadline passed before their load.
+    pub deadline_exceeded: Vec<String>,
 }
 
 /// Run preparation, filter marking and the target load for each focus target,
@@ -50,9 +52,14 @@ pub fn run_target_load_pass(
     let diagnostics = NeuronDiagnostics::new(&prep.unique_focus);
     mark_skipped_filters(&prep, &diagnostics);
 
+    let mut deadline_exceeded = Vec::new();
     for target_uuid in &prep.focus_order {
-        if let Some(records) = load_target_records(cache, &diagnostics, target_uuid) {
-            diagnostics.set_target_record_count(target_uuid, records.len());
+        match load_target_records(cache, &diagnostics, target_uuid) {
+            TargetLoad::Loaded(records) => {
+                diagnostics.set_target_record_count(target_uuid, records.len());
+            }
+            TargetLoad::Failed => {}
+            TargetLoad::DeadlineExceeded => deadline_exceeded.push(target_uuid.clone()),
         }
     }
 
@@ -70,5 +77,6 @@ pub fn run_target_load_pass(
         summaries: diagnostics.no_candidate_summaries(),
         load_failures,
         target_load_failed,
+        deadline_exceeded,
     })
 }
