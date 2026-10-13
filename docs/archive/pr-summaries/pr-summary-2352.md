@@ -84,10 +84,7 @@ review found all four issue requirements met. Optional note: `focus_order` is
 now cloned (`prep.focus_order.clone()`) so the early `mark_skipped_filters` can
 borrow `prep`.
 
-Docs sweep:
-- grep: `NoEligibleSources`, `no_eligible_sources`, `ConstantNeuronFiltered`, `constant_neuron_filtered`
-- section: updated `docs/DROUGHT_PLAYBOOK.md` (new `target_record_load_failed` row) and `docs/ANALYSIS_DEEP_DIVE.md` (precedence paragraph); left unchanged and still true: `DROUGHT_PLAYBOOK.md:108` (JSON example), `:200` (Mermaid label), `:453` (prose), `docs/FFI_API.md:651` (JSON example), `docs/analysis/rejection-diagnosis-1737.md:150` (historical), `ANALYSIS_DEEP_DIVE.md:947` (existing `constant_neuron_filtered` row); README and CONTRIBUTING have no hits
-- siblings: `NoEligibleSources`, `no_eligible_sources`, `ConstantNeuronFiltered`, `constant_neuron_filtered`
+**Docs sweep** — grep: `NoEligibleSources`, `no_eligible_sources`, `NeuronNoCandidateReason`, `NeuronDiagnosticReasonJson`, `ALL_REJECTION_REASONS`, `MAX_GPU_RETRY_LIMIT`, `regression-harness`; section: `docs/DROUGHT_PLAYBOOK.md` (rejection-reason table), `docs/ANALYSIS_DEEP_DIVE.md` (focus-list filter table), `CONTRIBUTING.md#-cargo-features` (feature-gated scaffolding table); siblings: `ConstantNeuronFiltered`, `constant_neuron_filtered`, `input_neuron_filtered`, `production_discovery_regression.rs`; updated: `docs/DROUGHT_PLAYBOOK.md` (new `target_record_load_failed` row), `docs/ANALYSIS_DEEP_DIVE.md` (precedence paragraph), `CONTRIBUTING.md` (new `neuron_target_load_harness.rs` row in the Cargo Features table); read and left unchanged as still true: `DROUGHT_PLAYBOOK.md:108`/`:200`/`:454` and `docs/FFI_API.md:651` (examples of `no_eligible_sources`, not exhaustive lists), `docs/analysis/rejection-diagnosis-1737.md:150` (historical), `docs/analysis/discovery-regression-harness-1741.md:111` (describes its own test target only), `docs/audits/security-sweep-chunk-08b-synapse-scoring-recommendation.md:629` (`NeuronNoCandidateReason` is still fieldless); README.md and `*/README.md` have no hits
 
 ## Test Plan
 
