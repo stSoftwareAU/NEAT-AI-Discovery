@@ -84,7 +84,8 @@ pub const LAZY_OVERBOOK_SKIP_RATIO: u64 = 10;
 const ANALYSIS_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(60);
 
 /// Typed error returned by [`RecordCache::get`] when the shared analysis
-/// deadline has passed (or host cancellation was requested) before a lookup.
+/// deadline has passed (or host cancellation was requested) before a cache-miss
+/// load (Issue #2408: already-loaded records are still served).
 ///
 /// A deadline bail is a normal timeout, not a record-store fault: callers can
 /// tell the two apart with `err.downcast_ref::<AnalysisDeadlineExceeded>()`
@@ -134,9 +135,11 @@ pub struct RecordCache {
     /// is active (Issue #1048). The field is never read — its `Drop` impl
     /// closes the handle when the cache is dropped.
     _file_guard: Option<File>,
-    /// Shared analysis deadline (Issue #2013). Lazy per-neuron loads poll this
-    /// before each disk scan so a run past `#3866` stops cleanly instead of
-    /// hanging until the external wall-clock cap.
+    /// Shared analysis deadline (Issue #2013). Polled only on a cache miss,
+    /// before the loader runs, so a run past `#3866` stops cleanly instead of
+    /// hanging until the external wall-clock cap, while already-loaded records
+    /// stay readable after it passes (Issue #2408). Orchestration passes the
+    /// #1408 loading deadline here (overall minus the analysis reserve).
     deadline: Option<SystemTime>,
     /// Wall-clock start of this cache instance — used for heartbeat elapsed.
     phase_started: Instant,
@@ -202,7 +205,8 @@ impl RecordCache {
     ///   [`parquet_preload_fits_available`] primitive focus ranking uses.
     ///
     /// Lazy mode is reserved for modest overbooks and still completes: its
-    /// per-neuron loads poll the shared analysis deadline (Issue #2013) and emit
+    /// per-neuron loads poll the shared analysis deadline on a cache miss
+    /// (Issues #2013, #2408) and emit
     /// a periodic INFO heartbeat so silence of multi-hour length is impossible.
     ///
     /// Returns `Ok(None)` when the phase was skipped as unworkable.
@@ -225,7 +229,7 @@ impl RecordCache {
     /// Create a lazy-loading cache that loads records on-demand.
     /// Slower than pre-loaded mode but uses minimal memory.
     ///
-    /// `deadline` is polled on every `get` (Issue #2013) so a host that fell
+    /// `deadline` is polled on every cache-miss `get` (Issues #2013, #2408) so a host that fell
     /// into lazy mode still honours the `#3866` logical stop.
     fn new_lazy(parquet_file: &str, deadline: Option<SystemTime>) -> Result<Self> {
         use crate::parquet_format::read_records_from_parquet;
@@ -364,18 +368,18 @@ impl RecordCache {
     ///
     /// # Errors
     ///
-    /// Returns [`AnalysisDeadlineExceeded`] (before any load is attempted, in
-    /// pre-loaded mode too) when the deadline has passed or cancellation was
-    /// requested, and a load error when the neuron's records fail to load.
+    /// Returns [`AnalysisDeadlineExceeded`] only when the neuron's records are
+    /// not already loaded and the deadline has passed or cancellation was
+    /// requested, before the loader runs (Issue #2408). Records already in the
+    /// cache stay readable after the deadline. Also returns a load error when
+    /// the neuron's records fail to load.
     pub fn get(&self, neuron_uuid: &str) -> Result<Arc<Vec<DiscoverRecord>>> {
-        // Issue #2013: poll the shared analysis deadline before each (potentially
-        // multi-minute) per-neuron parquet scan on the lazy path.
-        if deadline_passed(&self.deadline) {
-            return Err(anyhow::Error::new(AnalysisDeadlineExceeded {
-                neuron_uuid: neuron_uuid.to_string(),
-            }));
-        }
-        self.emit_progress_heartbeat(neuron_uuid);
+        let to_result = |result: &Result<Arc<Vec<DiscoverRecord>>, String>| match result {
+            Ok(records) => Ok(Arc::clone(records)),
+            Err(msg) => Err(anyhow::anyhow!(
+                "Failed to load records for neuron '{neuron_uuid}': {msg}"
+            )),
+        };
 
         // Fast path: try to get with read lock first (allows concurrent reads)
         let cell = {
@@ -396,6 +400,24 @@ impl RecordCache {
             }
         };
 
+        // Already loaded (pre-loaded mode or an earlier lazy load): serve it
+        // without polling the deadline (Issue #2408).
+        if let Some(result) = cell.get() {
+            return to_result(result);
+        }
+
+        // Issue #2013 / #2408: poll the shared analysis deadline only on a cache
+        // miss, right before the (potentially multi-minute) per-neuron parquet
+        // scan. Orchestration builds the cache with the loading deadline, which
+        // is earlier than the overall one by the analysis reserve (#1408), so
+        // polling on hits would fail reads of data that is already in memory.
+        if deadline_passed(&self.deadline) {
+            return Err(anyhow::Error::new(AnalysisDeadlineExceeded {
+                neuron_uuid: neuron_uuid.to_string(),
+            }));
+        }
+        self.emit_progress_heartbeat(neuron_uuid);
+
         // Lazily initialise the cell outside the cache lock so other threads can
         // access other neurons while this one is being loaded. get_or_init
         // guarantees only one thread executes the loader for a given neuron.
@@ -407,12 +429,7 @@ impl RecordCache {
                 .map_err(|e| format!("{e:#}"))
         });
 
-        match result {
-            Ok(records) => Ok(Arc::clone(records)),
-            Err(msg) => Err(anyhow::anyhow!(
-                "Failed to load records for neuron '{neuron_uuid}': {msg}"
-            )),
-        }
+        to_result(result)
     }
 
     /// Get the number of entries in the cache.
