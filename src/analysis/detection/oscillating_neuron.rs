@@ -111,7 +111,8 @@ pub fn detect_oscillating_neurons(
         let mean_abs_activation = compute_mean_abs_activation(records);
 
         // Skip dead or near-dead neurons
-        if mean_abs_activation < MIN_MEAN_ABS_ACTIVATION {
+        // Issue #2351: NaN / overflowed mean must not fail the gate open.
+        if !mean_abs_activation.is_finite() || mean_abs_activation < MIN_MEAN_ABS_ACTIVATION {
             continue;
         }
 

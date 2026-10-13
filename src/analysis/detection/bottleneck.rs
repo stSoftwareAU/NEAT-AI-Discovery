@@ -165,7 +165,8 @@ pub fn detect_bottleneck_neurons(
         // to represent more complex combinations.
         let estimated_improvement = bottleneck_score * 0.01;
 
-        if estimated_improvement <= 0.0 {
+        // Issue #2351: overflowing error sums make the ratio and gain NaN.
+        if !estimated_improvement.is_finite() || estimated_improvement <= 0.0 {
             continue;
         }
 

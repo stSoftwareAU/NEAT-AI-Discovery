@@ -299,7 +299,8 @@ fn detect_weight_corrections(
             .sum();
 
         let improvement = (baseline_error_sq - corrected_error_sq) / count as f32;
-        if improvement <= 0.0 {
+        // Issue #2351: squared-error sums can overflow to +inf (NaN improvement).
+        if !improvement.is_finite() || improvement <= 0.0 {
             continue;
         }
 
@@ -360,7 +361,8 @@ fn combine_corrections(
             let combined_improvement =
                 bias_corr.estimated_improvement + weight_corr.estimated_improvement * 0.7;
 
-            if combined_improvement <= 0.0 {
+            // Issue #2351: reject a non-finite combined gain (NaN fails `<= 0.0`).
+            if !combined_improvement.is_finite() || combined_improvement <= 0.0 {
                 continue;
             }
 

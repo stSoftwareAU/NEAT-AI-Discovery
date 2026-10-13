@@ -179,6 +179,8 @@ fn evaluate_neuron(
     // (since target = activation + error, |activation - target| = |error|)
     let current_mae = compute_mae_for_squash(current_squash, &samples);
 
+    // Aggregate / unsimulable current squash yields +inf MAE; reject it so the
+    // reduction fraction cannot become NaN (Issue #2351).
     if current_mae < MIN_MEAN_ERROR_THRESHOLD {
         return None;
     }
