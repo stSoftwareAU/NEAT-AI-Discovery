@@ -27,10 +27,14 @@
 //! These are emitted as `CoordinatedStructuralCandidateJson` candidates.
 
 #![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+use std::time::SystemTime;
 
+use crate::analysis::utils::deadline_passed;
 use crate::types::DiscoverRecord;
-use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson, CreatureJson};
+use crate::{
+    CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson, CreatureJson, SynapseJson,
+};
 
 use crate::analysis::constants::MIN_DISCOVERY_SAMPLE_COUNT as MIN_SAMPLES;
 
@@ -214,9 +218,16 @@ fn split_neuron_uuid(original_uuid: &str, output_index: usize) -> String {
 /// # Arguments
 /// * `conflicts` - Detected output conflict neurons.
 /// * `creature` - The creature topology.
+/// * `deadline` - Optional discovery deadline (Issue #2358). The conversion
+///   stops and returns the candidates built so far once the deadline passes or
+///   global cancellation is requested.
+///
+/// Synapses are indexed once by `(from, to)`, so the work is
+/// O(synapses + conflicts) rather than O(conflicts x synapses).
 pub fn output_conflicts_to_coordinated_candidates(
     conflicts: &[OutputConflictNeuron],
     creature: &CreatureJson,
+    deadline: &Option<SystemTime>,
 ) -> Vec<CoordinatedStructuralCandidateJson> {
     // Find output neuron UUIDs in order
     let output_uuids: Vec<&str> = creature
@@ -229,9 +240,23 @@ pub fn output_conflicts_to_coordinated_candidates(
     // Find the first output neuron UUID for insert_before placement
     let first_output_uuid = output_uuids.first().map(std::string::ToString::to_string);
 
+    // Index synapses once (Issue #2358). `or_insert` keeps the FIRST synapse for a duplicate (from, to) pair, matching the old `find`.
+    let mut synapses_by_from: HashMap<&str, HashMap<&str, &SynapseJson>> = HashMap::new();
+    for s in &creature.synapses {
+        synapses_by_from
+            .entry(s.from_uuid.as_str())
+            .or_default()
+            .entry(s.to_uuid.as_str())
+            .or_insert(s);
+    }
+
     let mut results = Vec::new();
 
     for conflict in conflicts {
+        if deadline_passed(deadline) {
+            break;
+        }
+
         // Strategy: add a new gating neuron that routes the original neuron's
         // output only to the helped outputs, bypassing the harmed ones.
         // We create a split: a new hidden neuron connected only to the harmed outputs
@@ -249,11 +274,7 @@ pub fn output_conflicts_to_coordinated_candidates(
             .collect();
 
         // Find which existing synapses connect this neuron to the harmed outputs
-        let existing_synapses: Vec<&crate::SynapseJson> = creature
-            .synapses
-            .iter()
-            .filter(|s| s.from_uuid == conflict.neuron_uuid)
-            .collect();
+        let existing_synapses = synapses_by_from.get(conflict.neuron_uuid.as_str());
 
         // For each harmed output, adjust the synapse weight to reduce the harm
         for &(output_idx, harm_magnitude) in &harmed_outputs {
@@ -263,7 +284,7 @@ pub fn output_conflicts_to_coordinated_candidates(
             let output_uuid = output_uuids[output_idx];
 
             // Check if there's a direct synapse from the conflicting neuron to this output
-            if let Some(syn) = existing_synapses.iter().find(|s| s.to_uuid == output_uuid) {
+            if let Some(syn) = existing_synapses.and_then(|m| m.get(output_uuid)) {
                 // Reduce the weight toward zero to attenuate harm
                 let reduced_weight = syn.weight * 0.3; // reduce to 30%
                 operations.push(CoordinatedStructuralOpJson::SetWeight {
