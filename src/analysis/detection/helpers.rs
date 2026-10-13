@@ -13,13 +13,15 @@
 //! | [`compute_mean_abs_activation`] | Mean absolute activation | 6+ |
 //! | [`sort_candidates_by_score_gain`] | Descending sort on score gain | 20+ |
 //! | [`weighted_confidence`] | Multi-factor confidence scoring | 14+ |
+//! | [`existing_neuron_uuids`] | Set of UUIDs the creature already has (Issue #2359) | 5 |
+//! | [`first_free_neuron_uuid`] | Re-salt a synthetic UUID until it is unused (Issue #2359) | 5 |
 
 #![allow(clippy::cast_precision_loss)] // Intentional numeric casts for neural network computation (Issue #873)
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
-use crate::CoordinatedStructuralCandidateJson;
 use crate::types::DiscoverRecord;
+use crate::{CoordinatedStructuralCandidateJson, CreatureJson};
 
 /// Build a lookup map from neuron UUID strings to their discovery records.
 ///
@@ -220,4 +222,25 @@ pub fn weighted_confidence(factors: &[ConfidenceFactor], floor: f32, ceiling: f3
         .map(|f| f.value.clamp(0.0, 1.0) * f.weight)
         .sum();
     floor + raw * (ceiling - floor)
+}
+
+/// Issue #2359: UUIDs of every neuron the creature already has, built once per converter call.
+pub fn existing_neuron_uuids(creature: &CreatureJson) -> HashSet<&str> {
+    creature.neurons.iter().map(|n| n.uuid.as_str()).collect()
+}
+
+/// Issue #2359: first UUID from `make(salt)` (salt 0, 1, 2, …) that names no existing neuron.
+///
+/// Salt 0 must reproduce the legacy UUID so non-colliding output is unchanged.
+pub fn first_free_neuron_uuid(
+    existing: &HashSet<&str>,
+    mut make: impl FnMut(u32) -> String,
+) -> String {
+    for salt in 0..=u32::MAX {
+        let uuid = make(salt);
+        if !existing.contains(uuid.as_str()) {
+            return uuid;
+        }
+    }
+    unreachable!("a finite set of existing neurons cannot occupy every u32 salt (Issue #2359)")
 }

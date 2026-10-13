@@ -30,6 +30,7 @@
 use std::collections::{HashMap, HashSet};
 use std::time::SystemTime;
 
+use super::helpers::{existing_neuron_uuids, first_free_neuron_uuid};
 use crate::analysis::utils::deadline_passed;
 use crate::types::DiscoverRecord;
 use crate::{
@@ -199,8 +200,15 @@ pub fn detect_output_conflict_neurons(
 }
 
 /// Generate a deterministic UUID for a split neuron.
-fn split_neuron_uuid(original_uuid: &str, output_index: usize) -> String {
-    let key = format!("output-conflict-split|{original_uuid}|{output_index}");
+///
+/// Salt 0 hashes the legacy key; salt `n >= 1` appends `|n` so the caller can
+/// step past a UUID the creature already owns (Issue #2359).
+fn split_neuron_uuid(original_uuid: &str, output_index: usize, salt: u32) -> String {
+    let key = if salt == 0 {
+        format!("output-conflict-split|{original_uuid}|{output_index}")
+    } else {
+        format!("output-conflict-split|{original_uuid}|{output_index}|{salt}")
+    };
     // FNV-1a 64-bit
     let mut hash: u64 = 0xcbf29ce484222325;
     for b in key.as_bytes() {
@@ -222,6 +230,8 @@ fn split_neuron_uuid(original_uuid: &str, output_index: usize) -> String {
 ///   stops and returns the candidates built so far once the deadline passes or
 ///   global cancellation is requested.
 ///
+/// Split-neuron UUIDs avoid every UUID already in `creature` (Issue #2359).
+///
 /// Synapses are indexed once by `(from, to)`, so the work is
 /// O(synapses + conflicts) rather than O(conflicts x synapses).
 pub fn output_conflicts_to_coordinated_candidates(
@@ -236,6 +246,9 @@ pub fn output_conflicts_to_coordinated_candidates(
         .filter(|n| n.neuron_type == "output")
         .map(|n| n.uuid.as_str())
         .collect();
+
+    // Existing neuron UUIDs, built once (Issue #2359).
+    let existing = existing_neuron_uuids(creature);
 
     // Find the first output neuron UUID for insert_before placement
     let first_output_uuid = output_uuids.first().map(std::string::ToString::to_string);
@@ -295,7 +308,9 @@ pub fn output_conflicts_to_coordinated_candidates(
             } else {
                 // No direct synapse — add a compensating neuron between the
                 // conflicting hidden neuron and the harmed output
-                let new_uuid = split_neuron_uuid(&conflict.neuron_uuid, output_idx);
+                let new_uuid = first_free_neuron_uuid(&existing, |salt| {
+                    split_neuron_uuid(&conflict.neuron_uuid, output_idx, salt)
+                });
 
                 operations.push(CoordinatedStructuralOpJson::AddNeuron {
                     neuron_uuid: new_uuid.clone(),
