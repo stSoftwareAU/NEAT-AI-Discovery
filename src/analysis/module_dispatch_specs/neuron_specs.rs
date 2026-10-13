@@ -6,6 +6,7 @@
 //! symmetry breaking, and co-adaptation detection.
 
 use std::sync::Arc;
+use std::time::SystemTime;
 
 use super::super::cost_function_hint::CostFunctionHint;
 use super::super::detection::{
@@ -22,6 +23,10 @@ use super::super::{cache, discovery_dispatch, merge_redundant_neuron};
 /// `cost_hint` (Issue #1317) governs the implied-target reconstruction
 /// guard: linear-residual costs enable the high-error squash exploration
 /// detector, non-linear-residual costs (and neutral / absent) gate it off.
+///
+/// `deadline` (Issues #2348, #2349) is forwarded into both the
+/// symmetry-breaking and co-adaptation pairwise scans so each stops at the
+/// discovery deadline or on global cancellation.
 pub(crate) fn append_neuron_specs(
     modules: &mut Vec<discovery_dispatch::DiscoveryModuleSpec>,
     creature: &Arc<crate::CreatureJson>,
@@ -29,6 +34,7 @@ pub(crate) fn append_neuron_specs(
     shared_cache: &Arc<cache::RecordCache>,
     topo: &Arc<CreatureTopologyCache>,
     cost_hint: CostFunctionHint,
+    deadline: Option<SystemTime>,
 ) {
     // Issue #342: Saturated neuron detection
     discovery_spec!(modules, "saturation detection", "saturation_detection",
@@ -184,17 +190,63 @@ pub(crate) fn append_neuron_specs(
         cache = shared_cache, hidden = hidden_neurons, creature = creature =>
         guard_min: hidden 2,
         records: cache.load_records_for_hidden(&hidden),
-        detect: |records| symmetry_breaking::detect_symmetric_neurons(&creature, &records),
+        detect: |records| {
+            // Issue #2349 (eligible-neuron cap hardened per review of PR
+            // #2400): the O(E²) pair scan stops at the deadline, on
+            // cancellation or at the candidate ceiling; a partial scan is
+            // logged, as is a capped eligible-neuron count.
+            let scan = symmetry_breaking::detect_symmetric_neurons_with_deadline(&creature, &records, &deadline);
+            if let Some(reason) = scan.truncation {
+                tracing::warn!(reason = ?reason, returned = scan.candidates.len(), "Symmetry-breaking scan stopped early; returning partial candidates.");
+            }
+            if scan.eligible_skipped > 0 {
+                tracing::warn!(
+                    skipped = scan.eligible_skipped,
+                    cap = symmetry_breaking::MAX_SYMMETRY_ELIGIBLE_NEURONS,
+                    "Symmetry-breaking scan capped eligible hidden neurons; skipped neurons were not compared."
+                );
+            }
+            scan.candidates
+        },
         convert: |detected| symmetry_breaking::symmetric_neurons_to_coordinated_candidates(&detected),
     );
 
     // Issue #571: Activation co-adaptation detection for redundant neuron pairs
+    // Issue #2348: bound the O(E²·S) pairwise scan with a shared deadline and
+    // report truncation / eligible-neuron skips via tracing warnings.
     discovery_spec!(modules, "co-adaptation detection", "co_adaptation_detection",
         cache = shared_cache, hidden = hidden_neurons, creature = creature =>
-        guard_min: hidden 2,
-        records: cache.load_records_for_hidden(&hidden),
-        detect: |records| co_adaptation::detect_co_adapted_neurons(&creature, &records),
-        convert: |detected| co_adaptation::co_adapted_pairs_to_coordinated_candidates(&detected, &creature),
+        custom: move || {
+            if hidden.len() < 2 {
+                return None;
+            }
+            let records = cache.load_records_for_hidden(&hidden);
+            let scan = co_adaptation::detect_co_adapted_neurons_with_deadline(&creature, &records, &deadline);
+            if let Some(reason) = scan.truncation {
+                tracing::warn!(
+                    reason = ?reason,
+                    pairs_evaluated = scan.pairs_evaluated,
+                    returned = scan.candidates.len(),
+                    "Co-adaptation scan stopped early; returning partial candidates."
+                );
+            }
+            if scan.eligible_skipped > 0 {
+                tracing::warn!(
+                    skipped = scan.eligible_skipped,
+                    cap = co_adaptation::MAX_CO_ADAPTATION_ELIGIBLE_NEURONS,
+                    "Co-adaptation scan capped eligible hidden neurons; skipped neurons were not compared."
+                );
+            }
+            let detected = scan.candidates;
+            if detected.is_empty() {
+                return None;
+            }
+            let candidates = co_adaptation::co_adapted_pairs_to_coordinated_candidates(&detected, &creature);
+            Some(discovery_dispatch::DiscoveryDetectionResult {
+                detected_count: detected.len(),
+                candidates,
+            })
+        },
     );
 
     // Issue #1633: Merge/fold redundant (highly-correlated) hidden neuron pairs

@@ -239,6 +239,13 @@ the gate runs on milestone sub-issue PRs too, not just the rollup into `Develop`
   and uploads Codecov coverage. It carries no fmt or Clippy step: those live in
   `ci.yml/quality` and running them twice doubled CI time for an identical
   result (Issue #1636)
+- `MSRV` (separate workflow `.github/workflows/msrv.yml`) — checks every
+  target with the toolchain Cargo.toml declares as `rust-version` (1.95), so
+  code needing a newer rustc fails on the PR rather than on fleet hosts. The
+  declared `rust-version` is also what `scripts/runlib.sh`'s toolchain gate
+  reads to upgrade a host, so raise it whenever new code needs a newer
+  compiler (Issue #2395). `tests/issue_2395_msrv_declared.rs` pins the
+  workflow's toolchain to it
 - `Markdown Lint` (separate workflow `.github/workflows/markdown-lint.yml`) —
   `markdownlint-cli2` over every `**/*.md`, configured by
   `.markdownlint-cli2.jsonc`
