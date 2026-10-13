@@ -64,6 +64,10 @@ pub mod module_tiering;
 pub mod module_weights;
 pub mod neuron;
 pub mod neuron_fingerprint;
+/// Regression-test scaffolding, not shipped API — gated behind the
+/// off-by-default `regression-harness` feature (Issue #2352).
+#[cfg(feature = "regression-harness")]
+pub mod neuron_target_load_harness;
 pub mod novelty_escalation;
 pub mod one_hot_class_allocation;
 /// Regression-test scaffolding, not shipped API — gated behind the
