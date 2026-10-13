@@ -63,7 +63,7 @@ creature has.
 - `cargo test --test detection issue_639` — 11/11 pass
 - `cargo fmt --all -- --check`, `cargo clippy --all-targets -- -D warnings`,
   `cargo doc --no-deps` — clean
-- `./quality.sh < /dev/null` — run before raising the PR
+- `./quality.sh < /dev/null` — all quality checks passed
 
 **Docs sweep** — grep: `output_conflicts_to_coordinated_candidates`, `deadline` in
 `src/analysis/module_dispatch_specs/`, `output.conflict` in `README.md` and `docs/`;
