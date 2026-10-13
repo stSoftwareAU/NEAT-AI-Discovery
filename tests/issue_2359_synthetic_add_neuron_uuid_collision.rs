@@ -334,3 +334,25 @@ fn legacy_uuid_kept_when_no_collision() {
     ));
     assert_eq!(bo, vec!["gate-bounded-h-conflict".to_string()]);
 }
+
+/// Golden values captured from the unfixed base (d82e793): with no collision
+/// the salt-0 FNV UUIDs must be byte-identical to the pre-fix output.
+#[test]
+fn legacy_fnv_uuids_match_pre_fix_values() {
+    let creature = conflict_creature();
+    assert_eq!(
+        add_neuron_uuids(&hsc_and_ocs(&creature)),
+        vec![
+            "hsc-c386a0579d407bd5".to_string(),
+            "ocs-ec07650c78436186".to_string()
+        ]
+    );
+    assert_eq!(
+        add_neuron_uuids(&bottleneck_neurons_to_coordinated_candidates(
+            &bottlenecks(),
+            &creature,
+            None
+        )),
+        vec!["bp-178b654c0ea8cf1b".to_string()]
+    );
+}
