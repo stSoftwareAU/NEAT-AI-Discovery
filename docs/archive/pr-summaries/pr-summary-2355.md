@@ -69,19 +69,8 @@ Closes #2355
   `src/config/user_facing.rs:56` now names the private const in plain backticks
   instead of an intra-doc link. This is a doc-only change, needed for the gate to
   pass.
-- **Docs sweep:**
-  - grep terms: `assess_sentinel_cluster`, `sentinel_indices`,
-    `non_sentinel_indices`, `contains(`.
-  - section: n/a (no rule or prompt text changed).
-  - siblings: `sentinel_indices`, `non_sentinel_indices`.
-  - files updated: none needed. The function's name, signature and contract
-    are unchanged.
-  - remaining hits:
-    - `src/analysis/detection/observation_range.rs:164` — still true because
-      that `sentinel_indices` is a `HashSet`, so each lookup is O(1).
-    - `docs/archive/pr-summaries/pr-summary-2042.md:20,41,91,93` — still true
-      because these are historical notes on the rule, which is unchanged.
-    - No hits in README.md, CONTRIBUTING.md or `docs/` reference docs.
+
+**Docs sweep** — grep: `assess_sentinel_cluster`, `sentinel_indices`, `non_sentinel_indices`, `sentinel_cluster`, `MIN_SENTINEL_FRACTION`, `SENTINEL_TOLERANCE`, "sentinel cluster", `MAX_GPU_RETRY_LIMIT`, `resolve_gpu_retry_limit`, `NEAT_AI_DISCOVERY_GPU_RETRY_LIMIT`; section: `docs/DISCOVERY_TYPES.md#sentinel-gating-detection` (criterion 2 names `sentinel_cluster.rs` as the single accept/reject rule — still true, the rule is unchanged and only the partition's cost changed) and `docs/CONFIGURATION.md` row `NEAT_AI_DISCOVERY_GPU_RETRY_LIMIT` (still true — the `user_facing.rs` change only turns an intra-doc link into plain backticks); siblings: none — no existing set gained a member, the diff only rewrites the body of one function and one rustdoc link; no hits needing change — "sentinel cluster" hits in `docs/ANALYSIS_DEEP_DIVE.md:768`, `docs/DISCOVERY_TYPES.md:1559,1588`, `docs/discoveries/observation-utilisation.md:48` and `docs/discoveries/sentinel-gating.md:11,18` describe detection behaviour, which is unchanged; no hits for the other names in README.md, `docs/` (excluding `docs/archive/`) or `*/README.md`; updated: none
 
 ## Test Plan
 
