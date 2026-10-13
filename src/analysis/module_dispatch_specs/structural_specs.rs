@@ -17,7 +17,8 @@ use super::super::{cache, discovery_dispatch};
 /// Append structural discovery module specs to the provided vector.
 ///
 /// `deadline` (Issue #2183) is forwarded into the multi-hop and fan-in
-/// scans so they stop at the discovery deadline or on global cancellation.
+/// scans and the output-conflict conversion (Issue #2358) so they stop at the
+/// discovery deadline or on global cancellation.
 pub(crate) fn append_structural_specs(
     modules: &mut Vec<discovery_dispatch::DiscoveryModuleSpec>,
     creature: &Arc<crate::CreatureJson>,
@@ -110,7 +111,7 @@ pub(crate) fn append_structural_specs(
                 return None;
             }
             let candidates = output_conflict::output_conflicts_to_coordinated_candidates(
-                &detected, &creature,
+                &detected, &creature, &deadline,
             );
             Some(discovery_dispatch::DiscoveryDetectionResult {
                 detected_count: detected.len(),
