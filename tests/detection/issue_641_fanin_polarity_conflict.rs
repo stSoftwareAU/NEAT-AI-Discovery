@@ -411,3 +411,92 @@ fn test_candidates_sorted_by_conflict_score() {
         );
     }
 }
+
+// =============================================================================
+// Test 9: Squash lookup (Issue #2350)
+// =============================================================================
+
+/// Build a four-input creature with a balanced polarity conflict on `h-0`,
+/// using the supplied squash for `h-0`, plus matching records.
+fn conflict_fixture(
+    h0_squash: Option<&str>,
+) -> (
+    neat_ai_discovery::CreatureJson,
+    Vec<(String, Vec<DiscoverRecord>)>,
+) {
+    let mut neurons = vec![
+        neuron("in-0", "input", "IDENTITY"),
+        neuron("in-1", "input", "IDENTITY"),
+        neuron("in-2", "input", "IDENTITY"),
+        neuron("in-3", "input", "IDENTITY"),
+    ];
+    if let Some(squash) = h0_squash {
+        neurons.push(hidden("h-0", squash));
+    }
+    neurons.push(output("out-0", "IDENTITY"));
+
+    let creature = make_creature(
+        neurons,
+        vec![
+            synapse("in-0", "h-0", 2.0),
+            synapse("in-1", "h-0", 2.0),
+            synapse("in-2", "h-0", -2.0),
+            synapse("in-3", "h-0", -2.0),
+            synapse("h-0", "out-0", 1.0),
+        ],
+    );
+
+    let mut records: Vec<(String, Vec<DiscoverRecord>)> = Vec::new();
+    for i in 0..4 {
+        records.push((format!("in-{i}"), make_records(&format!("in-{i}"), 30)));
+    }
+    records.push(("h-0".to_string(), make_records("h-0", 30)));
+    records.push(("out-0".to_string(), make_records("out-0", 30)));
+    (creature, records)
+}
+
+/// Extract the squash of the first emitted `AddNeuron` operation.
+fn first_add_neuron_squash(
+    coordinated: &[neat_ai_discovery::CoordinatedStructuralCandidateJson],
+) -> String {
+    use neat_ai_discovery::CoordinatedStructuralOpJson;
+    coordinated
+        .first()
+        .expect("should emit a coordinated candidate")
+        .operations
+        .iter()
+        .find_map(|op| match op {
+            CoordinatedStructuralOpJson::AddNeuron { squash, .. } => Some(squash.clone()),
+            _ => None,
+        })
+        .expect("should contain an AddNeuron operation")
+}
+
+/// When the candidate's target neuron is absent from `creature.neurons`, the
+/// squash lookup misses and the new neuron falls back to `"TANH"`.
+#[test]
+fn test_missing_target_neuron_falls_back_to_tanh_squash() {
+    // Detect against the full creature, so a candidate for h-0 exists.
+    let (full, records) = conflict_fixture(Some("RELU"));
+    let candidates = detect_fanin_polarity_conflicts(&full, &records);
+    assert!(!candidates.is_empty(), "Should detect conflict");
+    assert_eq!(candidates[0].neuron_uuid, "h-0");
+
+    // Convert against a creature whose neurons omit h-0 (synapses still target it).
+    let (without_h0, _) = conflict_fixture(None);
+    assert!(without_h0.neurons.iter().all(|n| n.uuid != "h-0"));
+
+    let coordinated = fanin_polarity_conflicts_to_coordinated_candidates(&candidates, &without_h0);
+    assert_eq!(first_add_neuron_squash(&coordinated), "TANH");
+}
+
+/// When the target neuron is present, the new neuron keeps its non-TANH squash.
+#[test]
+fn test_present_target_neuron_keeps_its_squash() {
+    let (creature, records) = conflict_fixture(Some("RELU"));
+    let candidates = detect_fanin_polarity_conflicts(&creature, &records);
+    assert!(!candidates.is_empty(), "Should detect conflict");
+
+    let coordinated = fanin_polarity_conflicts_to_coordinated_candidates(&candidates, &creature);
+    assert_eq!(first_add_neuron_squash(&coordinated), "RELU");
+}
