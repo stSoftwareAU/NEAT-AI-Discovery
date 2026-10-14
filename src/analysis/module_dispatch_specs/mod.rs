@@ -48,6 +48,7 @@ use super::{
 /// Issue #2348: it is also captured by the co-adaptation pairwise scan.
 /// Issue #2349: `deadline` is also forwarded to the symmetry-breaking pair
 /// scan, so it stops at the deadline or on global cancellation too.
+/// Issue #2358: it is also forwarded to the output-conflict candidate conversion.
 pub(crate) fn build_discovery_module_specs(
     creature: &Arc<crate::CreatureJson>,
     hidden_neurons: &Arc<Vec<(String, String, f32)>>,

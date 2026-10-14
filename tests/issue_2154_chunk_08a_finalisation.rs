@@ -14,7 +14,9 @@
 //!
 //! * the record is promoted out of `in-progress/` and the staged copy is gone;
 //! * no cell anywhere in the record still reads `pending`;
-//! * `## Files swept` carries exactly one row per in-scope file, matching the
+//! * `## Files swept` carries exactly one row per in-scope file (53, including
+//!   the `#[cfg(test)]`-only `symmetry_breaking_deadline_tests.rs` added by
+//!   #2349), matching the
 //!   on-disk `.rs` files of `src/analysis/detection` and `src/analysis/neuron`;
 //! * the six `<!-- section: … -->` markers are present, in order;
 //! * every production capacity site the capacity regex sweep
@@ -45,7 +47,7 @@ const SCOPE_DIRS: [&str; 2] = ["src/analysis/detection", "src/analysis/neuron"];
 
 /// Total files across both scope directories — also the row count in
 /// `## Files swept`.
-const EXPECTED_FILE_COUNT: usize = 52;
+const EXPECTED_FILE_COUNT: usize = 53;
 
 /// One `<!-- section: … -->` marker per audit sub-issue, in record order.
 const SECTION_NAMES: [&str; 6] = [
@@ -110,11 +112,7 @@ fn rust_files_under(root: &str) -> Vec<String> {
     let mut found: Vec<String> = entries
         .filter_map(|entry| {
             let path = entry.expect("directory entry must be readable").path();
-            // `*_tests.rs` files are `#[cfg(test)]`-only siblings, not production code.
-            (path.is_file()
-                && path.extension().is_some_and(|e| e == "rs")
-                && !path.to_string_lossy().ends_with("_tests.rs"))
-            .then(|| {
+            (path.is_file() && path.extension().is_some_and(|e| e == "rs")).then(|| {
                 path.strip_prefix(&base)
                     .expect("walked path sits under the repo root")
                     .to_string_lossy()
@@ -239,6 +237,10 @@ fn scope_capacity_site_counts() -> Vec<(String, usize)> {
     SCOPE_DIRS
         .iter()
         .flat_map(|root| rust_files_under(root))
+        // `*_tests.rs` files are `#[cfg(test)]` modules wired in with `#[path]`
+        // (e.g. `symmetry_breaking_deadline_tests.rs`): all test code, so none
+        // of their allocations is a production capacity site.
+        .filter(|rel| !rel.ends_with("_tests.rs"))
         .filter_map(|rel| {
             let count = production_source(&rel)
                 .lines()
@@ -335,7 +337,7 @@ fn no_word_pending_survives_anywhere_in_the_record() {
 }
 
 #[test]
-fn files_swept_has_52_rows_each_with_an_outcome_and_a_reason() {
+fn files_swept_has_one_row_per_in_scope_file_each_with_an_outcome_and_a_reason() {
     let doc = read(RECORD);
     let rows = file_rows(section(&doc, "## Files swept"));
     assert_eq!(

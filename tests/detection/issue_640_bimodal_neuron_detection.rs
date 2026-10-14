@@ -24,6 +24,25 @@ use neat_ai_discovery::analysis::detection::bimodal_neuron::{
     bimodal_neurons_to_coordinated_candidates, detect_bimodal_neurons,
 };
 use neat_ai_discovery::types::DiscoverRecord;
+use neat_ai_discovery::{CreatureJson, NeuronJson};
+
+/// Helper: minimal creature containing the given `(uuid, squash, bias)` hidden neurons.
+fn creature_with(neurons: &[(String, String, f32)]) -> CreatureJson {
+    CreatureJson {
+        neurons: neurons
+            .iter()
+            .map(|(uuid, squash, bias)| NeuronJson {
+                uuid: uuid.clone(),
+                neuron_type: "hidden".to_string(),
+                squash: squash.clone(),
+                bias: *bias,
+            })
+            .collect(),
+        synapses: Vec::new(),
+        input: 0,
+        output: 0,
+    }
+}
 
 /// Helper: create a `DiscoverRecord` with a specific pre-activation value.
 fn make_record(neuron_uuid: &str, obs_index: u32, value: Option<f32>) -> DiscoverRecord {
@@ -135,7 +154,8 @@ fn test_coordinated_candidate_has_add_neuron() {
     let candidates = detect_bimodal_neurons(&neurons, &[("bimodal-coord".to_string(), records)]);
     assert!(!candidates.is_empty(), "Should detect bimodal neuron");
 
-    let coordinated = bimodal_neurons_to_coordinated_candidates(&candidates);
+    let coordinated =
+        bimodal_neurons_to_coordinated_candidates(&candidates, &creature_with(&neurons));
 
     assert!(
         !coordinated.is_empty(),
@@ -374,7 +394,8 @@ fn test_coordinated_candidate_comment() {
     let candidates = detect_bimodal_neurons(&neurons, &[("bimodal-comment".to_string(), records)]);
     assert!(!candidates.is_empty());
 
-    let coordinated = bimodal_neurons_to_coordinated_candidates(&candidates);
+    let coordinated =
+        bimodal_neurons_to_coordinated_candidates(&candidates, &creature_with(&neurons));
     assert!(!coordinated.is_empty());
 
     let comment = coordinated[0].comment.as_ref().unwrap();

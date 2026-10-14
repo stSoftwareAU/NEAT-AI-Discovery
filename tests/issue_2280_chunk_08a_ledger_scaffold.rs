@@ -37,7 +37,7 @@ const SCOPE_DIRS: [&str; 2] = ["src/analysis/detection", "src/analysis/neuron"];
 
 /// Total files across both scope directories — also the row count in
 /// `## Files swept`.
-const ROW_COUNT: usize = 52;
+const ROW_COUNT: usize = 53;
 
 /// One `###` section per audit sub-issue, in record order, with the files it
 /// owns. Owning issues: shared — none (scaffolding only); graph — #2217;
@@ -79,6 +79,8 @@ const SECTIONS: [(&str, &[&str]); 6] = [
             "src/analysis/detection/output_conflict.rs",
             "src/analysis/detection/hard_sample_cluster.rs",
             "src/analysis/detection/sentinel_cluster.rs",
+            // `#[cfg(test)]`-only companion added by #2400 (the #2349 fix).
+            "src/analysis/detection/symmetry_breaking_deadline_tests.rs",
         ],
     ),
     (
@@ -249,7 +251,7 @@ fn files_swept_carries_exactly_six_section_markers_in_order() {
 }
 
 #[test]
-fn files_swept_has_exactly_52_rows() {
+fn files_swept_has_exactly_53_rows() {
     let doc = read(RECORD);
     let files_swept = section(&doc, "## Files swept");
     assert_eq!(
@@ -271,8 +273,7 @@ fn each_in_scope_file_has_exactly_one_row_under_its_owning_section() {
             let entry = entry.unwrap_or_else(|e| panic!("failed to read a {dir} entry: {e}"));
             let name = entry.file_name();
             let name = name.to_string_lossy();
-            // `*_tests.rs` files are `#[cfg(test)]`-only siblings, not production code.
-            if name.ends_with(".rs") && !name.ends_with("_tests.rs") {
+            if name.ends_with(".rs") {
                 on_disk.push(format!("{dir}/{name}"));
             }
         }

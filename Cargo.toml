@@ -60,6 +60,14 @@ naga = { version = "30", features = ["wgsl-in"] }  # WGSL parse/validate for sha
 name = "production_discovery_regression"
 required-features = ["regression-harness"]
 
+# Issue #2352: drives the GPU-free neuron target-load harness, which only exists
+# when `regression-harness` is on. Without this, a default-feature `cargo test`
+# fails to compile the target with an unresolved-import error.
+[[test]]
+name = "issue_2352_neuron_target_load_failure_surfaced"
+path = "tests/issue_2352_neuron_target_load_failure_surfaced.rs"
+required-features = ["regression-harness"]
+
 [[bench]]
 name = "synapse_counts"
 harness = false
