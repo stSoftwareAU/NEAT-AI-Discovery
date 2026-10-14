@@ -229,6 +229,10 @@ name = "input_uuid_precompute"
 harness = false
 
 [[bench]]
+name = "sentinel_cluster_partition"
+harness = false
+
+[[bench]]
 name = "record_arc_sharing"
 harness = false
 
