@@ -206,8 +206,8 @@ impl RecordCache {
     ///
     /// Lazy mode is reserved for modest overbooks and still completes: its
     /// per-neuron loads poll the shared analysis deadline on a cache miss
-    /// (Issues #2013, #2408) and emit
-    /// a periodic INFO heartbeat so silence of multi-hour length is impossible.
+    /// (Issues #2013, #2408) and emit a periodic INFO heartbeat so silence of
+    /// multi-hour length is impossible.
     ///
     /// Returns `Ok(None)` when the phase was skipped as unworkable.
     #[tracing::instrument(skip_all, fields(parquet_file))]
@@ -229,8 +229,8 @@ impl RecordCache {
     /// Create a lazy-loading cache that loads records on-demand.
     /// Slower than pre-loaded mode but uses minimal memory.
     ///
-    /// `deadline` is polled on every cache-miss `get` (Issues #2013, #2408) so a host that fell
-    /// into lazy mode still honours the `#3866` logical stop.
+    /// `deadline` is polled on every cache-miss `get` (Issues #2013, #2408) so
+    /// a host that fell into lazy mode still honours the `#3866` logical stop.
     fn new_lazy(parquet_file: &str, deadline: Option<SystemTime>) -> Result<Self> {
         use crate::parquet_format::read_records_from_parquet;
 
