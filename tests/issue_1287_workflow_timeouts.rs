@@ -163,3 +163,14 @@ fn shellcheck_yml_job_declares_timeout_minutes() {
          `timeout-minutes:` (Issue #1287)",
     );
 }
+
+#[test]
+fn msrv_yml_job_declares_timeout_minutes() {
+    let body = read_workflow("msrv.yml");
+    let block = job_block(&body, "msrv").expect("job `msrv` not found in msrv.yml");
+    assert!(
+        has_timeout_minutes(block),
+        "job `msrv` in msrv.yml must declare \
+         `timeout-minutes:` (Issue #1287)",
+    );
+}

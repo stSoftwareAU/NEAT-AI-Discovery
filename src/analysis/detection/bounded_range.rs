@@ -29,7 +29,10 @@
 #![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use std::collections::HashSet;
 
-use super::helpers::{ConfidenceFactor, sort_candidates_by_score_gain, weighted_confidence};
+use super::helpers::{
+    ConfidenceFactor, existing_neuron_uuids, first_free_neuron_uuid, sort_candidates_by_score_gain,
+    weighted_confidence,
+};
 use crate::types::DiscoverRecord;
 use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson, CreatureJson};
 
@@ -236,9 +239,15 @@ fn compute_detection_confidence(boundary_fraction: f32, gap: f32, sample_count: 
 ///
 /// The NEAT-AI controller will validate each candidate through ablation testing
 /// before applying it.
+///
+/// The gating neuron UUID is `gate-bounded-{uuid}`, or `gate-bounded-{uuid}-{n}`
+/// when that is already taken, so it never reuses an existing neuron UUID
+/// from `creature` (Issue #2359).
 pub fn bounded_range_to_coordinated_candidates(
     candidates: &[BoundedRangeCandidate],
+    creature: &CreatureJson,
 ) -> Vec<CoordinatedStructuralCandidateJson> {
+    let existing = existing_neuron_uuids(creature);
     let mut results = Vec::with_capacity(candidates.len());
 
     for c in candidates {
@@ -249,7 +258,13 @@ pub fn bounded_range_to_coordinated_candidates(
         let gate_bias = -useful_centre;
 
         // Create a deterministic UUID for the new gating neuron
-        let gate_uuid = format!("gate-bounded-{}", c.neuron_uuid);
+        let gate_uuid = first_free_neuron_uuid(&existing, |salt| {
+            if salt == 0 {
+                format!("gate-bounded-{}", c.neuron_uuid)
+            } else {
+                format!("gate-bounded-{}-{salt}", c.neuron_uuid)
+            }
+        });
 
         results.push(CoordinatedStructuralCandidateJson {
             remove_neuron_compensation: None,

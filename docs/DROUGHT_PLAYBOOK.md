@@ -253,6 +253,7 @@ authoritative list is `ALL_REJECTION_REASONS` in that file.
 | Reason | Implication |
 |--------|-------------|
 | `no_eligible_sources` | Source pre-screening (sample variance, range checks) eliminated every source. Often a sign that the creature has converged structurally. |
+| `target_record_load_failed` | The focus target neuron's own records failed to load (`RecordCache::get` on the target), so no sources could be assessed. Previously misreported as `no_eligible_sources`. It is counted in the neuron diagnostics' load-failure count and logged at `warn` in every build profile — check the logs and the record store rather than the creature structure. A deadline or cancellation bail from the cache is a timeout, not a load failure: it is neither warned about nor counted here, and the pass is reported as timed out instead. |
 | `below_threshold` | Candidates were generated but their expected gain failed the coordinated-structural floor. Conservative mode raises this floor 10×; consider lowering `CONSERVATIVE_GAIN_MULTIPLIER` or waiting for cooldown exit. |
 | `budget_truncated` | Module budget allocation is leaving no headroom. Inspect `module_weights` snapshot. |
 | `target_cooldown_skipped` | Targets eliminated by `TargetFailureTracker`. Cross-check `targetCooldownActiveCount`. |
