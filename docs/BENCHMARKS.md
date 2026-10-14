@@ -137,6 +137,7 @@ The following suites are defined in `Cargo.toml`:
 | `queue_submission_copies` | GPU queue submission copy overhead |
 | `record_arc_sharing` | Arc-shared `DiscoverRecord` across detection modules (Issue #1543) |
 | `sample_locality` | Sample data locality |
+| `sentinel_cluster_partition` | Sentinel-cluster partition cost growth, N vs 4N (Issue #2355) |
 | `simd_hot_paths` | SIMD baseline micro-benchmarks for hot numerical loops (Issue #1006) |
 | `source_budget` | Per-target source budget (top-K) vs unlimited enumeration (Issue #1542) |
 | `squash_normalisation` | Pre-normalised squash string lookup |
