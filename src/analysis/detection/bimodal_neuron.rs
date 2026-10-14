@@ -48,9 +48,9 @@
     clippy::cast_precision_loss,
     clippy::cast_sign_loss
 )] // Intentional numeric casts for GPU/neural network computation (Issue #873)
-use super::helpers::build_record_map;
+use super::helpers::{build_record_map, existing_neuron_uuids, first_free_neuron_uuid};
 use crate::types::DiscoverRecord;
-use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson};
+use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson, CreatureJson};
 
 use crate::analysis::constants::MIN_DISCOVERY_SAMPLE_COUNT;
 
@@ -266,9 +266,15 @@ fn variance(values: &[f32]) -> f32 {
 ///
 /// Each bimodal neuron produces an `AddNeuron` coordinated candidate to split
 /// the neuron into two, with bias offsets targeting each mode.
+///
+/// The new neuron's UUID is `{uuid}-split-lower`, or `{uuid}-split-lower-{n}`
+/// when that is already taken, so it never reuses an existing neuron UUID
+/// from `creature` (Issue #2359).
 pub fn bimodal_neurons_to_coordinated_candidates(
     candidates: &[BimodalNeuronCandidate],
+    creature: &CreatureJson,
 ) -> Vec<CoordinatedStructuralCandidateJson> {
+    let existing = existing_neuron_uuids(creature);
     let mut results = Vec::with_capacity(candidates.len());
 
     for c in candidates {
@@ -278,7 +284,13 @@ pub fn bimodal_neurons_to_coordinated_candidates(
         let new_neuron_bias = c.lower_mode_mean;
 
         let operations = vec![CoordinatedStructuralOpJson::AddNeuron {
-            neuron_uuid: format!("{}-split-lower", c.neuron_uuid),
+            neuron_uuid: first_free_neuron_uuid(&existing, |salt| {
+                if salt == 0 {
+                    format!("{}-split-lower", c.neuron_uuid)
+                } else {
+                    format!("{}-split-lower-{salt}", c.neuron_uuid)
+                }
+            }),
             neuron_type: "hidden".to_string(),
             squash: c.current_squash.clone(),
             bias: new_neuron_bias,

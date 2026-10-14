@@ -266,7 +266,8 @@ fn test_bounded_range_coordinated_candidate_conversion() {
         estimated_improvement: 0.01,
     }];
 
-    let coordinated = bounded_range_to_coordinated_candidates(&candidates);
+    let creature = make_creature(vec![hidden("input-obs", "TANH")], vec![]);
+    let coordinated = bounded_range_to_coordinated_candidates(&candidates, &creature);
 
     assert!(
         !coordinated.is_empty(),

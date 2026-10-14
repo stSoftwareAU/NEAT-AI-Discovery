@@ -278,10 +278,10 @@ pub(crate) fn append_neuron_specs(
 
     // Issue #640: Bimodal neuron detection (pre-activation distribution shape)
     discovery_spec!(modules, "bimodal neuron detection", "bimodal_neuron_detection",
-        cache = shared_cache, hidden = hidden_neurons =>
+        cache = shared_cache, hidden = hidden_neurons, creature = creature =>
         guard: hidden,
         records: cache.load_records_for_hidden(&hidden),
         detect: |records| bimodal_neuron::detect_bimodal_neurons(&hidden, &records),
-        convert: |detected| bimodal_neuron::bimodal_neurons_to_coordinated_candidates(&detected),
+        convert: |detected| bimodal_neuron::bimodal_neurons_to_coordinated_candidates(&detected, &creature),
     );
 }
