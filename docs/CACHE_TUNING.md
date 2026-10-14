@@ -62,8 +62,9 @@ rather than exhausting the host (Issue #1869).
 Records are loaded on demand, one neuron per Parquet scan, and memoised in the
 cache as they arrive. This is the memory-constrained fallback for a **modest**
 overbook. Its per-neuron loads poll the shared analysis deadline (Issue #2013)
-and emit a periodic INFO heartbeat every 60 s, so a legitimately slow lazy pass
-is curtailed rather than hanging in silence past the host's logical stop.
+on a cache miss only, before the loader runs, so records already loaded stay
+readable after it passes (Issue #2408). They also emit a periodic
+INFO heartbeat every 60 s, so a legitimately slow lazy pass is curtailed rather than hanging in silence past the host's logical stop.
 
 ### Skip unworkable (Issue #2013)
 

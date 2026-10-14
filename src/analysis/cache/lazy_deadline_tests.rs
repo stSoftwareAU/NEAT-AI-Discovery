@@ -103,3 +103,92 @@ fn lazy_get_runs_loader_when_deadline_in_future() {
     let records = cache.get("neuron-a").expect("future deadline allows load");
     assert!(records.is_empty());
 }
+
+/// Issue #2408: orchestration builds the cache with the loading deadline, so
+/// records that are already in the cache must stay readable after it passes.
+#[test]
+fn preloaded_records_served_after_loading_deadline() {
+    let _guard = DeadlineOverrideGuard::with_sequence(vec![true]);
+    let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let calls_loader = Arc::clone(&calls);
+    let cache = RecordCache::with_loader_and_deadline(
+        "unused.parquet",
+        Arc::new(move |_file, _uuid| {
+            calls_loader.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(Vec::<DiscoverRecord>::new())
+        }),
+        Some(SystemTime::now() - Duration::from_secs(1)),
+    );
+    let stored = Arc::new(vec![DiscoverRecord::new(
+        0,
+        "neuron-a".to_string(),
+        Some(1.0),
+        0.5,
+        vec![0.1],
+    )]);
+    let cell = OnceLock::new();
+    cell.set(Ok(Arc::clone(&stored))).ok();
+    cache
+        .cache
+        .write()
+        .insert("neuron-a".to_string(), Arc::new(cell));
+
+    let records = cache
+        .get("neuron-a")
+        .expect("already-loaded records must be served after the deadline passes");
+    assert!(Arc::ptr_eq(&records, &stored));
+    assert_eq!(
+        calls.load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "loader must not run for a pre-loaded neuron"
+    );
+}
+
+/// Issue #2408: the deadline gates only cache misses, before the loader runs.
+#[test]
+fn loaded_records_still_served_once_deadline_passes() {
+    // First poll (miss for neuron-a): not passed. Next poll (miss for
+    // neuron-b): passed. A hit on neuron-a must not consume a poll.
+    let _guard = DeadlineOverrideGuard::with_sequence(vec![false, true]);
+    let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let calls_loader = Arc::clone(&calls);
+    let cache = RecordCache::with_loader_and_deadline(
+        "unused.parquet",
+        Arc::new(move |_file, uuid| {
+            calls_loader.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(vec![DiscoverRecord::new(
+                0,
+                uuid.to_string(),
+                None,
+                0.25,
+                vec![],
+            )])
+        }),
+        Some(SystemTime::now() + Duration::from_secs(3600)),
+    );
+
+    let first = cache.get("neuron-a").expect("first get loads");
+    assert_eq!(first.len(), 1);
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+
+    let second = cache
+        .get("neuron-a")
+        .expect("loaded records stay readable once the deadline passes");
+    assert!(Arc::ptr_eq(&first, &second));
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+
+    let err = cache
+        .get("neuron-b")
+        .expect_err("an uncached neuron after the deadline must abort");
+    assert_eq!(
+        err.downcast_ref::<AnalysisDeadlineExceeded>(),
+        Some(&AnalysisDeadlineExceeded {
+            neuron_uuid: "neuron-b".to_string()
+        })
+    );
+    assert_eq!(
+        calls.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "loader must not run for the uncached neuron after the deadline"
+    );
+}
