@@ -5,7 +5,7 @@ performance regressions using Criterion.
 
 ## 🔍 Overview
 
-The project includes 42 Criterion benchmark suites in `benches/`. The
+The project includes 43 Criterion benchmark suites in `benches/`. The
 `benchmark_compare.sh` script automates baseline saving and regression
 detection by leveraging Criterion's built-in comparison features.
 
@@ -137,6 +137,7 @@ The following suites are defined in `Cargo.toml`:
 | `queue_submission_copies` | GPU queue submission copy overhead |
 | `record_arc_sharing` | Arc-shared `DiscoverRecord` across detection modules (Issue #1543) |
 | `sample_locality` | Sample data locality |
+| `sentinel_cluster_partition` | Sentinel-cluster partition cost growth, N vs 4N (Issue #2355) |
 | `simd_hot_paths` | SIMD baseline micro-benchmarks for hot numerical loops (Issue #1006) |
 | `source_budget` | Per-target source budget (top-K) vs unlimited enumeration (Issue #1542) |
 | `squash_normalisation` | Pre-normalised squash string lookup |
@@ -166,7 +167,7 @@ Save a baseline on your machine before making performance-sensitive changes:
 ./benchmark_compare.sh --save-baseline
 ```
 
-This runs all 42 benchmark suites and stores results in `target/criterion/`.
+This runs all 43 benchmark suites and stores results in `target/criterion/`.
 
 > **Baselines do not survive `./scripts/runlib.sh`.** That script removes the
 > checkout's `target/` after a successful install (Issue #2072), so copy any
