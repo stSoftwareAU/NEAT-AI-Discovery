@@ -27,7 +27,7 @@ use std::collections::{HashMap, HashSet};
 use crate::types::DiscoverRecord;
 use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson, CreatureJson};
 
-use super::helpers::build_record_map;
+use super::helpers::{build_record_map, existing_neuron_uuids, first_free_neuron_uuid};
 use crate::analysis::constants::MIN_DISCOVERY_SAMPLE_COUNT;
 
 // =============================================================================
@@ -315,8 +315,15 @@ fn find_dominant_inputs(
 // =============================================================================
 
 /// Generate a deterministic UUID for a hard-sample hidden neuron.
-fn hard_sample_neuron_uuid(cluster_index: usize, hard_obs_count: usize) -> String {
-    let key = format!("hard-sample-cluster|{cluster_index}|{hard_obs_count}");
+///
+/// Salt 0 hashes the legacy key; salt `n >= 1` appends `|n` so the caller can
+/// step past a UUID the creature already owns (Issue #2359).
+fn hard_sample_neuron_uuid(cluster_index: usize, hard_obs_count: usize, salt: u32) -> String {
+    let key = if salt == 0 {
+        format!("hard-sample-cluster|{cluster_index}|{hard_obs_count}")
+    } else {
+        format!("hard-sample-cluster|{cluster_index}|{hard_obs_count}|{salt}")
+    };
     // FNV-1a 64-bit
     let mut hash: u64 = 0xcbf29ce484222325;
     for b in key.as_bytes() {
@@ -331,6 +338,8 @@ fn hard_sample_neuron_uuid(cluster_index: usize, hard_obs_count: usize) -> Strin
 /// Each cluster produces a candidate that adds a hidden neuron connecting
 /// dominant inputs to all output neurons, increasing capacity for the
 /// hard sample region.
+///
+/// The synthetic neuron UUID avoids every UUID already in `creature` (Issue #2359).
 pub fn hard_sample_clusters_to_coordinated_candidates(
     clusters: &[HardSampleCluster],
     creature: &CreatureJson,
@@ -348,10 +357,14 @@ pub fn hard_sample_clusters_to_coordinated_candidates(
         .map(|n| n.uuid.as_str())
         .collect();
 
+    let existing = existing_neuron_uuids(creature);
+
     let mut results = Vec::new();
 
     for (idx, cluster) in clusters.iter().enumerate() {
-        let new_uuid = hard_sample_neuron_uuid(idx, cluster.hard_obs_indices.len());
+        let new_uuid = first_free_neuron_uuid(&existing, |salt| {
+            hard_sample_neuron_uuid(idx, cluster.hard_obs_indices.len(), salt)
+        });
 
         let mut operations = Vec::new();
 

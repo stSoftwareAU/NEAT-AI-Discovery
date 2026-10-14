@@ -115,3 +115,8 @@ fn semgrep_yml_declares_concurrency_group() {
 fn shellcheck_yml_declares_concurrency_group() {
     assert_canonical_concurrency("shellcheck.yml");
 }
+
+#[test]
+fn msrv_yml_declares_concurrency_group() {
+    assert_canonical_concurrency("msrv.yml");
+}

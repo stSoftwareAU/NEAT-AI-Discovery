@@ -28,6 +28,51 @@ const SWEPT: &[&str] = &[
     "src/analysis/detection/sentinel_cluster.rs",
 ];
 
+/// The `#[cfg(test)]`-only companion #2400 added to the `pairwise` section
+/// after the audit HEAD. It has a `pairwise` row but no capacity or
+/// traversal rows, so it is not in `SWEPT`.
+const TEST_ONLY_ROWS: &[&str] = &["src/analysis/detection/symmetry_breaking_deadline_tests.rs"];
+
+/// Swept files whose fix landed after the audit HEAD and now checks
+/// cancellation itself (#2398, #2400, #2410). Their audited-code rows keep
+/// describing the unfixed code, so only the loops in `CHECKED_SINCE_AUDIT`
+/// have a changed Cancellation-checked? cell.
+const CANCELLATION_FIXED_FILES: &[&str] = &[
+    "src/analysis/detection/co_adaptation.rs",
+    "src/analysis/detection/symmetry_breaking.rs",
+    "src/analysis/detection/output_conflict.rs",
+];
+
+/// `(source path, qualifier)` of the `TRAVERSAL` rows whose loop now checks
+/// the deadline, so their Cancellation-checked? cell reads `yes — …`.
+const CHECKED_SINCE_AUDIT: &[(&str, &str)] = &[
+    (
+        "src/analysis/detection/co_adaptation.rs",
+        "i<j loop over `eligible`",
+    ),
+    (
+        "src/analysis/detection/symmetry_breaking.rs",
+        "i<j loop over `eligible_neurons`",
+    ),
+    (
+        "src/analysis/detection/output_conflict.rs",
+        "`existing_synapses` filter per conflict",
+    ),
+    (
+        "src/analysis/detection/output_conflict.rs",
+        "`existing_synapses.iter().find` per harmed output",
+    ),
+];
+
+/// `(source path, function, qualifier)` of a `TRAVERSAL` row for a function
+/// a later fix deleted (#2400). The row stays as audit history, marked
+/// `Removed`.
+const REMOVED_SINCE_AUDIT: (&str, &str, &str) = (
+    "src/analysis/detection/symmetry_breaking.rs",
+    "build_weight_vector",
+    "linear `find` per source, twice per pair",
+);
+
 /// One entry per traversal / pairwise-loop row this sweep added to
 /// `## Capacity and traversal table`: (source path, function name, qualifier
 /// text as written in the row's Symbol cell parentheses).
@@ -71,11 +116,6 @@ const TRAVERSAL: &[(&str, &str, &str)] = &[
         "src/analysis/detection/symmetry_breaking.rs",
         "detect_symmetric_neurons",
         "i<j loop over `eligible_neurons`",
-    ),
-    (
-        "src/analysis/detection/symmetry_breaking.rs",
-        "build_weight_vector",
-        "linear `find` per source, twice per pair",
     ),
     (
         "src/analysis/detection/fanin_polarity_conflict.rs",
@@ -420,24 +460,67 @@ fn every_traversal_symbol_has_a_row_marked_module_level_only() {
             let symbol = row.first().map(String::as_str).unwrap_or_default();
             let kind = row.get(1).map(String::as_str).unwrap_or_default();
             let cancellation = row.get(4).map(String::as_str).unwrap_or_default();
+            let cancellation_ok = if CHECKED_SINCE_AUDIT.contains(&(*path, *qualifier)) {
+                cancellation.starts_with("yes — `deadline_passed`")
+            } else {
+                cancellation == "no (module-level only)"
+            };
             symbol.contains(&symbol_needle)
                 && symbol.contains(&qualifier_needle)
                 && (kind == "pairwise loop" || kind == "traversal")
-                && cancellation == "no (module-level only)"
+                && cancellation_ok
         });
         assert!(
             found,
             "`## Capacity and traversal table` must carry a `pairwise loop` or `traversal` row \
-             for `{base}::{name}` ({qualifier}) marked `no (module-level only)` in its \
-             Cancellation-checked? cell — an uncited loop is invisible to a reader deciding \
-             whether it needs a deadline check"
+             for `{base}::{name}` ({qualifier}) with the right Cancellation-checked? cell \
+             (`no (module-level only)`, or `yes — `deadline_passed` …` once a fix added the \
+             check) — an uncited loop is invisible to a reader deciding whether it needs a \
+             deadline check"
         );
     }
 }
 
 #[test]
+fn removed_function_row_is_marked_removed() {
+    let (path, name, qualifier) = REMOVED_SINCE_AUDIT;
+    assert!(
+        !production_source(path).contains(&format!("fn {name}")),
+        "`{name}` is declared in {path} again, so its ledger row is no longer history: move \
+         it back into TRAVERSAL"
+    );
+    let doc = read(RECORD);
+    let rows = table_rows(section(&doc, "## Capacity and traversal table"));
+    let symbol_needle = format!("`{}::{name}`", basename(path));
+    let qualifier_needle = format!("({qualifier})");
+    let row = rows
+        .iter()
+        .find(|row| {
+            row.first()
+                .is_some_and(|s| s.contains(&symbol_needle) && s.contains(&qualifier_needle))
+        })
+        .unwrap_or_else(|| panic!("the audit-history row for `{name}` must stay in the table"));
+    assert!(
+        row.get(3)
+            .is_some_and(|bound| bound.contains("**Removed**")),
+        "the row for the deleted `{name}` must say `**Removed**` in its Bound cell: {row:?}"
+    );
+}
+
+#[test]
 fn no_swept_file_checks_cancellation_itself() {
-    for path in SWEPT {
+    for path in CANCELLATION_FIXED_FILES {
+        let source = production_source(path);
+        assert!(
+            source.contains("deadline_passed"),
+            "{path} is listed in CANCELLATION_FIXED_FILES but no longer checks the deadline — \
+             move it back to the no-check rule and its rows back to `no (module-level only)`"
+        );
+    }
+    for path in SWEPT
+        .iter()
+        .filter(|p| !CANCELLATION_FIXED_FILES.contains(p))
+    {
         let source = read(path);
         assert!(
             !source.contains("deadline_passed") && !source.contains("is_cancelled"),
@@ -506,10 +589,10 @@ fn pairwise_section_holds_exactly_nine_rows_none_pending() {
 
     assert_eq!(
         rows.len(),
-        9,
-        "the `pairwise` section must carry exactly nine rows now that both sub-issues have \
-         landed — a missing or extra row means the ledger no longer matches the files the \
-         section owns"
+        SWEPT.len() + TEST_ONLY_ROWS.len(),
+        "the `pairwise` section must carry nine swept rows plus the test-only companion row \
+         now that both sub-issues have landed — a missing or extra row means the ledger no \
+         longer matches the files the section owns"
     );
 
     for row in &rows {
@@ -528,8 +611,11 @@ fn pairwise_section_holds_exactly_nine_rows_none_pending() {
         .filter_map(|row| row.first())
         .map(|first| first.trim_matches('`').to_string())
         .collect();
-    let swept_paths: std::collections::BTreeSet<String> =
-        SWEPT.iter().map(|s| (*s).to_string()).collect();
+    let swept_paths: std::collections::BTreeSet<String> = SWEPT
+        .iter()
+        .chain(TEST_ONLY_ROWS)
+        .map(|s| (*s).to_string())
+        .collect();
     assert_eq!(
         row_paths, swept_paths,
         "the set of paths in the `pairwise` section's rows must exactly match SWEPT — a \

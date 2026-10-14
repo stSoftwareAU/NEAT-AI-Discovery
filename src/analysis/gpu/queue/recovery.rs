@@ -87,7 +87,8 @@ mod tests {
 
     // Tautological `test_default_retry_limit` pin removed (Issue #1469): it only
     // re-asserted the constant's own literal. The retry-limit parsing behaviour
-    // is exercised through `gpu_retry_limit()` in the config module.
+    // lives in `resolve_gpu_retry_limit()` in the config module and is covered
+    // by `tests/issue_2364_gpu_retry_limit_warn_test.rs`.
 
     #[test]
     fn test_retry_limit_env_var_name() {

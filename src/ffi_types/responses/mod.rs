@@ -271,6 +271,9 @@ pub(crate) fn neuron_diagnostics_json(
                     analysis_mod::shared::NeuronNoCandidateReason::ConstantNeuronFiltered => {
                         NeuronDiagnosticReasonJson::ConstantNeuronFiltered
                     }
+                    analysis_mod::shared::NeuronNoCandidateReason::TargetRecordLoadFailed => {
+                        NeuronDiagnosticReasonJson::TargetRecordLoadFailed
+                    }
                 },
                 evaluated_sources: summary.evaluated_sources,
                 sources_with_samples: summary.sources_with_samples,
