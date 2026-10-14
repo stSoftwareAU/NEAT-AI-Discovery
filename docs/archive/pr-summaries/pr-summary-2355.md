@@ -61,14 +61,8 @@ Closes #2355
   `sentinel_gating.rs:98` uses `contains` on an unrelated `input_uuids` check.
 - **Existing behaviour:** `cargo test --test detection` gave 503 passed and
   0 failed. This includes the #2042 sentinel tests.
-- **Base-branch gate fix:** `./quality.sh` failed at `cargo doc` on Develop
-  itself (`public documentation for resolve_gpu_retry_limit links to private
-  item MAX_GPU_RETRY_LIMIT --> src/config/user_facing.rs:56:15`).
-  `src/config/user_facing.rs:56` now names the private const in plain backticks
-  instead of an intra-doc link. This is a doc-only change, needed for the gate to
-  pass.
 
-**Docs sweep** — grep: `assess_sentinel_cluster`, `sentinel_indices`, `non_sentinel_indices`, `sentinel_cluster`, `MIN_SENTINEL_FRACTION`, `SENTINEL_TOLERANCE`, "sentinel cluster", `MAX_GPU_RETRY_LIMIT`, `resolve_gpu_retry_limit`, `NEAT_AI_DISCOVERY_GPU_RETRY_LIMIT`; section: `docs/DISCOVERY_TYPES.md#sentinel-gating-detection` (criterion 2 names `sentinel_cluster.rs` as the single accept/reject rule — still true, the rule is unchanged and only the partition's cost changed) and `docs/CONFIGURATION.md` row `NEAT_AI_DISCOVERY_GPU_RETRY_LIMIT` (still true — the `user_facing.rs` change only turns an intra-doc link into plain backticks); siblings: `input_uuid_precompute`, `record_arc_sharing` (the `[[bench]]` set in `Cargo.toml` and the bench table in `docs/BENCHMARKS.md` gained `sentinel_cluster_partition`; the `docs/BENCHMARKS.md` row is added in this change); no hits needing change — "sentinel cluster" hits in `docs/ANALYSIS_DEEP_DIVE.md:768`, `docs/DISCOVERY_TYPES.md:1559,1588`, `docs/discoveries/observation-utilisation.md:48` and `docs/discoveries/sentinel-gating.md:11,18` describe detection behaviour, which is unchanged; no hits for the other names in README.md, `docs/` (excluding `docs/archive/`) or `*/README.md`; updated: `docs/BENCHMARKS.md` (new `sentinel_cluster_partition` row)
+**Docs sweep** — grep: `assess_sentinel_cluster`, `sentinel_indices`, `non_sentinel_indices`, `sentinel_cluster`, `MIN_SENTINEL_FRACTION`, `SENTINEL_TOLERANCE`, "sentinel cluster"; section: `docs/DISCOVERY_TYPES.md#sentinel-gating-detection` (criterion 2 names `sentinel_cluster.rs` as the single accept/reject rule — still true, the rule is unchanged and only the partition's cost changed); siblings: `input_uuid_precompute`, `record_arc_sharing` (the `[[bench]]` set in `Cargo.toml` and the bench table in `docs/BENCHMARKS.md` gained `sentinel_cluster_partition`; the `docs/BENCHMARKS.md` row is added in this change); no hits needing change — "sentinel cluster" hits in `docs/ANALYSIS_DEEP_DIVE.md:768`, `docs/DISCOVERY_TYPES.md:1559,1588`, `docs/discoveries/observation-utilisation.md:48` and `docs/discoveries/sentinel-gating.md:11,18` describe detection behaviour, which is unchanged; no hits for the other names in README.md, `docs/` (excluding `docs/archive/`) or `*/README.md`; updated: `docs/BENCHMARKS.md` (new `sentinel_cluster_partition` row)
 
 ## Test Plan
 
