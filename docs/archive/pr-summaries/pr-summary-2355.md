@@ -29,12 +29,12 @@ Closes #2355
 - One loop pushes each index into `sentinel_indices` or
   `non_sentinel_indices`. This replaces the `HashSet` alternative, which would
   have cost an extra allocation and hashing for no benefit.
-- The regression test uses `std::time::Instant` for a **ratio** check (N=4000
-  vs N=16000, best of 5, fail at ratio ≥ 10). CONTRIBUTING.md's testing section
-  discourages timing assertions in unit tests. This test departs from that
-  because the issue names this ratio test explicitly. It compares two readings
-  of the same work, never a reading against a constant, so a slow host inflates
-  both and stays green.
+- No wall-clock assertion lives in `tests/`. CONTRIBUTING.md's Unit Tests vs
+  Benchmarks table says tests must not use `Instant`/`elapsed` for pass/fail, and
+  a ratio of two timings fails under host load with no code defect (#2296,
+  #2320). The N vs 4N growth comparison is a Criterion benchmark,
+  `benches/sentinel_cluster_partition.rs` (N = 4000, 16000, 64000), and the
+  deterministic partition pin stays in `tests/`.
 
 ### Undiscoverable Facts
 
@@ -44,20 +44,18 @@ Closes #2355
 
 ## Evidence
 
-- **Regression test:**
-  `tests/issue_2355_sentinel_cluster_quadratic.rs::assess_sentinel_cluster_grows_linearly`
-  (new file in this diff).
-  - **Red against the unfixed code:**
-    `assess_sentinel_cluster grew super-linearly: N=4000 took 30968500ns,
-    N=16000 took 491187584ns, ratio 15.86 (linear ~4, quadratic ~16)
-    (Issue #2355)`
-  - **Green after the fix:** N=4000 took 156,916 ns and N=16000 took
-    627,208 ns, a ratio of 4.00.
-- **Behaviour pin:**
-  `tests/issue_2355_sentinel_cluster_quadratic.rs::assess_sentinel_cluster_partitions_every_sample_once`.
-  For n in {101, 10, 5}, it asserts that sentinels are exactly the even
-  indices, non-sentinels are exactly the odd indices, together they cover
-  `0..n` once in ascending order, and the reported fraction matches.
+- **Behaviour pin (regression test):**
+  `tests/issue_2355_sentinel_cluster_quadratic.rs::assess_sentinel_cluster_partitions_every_sample_once`
+  (new file in this diff). For n in {101, 10, 5}, it asserts that sentinels are
+  exactly the even indices, non-sentinels are exactly the odd indices, together
+  they cover `0..n` once in ascending order, and the reported fraction matches.
+  The old filter produced the same output, so this test pins the unchanged
+  behaviour; it does not reproduce the quadratic cost.
+- **Cost evidence:** `benches/sentinel_cluster_partition.rs` (new file in this
+  diff, registered in `Cargo.toml`). Earlier timings from the removed ratio
+  test: unfixed N=4000 took 30,968,500 ns and N=16000 took 491,187,584 ns
+  (ratio 15.86); fixed N=4000 took 156,916 ns and N=16000 took 627,208 ns
+  (ratio 4.00).
 - **No trivial bypass:** the trigger was the only `Vec::contains` partition in
   `sentinel_cluster.rs`, and the file now has no `contains` call.
   `sentinel_gating.rs:98` uses `contains` on an unrelated `input_uuids` check.
@@ -74,12 +72,16 @@ Closes #2355
 
 ## Test Plan
 
-- [x] `cargo test --test issue_2355_sentinel_cluster_quadratic`. The ratio test
-      fails on the unfixed code (ratio 15.86) and passes after the fix (4.00).
+- [x] `cargo test --test issue_2355_sentinel_cluster_quadratic`: 1 passed. It is
+      green on the base code too, because the output is unchanged. Inverting the
+      sentinel `if` condition in `sentinel_cluster.rs` turns it red.
+- [x] `cargo bench --bench sentinel_cluster_partition` on the head: N=4000
+      about 33.7 µs, N=16000 about 108.6 µs, N=64000 about 459 µs, so about
+      3.2x then 4.2x per 4x step in N (linear, not 16x).
 - [x] `cargo test --test detection`: 503 passed.
 - [x] `cargo clippy --all-targets --all-features -- -D warnings`: clean.
 - [x] `./quality.sh`: all checks passed, `cargo doc -D warnings` included.
-- Version bumped to 0.74.286 (`Cargo.toml`, `Cargo.lock`), one patch above the base branch's 0.74.285.
+- Version bumped to 0.74.288 (`Cargo.toml`, `Cargo.lock`), one patch above the base branch's 0.74.287.
 
 Branch outcomes:
 
@@ -87,7 +89,7 @@ Branch outcomes:
   reached by `assess_sentinel_cluster_partitions_every_sample_once` (the even
   indices). Swapping the arms turns it red.
 - The same loop's `else` (non-sentinel arm) is reached by the same test (the
-  odd indices) and by `assess_sentinel_cluster_grows_linearly`.
+  odd indices).
 
 The `if`/`else` replaces the old filter predicate one for one. It adds no new
 accept or reject outcome.

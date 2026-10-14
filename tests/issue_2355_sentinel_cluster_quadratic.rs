@@ -3,14 +3,12 @@
 //! an O(n·k) scan. Because the density rule guarantees `k >= 0.15·n`
 //! (`MIN_SENTINEL_FRACTION`), that is quadratic in the sample count.
 //!
-//! This is a ratio-timing growth guard: time the same work at N and 4N and
-//! fail only on super-linear growth. A slow host inflates both readings
-//! equally, so there is no absolute wall-clock threshold.
+//! The single-pass partition must classify every sample exactly once, in
+//! ascending order. The N-vs-4N timing comparison is a Criterion benchmark
+//! (`benches/sentinel_cluster_partition.rs`), not a test, because timing never
+//! decides pass/fail here (CONTRIBUTING.md, Unit Tests vs Benchmarks).
 
 #![allow(clippy::cast_precision_loss)] // Intentional numeric casts for synthetic activations (Issue #873)
-
-use std::hint::black_box;
-use std::time::Instant;
 
 use neat_ai_discovery::analysis::detection::sentinel_cluster::assess_sentinel_cluster;
 
@@ -30,36 +28,6 @@ fn fixture(n: usize) -> (Vec<f32>, Vec<f32>) {
         }
     }
     (acts, errs)
-}
-
-fn best_of(n: usize, repeats: usize) -> u128 {
-    let (acts, errs) = fixture(n);
-    let mut best = u128::MAX;
-    for _ in 0..repeats {
-        let start = Instant::now();
-        let result = assess_sentinel_cluster(black_box(&acts), black_box(&errs), black_box(-1.0));
-        let elapsed = start.elapsed().as_nanos().max(1);
-        assert!(black_box(result).is_some(), "fixture must be accepted");
-        best = best.min(elapsed);
-    }
-    best
-}
-
-#[test]
-fn assess_sentinel_cluster_grows_linearly() {
-    const SMALL: usize = 4_000;
-    const LARGE: usize = 16_000;
-
-    let small = best_of(SMALL, 5);
-    let large = best_of(LARGE, 5);
-    let ratio = large as f64 / small as f64;
-    println!("small={small}ns large={large}ns ratio={ratio:.2}");
-
-    assert!(
-        ratio < 10.0,
-        "assess_sentinel_cluster grew super-linearly: N={SMALL} took {small}ns, \
-         N={LARGE} took {large}ns, ratio {ratio:.2} (linear ~4, quadratic ~16) (Issue #2355)"
-    );
 }
 
 #[test]
