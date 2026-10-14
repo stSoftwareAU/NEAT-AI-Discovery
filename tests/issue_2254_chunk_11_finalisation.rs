@@ -94,7 +94,7 @@ fn section<'a>(doc: &'a str, heading: &str) -> &'a str {
 /// Cutting at the **first** `#[cfg(test)]` (as `tests/issue_2210_chunk_08b_finalisation.rs`
 /// does) is wrong here: `src/debug/sample_dir.rs` carries a `#[cfg(test)]` on
 /// a single accessor method well before its test module, and
-/// `src/watchdog.rs` carries several `#[cfg(test)]` statics and functions
+/// `src/watchdog.rs` carries several `#[cfg(test)]` static items and functions
 /// before its test module too — cutting at the first one would silently drop
 /// real production lines (e.g. `sample_dir.rs`'s `Drop::drop` `remove_dir_all`
 /// call) from the "production" half. Instead, cut at the first line that is
