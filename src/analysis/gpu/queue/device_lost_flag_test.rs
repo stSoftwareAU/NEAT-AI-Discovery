@@ -17,7 +17,7 @@ use super::{GpuWorkQueue, GpuWorkRequest};
 use crate::analysis::gpu::budget::GpuTimeBudget;
 use crate::analysis::gpu::heartbeat::GpuHeartbeat;
 use crate::analysis::samples::HelpfulSample;
-use crate::analysis::samples::{HelpfulStats, ReluStats};
+use crate::analysis::samples::{HarmfulStats, HelpfulStats, ReluStats};
 use anyhow::Result;
 use crossbeam_channel::Receiver;
 
@@ -66,6 +66,70 @@ fn relu_request() -> (GpuWorkRequest, Receiver<ReluResponse>) {
             target_activation: None,
         }],
         threshold: 0.0,
+        response_tx,
+        budget: GpuTimeBudget::unbounded(),
+        liveness,
+    };
+    (request, response_rx)
+}
+
+/// Build a harmful-batch request, returning its response receiver.
+fn harmful_request() -> (GpuWorkRequest, Receiver<Result<Vec<HarmfulStats>>>) {
+    let (response_tx, response_rx) = bounded(1);
+    let (guard, liveness) = caller_liveness_pair();
+    std::mem::forget(guard);
+    let request = GpuWorkRequest::HarmfulBatch {
+        samples_with_weights: vec![(
+            Arc::new(vec![HelpfulSample {
+                activation: 1.0,
+                avg_error: 0.5,
+                target_value: None,
+                target_activation: None,
+            }]),
+            1.0,
+        )],
+        response_tx,
+        budget: GpuTimeBudget::unbounded(),
+        liveness,
+    };
+    (request, response_rx)
+}
+
+/// Build a general activation evaluation request, returning its response receiver.
+fn activation_request() -> (GpuWorkRequest, Receiver<Result<(f32, f32, f32, u32)>>) {
+    let (response_tx, response_rx) = bounded(1);
+    let (guard, liveness) = caller_liveness_pair();
+    std::mem::forget(guard);
+    let request = GpuWorkRequest::ActivationEval {
+        samples: vec![HelpfulSample {
+            activation: 1.0,
+            avg_error: 0.5,
+            target_value: None,
+            target_activation: None,
+        }],
+        activation_type: 0,
+        orientation: 1.0,
+        scale: 1.0,
+        response_tx,
+        budget: GpuTimeBudget::unbounded(),
+        liveness,
+    };
+    (request, response_rx)
+}
+
+/// Build a batched activation evaluation request, returning its response receiver.
+fn activation_batch_request() -> (GpuWorkRequest, Receiver<Result<Vec<(f32, f32, f32, u32)>>>) {
+    let (response_tx, response_rx) = bounded(1);
+    let (guard, liveness) = caller_liveness_pair();
+    std::mem::forget(guard);
+    let request = GpuWorkRequest::ActivationBatchEval {
+        samples: vec![HelpfulSample {
+            activation: 1.0,
+            avg_error: 0.5,
+            target_value: None,
+            target_activation: None,
+        }],
+        activation_configs: vec![(0, 1.0, 1.0)],
         response_tx,
         budget: GpuTimeBudget::unbounded(),
         liveness,
@@ -181,6 +245,105 @@ fn flagged_non_matching_relu_error_enters_recovery() {
         Err(err) => err,
     };
     assert!(format!("{err:#}").contains("GPU device lost and recovery failed"));
+}
+
+/// Issue #2363: an opaque error on the harmful-batch arm enters recovery when the device-lost flag is set.
+#[test]
+#[serial(gpu_stale_skip)]
+fn flagged_opaque_harmful_error_enters_recovery() {
+    let (work_tx, work_rx) = bounded::<GpuWorkRequest>(4);
+    let (request, response_rx) = harmful_request();
+    enqueue(&work_tx, request);
+    enqueue(&work_tx, GpuWorkRequest::Shutdown);
+
+    let heartbeat = Arc::new(GpuHeartbeat::new());
+    let evaluator = FakeGpuEvaluator::new(
+        WedgeBehaviour::OpaqueMapErrorAfterDeviceLoss,
+        Arc::clone(&heartbeat),
+    );
+    let factory = FakeEvaluatorFactory::new();
+    GpuWorkQueue::run_work_loop(evaluator, work_rx, &factory, &heartbeat);
+
+    assert_eq!(
+        factory.create_count(),
+        crate::config::gpu_retry_limit() as usize,
+        "a flagged harmful-batch device loss must enter recovery"
+    );
+    let response = response_rx
+        .try_recv()
+        .expect("the caller must be told recovery failed");
+    // `HarmfulStats` does not implement `Debug`, so match rather than `expect_err`.
+    let err = match response {
+        Ok(_) => panic!("exhausted recovery must surface an error"),
+        Err(err) => err,
+    };
+    assert!(format!("{err:#}").contains("GPU device lost and recovery failed"));
+}
+
+/// Issue #2363: an opaque error on the general activation arm enters recovery when the device-lost flag is set.
+#[test]
+#[serial(gpu_stale_skip)]
+fn flagged_opaque_activation_error_enters_recovery() {
+    let (work_tx, work_rx) = bounded::<GpuWorkRequest>(4);
+    let (request, response_rx) = activation_request();
+    enqueue(&work_tx, request);
+    enqueue(&work_tx, GpuWorkRequest::Shutdown);
+
+    let heartbeat = Arc::new(GpuHeartbeat::new());
+    let evaluator = FakeGpuEvaluator::new(
+        WedgeBehaviour::OpaqueMapErrorAfterDeviceLoss,
+        Arc::clone(&heartbeat),
+    );
+    let factory = FakeEvaluatorFactory::new();
+    GpuWorkQueue::run_work_loop(evaluator, work_rx, &factory, &heartbeat);
+
+    assert_eq!(
+        factory.create_count(),
+        crate::config::gpu_retry_limit() as usize,
+        "a flagged activation device loss must enter recovery"
+    );
+    let response = response_rx
+        .try_recv()
+        .expect("the caller must be told recovery failed");
+    let err = response.expect_err("exhausted recovery must surface an error");
+    let text = format!("{err:#}");
+    assert!(
+        text.contains("GPU device lost and recovery failed"),
+        "expected the recovery-exhausted message, got: {text}"
+    );
+}
+
+/// Issue #2363: an opaque error on the batched activation arm enters recovery when the device-lost flag is set.
+#[test]
+#[serial(gpu_stale_skip)]
+fn flagged_opaque_activation_batch_error_enters_recovery() {
+    let (work_tx, work_rx) = bounded::<GpuWorkRequest>(4);
+    let (request, response_rx) = activation_batch_request();
+    enqueue(&work_tx, request);
+    enqueue(&work_tx, GpuWorkRequest::Shutdown);
+
+    let heartbeat = Arc::new(GpuHeartbeat::new());
+    let evaluator = FakeGpuEvaluator::new(
+        WedgeBehaviour::OpaqueMapErrorAfterDeviceLoss,
+        Arc::clone(&heartbeat),
+    );
+    let factory = FakeEvaluatorFactory::new();
+    GpuWorkQueue::run_work_loop(evaluator, work_rx, &factory, &heartbeat);
+
+    assert_eq!(
+        factory.create_count(),
+        crate::config::gpu_retry_limit() as usize,
+        "a flagged batched activation device loss must enter recovery"
+    );
+    let response = response_rx
+        .try_recv()
+        .expect("the caller must be told recovery failed");
+    let err = response.expect_err("exhausted recovery must surface an error");
+    let text = format!("{err:#}");
+    assert!(
+        text.contains("GPU device lost and recovery failed"),
+        "expected the recovery-exhausted message, got: {text}"
+    );
 }
 
 /// Issue #2363: a device-loss message whose text matches a known pattern enters

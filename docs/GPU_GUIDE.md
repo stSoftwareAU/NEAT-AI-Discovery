@@ -26,10 +26,12 @@ landing):
   added.
 - **Uncaptured errors and device loss (Issue #2363).** wgpu 30's default
   uncaptured-error handler panics on an error that no error scope captures, which
-  would kill the GPU thread. Each GPU evaluation is now wrapped in
-  `push_error_scope` for `OutOfMemory` and `Internal`, and a popped error becomes
-  a typed `Err` ("GPU out of memory: ..." / "GPU internal error: ..."). Device loss
-  is also signalled by `Device::set_device_lost_callback`, which sets the flag
+  would kill the GPU thread. Each evaluation the GPU work queue runs is now
+  wrapped in `push_error_scope` for `OutOfMemory` and `Internal`, and a popped
+  error becomes a typed `Err` with one of three prefixes, each followed by a
+  colon: "GPU out of memory: ...", "GPU internal error: ...", or
+  "GPU device error: ..." (any other captured error). Device loss is also
+  signalled by `Device::set_device_lost_callback`, which sets the flag
   exposed as `RequestEvaluator::device_lost()`, so an opaque `BufferAsyncError`
   map failure still reaches device-lost recovery. `is_device_lost_error()` and
   `is_memory_exhaustion_error()` also match wgpu-core's "Not enough memory left."
