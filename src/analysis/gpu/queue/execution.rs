@@ -962,4 +962,26 @@ mod tests {
 
         assert_eq!(request_label(&GpuWorkRequest::Shutdown), "shutdown");
     }
+
+    /// Issue #2363: a failure whose text already matches a device-loss pattern
+    /// passes through unchanged, with no second `GPU device lost` prefix.
+    #[test]
+    fn recovery_error_keeps_text_matched_message_unchanged() {
+        let input = "Device lost: adapter reset";
+        let out = recovery_error(&anyhow::anyhow!(input));
+        assert_eq!(format!("{out:#}"), input);
+    }
+
+    /// Issue #2363: an opaque wgpu 30 mapping failure that only the device-lost
+    /// flag routed to recovery is prefixed with `GPU device lost`, so the retry
+    /// loop classifies it as a device loss.
+    #[test]
+    fn recovery_error_prefixes_opaque_map_error() {
+        let input = "Buffer 0 mapping failed: Error occurred when trying to async map a buffer";
+        let out = recovery_error(&anyhow::anyhow!(input));
+        let text = format!("{out:#}");
+        assert!(text.starts_with("GPU device lost: "), "got: {text}");
+        assert!(text.contains(input), "got: {text}");
+        assert!(is_device_lost_error(&out), "got: {text}");
+    }
 }

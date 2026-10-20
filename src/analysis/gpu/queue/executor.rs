@@ -85,7 +85,7 @@ pub(crate) trait RequestEvaluator {
 pub(crate) fn scoped_device_error_message(err: &wgpu::Error) -> String {
     match err {
         wgpu::Error::OutOfMemory { .. } => format!("GPU out of memory: {err}"),
-        wgpu::Error::Internal { .. } => format!("GPU internal error: {err}"),
+        wgpu::Error::Internal { .. } => format!("GPU device error: {err}"),
         _ => format!("GPU device error: {err}"),
     }
 }
