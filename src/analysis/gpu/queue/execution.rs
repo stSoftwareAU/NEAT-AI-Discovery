@@ -94,8 +94,9 @@ fn recovery_error(e: &anyhow::Error) -> anyhow::Error {
 }
 
 /// Execute a single GPU work request, returning the result via the embedded
-/// response channel. Returns `Err` only for device-lost errors that should
-/// trigger recovery; normal evaluation errors are sent back to the caller.
+/// response channel. Returns `Err` for errors that route to recovery: text-matched
+/// device loss, or any failure while the evaluator's device-lost flag is set
+/// (Issue #2363). Other evaluation errors are sent back to the caller.
 fn execute_request<E: RequestEvaluator>(
     analyzer: &E,
     request: &GpuWorkRequest,
