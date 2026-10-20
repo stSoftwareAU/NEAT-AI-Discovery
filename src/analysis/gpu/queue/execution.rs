@@ -10,6 +10,14 @@
 //! limit is configurable via the `NEAT_AI_DISCOVERY_GPU_RETRY_LIMIT` environment
 //! variable (default: 3).
 //!
+//! ## Classify by source, not text (Issue #2363)
+//!
+//! wgpu 30 can report a lost device as an opaque error, or as a panic from the
+//! default uncaptured-error handler. A failed evaluation therefore also enters
+//! recovery when the analyser's device-lost flag is set, which the
+//! device-lost callback sets. A flag-only failure is re-tagged with a
+//! `GPU device lost` prefix so the retry loop classifies it as a device loss.
+//!
 //! ## Stale request skipping (Issue #1929)
 //!
 //! A dequeued request whose caller has already gone (dropped receiver) or whose
@@ -61,6 +69,30 @@ fn request_label(request: &GpuWorkRequest) -> &'static str {
     }
 }
 
+/// Whether a failed evaluation should enter device-lost recovery (Issue #2363).
+///
+/// Recovery is entered when the error text matches a known device-loss pattern,
+/// or when the device-lost callback has fired. The flag covers wgpu 30 losses
+/// that surface as opaque errors, such as "Error occurred when trying to async
+/// map a buffer".
+fn routes_to_recovery<E: RequestEvaluator>(analyzer: &E, e: &anyhow::Error) -> bool {
+    is_device_lost_error(e) || analyzer.device_lost()
+}
+
+/// The error returned to the retry loop for a failure that routes to recovery
+/// (Issue #2363).
+///
+/// When the text matched, the message is unchanged. When only the flag fired,
+/// the message is prefixed with `GPU device lost` so the loop classifies it as
+/// a device loss even though its text is opaque.
+fn recovery_error(e: &anyhow::Error) -> anyhow::Error {
+    if is_device_lost_error(e) {
+        anyhow::anyhow!("{e:#}")
+    } else {
+        anyhow::anyhow!("GPU device lost: {e:#}")
+    }
+}
+
 /// Execute a single GPU work request, returning the result via the embedded
 /// response channel. Returns `Err` only for device-lost errors that should
 /// trigger recovery; normal evaluation errors are sent back to the caller.
@@ -96,9 +128,9 @@ fn execute_request<E: RequestEvaluator>(
             }
 
             if let Err(ref e) = result
-                && is_device_lost_error(e)
+                && routes_to_recovery(analyzer, e)
             {
-                return Err(anyhow::anyhow!("{e:#}"));
+                return Err(recovery_error(e));
             }
 
             if response_tx.send(result).is_err() {
@@ -131,9 +163,9 @@ fn execute_request<E: RequestEvaluator>(
             }
 
             if let Err(ref e) = result
-                && is_device_lost_error(e)
+                && routes_to_recovery(analyzer, e)
             {
-                return Err(anyhow::anyhow!("{e:#}"));
+                return Err(recovery_error(e));
             }
 
             if response_tx.send(result).is_err() {
@@ -163,9 +195,9 @@ fn execute_request<E: RequestEvaluator>(
             }
 
             if let Err(ref e) = result
-                && is_device_lost_error(e)
+                && routes_to_recovery(analyzer, e)
             {
-                return Err(anyhow::anyhow!("{e:#}"));
+                return Err(recovery_error(e));
             }
 
             if response_tx.send(result).is_err() {
@@ -203,9 +235,9 @@ fn execute_request<E: RequestEvaluator>(
             }
 
             if let Err(ref e) = result
-                && is_device_lost_error(e)
+                && routes_to_recovery(analyzer, e)
             {
-                return Err(anyhow::anyhow!("{e:#}"));
+                return Err(recovery_error(e));
             }
 
             if response_tx.send(result).is_err() {
@@ -237,9 +269,9 @@ fn execute_request<E: RequestEvaluator>(
             }
 
             if let Err(ref e) = result
-                && is_device_lost_error(e)
+                && routes_to_recovery(analyzer, e)
             {
-                return Err(anyhow::anyhow!("{e:#}"));
+                return Err(recovery_error(e));
             }
 
             if response_tx.send(result).is_err() {
@@ -760,6 +792,10 @@ mod tests {
     impl RequestEvaluator for DeviceStepEvaluator {
         fn batch_size(&self) -> usize {
             1024
+        }
+
+        fn device_lost(&self) -> bool {
+            false
         }
 
         fn evaluate_helpful_batch(
