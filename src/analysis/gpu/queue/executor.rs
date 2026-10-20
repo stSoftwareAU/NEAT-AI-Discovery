@@ -85,7 +85,7 @@ pub(crate) trait RequestEvaluator {
 pub(crate) fn scoped_device_error_message(err: &wgpu::Error) -> String {
     match err {
         wgpu::Error::OutOfMemory { .. } => format!("GPU out of memory: {err}"),
-        wgpu::Error::Internal { .. } => format!("GPU device error: {err}"),
+        wgpu::Error::Internal { .. } => format!("GPU internal error: {err}"),
         _ => format!("GPU device error: {err}"),
     }
 }
@@ -100,10 +100,9 @@ impl GpuAnalyzer {
     /// trusted even if it returned `Ok`. Out-of-memory is preferred over
     /// internal when both were captured.
     fn with_device_error_scopes<T>(&self, evaluate: impl FnOnce() -> Result<T>) -> Result<T> {
-        let device = self
-            .device
-            .as_ref()
-            .context("GPU device unavailable for error-scoped evaluation")?;
+        let Some(device) = self.device.as_ref() else {
+            return evaluate();
+        };
         let oom_scope = device.push_error_scope(wgpu::ErrorFilter::OutOfMemory);
         let internal_scope = device.push_error_scope(wgpu::ErrorFilter::Internal);
         let result = evaluate();
