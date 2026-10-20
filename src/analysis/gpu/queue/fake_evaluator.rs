@@ -84,6 +84,10 @@ pub(crate) enum WedgeBehaviour {
     /// The same opaque buffer-mapping error, but the device-lost callback never
     /// fired (Issue #2363). Recovery must not be entered for it.
     OpaqueMapErrorHealthy,
+    /// A device-loss message whose text matches a known pattern, but whose
+    /// device-lost callback never fired (Issue #2363). Only the text can route it
+    /// to recovery.
+    TextDeviceLostUnflagged,
 }
 
 /// The opaque error wgpu 30 reports for a lost device during a buffer mapping
@@ -91,6 +95,12 @@ pub(crate) enum WedgeBehaviour {
 fn opaque_map_error() -> anyhow::Error {
     anyhow!("Buffer 0 mapping failed: Error occurred when trying to async map a buffer")
         .context("Helpful batch buffer mapping failed")
+}
+
+/// A device-loss error whose text matches a known pattern (Issue #2363). The
+/// device-lost flag is never set for it, so only the text can route it to recovery.
+fn text_device_lost_error() -> anyhow::Error {
+    anyhow!("Device lost during batch evaluation").context("Helpful batch buffer mapping failed")
 }
 
 /// What the fake device saw for one evaluation.
@@ -236,6 +246,7 @@ impl FakeGpuEvaluator {
                 ))
             }
             WedgeBehaviour::Panics => panic!("fake GPU panicked"),
+            WedgeBehaviour::TextDeviceLostUnflagged => Err(text_device_lost_error()),
             WedgeBehaviour::OpaqueMapErrorAfterDeviceLoss
             | WedgeBehaviour::OpaqueMapErrorHealthy => Err(opaque_map_error()),
         }

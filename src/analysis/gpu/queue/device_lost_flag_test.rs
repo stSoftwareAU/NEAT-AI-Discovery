@@ -182,3 +182,38 @@ fn flagged_non_matching_relu_error_enters_recovery() {
     };
     assert!(format!("{err:#}").contains("GPU device lost and recovery failed"));
 }
+
+/// Issue #2363: a device-loss message whose text matches a known pattern enters
+/// recovery even when the device-lost callback never fired. This pins the text
+/// operand of `routes_to_recovery`.
+#[test]
+#[serial(gpu_stale_skip)]
+fn text_matched_device_loss_enters_recovery_without_flag() {
+    let (work_tx, work_rx) = bounded::<GpuWorkRequest>(4);
+    let (request, response_rx) = helpful_request();
+    enqueue(&work_tx, request);
+    enqueue(&work_tx, GpuWorkRequest::Shutdown);
+
+    let heartbeat = Arc::new(GpuHeartbeat::new());
+    let evaluator = FakeGpuEvaluator::new(
+        WedgeBehaviour::TextDeviceLostUnflagged,
+        Arc::clone(&heartbeat),
+    );
+    let factory = FakeEvaluatorFactory::new();
+    GpuWorkQueue::run_work_loop(evaluator, work_rx, &factory, &heartbeat);
+
+    assert_eq!(
+        factory.create_count(),
+        crate::config::gpu_retry_limit() as usize,
+        "a text-matched device loss must enter recovery even without the flag"
+    );
+    let response = response_rx
+        .try_recv()
+        .expect("the caller must be told recovery failed");
+    let err = response.expect_err("exhausted recovery must surface an error");
+    let text = format!("{err:#}");
+    assert!(
+        text.contains("GPU device lost and recovery failed"),
+        "expected the recovery-exhausted message, got: {text}"
+    );
+}
