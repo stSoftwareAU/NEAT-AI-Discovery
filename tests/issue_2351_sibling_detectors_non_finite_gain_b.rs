@@ -96,7 +96,8 @@ fn bimodal_non_finite_value_does_not_emit_non_finite_gain_or_bias() {
         assert!(c.lower_mode_mean.is_finite());
         assert!(c.upper_mode_mean.is_finite());
     }
-    let coordinated = bimodal_neurons_to_coordinated_candidates(&found);
+    let c = creature(vec![]);
+    let coordinated = bimodal_neurons_to_coordinated_candidates(&found, &c);
     assert_gains_finite(&coordinated);
     let json = serde_json::to_string(&coordinated).unwrap();
     assert!(!json.contains("inf") && !json.contains("NaN"), "{json}");
@@ -289,7 +290,8 @@ fn bimodal_overflowing_finite_values_do_not_emit_non_finite_bias() {
         assert!(c.lower_mode_mean.is_finite());
         assert!(c.upper_mode_mean.is_finite());
     }
-    assert_gains_finite(&bimodal_neurons_to_coordinated_candidates(&found));
+    let c = creature(vec![]);
+    assert_gains_finite(&bimodal_neurons_to_coordinated_candidates(&found, &c));
 }
 
 #[test]

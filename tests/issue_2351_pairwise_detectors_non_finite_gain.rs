@@ -269,7 +269,7 @@ fn overflowing_output_errors_emit_no_non_finite_output_conflict() {
                 "output-conflict {label}: non-finite detection {d:?}"
             );
         }
-        let converted = output_conflicts_to_coordinated_candidates(&detected, c);
+        let converted = output_conflicts_to_coordinated_candidates(&detected, c, &None);
         for cand in &converted {
             assert!(cand.expected_creature_score_gain.is_finite(), "{label}");
             for op in &cand.operations {
