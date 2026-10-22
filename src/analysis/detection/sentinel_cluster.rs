@@ -88,21 +88,22 @@ pub fn assess_sentinel_cluster(
     let n = activations.len() as f32;
 
     // Rule 1: density — enough samples cluster at the candidate value.
-    let sentinel_indices: Vec<usize> = activations
-        .iter()
-        .enumerate()
-        .filter(|&(_, &a)| (a - sentinel).abs() <= SENTINEL_TOLERANCE)
-        .map(|(i, _)| i)
-        .collect();
+    // A single pass builds both halves of the partition, keeping it O(n)
+    // (Issue #2355).
+    let mut sentinel_indices: Vec<usize> = Vec::new();
+    let mut non_sentinel_indices: Vec<usize> = Vec::new();
+    for (i, &a) in activations.iter().enumerate() {
+        if (a - sentinel).abs() <= SENTINEL_TOLERANCE {
+            sentinel_indices.push(i);
+        } else {
+            non_sentinel_indices.push(i);
+        }
+    }
 
     let sentinel_fraction = sentinel_indices.len() as f32 / n;
     if sentinel_fraction < MIN_SENTINEL_FRACTION {
         return None;
     }
-
-    let non_sentinel_indices: Vec<usize> = (0..activations.len())
-        .filter(|i| !sentinel_indices.contains(i))
-        .collect();
 
     if non_sentinel_indices.is_empty() {
         return None;

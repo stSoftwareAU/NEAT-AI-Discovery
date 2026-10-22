@@ -116,6 +116,48 @@ fn neuron_diagnostics_reports_genuine_no_eligible_sources() {
 }
 
 #[test]
+fn neuron_diagnostics_target_load_failure_reports_dedicated_reason() {
+    // Issue #2352: a failed target load must not read as NoEligibleSources.
+    let diagnostics = NeuronDiagnostics::new_for_tests(&["output-0"]);
+    diagnostics.record_target_load_failure("output-0");
+
+    let summaries = diagnostics.no_candidate_summaries();
+    assert_eq!(summaries.len(), 1);
+    assert_eq!(
+        summaries[0].reason,
+        NeuronNoCandidateReason::TargetRecordLoadFailed
+    );
+
+    let entry = diagnostics.entry_for("output-0").unwrap();
+    assert!(entry.target_load_failed);
+    assert_eq!(entry.record_load_failures, 1);
+}
+
+#[test]
+fn neuron_diagnostics_filter_reasons_take_precedence_over_target_load_failure() {
+    // Issue #2352: pre-analysis filters keep their reason even if a load failure
+    // was also recorded.
+    let diagnostics = NeuronDiagnostics::new_for_tests(&["in-0", "hid-0", "const-0"]);
+    diagnostics.mark_input_filtered("in-0");
+    diagnostics.mark_hidden_filtered("hid-0");
+    diagnostics.mark_constant_filtered("const-0");
+    for uuid in ["in-0", "hid-0", "const-0"] {
+        diagnostics.record_target_load_failure(uuid);
+    }
+
+    let summaries = diagnostics.no_candidate_summaries();
+    assert_eq!(summaries.len(), 3);
+    for summary in &summaries {
+        let expected = match summary.target_uuid.as_str() {
+            "in-0" => NeuronNoCandidateReason::InputNeuronFiltered,
+            "hid-0" => NeuronNoCandidateReason::HiddenNeuronFiltered,
+            _ => NeuronNoCandidateReason::ConstantNeuronFiltered,
+        };
+        assert_eq!(summary.reason, expected, "for {}", summary.target_uuid);
+    }
+}
+
+#[test]
 fn target_diagnostics_reports_no_samples_reason() {
     // Issue #216: Methods now take &self, not &mut self
     let diagnostics = TargetDiagnostics::new_for_tests(&["output-0"]);

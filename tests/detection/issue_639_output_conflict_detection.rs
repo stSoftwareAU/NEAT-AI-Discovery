@@ -226,7 +226,7 @@ fn test_output_conflict_produces_valid_coordinated_candidates() {
         estimated_improvement: 0.05,
     }];
 
-    let candidates = output_conflicts_to_coordinated_candidates(&detected, &creature);
+    let candidates = output_conflicts_to_coordinated_candidates(&detected, &creature, &None);
 
     assert!(
         !candidates.is_empty(),

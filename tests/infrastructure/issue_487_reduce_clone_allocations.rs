@@ -368,7 +368,7 @@ fn bounded_range_detection_preserves_correctness() {
     assert!(d.estimated_improvement > 0.0);
 
     // Convert and verify gating neuron operations
-    let coordinated = bounded_range_to_coordinated_candidates(&detected);
+    let coordinated = bounded_range_to_coordinated_candidates(&detected, &creature);
     assert!(
         !coordinated.is_empty(),
         "Should produce coordinated candidates from bounded range"

@@ -27,7 +27,9 @@
 //! `AddSynapse` operations.
 
 #![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
-use super::helpers::{build_record_map, sort_candidates_by_score_gain};
+use super::helpers::{
+    build_record_map, existing_neuron_uuids, first_free_neuron_uuid, sort_candidates_by_score_gain,
+};
 
 use crate::types::DiscoverRecord;
 use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson, CreatureJson};
@@ -199,8 +201,15 @@ pub fn detect_bottleneck_neurons(
 }
 
 /// Generate a deterministic UUID for a parallel bottleneck neuron.
-fn bottleneck_parallel_neuron_uuid(bottleneck_uuid: &str, index: usize) -> String {
-    let key = format!("bottleneck-parallel|{bottleneck_uuid}|{index}");
+///
+/// Salt 0 hashes the legacy key; salt `n >= 1` appends `|n` so the caller can
+/// step past a UUID the creature already owns (Issue #2359).
+fn bottleneck_parallel_neuron_uuid(bottleneck_uuid: &str, index: usize, salt: u32) -> String {
+    let key = if salt == 0 {
+        format!("bottleneck-parallel|{bottleneck_uuid}|{index}")
+    } else {
+        format!("bottleneck-parallel|{bottleneck_uuid}|{index}|{salt}")
+    };
     // FNV-1a 64-bit
     let mut hash: u64 = 0xcbf29ce484222325;
     for b in key.as_bytes() {
@@ -221,6 +230,8 @@ fn bottleneck_parallel_neuron_uuid(bottleneck_uuid: &str, index: usize) -> Strin
 /// # Arguments
 /// * `candidates` - Detected bottleneck neurons.
 /// * `creature` - The creature topology (needed for existing synapse weights).
+///
+/// The parallel neuron UUID avoids every UUID already in `creature` (Issue #2359).
 pub fn bottleneck_neurons_to_coordinated_candidates(
     candidates: &[BottleneckNeuronCandidate],
     creature: &CreatureJson,
@@ -236,6 +247,8 @@ pub fn bottleneck_neurons_to_coordinated_candidates(
         }
     };
 
+    let existing = existing_neuron_uuids(creature);
+
     let mut results = Vec::with_capacity(candidates.len() * 2);
 
     for c in candidates {
@@ -246,7 +259,9 @@ pub fn bottleneck_neurons_to_coordinated_candidates(
             .iter()
             .any(|a| a == "addParallelNeuron")
         {
-            let new_uuid = bottleneck_parallel_neuron_uuid(&c.neuron_uuid, 0);
+            let new_uuid = first_free_neuron_uuid(&existing, |salt| {
+                bottleneck_parallel_neuron_uuid(&c.neuron_uuid, 0, salt)
+            });
 
             // Find the bottleneck neuron's squash function (borrow, not clone)
             let squash_ref = creature

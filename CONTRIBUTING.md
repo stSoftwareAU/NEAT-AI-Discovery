@@ -122,6 +122,7 @@ compiles them (Issue #1877):
 | Feature | Gates | Consumer |
 |---------|-------|----------|
 | `regression-harness` | `src/analysis/production_discovery_regression.rs` | `tests/production_discovery_regression.rs` |
+| `regression-harness` | `src/analysis/neuron_target_load_harness.rs` | `tests/issue_2352_neuron_target_load_failure_surfaced.rs` |
 
 Always run tests with `--all-features` (as `./quality.sh` and CI do) — a plain
 `cargo test` **skips** targets that declare `required-features`. To run a gated
