@@ -23,7 +23,7 @@ permissions:
 
 jobs:
   msrv:
-    if: ${{ github.event_name != 'pull_request' || !github.event.pull_request.draft }}
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     name: Build with declared MSRV
     runs-on: ubuntu-latest
     timeout-minutes: 45

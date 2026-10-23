@@ -44,7 +44,7 @@ jobs:
   version-increment:
     name: Auto-increment Versions
     runs-on: ubuntu-latest
-    if: ${{ github.event_name == 'pull_request' && !github.event.pull_request.draft }}
+    if: github.event_name == 'pull_request' && !github.event.pull_request.draft
     # Cap runtime to surface wedged `cargo install` / `git fetch` steps
     # as fast failures rather than letting them tie up a runner for the
     # GitHub default 6h (Issue #1287).
@@ -226,7 +226,7 @@ jobs:
     # GPU tests are skipped automatically when no GPU is available.
     # Set NEAT_CI_RUNNER to a GPU-enabled runner label for full test coverage.
     runs-on: 'ubuntu-latest'
-    if: ${{ github.event_name == 'pull_request' && !github.event.pull_request.draft }}
+    if: github.event_name == 'pull_request' && !github.event.pull_request.draft
     needs: [version-increment, auto-format]
     # Heaviest job: Rust compile, clippy, full test suite. 45 minutes
     # leaves headroom for cold caches while still firing well before
@@ -328,7 +328,7 @@ jobs:
 
   security:
     uses: ./.github/workflows/security.yml
-    if: ${{ github.event_name == 'pull_request' && !github.event.pull_request.draft }}
+    if: github.event_name == 'pull_request' && !github.event.pull_request.draft
     needs: [version-increment]
     # Reusable security.yml requests issues: write for dependency-review-action,
     # which posts its PR summary comment through the Issues API. Override the
@@ -344,7 +344,7 @@ jobs:
   validation:
     name: Project Validation
     runs-on: ubuntu-latest
-    if: ${{ github.event_name == 'pull_request' && !github.event.pull_request.draft }}
+    if: github.event_name == 'pull_request' && !github.event.pull_request.draft
     needs: [version-increment]
     # File-presence and Cargo.toml field validation — 10 minutes is plenty
     # while still capping wedged-runner exposure (Issue #1287).
@@ -430,7 +430,7 @@ jobs:
   auto-format:
     name: Auto-format Code
     runs-on: ubuntu-latest
-    if: ${{ github.event_name == 'pull_request' && !github.event.pull_request.draft }}
+    if: github.event_name == 'pull_request' && !github.event.pull_request.draft
     needs: [version-increment]
     # rustfmt + commit-and-push; 15 minutes covers a cold toolchain
     # install while still bounding hangs (Issue #1287).
@@ -517,7 +517,7 @@ jobs:
   spell-check:
     name: Spell Check
     runs-on: ubuntu-latest
-    if: ${{ github.event_name == 'pull_request' && !github.event.pull_request.draft }}
+    if: github.event_name == 'pull_request' && !github.event.pull_request.draft
     needs: [version-increment]
     # codespell over the tree — light job, 10 minute cap (Issue #1287).
     timeout-minutes: 10

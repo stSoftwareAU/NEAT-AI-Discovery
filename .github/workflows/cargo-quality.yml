@@ -32,7 +32,7 @@ permissions:
 
 jobs:
   coverage:
-    if: ${{ github.event_name != 'pull_request' || !github.event.pull_request.draft }}
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     name: Coverage
     runs-on: ubuntu-latest
     # cargo-llvm-cov coverage build. Coverage instrumentation roughly
