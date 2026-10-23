@@ -170,8 +170,11 @@ aggregation paths that call them are unchanged and covered by the existing
 - Test file: `tests/issue_2351_pairwise_detectors_non_finite_gain.rs`.
 - Test: `tests/issue_2351_pairwise_detectors_non_finite_gain.rs::overflowing_weights_emit_no_non_finite_candidate`.
 - It fails on the unfixed code (a `NaN` gain is emitted) and passes after the fix.
-- The trigger is closed at each gate. There is no trivial bypass: `inf`, `-inf`
-  and `NaN` all fail `is_finite()`, and every sibling detector with the same
-  comparison shape carries the same guard.
+- The trigger is closed at each gate this change touches. There is no trivial
+  bypass at those gates: `inf`, `-inf` and `NaN` all fail `is_finite()`. The
+  guard is not universal across the detectors: `output_squash_mismatch.rs:332`
+  (`if mean_error < MIN_MEAN_ERROR_THRESHOLD`) has the same fail-open shape with
+  no `is_finite` guard on `mean_error`. It is deliberately untouched here and
+  tracked by #2381, which is still open.
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
