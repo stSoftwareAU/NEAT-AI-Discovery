@@ -71,17 +71,23 @@ and `reject_non_finite_gains` over `README.md`, `docs/` and `src/`; section:
 every hit's surrounding paragraph; siblings: `opposing_synapse`,
 `output_squash_mismatch`, `hard_sample_cluster`, `redundant_path`; updated: none.
 
-- `docs/COST_FUNCTION_NOTES.md:136-138`, `:336` — still true because they
-  describe the late finite-gain filter, which is unchanged.
-- `docs/DISCOVERY_TYPES.md:180`, `:184`, `:198`, `:201`, `:2024` — still true
-  because they describe detector outputs for finite inputs, which are unchanged.
-- `docs/IMPACT_CALCULATION.md:416-456` — still true because the gain formulae
-  are unchanged; only non-finite results are now skipped.
-- `src/analysis/candidate_aggregation.rs:142-159` — still true because
-  `reject_non_finite_gains` is unchanged and still runs.
+- `docs/COST_FUNCTION_NOTES.md:67-68` — still true: it says a non-finite error
+  entry is skipped by every consumer, and the detectors now do that at their own
+  gate. `:136-138` and `:336` are the `output_conflict.rs` rows (presence, length
+  check, residual accumulator) and its consumer-list entry; they describe the
+  input checks, which are unchanged, and the new finiteness checks sit after
+  them in `output_conflict.rs`.
+- `docs/DISCOVERY_TYPES.md:180`, `:184`, `:198`, `:201` — registry table rows
+  (detector source file, issue, operations); none of those change. `:2024`
+  describes weight validation in `calculate_optimal_outgoing_weight`, which this
+  change does not touch.
+- `docs/IMPACT_CALCULATION.md:416-456` — costOfGrowth handling and removal-candidate
+  non-finite guards, a path this change does not touch.
+- `src/analysis/candidate_aggregation.rs:155-159` — `reject_non_finite_gains`
+  retains only candidates with a finite gain; unchanged and still runs.
 - `src/analysis/synapse/post_processing.rs:69`, `:92` and
-  `remove_neuron_drought.rs:139` — still true because they guard other paths
-  this change does not touch.
+  `src/analysis/remove_neuron_drought.rs:139` — they reference or call
+  `reject_non_finite_gains`, which is unchanged.
 
 Provenance:
 
@@ -109,7 +115,7 @@ Branch outcomes:
   red.
 - `src/analysis/detection/weight_coherence.rs:220` — inf ratio skipped —
   `overflowing_weights_emit_no_non_finite_candidate` — flip red.
-- `src/analysis/detection/output_conflict.rs:146` and `:184` — non-finite
+- `src/analysis/detection/output_conflict.rs:151-153` and `:189-191` — non-finite
   means/harmful mean skipped —
   `overflowing_output_errors_emit_no_non_finite_output_conflict` — flip red.
 - `src/analysis/detection/compound_degradation.rs:303` —
@@ -118,7 +124,7 @@ Branch outcomes:
   `non_finite_errors_emit_no_non_finite_long_path_gain` — flip red.
 - `src/analysis/detection/topology.rs:281` —
   `non_finite_errors_emit_no_non_finite_imbalance_gain` — flip red.
-- `src/analysis/detection/bottleneck.rs:169` —
+- `src/analysis/detection/bottleneck.rs:171` —
   `overflowing_errors_emit_no_non_finite_bottleneck_gain` — flip red.
 - `src/analysis/detection/low_impact_neuron.rs:137` —
   `nan_activations_emit_no_non_finite_low_impact_candidate` — flip red.
