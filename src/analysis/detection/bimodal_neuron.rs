@@ -140,7 +140,9 @@ pub fn detect_bimodal_neurons(
             let estimated_improvement = separation * result.gap_ratio * 0.001;
 
             // Reject overflowed means / gain so no non-finite bias or gain escapes (Issue #2351).
-            if !estimated_improvement.is_finite()                || !result.upper_mean.is_finite()
+            if !estimated_improvement.is_finite()
+                || !result.lower_mean.is_finite()
+                || !result.upper_mean.is_finite()
             {
                 continue;
             }
