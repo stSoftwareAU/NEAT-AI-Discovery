@@ -98,9 +98,9 @@ Provenance:
 
 - Each regression test was run against the unfixed detectors and failed (for
   example, symmetry similarity `NaN` gave a `NaN` gain, and `output_conflict`
-  means `[-0.5, inf, 0.0]` gave an `inf` gain). 16 of the 18 non-control tests
-  were red before the fix. The other two, the bimodal ±3e38 and single −inf
-  cases, are evidenced only by the red-flip of their guards.
+  means `[-0.5, inf, 0.0]` gave an `inf` gain). All 18 non-control tests fail
+  with `src/` restored to the base ref (confirmed by the pre-PR verifier); only
+  the 5 `*_finite_input_still_emits_candidate` controls pass there.
 - After the fix, all new tests pass, as do the `detection` (503),
   `recommendation` (249), `focus` (187), `infrastructure` (223) and `issue_2349`
   (7) suites and the lib `detection::` tests (38).
