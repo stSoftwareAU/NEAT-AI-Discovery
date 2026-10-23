@@ -101,7 +101,7 @@ Provenance:
   means `[-0.5, inf, 0.0]` gave an `inf` gain). All 18 non-control tests fail
   with `src/` restored to the base ref (confirmed by the pre-PR verifier); only
   the 5 `*_finite_input_still_emits_candidate` controls pass there.
-- After the fix, all new tests pass, as do the `detection` (503),
+- After the fix, all new tests pass, as do the `detection` (507),
   `recommendation` (249), `focus` (187), `infrastructure` (223) and `issue_2349`
   (7) suites and the lib `detection::` tests (38).
 - `cargo fmt` and `cargo clippy -D warnings` are clean.
