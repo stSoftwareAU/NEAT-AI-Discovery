@@ -271,7 +271,7 @@ pub fn detect_noisy_synapses(
         let signal_contribution = (-covariance * synapse.weight.abs()).max(0.0);
 
         // Issue #2351: non-finite contributions would fail the gate open.
-        if !noise_contribution.is_finite() {
+        if !noise_contribution.is_finite() || !signal_contribution.is_finite() {
             continue;
         }
 
