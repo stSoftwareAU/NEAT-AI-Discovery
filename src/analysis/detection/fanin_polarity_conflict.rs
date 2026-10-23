@@ -153,7 +153,12 @@ pub fn detect_fanin_polarity_conflicts(
         // Conflict score: ratio of minority to majority group
         let conflict_score = positive_sum.min(negative_sum) / positive_sum.max(negative_sum);
 
-        if conflict_score < MIN_CONFLICT_SCORE {
+        // Issue #2351: overflowing sums give inf/NaN scores, which fail open.
+        if !positive_sum.is_finite()
+            || !negative_sum.is_finite()
+            || !conflict_score.is_finite()
+            || conflict_score < MIN_CONFLICT_SCORE
+        {
             continue;
         }
 

@@ -215,7 +215,8 @@ pub fn detect_topology_issues(
         let excess_hops = (path_len - MAX_EFFICIENT_PATH_LENGTH) as f32;
         let estimated_improvement = excess_hops * mean_err * 0.005;
 
-        if estimated_improvement <= 0.0 {
+        // Issue #2351: non-finite recorded errors give a NaN/inf gain.
+        if !estimated_improvement.is_finite() || estimated_improvement <= 0.0 {
             continue;
         }
 
@@ -276,7 +277,8 @@ pub fn detect_topology_issues(
                 let imbalance_ratio = max_fan_in as f32 / fi.max(1) as f32;
                 let estimated_improvement = (imbalance_ratio - 1.0) * mean_err * 0.003;
 
-                if estimated_improvement <= 0.0 {
+                // Issue #2351: non-finite recorded errors give a NaN/inf gain.
+                if !estimated_improvement.is_finite() || estimated_improvement <= 0.0 {
                     continue;
                 }
 

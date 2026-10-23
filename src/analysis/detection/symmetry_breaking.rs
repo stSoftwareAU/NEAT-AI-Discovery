@@ -302,7 +302,8 @@ pub fn detect_symmetric_neurons_observed(
 
             // Criterion 1: Cosine similarity of incoming weight vectors
             let similarity = cosine_similarity(&vectors[i], &vectors[j]);
-            if similarity < COSINE_SIMILARITY_THRESHOLD {
+            // Issue #2351: overflowing weights give a NaN similarity, which fails open.
+            if !similarity.is_finite() || similarity < COSINE_SIMILARITY_THRESHOLD {
                 continue;
             }
 
