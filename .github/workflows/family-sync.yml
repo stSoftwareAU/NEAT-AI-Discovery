@@ -19,7 +19,7 @@ name: Family Sync
 
 on:
   pull_request:
-    types: [opened, synchronize, reopened]
+    types: [opened, synchronize, reopened, ready_for_review]
     branches:
       # Every separate workflow in this repository gates `"*"` plus
       # `milestone/*` — the `*` glob does not cross `/`, so milestone
@@ -45,7 +45,7 @@ jobs:
     timeout-minutes: 10
     # Same-repo guard, as on version-increment: a fork PR gets no push
     # credential, so the sync could only fail there.
-    if: github.event.pull_request.head.repo.full_name == github.repository
+    if: ${{ (github.event.pull_request.head.repo.full_name == github.repository) && (github.event_name != 'pull_request' || !github.event.pull_request.draft) }}
     # Read-only: the push authenticates with the ACTIONS_PUSH PAT (Issue #2102).
     permissions:
       contents: read
