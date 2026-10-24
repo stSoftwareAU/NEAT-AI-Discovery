@@ -122,7 +122,12 @@ pub fn detect_bimodal_neurons(
         };
 
         // Extract pre-activation values, skipping None
-        let mut values: Vec<f32> = records.iter().filter_map(|r| r.value).collect();
+        // Non-finite values are dropped: they poison the mean / variance (Issue #2351).
+        let mut values: Vec<f32> = records
+            .iter()
+            .filter_map(|r| r.value)
+            .filter(|v| v.is_finite())
+            .collect();
 
         if values.len() < MIN_DISCOVERY_SAMPLE_COUNT {
             continue;
@@ -133,6 +138,14 @@ pub fn detect_bimodal_neurons(
         if let Some(result) = compute_bimodality(&values) {
             let separation = (result.upper_mean - result.lower_mean).abs();
             let estimated_improvement = separation * result.gap_ratio * 0.001;
+
+            // Reject overflowed means / gain so no non-finite bias or gain escapes (Issue #2351).
+            if !estimated_improvement.is_finite()
+                || !result.lower_mean.is_finite()
+                || !result.upper_mean.is_finite()
+            {
+                continue;
+            }
 
             candidates.push(BimodalNeuronCandidate {
                 neuron_uuid: uuid.clone(),
