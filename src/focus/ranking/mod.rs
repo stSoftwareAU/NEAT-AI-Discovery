@@ -1621,6 +1621,7 @@ mod focus_deadline_tests {
     //! Issue #1407: `FocusDeadline::resolve` must bound focus selection by the
     //! shared absolute discovery deadline, capped by the focus-ranking budget.
     use super::{FocusDeadline, FocusLoadingMode};
+    use serial_test::serial;
     use std::time::{Duration, Instant, SystemTime};
 
     fn now_ms() -> u64 {
@@ -1641,6 +1642,7 @@ mod focus_deadline_tests {
     }
 
     #[test]
+    #[serial]
     fn resolve_uses_shared_deadline_when_sooner_than_budget() {
         let start = Instant::now();
         // Absolute deadline 5s out — well inside the default 120s focus budget.
@@ -1663,6 +1665,7 @@ mod focus_deadline_tests {
     }
 
     #[test]
+    #[serial]
     fn resolve_uses_budget_when_shared_deadline_is_distant() {
         let start = Instant::now();
         // Absolute deadline far beyond the focus budget (50 minutes out).
@@ -1679,6 +1682,7 @@ mod focus_deadline_tests {
     }
 
     #[test]
+    #[serial]
     fn resolve_with_passed_deadline_aborts_immediately() {
         let start = Instant::now();
         // An absolute deadline already in the past saturates to zero remaining.
@@ -1694,6 +1698,7 @@ mod focus_deadline_tests {
     // mode + dataset size — a lazy fallback on a large dataset earns a materially
     // larger window than the fast eager path, which keeps the unscaled default.
     #[test]
+    #[serial]
     fn resolve_scales_lazy_budget_above_eager_default() {
         let start = Instant::now();
         // No shared deadline: only the (scaled) focus budget bounds the run.
@@ -1721,6 +1726,7 @@ mod focus_deadline_tests {
 
     // Issue #3172: a bigger projected dataset earns a bigger lazy budget.
     #[test]
+    #[serial]
     fn resolve_lazy_budget_grows_with_projected_size() {
         let start = Instant::now();
         let small = FocusDeadline::resolve(start, None, FocusLoadingMode::Lazy, 100)
@@ -1730,6 +1736,138 @@ mod focus_deadline_tests {
         assert!(
             large.budget_ms >= small.budget_ms,
             "a larger projected dataset must not shrink the lazy budget",
+        );
+    }
+
+    // Issue #2264 (probe (a) of #2123): an explicit env budget cannot outlive
+    // the caller's shared deadline. The tests below set the budget env var, so
+    // each one is `#[serial]` and restores the prior value via the guard.
+    const BUDGET_ENV: &str = "NEAT_AI_DISCOVERY_FOCUS_RANKING_BUDGET_MS";
+
+    /// Sets the focus-ranking budget env var and restores the previous value
+    /// (or removes the var) on drop, so a panicking test cannot leak it.
+    struct FocusBudgetEnvGuard {
+        previous: Option<String>,
+    }
+
+    impl FocusBudgetEnvGuard {
+        fn set(value: &str) -> Self {
+            let previous = std::env::var(BUDGET_ENV).ok();
+            // SAFETY: env mutation is serialised by `#[serial]` on every test in this module that reads it.
+            unsafe { std::env::set_var(BUDGET_ENV, value) };
+            Self { previous }
+        }
+    }
+
+    impl Drop for FocusBudgetEnvGuard {
+        fn drop(&mut self) {
+            match &self.previous {
+                // SAFETY: env mutation is serialised by `#[serial]` on every test in this module that reads it.
+                Some(value) => unsafe { std::env::set_var(BUDGET_ENV, value) },
+                // SAFETY: env mutation is serialised by `#[serial]` on every test in this module that reads it.
+                None => unsafe { std::env::remove_var(BUDGET_ENV) },
+            }
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn resolve_explicit_max_budget_is_still_bounded_by_shared_deadline() {
+        let _guard =
+            FocusBudgetEnvGuard::set(&crate::config::FOCUS_RANKING_BUDGET_MAX_MS.to_string());
+        let start = Instant::now();
+
+        // Positive control: the explicit override is read, so the budget-only
+        // deadline is the 1 hour maximum.
+        let budget_only = resolve_eager(start, None).expect("explicit budget present");
+        assert_eq!(
+            budget_only.budget_ms, 3_600_000,
+            "the explicit env budget must be read so the bounded case is meaningful",
+        );
+
+        // A shared deadline 5s out must bound the run, not the 1 hour budget.
+        let resolved = resolve_eager(start, Some(now_ms() + 5_000)).expect("deadline present");
+        assert!(
+            resolved.expires_at < budget_only.expires_at,
+            "an explicit env budget must not outlive the shared deadline",
+        );
+        assert!(
+            abs_diff(resolved.expires_at, start + Duration::from_millis(5_000))
+                < Duration::from_millis(1_000),
+            "expiry should track the shared deadline, not the explicit budget",
+        );
+        assert!(
+            resolved.budget_ms <= 5_000,
+            "budget_ms should be the shared deadline's remaining ms, not the explicit budget",
+        );
+
+        // An explicit override is taken verbatim regardless of mode, so the lazy
+        // path must be bounded by the shared deadline too.
+        let lazy = FocusDeadline::resolve(
+            start,
+            Some(now_ms() + 5_000),
+            FocusLoadingMode::Lazy,
+            20_000,
+        )
+        .expect("lazy deadline present");
+        assert!(
+            abs_diff(lazy.expires_at, start + Duration::from_millis(5_000))
+                < Duration::from_millis(1_000),
+            "a lazy run with an explicit env budget must still expire at the shared deadline",
+        );
+        assert!(
+            lazy.budget_ms <= 5_000,
+            "a lazy run with an explicit env budget must report the shared deadline's remaining ms",
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn resolve_disabled_budget_still_honours_shared_deadline() {
+        let _guard = FocusBudgetEnvGuard::set("0");
+        let start = Instant::now();
+
+        // Positive control: `0` disables the budget, so no budget-only deadline.
+        assert!(
+            resolve_eager(start, None).is_none(),
+            "a `0` env budget must disable the focus budget",
+        );
+
+        // With the budget disabled, the shared deadline is the only bound.
+        let resolved = resolve_eager(start, Some(now_ms() + 5_000)).expect("deadline present");
+        assert!(
+            abs_diff(resolved.expires_at, start + Duration::from_millis(5_000))
+                < Duration::from_millis(1_000),
+            "a disabled focus budget must still expire at the shared deadline",
+        );
+        assert!(
+            resolved.budget_ms <= 5_000,
+            "budget_ms should be the shared deadline's remaining ms when the budget is disabled",
+        );
+    }
+
+    #[test]
+    #[serial]
+    fn resolve_disabled_budget_without_shared_deadline_is_unbounded() {
+        let start = Instant::now();
+        {
+            let _guard = FocusBudgetEnvGuard::set("0");
+            assert!(
+                resolve_eager(start, None).is_none(),
+                "a `0` env budget with no shared deadline must leave the run unbounded",
+            );
+            assert!(
+                FocusDeadline::resolve(start, None, FocusLoadingMode::Lazy, 20_000).is_none(),
+                "a `0` env budget with no shared deadline must leave the lazy run unbounded",
+            );
+        }
+
+        // Positive control: with a non-zero budget the same call is bounded, so
+        // the `None` above was caused by the `0`, not by something else.
+        let _guard = FocusBudgetEnvGuard::set("60000");
+        assert!(
+            resolve_eager(start, None).is_some(),
+            "a non-zero env budget must bound the run when no shared deadline is supplied",
         );
     }
 }

@@ -12,6 +12,9 @@ name: Coverage
 
 on:
   pull_request:
+    # Draft PRs are work in progress (owner, 2026-10-23): CI runs
+    # once, when the PR is marked ready.
+    types: [opened, synchronize, reopened, ready_for_review]
     # `"*"` matches single-level branch names (e.g. `Develop`) but not
     # `milestone/<slug>`, because the `*` glob does not cross `/`. Add
     # `milestone/*` so milestone sub-issue PRs are coverage-gated too
@@ -29,6 +32,7 @@ permissions:
 
 jobs:
   coverage:
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     name: Coverage
     runs-on: ubuntu-latest
     # cargo-llvm-cov coverage build. Coverage instrumentation roughly
@@ -97,7 +101,17 @@ jobs:
 
       - name: Upload coverage to Codecov
         # Pinned to a 40-char commit SHA (Issue #1216).
+        #
+        # `fail_ci_if_error: false` only suppresses errors the action's
+        # own upload logic catches; a raw network exception (e.g. a TLS
+        # handshake failure reaching Codecov's CDN — codecov/codecov-
+        # action#1975, still open upstream) crashes the step before that
+        # logic runs, so the step still exits non-zero and fails the job.
+        # `continue-on-error: true` makes the step non-blocking regardless
+        # of how it fails, honouring the workflow's existing intent that a
+        # coverage-upload failure must never block CI (PR #2389).
         uses: codecov/codecov-action@0f8570b1a125f4937846a11fcfa3bcd548bd8c97 # v4.6.0
+        continue-on-error: true
         with:
           files: lcov.info
           token: ${{ secrets.CODECOV_TOKEN }}

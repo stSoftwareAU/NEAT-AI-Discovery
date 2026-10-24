@@ -75,6 +75,8 @@ pub(crate) enum WedgeBehaviour {
     /// #1928): blocks only while the request's [`GpuTimeBudget`] allows, then
     /// fails loudly instead of going silent.
     WedgesUntilBudgetExpires,
+    /// Panics on the first request, as a GPU-thread bug would (Issue #2361).
+    Panics,
 }
 
 /// What the fake device saw for one evaluation.
@@ -219,6 +221,7 @@ impl FakeGpuEvaluator {
                      without an expiring budget — the request carried no caller deadline"
                 ))
             }
+            WedgeBehaviour::Panics => panic!("fake GPU panicked"),
         }
     }
 }

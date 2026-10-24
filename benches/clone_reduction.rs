@@ -293,7 +293,12 @@ fn bench_bounded_range(c: &mut Criterion) {
         let detected = detect_bounded_range_neurons(&creature, &records);
         if !detected.is_empty() {
             group.bench_function(format!("convert_{count}_neurons"), |b| {
-                b.iter(|| bounded_range_to_coordinated_candidates(black_box(&detected)));
+                b.iter(|| {
+                    bounded_range_to_coordinated_candidates(
+                        black_box(&detected),
+                        black_box(&creature),
+                    )
+                });
             });
         }
     }

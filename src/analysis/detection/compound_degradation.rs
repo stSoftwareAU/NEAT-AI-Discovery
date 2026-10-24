@@ -299,7 +299,8 @@ fn detect_weight_corrections(
             .sum();
 
         let improvement = (baseline_error_sq - corrected_error_sq) / count as f32;
-        if improvement <= 0.0 {
+        // Issue #2351: squared-error sums can overflow to +inf (NaN improvement).
+        if !improvement.is_finite() || improvement <= 0.0 {
             continue;
         }
 

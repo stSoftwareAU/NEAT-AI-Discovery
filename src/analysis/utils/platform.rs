@@ -748,7 +748,12 @@ mod tests {
 
     /// `setup_gpu_environment` is a *safe* function: no caller has to promise
     /// an invariant it cannot enforce, and repeated calls agree (Issue #1873).
+    /// Serial because its verdict depends on the process-global
+    /// `XDG_RUNTIME_DIR` env var, which sibling tests in this module mutate;
+    /// without the lock, one of those tests can flip the variable between
+    /// this test's two calls and make the "same verdict" assertion flaky.
     #[test]
+    #[serial_test::serial]
     fn test_setup_gpu_environment_is_safe_and_consistent() {
         let first = setup_gpu_environment();
         let second = setup_gpu_environment();

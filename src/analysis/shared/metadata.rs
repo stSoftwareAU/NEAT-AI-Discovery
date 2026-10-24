@@ -427,6 +427,10 @@ pub enum NeuronNoCandidateReason {
     /// don't receive inputs - they always output a fixed value regardless of
     /// network state, so adding a connection to them has no effect.
     ConstantNeuronFiltered,
+    /// The target neuron's own records failed to load from the record cache
+    /// (Issue #2352). Distinct from `NoEligibleSources`: the target was a valid
+    /// focus but could not be analysed at all.
+    TargetRecordLoadFailed,
 }
 
 /// Detailed information about why a neuron candidate was rejected

@@ -116,6 +116,41 @@ assert_pattern_absent \
   "cargo[[:space:]]+clippy" \
   "$WORKFLOW_FILE"
 
+# --- Test: Codecov upload never fails the job (Issue #2389) ---
+# `fail_ci_if_error: false` only suppresses errors the action's own
+# upload logic catches; a raw network exception (e.g. the codecov/
+# codecov-action#1975 TLS handshake failure against Codecov's CDN)
+# crashes the step before that logic runs and still fails the job.
+# `continue-on-error: true` on the step itself closes that gap.
+extract_step() {
+  local step_name="$1"
+  local file="$2"
+
+  awk -v step="      - name: $step_name" '
+    $0 == step { found=1; print; next }
+    found && /^      - name:/ { exit }
+    found { print }
+  ' "$file"
+}
+
+codecov_step="$(extract_step "Upload coverage to Codecov" "$WORKFLOW_FILE")"
+if echo "$codecov_step" | grep -qE "continue-on-error:[[:space:]]+true"; then
+  PASS=$((PASS + 1))
+else
+  echo "FAIL: Codecov upload step must set continue-on-error: true"
+  FAIL=$((FAIL + 1))
+fi
+
+# Negative: the coverage-generation step must still fail the job on a
+# real test failure — continue-on-error must not leak onto it.
+coverage_gen_step="$(extract_step "Generate coverage (lcov)" "$WORKFLOW_FILE")"
+if echo "$coverage_gen_step" | grep -qE "continue-on-error:"; then
+  echo "FAIL: Generate coverage step must not set continue-on-error (real test failures must still fail the job)"
+  FAIL=$((FAIL + 1))
+else
+  PASS=$((PASS + 1))
+fi
+
 # --- Summary ---
 echo ""
 echo "Results: $PASS passed, $FAIL failed"

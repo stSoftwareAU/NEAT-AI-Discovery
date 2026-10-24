@@ -11,6 +11,10 @@
 //!   cited symbol still exists in its source file (Issue #1942);
 //! * the section's region of the re-verification table carries a #1905 and a
 //!   #1904 row, and the guard tests they cite exist.
+//!
+//! Issue #2254 removed the tables' `<!-- section: -->` markers at
+//! finalisation, once no more concurrent slices remained to disambiguate; a
+//! section's "region" of a table is now the whole table.
 
 use std::path::PathBuf;
 
@@ -104,20 +108,6 @@ fn section<'a>(doc: &'a str, heading: &str) -> &'a str {
     &doc[body_start..end]
 }
 
-/// This section's marked region of a finding table: from its marker to the
-/// next `<!-- section:` marker.
-fn marker_region(table: &str) -> &str {
-    let marker = format!("<!-- section: {SECTION} -->");
-    let start = table
-        .find(&marker)
-        .unwrap_or_else(|| panic!("the table must carry `{marker}`"))
-        + marker.len();
-    let end = table[start..]
-        .find("<!-- section:")
-        .map_or(table.len(), |offset| start + offset);
-    &table[start..end]
-}
-
 fn table_rows(body: &str) -> Vec<&str> {
     body.lines()
         .filter(|line| line.trim_start().starts_with('|'))
@@ -179,7 +169,9 @@ fn no_debug_sampler_row_reads_pending_and_each_has_an_outcome_and_a_reason() {
 #[test]
 fn the_debug_sampler_mutation_region_cites_all_five_sites() {
     let doc = read(RECORD);
-    let region = marker_region(section(&doc, "## Filesystem mutation sites"));
+    // Issue #2254 removed the `<!-- section: -->` markers; the whole table
+    // is this section's region now that no concurrent slice remains.
+    let region = section(&doc, "## Filesystem mutation sites");
     let rows = table_rows(region);
 
     for (site, file, definition) in MUTATION_SITES {
@@ -209,7 +201,9 @@ fn the_debug_sampler_mutation_region_cites_all_five_sites() {
 #[test]
 fn the_debug_sampler_reverification_region_has_1905_and_1904_rows() {
     let doc = read(RECORD);
-    let region = marker_region(section(&doc, "## Re-verified remediations"));
+    // Issue #2254 removed the `<!-- section: -->` markers; the whole table
+    // is this section's region now that no concurrent slice remains.
+    let region = section(&doc, "## Re-verified remediations");
     let rows = table_rows(region);
 
     for (issue, guard) in REVERIFIED {

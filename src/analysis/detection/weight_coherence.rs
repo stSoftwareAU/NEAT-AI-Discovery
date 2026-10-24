@@ -216,6 +216,11 @@ pub fn detect_incoherent_weight_ratios(
 
         let ratio = incoming_sum / outgoing_sum;
 
+        // Issue #2351: an overflowed sum gives an infinite ratio and gain.
+        if !ratio.is_finite() {
+            continue;
+        }
+
         if ratio > config.max_weight_ratio {
             // Calculate recommended outgoing weight to bring ratio down
             let recommended_outgoing = incoming_sum / config.max_weight_ratio;

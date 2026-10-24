@@ -2,10 +2,14 @@
 //!
 //! Chunk 11 is swept by several audit sub-issues writing into **one** shared
 //! record. These tests pin the shape they write into: every in-scope file has
-//! exactly one row under its owning `###` section, and both finding tables
-//! carry one `<!-- section: … -->` marker per section, in order, so concurrent
-//! PRs append to disjoint regions. They deliberately do not assert `pending` —
-//! the audit sub-issues flip those outcomes.
+//! exactly one row under its owning `###` section. The scaffold originally
+//! cut both finding tables with one `<!-- section: … -->` marker per section,
+//! in order, so concurrent slice PRs could append to disjoint regions; Issue
+//! #2254 removed those markers at finalisation, once no more concurrent
+//! slices remained to disambiguate
+//! (`tests/issue_2254_chunk_11_finalisation.rs` pins their absence). These
+//! tests deliberately do not assert `pending` — the audit sub-issues flip
+//! those outcomes.
 //! `tests/issue_2088_sweep_ledger_contract.rs` covers the ledger-wide rules.
 
 use std::path::PathBuf;
@@ -38,12 +42,6 @@ const SECTIONS: [(&str, &[&str]); 3] = [
             "src/discovery_history.rs",
         ],
     ),
-];
-
-/// The two finding tables, each split by the section markers.
-const FINDING_TABLES: [&str; 2] = [
-    "## Filesystem mutation sites",
-    "## Re-verified remediations",
 ];
 
 fn read(rel: &str) -> String {
@@ -128,26 +126,6 @@ fn each_in_scope_file_has_exactly_one_row_under_its_owning_section() {
                 anywhere, 1,
                 "{file} must appear exactly once in `## Files swept`, not also under another section"
             );
-        }
-    }
-}
-
-#[test]
-fn both_finding_tables_carry_the_section_markers_in_order() {
-    let doc = read(RECORD);
-
-    for heading in FINDING_TABLES {
-        let body = section(&doc, heading);
-        let mut cursor = 0usize;
-        for (name, _) in SECTIONS {
-            let marker = format!("<!-- section: {name} -->");
-            let offset = body[cursor..].find(&marker).unwrap_or_else(|| {
-                panic!(
-                    "`{heading}` must carry `{marker}` after the markers before it, so each \
-                     sub-issue's rows land in a disjoint region"
-                )
-            });
-            cursor = cursor + offset + marker.len();
         }
     }
 }

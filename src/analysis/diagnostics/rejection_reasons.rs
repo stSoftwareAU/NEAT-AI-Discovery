@@ -161,6 +161,11 @@ pub const REJECTION_HIDDEN_NEURON_FILTERED: &str = "hidden_neuron_filtered";
 /// Neuron: target was a constant neuron (does not receive inputs).
 pub const REJECTION_CONSTANT_NEURON_FILTERED: &str = "constant_neuron_filtered";
 
+/// Neuron: the target neuron's own records failed to load from the record
+/// cache, so it could not be analysed (Issue #2352). Distinct from
+/// `no_eligible_sources`.
+pub const REJECTION_TARGET_RECORD_LOAD_FAILED: &str = "target_record_load_failed";
+
 /// Synapse: target neuron evaluated candidates but none had any recorded
 /// diagnostic detail. Corresponds to `SynapseNoCandidateReason::NoDiagnostics`.
 pub const REJECTION_NO_DIAGNOSTICS: &str = "no_diagnostics";
@@ -391,6 +396,7 @@ pub const ALL_REJECTION_REASONS: &[&str] = &[
     REJECTION_INPUT_NEURON_FILTERED,
     REJECTION_HIDDEN_NEURON_FILTERED,
     REJECTION_CONSTANT_NEURON_FILTERED,
+    REJECTION_TARGET_RECORD_LOAD_FAILED,
     REJECTION_NO_DIAGNOSTICS,
     REJECTION_TARGET_SATURATED,
     REJECTION_REMOVAL_BELOW_NOISE_FLOOR,
@@ -584,6 +590,7 @@ fn friendly_reason(reason: &str) -> String {
         REJECTION_INPUT_NEURON_FILTERED => "input-neuron pre-filter".to_string(),
         REJECTION_HIDDEN_NEURON_FILTERED => "hidden-neuron pre-filter".to_string(),
         REJECTION_CONSTANT_NEURON_FILTERED => "constant-neuron pre-filter".to_string(),
+        REJECTION_TARGET_RECORD_LOAD_FAILED => "target neuron records failed to load".to_string(),
         REJECTION_NO_DIAGNOSTICS => "no diagnostics recorded".to_string(),
         REJECTION_TARGET_SATURATED => {
             "target neuron already saturated (observed activation covers the full bounded range)"
