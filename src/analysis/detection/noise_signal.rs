@@ -270,6 +270,11 @@ pub fn detect_noisy_synapses(
         // Negative correlation (activation up → error down) is good signal
         let signal_contribution = (-covariance * synapse.weight.abs()).max(0.0);
 
+        // Issue #2351: non-finite contributions would fail the gate open.
+        if !noise_contribution.is_finite() || !signal_contribution.is_finite() {
+            continue;
+        }
+
         // Only flag if noise significantly exceeds signal
         if noise_contribution <= signal_contribution * 2.0 {
             continue;

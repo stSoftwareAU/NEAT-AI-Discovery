@@ -147,6 +147,11 @@ pub fn detect_output_conflict_neurons(
 
         let mean_errors: Vec<f32> = sum_errors.iter().map(|&s| s / count as f32).collect();
 
+        // Issue #2351: overflowed accumulation or an infinite error gives non-finite means.
+        if mean_errors.iter().any(|e| !e.is_finite()) {
+            continue;
+        }
+
         // Check for sign conflict: at least one negative and one positive mean error
         let has_negative = mean_errors.iter().any(|&e| e < -MIN_SIGNIFICANT_ERROR);
         let has_positive = mean_errors.iter().any(|&e| e > MIN_SIGNIFICANT_ERROR);
@@ -180,6 +185,10 @@ pub fn detect_output_conflict_neurons(
         // error contribution. Use the mean of the positive (harmful) errors as estimate.
         let harmful_mean: f32 = mean_errors.iter().filter(|&&e| e > 0.0).sum::<f32>()
             / mean_errors.iter().filter(|&&e| e > 0.0).count().max(1) as f32;
+        // Issue #2351: finite means can still overflow when summed.
+        if !harmful_mean.is_finite() {
+            continue;
+        }
         let estimated_improvement = harmful_mean * 0.1; // conservative 10% capture
 
         results.push(OutputConflictNeuron {
