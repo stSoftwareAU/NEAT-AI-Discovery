@@ -169,16 +169,24 @@ Checked with no violation: version bump, Key Invariants, dependency discipline, 
 
 ## Test Plan
 
-**Regression test:** `tests/issue_2346_correlated_error_matrix_guard_test.rs::rejects_output_count_above_ceiling_without_building_the_matrix`
+**Regression test:** `tests/issue_2346_correlated_error_output_ceiling_test.rs::rejects_output_count_above_ceiling_without_building_the_matrix`
 
-- The test reproduces the original trigger: `MAX_CORRELATED_ERROR_OUTPUTS + 1` error-carrying outputs.
-- It asserts that no groups are returned and that `skip == OutputCeilingExceeded`.
+- The test reproduces the original trigger: 1,001 error-carrying outputs, one above the documented 1,000-output ceiling.
+- It uses only the pre-existing `detect_correlated_error_patterns` API, so it compiles against both base and head. A small correlated fixture must first produce groups, then the oversized fixture must return no groups.
 - It fails against the unfixed code and passes after the fix. The original trigger — an unbounded n_outputs² allocation and an uncancellable scan — is closed with no trivial bypass:
   - the ceiling counts eligible outputs before any allocation;
   - both loops check `deadline_passed`;
   - the only production caller uses the deadline-aware entry point.
 
-**Other tests:** the same file holds five more tests, plus one in-module unit test, `find_predictive_inputs_returns_none_when_deadline_elapsed`.
+**Other tests:** `tests/issue_2346_correlated_error_matrix_guard_test.rs` retains all six deadline and typed skip-reason tests, including the `OutputCeilingExceeded` assertion. The in-module unit test `find_predictive_inputs_returns_none_when_deadline_elapsed` covers the predictive-input deadline.
+
+**Security-gate retry validation:**
+
+- Command: `cargo test --offline --test issue_2346_correlated_error_output_ceiling_test -- --exact rejects_output_count_above_ceiling_without_building_the_matrix --nocapture`.
+- Base `dc21526b3728477c5cb079c33ac2c8ac2168dff7`, with the same standalone test copied into an isolated worktree: compiled successfully, then failed at the assertion `1,001 eligible outputs must be rejected by the 1,000-output ceiling` (0 passed, 1 failed).
+- Fixed source: 1 passed, 0 failed. The small-fixture positive precondition also passed on both versions.
+- The original target imports APIs introduced by the fix and cannot compile against base. The standalone regression target avoids those imports, while the original target retains the deadline and diagnostic coverage at head.
+- Retry quality gate: script checks, dependency audit, build, formatting, Clippy and type checks passed. The library suite reported 1,657 passed and one failure in the unchanged `analysis::mod_tests::watchdog_beats_do_not_claim_finished_when_analysis_is_skipped`: its process-wide activity label was overwritten by an analysis-cache load. That test passed when rerun in isolation. No watchdog code is changed in this retry.
 
 **Branch outcomes:**
 
