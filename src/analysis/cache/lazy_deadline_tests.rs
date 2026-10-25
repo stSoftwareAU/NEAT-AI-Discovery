@@ -73,6 +73,13 @@ fn lazy_get_returns_at_deadline() {
     let err = cache
         .get("neuron-a")
         .expect_err("past deadline must abort lazy get");
+    assert_eq!(
+        err.downcast_ref::<AnalysisDeadlineExceeded>(),
+        Some(&AnalysisDeadlineExceeded {
+            neuron_uuid: "neuron-a".to_string()
+        }),
+        "a deadline bail must be the typed error so callers can tell it from a load failure"
+    );
     let msg = format!("{err:#}");
     assert!(
         msg.contains("deadline exceeded") || msg.contains("Issue #2013"),

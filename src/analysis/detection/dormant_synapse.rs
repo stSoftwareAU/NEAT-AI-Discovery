@@ -130,6 +130,12 @@ pub fn detect_dormant_synapses(
         }
         let mean_abs_contribution = sum_abs_contribution / n;
 
+        // NaN / infinite contribution (non-finite activation or weight) must not
+        // fall through the fail-open gates below (Issue #2351).
+        if !max_abs_contribution.is_finite() || !mean_abs_contribution.is_finite() {
+            continue;
+        }
+
         // Spike guard: a synapse that is strongly active on even a single
         // observation is not dormant, regardless of how low its mean is.
         if max_abs_contribution > DORMANT_MAX_CONTRIBUTION_THRESHOLD {

@@ -180,7 +180,8 @@ pub fn detect_bias_perturbation_candidates(
             / records.len() as f32;
 
         // Skip neurons with negligible error — they're performing fine
-        if mean_error < MIN_ERROR_THRESHOLD {
+        // Issue #2351: a NaN/inf recorded error fails the threshold comparison.
+        if !mean_error.is_finite() || mean_error < MIN_ERROR_THRESHOLD {
             continue;
         }
 

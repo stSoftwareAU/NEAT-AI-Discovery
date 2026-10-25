@@ -682,6 +682,9 @@ pub enum NeuronDiagnosticReasonJson {
     /// don't receive inputs - they always output a fixed value regardless of
     /// network state, so adding a connection to them has no effect.
     ConstantNeuronFiltered,
+    /// The target neuron's own records failed to load from the record cache
+    /// (Issue #2352).
+    TargetRecordLoadFailed,
 }
 
 /// Optional detail attached to [`NeuronDiagnosticJson::detail`] — extra

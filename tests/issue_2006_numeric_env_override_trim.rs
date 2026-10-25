@@ -14,8 +14,11 @@
 //!
 //! `gpu_batch_size_override` and `gpu_retry_limit` also lost the trim, but both
 //! memoise into a process-wide `OnceLock`, so their value is frozen by whichever
-//! test touches them first and they cannot be exercised in-process. Their trim
-//! is covered by the shared helper's own unit tests in `src/config/helpers.rs`.
+//! test touches them first and they cannot be exercised in-process. The
+//! `gpu_batch_size_override` trim is covered by the shared helper's own unit
+//! tests in `src/config/helpers.rs`; `gpu_retry_limit` now trims in the pure
+//! `resolve_gpu_retry_limit`, covered by
+//! `tests/issue_2364_gpu_retry_limit_warn_test.rs` (Issue #2364).
 
 use std::time::Duration;
 

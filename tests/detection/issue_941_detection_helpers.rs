@@ -13,7 +13,8 @@
 use neat_ai_discovery::CoordinatedStructuralCandidateJson;
 use neat_ai_discovery::analysis::detection::helpers::{
     ConfidenceFactor, compute_activation_range, compute_activation_stats,
-    compute_mean_abs_activation, sort_candidates_by_score_gain, weighted_confidence,
+    compute_mean_abs_activation, existing_neuron_uuids, first_free_neuron_uuid,
+    sort_candidates_by_score_gain, weighted_confidence,
 };
 use neat_ai_discovery::types::DiscoverRecord;
 
@@ -332,4 +333,51 @@ fn test_weighted_confidence_custom_range() {
     // raw = 0.5, floor=0.3, ceiling=0.9 → 0.3 + 0.5 * 0.6 = 0.6
     let result = weighted_confidence(&factors, 0.3, 0.9);
     assert!((result - 0.6).abs() < 1e-6);
+}
+
+// =============================================================================
+// Issue #2359: synthetic neuron UUID collision helpers
+// =============================================================================
+
+fn salted(salt: u32) -> String {
+    format!("syn-{salt}")
+}
+
+#[test]
+fn first_free_neuron_uuid_returns_salt_zero_when_free() {
+    let existing = std::collections::HashSet::new();
+    assert_eq!(first_free_neuron_uuid(&existing, salted), "syn-0");
+}
+
+#[test]
+fn first_free_neuron_uuid_skips_one_collision() {
+    let existing: std::collections::HashSet<&str> = ["syn-0"].into_iter().collect();
+    assert_eq!(first_free_neuron_uuid(&existing, salted), "syn-1");
+}
+
+#[test]
+fn first_free_neuron_uuid_skips_two_collisions() {
+    let existing: std::collections::HashSet<&str> = ["syn-0", "syn-1"].into_iter().collect();
+    assert_eq!(first_free_neuron_uuid(&existing, salted), "syn-2");
+}
+
+#[test]
+fn existing_neuron_uuids_lists_every_neuron() {
+    let creature = neat_ai_discovery::CreatureJson {
+        neurons: ["a", "b", "c"]
+            .iter()
+            .map(|u| neat_ai_discovery::NeuronJson {
+                uuid: (*u).to_string(),
+                neuron_type: "hidden".to_string(),
+                squash: "TANH".to_string(),
+                bias: 0.0,
+            })
+            .collect(),
+        synapses: Vec::new(),
+        input: 0,
+        output: 0,
+    };
+    let set = existing_neuron_uuids(&creature);
+    assert_eq!(set.len(), 3);
+    assert!(set.contains("a") && set.contains("b") && set.contains("c"));
 }

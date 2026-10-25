@@ -121,6 +121,9 @@ pub const UPSTREAM_REJECTION_REASONS: &[&str] = &[
     reasons::REJECTION_INPUT_NEURON_FILTERED,
     reasons::REJECTION_HIDDEN_NEURON_FILTERED,
     reasons::REJECTION_CONSTANT_NEURON_FILTERED,
+    // Issue #2352: the target's own records failed to load, so it was never
+    // analysed and no proposal could reach the gate.
+    reasons::REJECTION_TARGET_RECORD_LOAD_FAILED,
     reasons::REJECTION_NO_DIAGNOSTICS,
     reasons::REJECTION_TARGET_SATURATED,
     // Issue #1781: focus neurons skipped by the structural fingerprint cache
