@@ -1109,8 +1109,10 @@ it the scan returns no groups (`OutputCeilingExceeded`). Above
 `MAX_CORRELATED_ERROR_INPUTS` (10,000) input-typed neurons, the
 predictive-input search is skipped per group (`InputCeilingExceeded`), so
 groups are still emitted with empty `predictive_input_uuids`. The
-deadline-aware entry point checks the shared analysis deadline per matrix row
-and per input.
+deadline-aware entry point checks the shared analysis deadline before matrix
+allocation, per matrix row and pair, and per candidate input. Cancellation
+while building the matrix returns no groups; cancellation during group
+analysis keeps groups completed before cancellation.
 
 **Recommended actions**:
 

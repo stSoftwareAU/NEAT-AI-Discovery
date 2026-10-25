@@ -174,6 +174,35 @@ fn small_correlated_output_set_is_not_skipped() {
     );
 }
 
+/// Counts exactly at both limits are accepted; only counts above the limits
+/// trigger their respective skip reasons.
+#[test]
+fn output_and_input_ceiling_boundaries_are_accepted() {
+    let (creature, neuron_records) = make_fixture(MAX_CORRELATED_ERROR_OUTPUTS, 1);
+    let scan = detect_correlated_error_patterns_with_deadline(&creature, &neuron_records, &None);
+    assert_ne!(
+        scan.skip,
+        Some(CorrelatedErrorSkip::OutputCeilingExceeded {
+            eligible: MAX_CORRELATED_ERROR_OUTPUTS,
+            ceiling: MAX_CORRELATED_ERROR_OUTPUTS,
+        })
+    );
+
+    let (creature, neuron_records) = make_fixture(3, MAX_CORRELATED_ERROR_INPUTS);
+    let scan = detect_correlated_error_patterns_with_deadline(&creature, &neuron_records, &None);
+    assert_ne!(
+        scan.skip,
+        Some(CorrelatedErrorSkip::InputCeilingExceeded {
+            inputs: MAX_CORRELATED_ERROR_INPUTS,
+            ceiling: MAX_CORRELATED_ERROR_INPUTS,
+        })
+    );
+    assert!(
+        !scan.groups.is_empty(),
+        "input count at the ceiling should still produce correlated groups"
+    );
+}
+
 /// Test 3: a deadline that has already elapsed stops the pairwise scan early.
 #[test]
 fn elapsed_deadline_stops_the_pair_scan() {

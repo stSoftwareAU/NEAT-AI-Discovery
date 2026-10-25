@@ -30,8 +30,9 @@
 //! The output count is checked against `MAX_CORRELATED_ERROR_OUTPUTS` before the
 //! O(n²) correlation matrix is allocated. The input count is checked against
 //! `MAX_CORRELATED_ERROR_INPUTS` before the per-group predictive-input search runs.
-//! The analysis deadline/global cancellation (via `deadline_passed`) is checked once
-//! per matrix row and once per candidate input neuron, so a scan
+//! The analysis deadline/global cancellation (via `deadline_passed`) is checked
+//! before matrix allocation, once per matrix row and pair, and once per
+//! candidate input neuron, so a scan
 //! stops early rather than running unbounded. Skipped or partial work is reported via
 //! `CorrelatedErrorScan::skip`.
 
@@ -223,6 +224,12 @@ pub fn detect_correlated_error_patterns_with_deadline(
     // Find shared obs_indices across all output pairs
     // Build pairwise correlation matrix
     let n_outputs = output_neurons_with_errors.len();
+    if deadline_passed(deadline) {
+        return CorrelatedErrorScan {
+            groups: Vec::new(),
+            skip: Some(CorrelatedErrorSkip::DeadlinePassed),
+        };
+    }
     let mut correlation_matrix: Vec<Vec<f32>> = vec![vec![0.0; n_outputs]; n_outputs];
 
     for i in 0..n_outputs {
@@ -235,6 +242,14 @@ pub fn detect_correlated_error_patterns_with_deadline(
         }
         correlation_matrix[i][i] = 1.0; // self-correlation
         for j in (i + 1)..n_outputs {
+            // A deadline during a row leaves the matrix incomplete, so it must
+            // not be passed to clustering.
+            if deadline_passed(deadline) {
+                return CorrelatedErrorScan {
+                    groups: Vec::new(),
+                    skip: Some(CorrelatedErrorSkip::DeadlinePassed),
+                };
+            }
             let uuid_i = output_neurons_with_errors[i];
             let uuid_j = output_neurons_with_errors[j];
 
@@ -280,7 +295,7 @@ pub fn detect_correlated_error_patterns_with_deadline(
     // For each group, compute statistics and find predictive inputs
     let mut results: Vec<CorrelatedErrorGroup> = Vec::with_capacity(groups.len());
 
-    for group_indices in &groups {
+    'groups: for group_indices in &groups {
         let group_uuids: Vec<&str> = group_indices
             .iter()
             .map(|&i| output_neurons_with_errors[i])
@@ -332,7 +347,7 @@ pub fn detect_correlated_error_patterns_with_deadline(
                 deadline,
             ) else {
                 skip = Some(CorrelatedErrorSkip::DeadlinePassed);
-                continue;
+                break 'groups;
             };
             predictive_inputs
         };
@@ -690,6 +705,8 @@ pub fn correlated_errors_to_coordinated_candidates(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::analysis::utils::deadline_override::DeadlineOverrideGuard;
+    use serial_test::serial;
 
     /// `find_predictive_inputs` returns `Some(_)` with no deadline, and `None`
     /// once the deadline has elapsed (Issue #2346).
@@ -755,13 +772,11 @@ mod tests {
     /// The fixture has two independent correlated output pairs (o0/o1 and
     /// o2/o3) and exactly one input neuron, so `input_uuids` has a single
     /// member and each of the two `find_predictive_inputs` calls makes
-    /// exactly one `deadline_passed` call (one per candidate input). Combined
-    /// with the one `deadline_passed` call per correlation-matrix row (4
-    /// outputs ⇒ 4 rows), the override sequence below needs exactly 4 + 1 + 1
-    /// = 6 entries: 4 `false` for the matrix build, `false` for the first
-    /// group's single input (lets it complete), then `true` for the second
-    /// group's single input (stops the scan there).
+    /// exactly one `deadline_passed` call (one per candidate input). The scan
+    /// checks once before allocation, once per row and once per pair, so this
+    /// four-output fixture needs 1 + 4 + 6 + 2 = 13 override values.
     #[test]
+    #[serial]
     fn deadline_during_group_search_keeps_completed_groups() {
         const SAMPLES: u32 = 20; // == MIN_SAMPLES_FOR_CORRELATION
 
@@ -876,13 +891,27 @@ mod tests {
             "No skip reason should be reported with no deadline override"
         );
 
-        // 4 matrix rows (4 outputs), then one deadline check per group's
-        // single candidate input: let the first group's search complete,
-        // then stop during the second group's search.
-        let _guard =
-            crate::analysis::utils::deadline_override::DeadlineOverrideGuard::with_sequence(vec![
-                false, false, false, false, false, true,
-            ]);
+        // Interrupt the first group's input scan. If the outer loop merely
+        // continued, the second group would complete after the scripted queue.
+        {
+            let mut sequence = vec![false; 11];
+            sequence.extend([true, false]);
+            let _guard = DeadlineOverrideGuard::with_sequence(sequence);
+            let scan =
+                detect_correlated_error_patterns_with_deadline(&creature, &neuron_records, &None);
+            assert!(
+                scan.groups.is_empty(),
+                "no group was complete before cancellation"
+            );
+            assert_eq!(scan.skip, Some(CorrelatedErrorSkip::DeadlinePassed));
+        }
+
+        // Matrix allocation check, 4 row checks, 6 pair checks, then one input
+        // check per group. Complete the first group and interrupt the second;
+        // the first group's result must survive.
+        let mut sequence = vec![false; 11];
+        sequence.extend([false, true]);
+        let _guard = DeadlineOverrideGuard::with_sequence(sequence);
         let scan =
             detect_correlated_error_patterns_with_deadline(&creature, &neuron_records, &None);
 
@@ -897,5 +926,62 @@ mod tests {
             Some(CorrelatedErrorSkip::DeadlinePassed),
             "Skip reason should report the deadline that fired mid-way through the group search"
         );
+    }
+
+    /// A cancellation during a row's pair scan must stop there, before the
+    /// incomplete matrix can be sent to clustering.
+    #[test]
+    #[serial]
+    fn deadline_during_pair_scan_returns_no_groups() {
+        const SAMPLES: u32 = 20;
+        let neurons = (0..3)
+            .map(|i| crate::NeuronJson {
+                uuid: format!("output-{i}"),
+                neuron_type: "output".to_string(),
+                squash: "IDENTITY".to_string(),
+                bias: 0.0,
+            })
+            .collect();
+        let creature = CreatureJson {
+            neurons,
+            synapses: vec![],
+            input: 0,
+            output: 3,
+        };
+        let neuron_records: Vec<(String, Vec<DiscoverRecord>)> = (0..3)
+            .map(|neuron| {
+                let uuid = format!("output-{neuron}");
+                let records = (0..SAMPLES)
+                    .map(|i| DiscoverRecord {
+                        obs_index: i,
+                        neuron_uuid: uuid.clone(),
+                        value: Some(i as f32),
+                        activation: 0.5,
+                        errors: vec![i as f32],
+                    })
+                    .collect();
+                (uuid, records)
+            })
+            .collect();
+
+        let control =
+            detect_correlated_error_patterns_with_deadline(&creature, &neuron_records, &None);
+        assert_eq!(
+            control.groups.len(),
+            1,
+            "fixture must form a correlated group"
+        );
+
+        // Pass allocation, row 0 and its two pairs, and row 1; cancel on its
+        // final pair. Without the pair check, row 2 proceeds and finds a group.
+        let _guard =
+            DeadlineOverrideGuard::with_sequence(vec![false, false, false, false, false, true]);
+        let scan =
+            detect_correlated_error_patterns_with_deadline(&creature, &neuron_records, &None);
+        assert!(
+            scan.groups.is_empty(),
+            "an incomplete matrix must not be clustered"
+        );
+        assert_eq!(scan.skip, Some(CorrelatedErrorSkip::DeadlinePassed));
     }
 }
