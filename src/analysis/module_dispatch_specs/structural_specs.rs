@@ -17,8 +17,9 @@ use super::super::{cache, discovery_dispatch};
 /// Append structural discovery module specs to the provided vector.
 ///
 /// `deadline` is forwarded into the multi-hop and fan-in scans (Issue #2183),
-/// the correlated-error scan (Issue #2346), and the output-conflict conversion
-/// (Issue #2358) so they stop at the discovery deadline or on global cancellation.
+/// the correlated-error scan (Issue #2346), the output-conflict conversion
+/// (Issue #2358), and the compound bias+weight degradation scan (Issue #2367) so
+/// they stop at the discovery deadline or on global cancellation.
 pub(crate) fn append_structural_specs(
     modules: &mut Vec<discovery_dispatch::DiscoveryModuleSpec>,
     creature: &Arc<crate::CreatureJson>,
@@ -150,7 +151,16 @@ pub(crate) fn append_structural_specs(
         cache = shared_cache, hidden = hidden_neurons, creature = creature =>
         guard: hidden,
         records: cache.load_records_for_all_neurons(&creature),
-        detect: |records| compound_degradation::detect_compound_bias_weight_degradations(&creature, &records),
+        detect: |records| {
+            // Issue #2367: deadline-aware scan, capped on pairs and candidates.
+            let scan = compound_degradation::detect_compound_bias_weight_degradations_with_deadline(
+                &creature, &records, &deadline,
+            );
+            if let Some(reason) = scan.truncation {
+                tracing::warn!(reason = ?reason, returned = scan.candidates.len(), "Compound degradation scan stopped early or was capped; returning partial candidates.");
+            }
+            scan.candidates
+        },
         convert: |detected| compound_degradation::compound_degradations_to_coordinated_candidates(&detected),
     );
 }
