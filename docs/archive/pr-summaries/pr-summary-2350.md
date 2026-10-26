@@ -59,9 +59,9 @@ Docs sweep: grep `fanin_polarity_conflicts_to_coordinated_candidates`, "fan-in p
 - `tests/detection/issue_641_fanin_polarity_conflict.rs`: `test_missing_target_neuron_falls_back_to_tanh_squash`, `test_present_target_neuron_keeps_its_squash`, `test_duplicate_target_uuid_uses_first_neuron_squash`.
 - `src/analysis/module_dispatch_specs/mod.rs`: `fanin_polarity_spec_detects_conflicts_before_the_deadline`, `fanin_polarity_spec_honours_an_elapsed_deadline` (covers the `synapse_specs.rs` call site passing the deadline).
 - `benches/fanin_polarity_squash_lookup.rs`: Criterion benchmark of absolute cost.
-- Ran on the final head: growth test file passed; `cargo fmt`, `cargo clippy --all-targets --all-features -- -D warnings` and `tests/issue_1685_doc_link_integrity.rs` (9 tests) clean.
-- `./quality.sh`: an earlier run passed lint, type checks and shellcheck stages, but the test stage exceeded the 600 s foreground cap on a cold build twice after the last docs edit, so the full gate did not finish on this head.
-  <!-- vibe-quality-gate-skipped reason="test stage exceeded the foreground time cap on a cold build; CI and the worker re-run the gate" -->
+- Ran on the final head (after merging current `Develop`): `cargo test --test issue_2350_fanin_polarity_squash_lookup_growth` (2 passed), `cargo test --test detection issue_641` (11 passed), `cargo test --lib fanin_polarity` (3 passed), `cargo fmt --check` and `cargo clippy --all-targets --all-features -- -D warnings` clean.
+- `./quality.sh` on the final head passed its bash, shellcheck, pinning and PR-summary stages and then stopped at `cargo deny`: `advisories FAILED` on RUSTSEC-2026-0391, -0398, -0403 and -0410 against the locked `zstd-sys 2.1.0` (via `parquet`). This PR changes no dependency and `Cargo.lock` differs from `Develop` only in this crate's version, so the failure is already present on the base branch; the later test stage did not run through the gate.
+  <!-- vibe-quality-gate-skipped reason="quality.sh stops at cargo deny on RUSTSEC advisories for zstd-sys already on Develop; targeted tests, fmt and clippy were run directly" -->
 
 Removed assertions: none (the earlier output-count test was folded into the growth test, which still asserts one candidate per conflict at N and 4N).
 
