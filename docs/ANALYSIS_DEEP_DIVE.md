@@ -670,8 +670,8 @@ Analyses topological depth and gradient attenuation to identify deep hidden
 neurons that would benefit from residual-style skip connections.
 
 **Algorithm**:
-1. Compute shortest path length from each hidden neuron to the nearest output
-   via reverse BFS.
+1. Compute each neuron's topological depth from the inputs (longest path) in a
+   single topological pass; a cyclic creature yields no candidates.
 2. Estimate gradient attenuation along the path (product of activation
    derivatives and weight magnitudes).
 3. For deep neurons with significant error and no existing shortcut, propose

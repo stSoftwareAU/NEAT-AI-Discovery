@@ -8,7 +8,7 @@
 //! ## Detection Criteria
 //!
 //! 1. **Layer depth analysis**: Compute topological depth of each neuron from
-//!    inputs using forward BFS.
+//!    inputs using a single-pass longest-path traversal (see Scan bounds).
 //! 2. **Gradient attenuation**: Identify neurons at depth > 2 whose mean
 //!    absolute error is significantly lower than the mean error at shallow
 //!    depths (ratio below `ATTENUATION_THRESHOLD`).
@@ -21,6 +21,21 @@
 //!
 //! - **Attenuated gradient → addSynapse** (skip connection): Connect a shallow
 //!   neuron directly to a deep neuron to restore gradient signal flow.
+//!
+//! ## Scan bounds (Issue #2368)
+//!
+//! - **Depth pass**: depths are computed in a single O(V+E) Kahn-style
+//!   longest-path pass. Nodes are processed only once their in-degree reaches
+//!   zero, so there is no re-queueing. A cyclic synapse graph has no
+//!   well-defined depths: the detector fails closed, returning no candidates
+//!   and setting [`SkipConnectionScan::depth_cycle_detected`].
+//! - **Source lookup**: shallow sources (depth 0 and depth 1) are indexed once
+//!   in creature order. Each deep target scans them only until the first
+//!   unconnected source, so its cost is bounded by its in-degree.
+//! - **Deadline**: [`detect_skip_connection_candidates_with_deadline`] checks the
+//!   shared analysis deadline / global cancellation once per deep target and
+//!   returns the candidates found so far, flagged via
+//!   [`SkipConnectionScan::truncation`].
 
 #![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -29,6 +44,8 @@ use crate::types::DiscoverRecord;
 use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson, CreatureJson};
 
 use crate::analysis::constants::MIN_DISCOVERY_SAMPLE_COUNT;
+use crate::analysis::recommendation::epistatic::ScanTruncation;
+use crate::analysis::utils::deadline_passed;
 
 use super::helpers::build_record_map;
 
@@ -59,50 +76,123 @@ pub struct SkipConnectionCandidate {
     pub estimated_improvement: f32,
 }
 
-/// Compute topological depth of each neuron from inputs using forward BFS.
+/// Result of a deadline-bounded skip-connection scan (Issue #2368).
+#[derive(Debug, Clone)]
+pub struct SkipConnectionScan {
+    /// Candidates found before the scan finished or stopped, sorted by
+    /// estimated improvement (best first). Empty when the synapse graph
+    /// contains a cycle.
+    pub candidates: Vec<SkipConnectionCandidate>,
+    /// `Some` when the scan stopped before visiting every deep target.
+    pub truncation: Option<ScanTruncation>,
+    /// `true` when the synapse graph contains a cycle, so depths are undefined
+    /// and no candidates are proposed (fail closed).
+    pub depth_cycle_detected: bool,
+}
+
+/// Result of the single-pass depth computation (Issue #2368).
+#[derive(Debug)]
+struct DepthScan {
+    /// Longest-path depth from inputs for each reached neuron UUID. Neurons
+    /// unreachable from any input have no entry.
+    depths: HashMap<String, usize>,
+    /// `true` when the synapse graph contains a cycle. `depths` is incomplete
+    /// in that case and must not be used.
+    cycle_detected: bool,
+}
+
+/// Intern a UUID as a dense node index, recording its name on first sight.
+fn intern_uuid<'a>(
+    index: &mut HashMap<&'a str, usize>,
+    names: &mut Vec<&'a str>,
+    uuid: &'a str,
+) -> usize {
+    *index.entry(uuid).or_insert_with(|| {
+        names.push(uuid);
+        names.len() - 1
+    })
+}
+
+/// Compute topological depth of each neuron from inputs in a single
+/// Kahn-style pass (Issue #2368).
 ///
-/// Input neurons have depth 0. Each subsequent layer increments by 1.
-/// Returns a map from neuron UUID to its depth.
-fn compute_depths_from_inputs(creature: &CreatureJson) -> HashMap<String, usize> {
-    // Build forward adjacency: from_uuid → [to_uuid, ...]
-    let mut forward_adj: HashMap<&str, Vec<&str>> = HashMap::new();
-    for s in &creature.synapses {
-        forward_adj
-            .entry(s.from_uuid.as_str())
-            .or_default()
-            .push(s.to_uuid.as_str());
-    }
+/// Input neurons start at depth 0. A neuron's depth is the longest path from
+/// any input: the maximum of `predecessor depth + 1` over predecessors that
+/// have a depth. Neurons unreachable from any input get no entry. Runs in
+/// O(V + E). A cycle leaves some nodes unprocessed, which is reported through
+/// `cycle_detected`.
+fn compute_depths_from_inputs(creature: &CreatureJson) -> DepthScan {
+    let mut index: HashMap<&str, usize> = HashMap::new();
+    let mut names: Vec<&str> = Vec::new();
 
-    let mut depths: HashMap<String, usize> = HashMap::new();
-    let mut queue: VecDeque<(&str, usize)> = VecDeque::new();
-
-    // Seed: input neurons at depth 0
+    let mut input_nodes: Vec<usize> = Vec::new();
     for n in &creature.neurons {
+        let id = intern_uuid(&mut index, &mut names, n.uuid.as_str());
         if n.neuron_type == "input" {
-            depths.insert(n.uuid.clone(), 0);
-            queue.push_back((n.uuid.as_str(), 0));
+            input_nodes.push(id);
         }
     }
 
-    // BFS forward through the graph, taking maximum depth for each neuron
-    // (so depth reflects the longest path from any input, giving true layer depth)
-    while let Some((current, depth)) = queue.pop_front() {
-        if let Some(successors) = forward_adj.get(current) {
-            for &succ in successors {
-                let new_depth = depth + 1;
-                let entry = depths.entry(succ.to_string()).or_insert(0);
-                if new_depth > *entry {
-                    *entry = new_depth;
-                    queue.push_back((succ, new_depth));
-                }
+    // Synapse endpoints not declared in `creature.neurons` are still interned
+    // as nodes, so they receive depths exactly as before.
+    let edges: Vec<(usize, usize)> = creature
+        .synapses
+        .iter()
+        .map(|s| {
+            let from = intern_uuid(&mut index, &mut names, s.from_uuid.as_str());
+            let to = intern_uuid(&mut index, &mut names, s.to_uuid.as_str());
+            (from, to)
+        })
+        .collect();
+
+    let node_count = names.len();
+    let mut out_edges: Vec<Vec<usize>> = vec![Vec::new(); node_count];
+    let mut in_degree: Vec<usize> = vec![0; node_count];
+    for &(from, to) in &edges {
+        out_edges[from].push(to);
+        in_degree[to] += 1;
+    }
+
+    // `depth[i]` is `Some` once node `i` is known to be reachable from an input.
+    let mut depth: Vec<Option<usize>> = vec![None; node_count];
+    for &id in &input_nodes {
+        depth[id] = Some(0);
+    }
+
+    // A node is processed only once every predecessor has been processed, so
+    // its depth is final when it is popped.
+    let mut queue: VecDeque<usize> = (0..node_count).filter(|&i| in_degree[i] == 0).collect();
+    let mut processed: usize = 0;
+    while let Some(node) = queue.pop_front() {
+        processed += 1;
+        for &succ in &out_edges[node] {
+            if let Some(d) = depth[node] {
+                let candidate = d + 1;
+                depth[succ] = Some(depth[succ].map_or(candidate, |cur| cur.max(candidate)));
+            }
+            in_degree[succ] -= 1;
+            if in_degree[succ] == 0 {
+                queue.push_back(succ);
             }
         }
     }
 
-    depths
+    let depths: HashMap<String, usize> = names
+        .iter()
+        .zip(depth.iter().copied())
+        .filter_map(|(name, d)| d.map(|d| ((*name).to_string(), d)))
+        .collect();
+
+    DepthScan {
+        depths,
+        cycle_detected: processed < node_count,
+    }
 }
 
 /// Detect skip-connection candidates based on gradient attenuation in deep neurons.
+///
+/// Applies no deadline (Issue #2368); equivalent to calling
+/// [`detect_skip_connection_candidates_with_deadline`] with a `None` deadline.
 ///
 /// # Arguments
 /// * `creature` - The creature's network topology.
@@ -114,6 +204,27 @@ pub fn detect_skip_connection_candidates(
     creature: &CreatureJson,
     neuron_records: &[(String, impl AsRef<[DiscoverRecord]>)],
 ) -> Vec<SkipConnectionCandidate> {
+    detect_skip_connection_candidates_with_deadline(creature, neuron_records, &None).candidates
+}
+
+/// Deadline- and cancellation-aware variant of [`detect_skip_connection_candidates`]
+/// (Issue #2368).
+///
+/// Checks `deadline` once per deep attenuated target, so the scan stops promptly
+/// on an elapsed deadline or global cancellation and keeps the candidates found
+/// so far. A creature whose synapse graph contains a cycle has no well-defined
+/// depths, so it yields no candidates and sets `depth_cycle_detected`.
+pub fn detect_skip_connection_candidates_with_deadline(
+    creature: &CreatureJson,
+    neuron_records: &[(String, impl AsRef<[DiscoverRecord]>)],
+    deadline: &Option<std::time::SystemTime>,
+) -> SkipConnectionScan {
+    let no_candidates = || SkipConnectionScan {
+        candidates: Vec::new(),
+        truncation: None,
+        depth_cycle_detected: false,
+    };
+
     let hidden_uuids: HashSet<&str> = creature
         .neurons
         .iter()
@@ -122,7 +233,7 @@ pub fn detect_skip_connection_candidates(
         .collect();
 
     if hidden_uuids.is_empty() {
-        return Vec::new();
+        return no_candidates();
     }
 
     // Build records lookup
@@ -140,11 +251,19 @@ pub fn detect_skip_connection_candidates(
         .collect();
 
     if qualified_hidden.is_empty() {
-        return Vec::new();
+        return no_candidates();
     }
 
     // Compute topological depth from inputs
-    let depths = compute_depths_from_inputs(creature);
+    let depth_scan = compute_depths_from_inputs(creature);
+    if depth_scan.cycle_detected {
+        return SkipConnectionScan {
+            candidates: Vec::new(),
+            truncation: None,
+            depth_cycle_detected: true,
+        };
+    }
+    let depths = depth_scan.depths;
 
     // Compute mean absolute error for each qualified hidden neuron
     let mean_errors: HashMap<&str, f32> = qualified_hidden
@@ -174,13 +293,13 @@ pub fn detect_skip_connection_candidates(
         .collect();
 
     if shallow_errors.is_empty() {
-        return Vec::new();
+        return no_candidates();
     }
 
     let shallow_mean_error: f32 = shallow_errors.iter().sum::<f32>() / shallow_errors.len() as f32;
 
     if shallow_mean_error <= 0.0 {
-        return Vec::new();
+        return no_candidates();
     }
 
     // Find deep neurons with attenuated gradients
@@ -202,7 +321,7 @@ pub fn detect_skip_connection_candidates(
         .collect();
 
     if deep_attenuated.is_empty() {
-        return Vec::new();
+        return no_candidates();
     }
 
     // Build set of existing synapses for deduplication
@@ -212,40 +331,50 @@ pub fn detect_skip_connection_candidates(
         .map(|s| (s.from_uuid.as_str(), s.to_uuid.as_str()))
         .collect();
 
-    // Collect shallow source neurons (inputs and hidden at depth <= 1)
-    let shallow_sources: Vec<(&str, usize)> = creature
+    // Index shallow source neurons (inputs and hidden at depth <= 1) by depth,
+    // in creature order. Unreached neurons count as depth 0, as before.
+    let mut shallow_depth0: Vec<&str> = Vec::new();
+    let mut shallow_depth1: Vec<&str> = Vec::new();
+    for n in creature
         .neurons
         .iter()
         .filter(|n| n.neuron_type == "input" || n.neuron_type == "hidden")
-        .filter_map(|n| {
-            let depth = depths.get(n.uuid.as_str()).copied().unwrap_or(0);
-            if depth <= 1 {
-                Some((n.uuid.as_str(), depth))
-            } else {
-                None
-            }
-        })
-        .collect();
+    {
+        match depths.get(n.uuid.as_str()).copied().unwrap_or(0) {
+            0 => shallow_depth0.push(n.uuid.as_str()),
+            1 => shallow_depth1.push(n.uuid.as_str()),
+            _ => {}
+        }
+    }
 
     let mut candidates = Vec::with_capacity(deep_attenuated.len());
+    let mut truncation: Option<ScanTruncation> = None;
 
     for &(target_uuid, target_depth, target_mean_err) in &deep_attenuated {
-        // Find the best shallow source: prefer largest depth gap, not already connected
-        let mut best_source: Option<(&str, usize)> = None;
-        let mut best_gap: usize = 0;
-
-        for &(source_uuid, source_depth) in &shallow_sources {
-            if existing_synapses.contains(&(source_uuid, target_uuid)) {
-                continue;
-            }
-            let gap = target_depth.saturating_sub(source_depth);
-            if gap > best_gap {
-                best_gap = gap;
-                best_source = Some((source_uuid, source_depth));
-            }
+        if deadline_passed(deadline) {
+            truncation = Some(ScanTruncation::DeadlinePassed);
+            break;
         }
 
+        // Best shallow source: the largest gap wins. A depth-0 source gives gap
+        // `target_depth`, which beats any depth-1 source (gap `target_depth - 1`).
+        // Within each depth, the first unconnected source in creature order wins.
+        let best_source: Option<(&str, usize)> = shallow_depth0
+            .iter()
+            .copied()
+            .find(|&s| !existing_synapses.contains(&(s, target_uuid)))
+            .map(|s| (s, 0_usize))
+            .or_else(|| {
+                shallow_depth1
+                    .iter()
+                    .copied()
+                    .find(|&s| !existing_synapses.contains(&(s, target_uuid)))
+                    .map(|s| (s, 1_usize))
+            });
+
         if let Some((source_uuid, source_depth)) = best_source {
+            let best_gap = target_depth.saturating_sub(source_depth);
+
             // Estimated improvement: depth gap × attenuation severity × factor
             let attenuation_severity = 1.0 - (target_mean_err / shallow_mean_error);
             let estimated_improvement = best_gap as f32 * attenuation_severity * 0.005;
@@ -271,7 +400,11 @@ pub fn detect_skip_connection_candidates(
             .then_with(|| b.depth_gap.cmp(&a.depth_gap))
     });
 
-    candidates
+    SkipConnectionScan {
+        candidates,
+        truncation,
+        depth_cycle_detected: false,
+    }
 }
 
 /// Convert skip-connection candidates into coordinated structural candidates.
@@ -318,3 +451,7 @@ pub fn skip_connections_to_coordinated_candidates(
 
     results
 }
+
+#[cfg(test)]
+#[path = "skip_connection_tests.rs"]
+mod tests;

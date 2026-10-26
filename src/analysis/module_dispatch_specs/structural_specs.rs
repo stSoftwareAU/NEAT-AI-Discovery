@@ -17,8 +17,9 @@ use super::super::{cache, discovery_dispatch};
 /// Append structural discovery module specs to the provided vector.
 ///
 /// `deadline` is forwarded into the multi-hop and fan-in scans (Issue #2183),
-/// the correlated-error scan (Issue #2346), and the output-conflict conversion
-/// (Issue #2358) so they stop at the discovery deadline or on global cancellation.
+/// the correlated-error scan (Issue #2346), the skip-connection scan (Issue #2368),
+/// and the output-conflict conversion (Issue #2358) so they stop at the discovery
+/// deadline or on global cancellation.
 pub(crate) fn append_structural_specs(
     modules: &mut Vec<discovery_dispatch::DiscoveryModuleSpec>,
     creature: &Arc<crate::CreatureJson>,
@@ -88,11 +89,24 @@ pub(crate) fn append_structural_specs(
     );
 
     // Issue #570: Skip-connection discovery for beneficial residual connections
+    // (Issue #2368: deadline-bounded scan; cyclic creatures yield no candidates).
     discovery_spec!(modules, "skip connection discovery", "skip_connection_discovery",
         cache = shared_cache, hidden = hidden_neurons, creature = creature =>
         guard: hidden,
         records: cache.load_records_for_all_neurons(&creature),
-        detect: |records| skip_connection::detect_skip_connection_candidates(&creature, &records),
+        detect: |records| {
+            let scan = skip_connection::detect_skip_connection_candidates_with_deadline(
+                &creature, &records, &deadline,
+            );
+            // Issue #2368: report (and return) partial results rather than failing silently.
+            if let Some(reason) = &scan.truncation {
+                tracing::warn!(reason = ?reason, returned = scan.candidates.len(), "Skip-connection scan stopped early; returning partial candidates.");
+            }
+            if scan.depth_cycle_detected {
+                tracing::warn!("Skip-connection scan found a cycle in the synapse graph; depths are undefined, returning no candidates.");
+            }
+            scan.candidates
+        },
         convert: |detected| skip_connection::skip_connections_to_coordinated_candidates(&detected, &creature),
     );
 

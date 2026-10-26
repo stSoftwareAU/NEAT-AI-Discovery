@@ -1288,13 +1288,23 @@ provides a shorter gradient path.
 
 **Detection criteria**:
 
-1. **Deep topology**: The neuron is several hops away from the nearest
-   output neuron.
+1. **Deep topology**: The neuron's topological depth (the longest path from
+   any input) is at least 3.
 2. **Gradient attenuation**: The effective gradient reaching the neuron is
    significantly reduced by the depth of the path.
 3. **Positive error**: The neuron carries meaningful error worth improving.
 4. **No existing shortcut**: A direct connection to the output does not
    already exist.
+
+**Scan bounds (Issue #2368)**: depths are computed in a single O(V+E)
+topological pass that also detects cycles; a cyclic creature yields no
+skip-connection candidates and the cycle is reported instead of hanging the
+scan. The shallow-source lookup is indexed into depth-0 and depth-1 lists,
+and the first unconnected source in that order wins, so results are identical
+to the previous scan on acyclic creatures. The dispatch spec uses
+`detect_skip_connection_candidates_with_deadline`, which checks the analysis
+deadline and global cancellation once per deep target and returns partial
+candidates with a `ScanTruncation::DeadlinePassed` reason.
 
 **Recommended actions**:
 

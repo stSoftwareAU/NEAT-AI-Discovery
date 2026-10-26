@@ -48,7 +48,7 @@ graph LR
 
 ```mermaid
 flowchart TD
-    A["🔄 For each hidden neuron"]:::process --> B{"📏 Compute topological<br/>depth via forward BFS"}:::process
+    A["🔄 For each hidden neuron"]:::process --> B{"📏 Compute topological<br/>depth in one topological pass"}:::process
     B --> C{"depth >= 3?"}:::decision
     C -- No --> Skip["✅ Skip — neuron<br/>is not deep"]:::output
     C -- Yes --> D["📊 Compare mean |error|<br/>to shallow neurons<br/>depth <= 2"]:::process
