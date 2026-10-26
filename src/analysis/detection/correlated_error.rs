@@ -31,9 +31,9 @@
 //! O(n²) correlation matrix is allocated. The input count is checked against
 //! `MAX_CORRELATED_ERROR_INPUTS` before the per-group predictive-input search runs.
 //! The analysis deadline/global cancellation (via `deadline_passed`) is checked
-//! before matrix allocation, once per matrix row and pair, and once per
-//! candidate input neuron, so a scan
-//! stops early rather than running unbounded. Skipped or partial work is reported via
+//! before matrix allocation, once per matrix row and pair, at the start and end
+//! of each group, and once per candidate input neuron, so a scan stops early.
+//! Skipped or partial work is reported via
 //! `CorrelatedErrorScan::skip`.
 
 #![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
@@ -296,6 +296,12 @@ pub fn detect_correlated_error_patterns_with_deadline(
     let mut results: Vec<CorrelatedErrorGroup> = Vec::with_capacity(groups.len());
 
     'groups: for group_indices in &groups {
+        // Group cancellation must also work when the predictive-input loop is
+        // empty or skipped because of the input ceiling.
+        if deadline_passed(deadline) {
+            skip = Some(CorrelatedErrorSkip::DeadlinePassed);
+            break;
+        }
         let group_uuids: Vec<&str> = group_indices
             .iter()
             .map(|&i| output_neurons_with_errors[i])
@@ -356,6 +362,13 @@ pub fn detect_correlated_error_patterns_with_deadline(
         let mean_abs_error = compute_mean_abs_error(&group_uuids, &error_by_obs, &shared_obs);
         let estimated_improvement =
             mean_correlation * mean_abs_error * (group_uuids.len() as f32) * 0.01;
+
+        // Discard this group if cancellation arrived while its statistics or
+        // final predictive input were being processed.
+        if deadline_passed(deadline) {
+            skip = Some(CorrelatedErrorSkip::DeadlinePassed);
+            break;
+        }
 
         results.push(CorrelatedErrorGroup {
             output_neuron_uuids: group_uuids
@@ -774,7 +787,8 @@ mod tests {
     /// member and each of the two `find_predictive_inputs` calls makes
     /// exactly one `deadline_passed` call (one per candidate input). The scan
     /// checks once before allocation, once per row and once per pair, so this
-    /// four-output fixture needs 1 + 4 + 6 + 2 = 13 override values.
+    /// four-output fixture needs 1 + 4 + 6 = 11 checks for the matrix, plus
+    /// group-start, input and group-completion checks for each full group.
     #[test]
     #[serial]
     fn deadline_during_group_search_keeps_completed_groups() {
@@ -895,7 +909,7 @@ mod tests {
         // continued, the second group would complete after the scripted queue.
         {
             let mut sequence = vec![false; 11];
-            sequence.extend([true, false]);
+            sequence.extend([false, true, false]);
             let _guard = DeadlineOverrideGuard::with_sequence(sequence);
             let scan =
                 detect_correlated_error_patterns_with_deadline(&creature, &neuron_records, &None);
@@ -906,11 +920,11 @@ mod tests {
             assert_eq!(scan.skip, Some(CorrelatedErrorSkip::DeadlinePassed));
         }
 
-        // Matrix allocation check, 4 row checks, 6 pair checks, then one input
-        // check per group. Complete the first group and interrupt the second;
+        // Matrix allocation check, 4 row checks, 6 pair checks, then group
+        // start, input and completion checks. Interrupt the second input scan;
         // the first group's result must survive.
         let mut sequence = vec![false; 11];
-        sequence.extend([false, true]);
+        sequence.extend([false, false, false, false, true]);
         let _guard = DeadlineOverrideGuard::with_sequence(sequence);
         let scan =
             detect_correlated_error_patterns_with_deadline(&creature, &neuron_records, &None);
@@ -933,51 +947,134 @@ mod tests {
     #[test]
     #[serial]
     fn deadline_during_pair_scan_returns_no_groups() {
-        const SAMPLES: u32 = 20;
-        let neurons = (0..3)
+        let (creature, records) = group_cancellation_fixture(0);
+        let control = detect_correlated_error_patterns_with_deadline(&creature, &records, &None);
+        assert_eq!(
+            control.groups.len(),
+            2,
+            "fixture must form correlated groups"
+        );
+
+        // Pass allocation, rows 0 and 1 with their five pairs, then row 2.
+        // Cancel on the last pair, before the final matrix row.
+        let mut sequence = vec![false; 9];
+        sequence.extend([true, false]);
+        let _guard = DeadlineOverrideGuard::with_sequence(sequence);
+        let scan = detect_correlated_error_patterns_with_deadline(&creature, &records, &None);
+        assert!(
+            scan.groups.is_empty(),
+            "an incomplete matrix must not be clustered"
+        );
+        assert_eq!(scan.skip, Some(CorrelatedErrorSkip::DeadlinePassed));
+    }
+
+    fn group_cancellation_fixture(
+        n_inputs: usize,
+    ) -> (CreatureJson, Vec<(String, Vec<DiscoverRecord>)>) {
+        let mut neurons: Vec<_> = (0..n_inputs)
             .map(|i| crate::NeuronJson {
-                uuid: format!("output-{i}"),
-                neuron_type: "output".to_string(),
+                uuid: format!("input-{i}"),
+                neuron_type: "input".to_string(),
                 squash: "IDENTITY".to_string(),
                 bias: 0.0,
             })
             .collect();
-        let creature = CreatureJson {
-            neurons,
-            synapses: vec![],
-            input: 0,
-            output: 3,
-        };
-        let neuron_records: Vec<(String, Vec<DiscoverRecord>)> = (0..3)
-            .map(|neuron| {
-                let uuid = format!("output-{neuron}");
-                let records = (0..SAMPLES)
-                    .map(|i| DiscoverRecord {
-                        obs_index: i,
-                        neuron_uuid: uuid.clone(),
-                        value: Some(i as f32),
-                        activation: 0.5,
-                        errors: vec![i as f32],
-                    })
-                    .collect();
-                (uuid, records)
-            })
-            .collect();
+        let mut records = Vec::new();
+        for output in 0..4 {
+            let uuid = format!("output-{output}");
+            neurons.push(crate::NeuronJson {
+                uuid: uuid.clone(),
+                neuron_type: "output".to_string(),
+                squash: "IDENTITY".to_string(),
+                bias: 0.0,
+            });
+            // Two correlated pairs, with negative correlation between pairs.
+            let samples: Vec<_> = (0..20)
+                .map(|i| DiscoverRecord {
+                    obs_index: i,
+                    neuron_uuid: uuid.clone(),
+                    value: None,
+                    activation: 0.5,
+                    errors: vec![if output < 2 { i + 1 } else { 20 - i } as f32],
+                })
+                .collect();
+            records.push((uuid, samples));
+        }
+        (
+            CreatureJson {
+                neurons,
+                synapses: vec![],
+                input: n_inputs,
+                output: 4,
+            },
+            records,
+        )
+    }
 
-        let control =
-            detect_correlated_error_patterns_with_deadline(&creature, &neuron_records, &None);
+    fn assert_group_cancellation_without_predictive_search(n_inputs: usize) {
+        let (creature, records) = group_cancellation_fixture(n_inputs);
+        let control = detect_correlated_error_patterns_with_deadline(&creature, &records, &None);
+        assert_eq!(control.groups.len(), 2, "fixture must complete both groups");
         assert_eq!(
-            control.groups.len(),
-            1,
-            "fixture must form a correlated group"
+            control.skip,
+            if n_inputs > MAX_CORRELATED_ERROR_INPUTS {
+                Some(CorrelatedErrorSkip::InputCeilingExceeded {
+                    inputs: n_inputs,
+                    ceiling: MAX_CORRELATED_ERROR_INPUTS,
+                })
+            } else {
+                None
+            }
         );
 
-        // Pass allocation, row 0 and its two pairs, and row 1; cancel on its
-        // final pair. Without the pair check, row 2 proceeds and finds a group.
-        let _guard =
-            DeadlineOverrideGuard::with_sequence(vec![false, false, false, false, false, true]);
-        let scan =
-            detect_correlated_error_patterns_with_deadline(&creature, &neuron_records, &None);
+        // All 11 matrix checks pass. Cancel at the start or end of each group,
+        // independently of whether predictive inputs can be searched. A transient
+        // signal also proves cancellation stops subsequent groups.
+        for (group_checks, completed_groups) in [(0, 0), (1, 0), (2, 1), (3, 1)] {
+            let mut sequence = vec![false; 11 + group_checks];
+            sequence.extend([true, false]);
+            let _guard = DeadlineOverrideGuard::with_sequence(sequence);
+            let scan = detect_correlated_error_patterns_with_deadline(&creature, &records, &None);
+            assert_eq!(scan.skip, Some(CorrelatedErrorSkip::DeadlinePassed));
+            assert_eq!(scan.groups.len(), completed_groups);
+            if completed_groups == 1 {
+                assert_eq!(
+                    scan.groups[0].output_neuron_uuids,
+                    control.groups[0].output_neuron_uuids
+                );
+            }
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn group_cancellation_with_zero_inputs_keeps_only_completed_groups() {
+        assert_group_cancellation_without_predictive_search(0);
+    }
+
+    #[test]
+    #[serial]
+    fn group_cancellation_above_input_ceiling_keeps_only_completed_groups() {
+        assert_group_cancellation_without_predictive_search(MAX_CORRELATED_ERROR_INPUTS + 1);
+    }
+
+    #[test]
+    #[serial]
+    fn deadline_at_subsequent_matrix_row_discards_incomplete_matrix() {
+        let (creature, records) = group_cancellation_fixture(0);
+        let control = detect_correlated_error_patterns_with_deadline(&creature, &records, &None);
+        assert_eq!(
+            control.groups.len(),
+            2,
+            "fixture must form correlated groups"
+        );
+
+        // Pass allocation, the first three rows and all six pairs. Cancel at
+        // the final row, which has no pairs, before the matrix is complete.
+        let mut sequence = vec![false; 10];
+        sequence.extend([true, false]);
+        let _guard = DeadlineOverrideGuard::with_sequence(sequence);
+        let scan = detect_correlated_error_patterns_with_deadline(&creature, &records, &None);
         assert!(
             scan.groups.is_empty(),
             "an incomplete matrix must not be clustered"

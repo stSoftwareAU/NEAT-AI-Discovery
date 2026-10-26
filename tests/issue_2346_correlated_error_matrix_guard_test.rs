@@ -280,13 +280,12 @@ fn predictive_input_found_below_input_ceiling() {
     );
 }
 
-/// Test 6: with no input neurons at all, `find_predictive_inputs` never checks
-/// the deadline (its loop iterates zero times), so only the per-matrix-row
-/// deadline check can stop the scan. First confirm the fixture produces
-/// groups with no deadline, then confirm an elapsed deadline reports
-/// `DeadlinePassed` with no groups.
+/// An already-expired deadline stops before matrix allocation, even without
+/// input neurons. The deterministic later-row regression lives in
+/// `correlated_error.rs::tests::deadline_at_subsequent_matrix_row_discards_incomplete_matrix`
+/// because the deadline override is available only to unit tests.
 #[test]
-fn elapsed_deadline_stops_matrix_build_with_no_input_neurons() {
+fn elapsed_deadline_stops_before_matrix_allocation_with_no_input_neurons() {
     let (creature, neuron_records) = make_fixture(3, 0);
 
     let scan = detect_correlated_error_patterns_with_deadline(&creature, &neuron_records, &None);
@@ -310,6 +309,6 @@ fn elapsed_deadline_stops_matrix_build_with_no_input_neurons() {
     assert_eq!(
         scan.skip,
         Some(CorrelatedErrorSkip::DeadlinePassed),
-        "Skip reason should report the elapsed deadline via the per-matrix-row check"
+        "Skip reason should report the elapsed deadline before allocation"
     );
 }

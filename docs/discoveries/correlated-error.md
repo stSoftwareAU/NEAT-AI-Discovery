@@ -108,10 +108,10 @@ input-typed neurons exceeds `MAX_CORRELATED_ERROR_INPUTS`
 (10,000) — groups are still emitted, with empty `predictive_input_uuids`, and
 `InputCeilingExceeded` is logged. `detect_correlated_error_patterns_with_deadline`
 also checks the shared analysis deadline before matrix allocation, per matrix
-row and pair, and per candidate input. A deadline during matrix construction
-returns no groups because the matrix is incomplete; a deadline during group
-analysis returns the groups completed before cancellation with
-`DeadlinePassed`.
+row and pair, at the start and end of each group, and per candidate input.
+A deadline during matrix construction returns no groups because the matrix is
+incomplete; a deadline during group analysis returns the groups completed before
+cancellation with `DeadlinePassed`.
 
 ---
 
