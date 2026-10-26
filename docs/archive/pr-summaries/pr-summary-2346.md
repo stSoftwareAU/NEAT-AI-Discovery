@@ -48,10 +48,10 @@ rejected by the 1,000-output ceiling`, then passed against this branch.
 - `src/analysis/detection/correlated_error.rs::deadline_during_group_search_keeps_completed_groups` — passed; the cancellation case asserts later groups are not processed and completed groups survive.
 - `src/analysis/module_dispatch_specs/structural_specs_issue_2346_tests.rs::correlated_error_spec_stops_at_elapsed_deadline` — passed; restoring the caller to the legacy wrapper makes the assertion fail.
 - `cargo fmt --all -- --check` — passed.
-- `cargo clippy --all-targets -- -D warnings` — pending final run.
-- `./quality.sh` — pending final run.
+- `cargo clippy --all-targets -- -D warnings` — passed.
+- `./quality.sh` — not completed: timed out after 900 seconds (exit 124) while building the release library. The complete test phase passed (1,659 library tests and all integration test targets); documentation generation passed. The release build did not finish.
 
-**Docs sweep** — grep: `detect_correlated_error_patterns`, `find_predictive_inputs`, `CorrelatedError`, `MAX_CORRELATED_ERROR_OUTPUTS`, `MAX_CORRELATED_ERROR_INPUTS`, and `deadline`; section: `docs/discoveries/correlated-error.md#-bounds-issue-2346`, `docs/DISCOVERY_TYPES.md#correlated-error-pattern-detection`, and `docs/ANALYSIS_DEEP_DIVE.md#-correlated-error-pattern-detection-issue-344`; updated: `docs/discoveries/correlated-error.md`, `docs/DISCOVERY_TYPES.md`, `docs/ANALYSIS_DEEP_DIVE.md`, and the `correlated_error.rs` module comment. Remaining mentions in cost notes and discovery overviews describe the unchanged error fields, detector purpose, or discovery output; none describes unbounded allocation or uncancellable scans.
+**Docs sweep** — grep: `detect_correlated_error_patterns`, `find_predictive_inputs`, `CorrelatedError`, `MAX_CORRELATED_ERROR_OUTPUTS`, `MAX_CORRELATED_ERROR_INPUTS`, and deadline claims; section: `docs/discoveries/correlated-error.md#-bounds-issue-2346`, `docs/DISCOVERY_TYPES.md#correlated-error-pattern-detection`, and `docs/ANALYSIS_DEEP_DIVE.md#-correlated-error-pattern-detection-issue-344`; updated: `docs/discoveries/correlated-error.md`, `docs/DISCOVERY_TYPES.md`, `docs/ANALYSIS_DEEP_DIVE.md`, and the `correlated_error.rs` module comment. Remaining hits: `docs/COST_FUNCTION_NOTES.md:124,125,331` describe the unchanged error-field reads; `docs/ANALYSIS_DEEP_DIVE.md:283-284` describe the new ceilings; these remain accurate. Archive audit entries were excluded from the manual sweep.
 
 The tested entry points are the public detector (both the deadline-aware API
 and legacy wrapper), the structural-spec closure, and the dispatch deadline
