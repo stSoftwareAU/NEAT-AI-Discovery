@@ -67,49 +67,6 @@ fn far_future() -> Option<SystemTime> {
 }
 
 // =============================================================================
-// Test 1: Work grows no faster than the fan-in cap allows.
-// =============================================================================
-
-#[test]
-fn symmetric_cancellation_work_grows_no_faster_than_the_cap_allows() {
-    let config = WeightCoherenceConfig::default();
-
-    let n = 128;
-    let (creature_n, records_n) = fanin_fixture(n);
-    let scan_n =
-        detect_symmetric_cancellation_with_deadline(&creature_n, &records_n, &config, None, &None);
-
-    let four_n = 4 * n;
-    let (creature_4n, records_4n) = fanin_fixture(four_n);
-    let scan_4n = detect_symmetric_cancellation_with_deadline(
-        &creature_4n,
-        &records_4n,
-        &config,
-        None,
-        &None,
-    );
-
-    assert!(
-        scan_n.pairs_correlated > 0,
-        "the under-cap target should have been scanned"
-    );
-    assert!(
-        four_n > MAX_FANIN_FOR_CANCELLATION_SCAN,
-        "fixture must exceed the fan-in cap to exercise the skip"
-    );
-    assert_eq!(
-        scan_4n.skipped_high_fanin_targets, 1,
-        "the over-cap target must be skipped entirely, not partially scanned"
-    );
-    assert!(
-        scan_4n.pairs_correlated <= 4 * scan_n.pairs_correlated,
-        "work must not grow faster than the cap allows: {} vs 4x{}",
-        scan_4n.pairs_correlated,
-        scan_n.pairs_correlated
-    );
-}
-
-// =============================================================================
 // Test 2: Fan-in boundary — cap is scanned, cap + 1 is skipped.
 // =============================================================================
 

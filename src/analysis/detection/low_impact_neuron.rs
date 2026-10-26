@@ -133,7 +133,11 @@ pub fn detect_low_impact_neurons(
         let mean_abs_activation = compute_mean_abs_activation(records);
 
         // Must be above dead threshold and below low-impact ceiling
-        if mean_abs_activation <= DEAD_THRESHOLD || mean_abs_activation >= LOW_IMPACT_CEILING {
+        // Issue #2351: a NaN activation makes the mean (and std dev) NaN, which fails every comparison.
+        if !mean_abs_activation.is_finite()
+            || mean_abs_activation <= DEAD_THRESHOLD
+            || mean_abs_activation >= LOW_IMPACT_CEILING
+        {
             continue;
         }
 

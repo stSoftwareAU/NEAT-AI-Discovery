@@ -54,6 +54,10 @@ pub(crate) struct NeuronDiagnosticEntry {
     /// Set to true when this neuron was filtered out because it's a constant neuron
     /// (constant neurons don't receive inputs - they always output a fixed value).
     pub(crate) constant_filtered: bool,
+    /// Set to true when the target neuron's own records failed to load from the
+    /// record cache (Issue #2352). Distinct from `NoEligibleSources`: the target
+    /// was a valid focus but could not be analysed at all.
+    pub(crate) target_load_failed: bool,
 }
 
 impl NeuronDiagnosticEntry {
@@ -70,6 +74,7 @@ impl NeuronDiagnosticEntry {
             hidden_filtered: false,
             input_filtered: false,
             constant_filtered: false,
+            target_load_failed: false,
         }
     }
 
@@ -146,6 +151,18 @@ impl NeuronDiagnostics {
 
     pub(crate) fn record_load_failure(&self, target_uuid: &str) {
         if let Some(mut entry) = self.entries.get_mut(target_uuid) {
+            entry.record_load_failures += 1;
+        }
+    }
+
+    /// Record that the target neuron's own records failed to load (Issue #2352).
+    ///
+    /// Sets the `target_load_failed` flag and counts the failure so that
+    /// `no_candidate_summaries` can report `TargetRecordLoadFailed` rather than
+    /// the misleading `NoEligibleSources`.
+    pub(crate) fn record_target_load_failure(&self, target_uuid: &str) {
+        if let Some(mut entry) = self.entries.get_mut(target_uuid) {
+            entry.target_load_failed = true;
             entry.record_load_failures += 1;
         }
     }
@@ -286,6 +303,16 @@ impl NeuronDiagnostics {
                 continue;
             }
 
+            // The target's own records failed to load (Issue #2352)
+            if entry.target_load_failed {
+                tracing::warn!(
+                    target_uuid = %entry.target_uuid,
+                    record_load_failures = entry.record_load_failures,
+                    "Target was skipped because its own records failed to load from the record cache"
+                );
+                continue;
+            }
+
             // Check for record loading failures (this indicates a bug or data issue)
             if entry.record_load_failures > 0 {
                 tracing::warn!(
@@ -401,6 +428,19 @@ impl NeuronDiagnostics {
                         evaluated_sources: 0,
                         sources_with_samples: 0,
                         target_record_count: 0,
+                        detail: None,
+                    };
+                }
+
+                // The target's own records failed to load (Issue #2352). Reported
+                // separately so it is not mistaken for "no eligible sources".
+                if entry.target_load_failed {
+                    return NeuronNoCandidateSummary {
+                        target_uuid: entry.target_uuid.clone(),
+                        reason: NeuronNoCandidateReason::TargetRecordLoadFailed,
+                        evaluated_sources: entry.evaluated_sources,
+                        sources_with_samples: entry.sources_with_samples,
+                        target_record_count: entry.target_record_count,
                         detail: None,
                     };
                 }

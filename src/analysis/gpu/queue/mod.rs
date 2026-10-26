@@ -65,6 +65,9 @@ mod stale_skip_tests;
 /// Regression tests for the Issue #1926 wedged-GPU defences (Issue #1935).
 #[cfg(test)]
 mod wedge_tests;
+/// Regression tests for the Issue #2361 panicked-GPU-thread defence.
+#[cfg(test)]
+mod worker_panic_test;
 
 use anyhow::Result;
 use crossbeam_channel::{Receiver, Sender};
