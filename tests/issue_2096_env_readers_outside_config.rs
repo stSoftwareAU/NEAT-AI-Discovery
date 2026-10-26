@@ -10,19 +10,19 @@
 //!
 //! Readers covered, all re-exported from `neat_ai_discovery::analysis::constants`:
 //!
-//! - `candidate_scoring.rs::max_add_neuron_candidates_per_target` (L58)
-//! - `candidate_scoring.rs::max_coordinated_per_target_output` (L109)
-//! - `candidate_scoring.rs::min_distinct_targets_per_batch` (L155)
-//! - `candidate_scoring.rs::risky_squash_prior` (L505)
-//! - `candidate_scoring.rs::min_expected_creature_score_gain` (L845)
-//! - `candidate_scoring.rs::neuron_ranking_reliability_bands` (L991)
-//! - `candidate_scoring.rs::min_bypass_weight_for_collapse` (L1050)
-//! - `candidate_scoring.rs::coordinated_noise_floor_multiplier` (L1203)
-//! - `candidate_scoring.rs::remove_low_impact_noise_floor` (L1508)
-//! - `detection_thresholds.rs::cooldown_conservative_divisor` (L235)
-//! - `detection_thresholds.rs::cooldown_extended_drought_divisor` (L249)
+//! - `candidate_scoring.rs::max_add_neuron_candidates_per_target`
+//! - `candidate_scoring.rs::max_coordinated_per_target_output`
+//! - `candidate_scoring.rs::min_distinct_targets_per_batch`
+//! - `candidate_scoring.rs::risky_squash_prior`
+//! - `candidate_scoring.rs::min_expected_creature_score_gain`
+//! - `candidate_scoring.rs::neuron_ranking_reliability_bands`
+//! - `candidate_scoring.rs::min_bypass_weight_for_collapse`
+//! - `candidate_scoring.rs::coordinated_noise_floor_multiplier`
+//! - `candidate_scoring.rs::remove_low_impact_noise_floor`
+//! - `detection_thresholds.rs::cooldown_conservative_divisor`
+//! - `detection_thresholds.rs::cooldown_extended_drought_divisor`
 //!
-//! Integer readers parse with `parse_env` (`src/config/helpers.rs:36`), which
+//! Integer readers parse with `parse_env` (`src/config/helpers.rs::parse_env`), which
 //! trims surrounding whitespace before parsing. `0` parses successfully, so it
 //! is clamped to the floor rather than replaced by the default. The
 //! `neuron_ranking_reliability_bands` reader parses as `u32`, so a value of
@@ -32,6 +32,8 @@
 //! Rule for this sub-issue: tests only. A failing probe is not fixed here. Its
 //! case is marked `#[ignore = "finding: <reason>"]`, keeps its failing
 //! assertion, and is handed to 13d-2 as a candidate finding.
+
+use std::ffi::OsString;
 
 use neat_ai_discovery::analysis::constants::{
     COOLDOWN_CONSERVATIVE_DIVISOR, COOLDOWN_DIVISOR_CEILING, COOLDOWN_DIVISOR_FLOOR,
@@ -64,12 +66,12 @@ macro_rules! var {
 /// so the process-wide mutation is safe.
 struct EnvGuard {
     key: String,
-    prior: Option<String>,
+    prior: Option<OsString>,
 }
 
 impl EnvGuard {
     fn set(key: &str, value: &str) -> Self {
-        let prior = std::env::var(key).ok();
+        let prior = std::env::var_os(key);
         // SAFETY: tests are marked #[serial] so no concurrent set/unset races.
         unsafe { std::env::set_var(key, value) };
         Self {
@@ -79,7 +81,7 @@ impl EnvGuard {
     }
 
     fn unset(key: &str) -> Self {
-        let prior = std::env::var(key).ok();
+        let prior = std::env::var_os(key);
         // SAFETY: tests are marked #[serial] so no concurrent set/unset races.
         unsafe { std::env::remove_var(key) };
         Self {

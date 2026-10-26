@@ -438,6 +438,42 @@ pub fn setup_gpu_environment() -> GpuEnvSetup {
 mod tests {
     use super::*;
 
+    #[cfg(unix)]
+    struct EnvGuard {
+        key: &'static str,
+        prior: Option<std::ffi::OsString>,
+    }
+
+    #[cfg(unix)]
+    impl EnvGuard {
+        fn set(key: &'static str, value: &std::ffi::OsStr) -> Self {
+            let prior = std::env::var_os(key);
+            // SAFETY: callers are serialised and no other thread accesses the environment.
+            unsafe { std::env::set_var(key, value) };
+            Self { key, prior }
+        }
+
+        fn unset(key: &'static str) -> Self {
+            let prior = std::env::var_os(key);
+            // SAFETY: callers are serialised and no other thread accesses the environment.
+            unsafe { std::env::remove_var(key) };
+            Self { key, prior }
+        }
+    }
+
+    #[cfg(unix)]
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            // SAFETY: callers are serialised and no other thread accesses the environment.
+            unsafe {
+                match &self.prior {
+                    Some(value) => std::env::set_var(self.key, value),
+                    None => std::env::remove_var(self.key),
+                }
+            }
+        }
+    }
+
     /// Collects formatted tracing output so a test can assert that a rejection
     /// was reported rather than swallowed.
     #[cfg(unix)]
@@ -542,7 +578,6 @@ mod tests {
     #[test]
     #[serial_test::serial]
     fn xdg_runtime_dir_rejects_preexisting_world_writable() {
-        use std::env;
         use std::os::unix::fs::PermissionsExt;
 
         let base = tempfile::tempdir().expect("temp dir should be created");
@@ -565,33 +600,15 @@ mod tests {
             "the rejection must be warned about, got: {logs}"
         );
 
-        let saved_runtime = env::var("XDG_RUNTIME_DIR").ok();
-        let saved_tmpdir = env::var("TMPDIR").ok();
-        // SAFETY: serialised via #[serial]; both variables are restored below.
-        unsafe {
-            env::remove_var("XDG_RUNTIME_DIR");
-            env::set_var("TMPDIR", &base_path);
-        }
+        let _runtime = EnvGuard::unset("XDG_RUNTIME_DIR");
+        let _tmpdir = EnvGuard::set("TMPDIR", base_path.as_os_str());
 
         // SAFETY: serialised via #[serial]; no other thread touches the env here.
         unsafe { apply_xdg_runtime_dir() };
 
-        let after = env::var("XDG_RUNTIME_DIR").ok();
-
-        // SAFETY: serialised via #[serial]; restore the pre-existing values.
-        unsafe {
-            match saved_runtime {
-                Some(v) => env::set_var("XDG_RUNTIME_DIR", v),
-                None => env::remove_var("XDG_RUNTIME_DIR"),
-            }
-            match saved_tmpdir {
-                Some(v) => env::set_var("TMPDIR", v),
-                None => env::remove_var("TMPDIR"),
-            }
-        }
-
         assert_eq!(
-            after, None,
+            std::env::var_os("XDG_RUNTIME_DIR"),
+            None,
             "XDG_RUNTIME_DIR must stay unset when only an untrusted directory is available"
         );
     }
@@ -661,7 +678,6 @@ mod tests {
     #[test]
     #[serial_test::serial]
     fn xdg_runtime_dir_apply_rejects_symlink() {
-        use std::env;
         use std::os::unix::fs::PermissionsExt;
 
         let base = tempfile::tempdir().expect("temp dir should be created");
@@ -675,33 +691,15 @@ mod tests {
         let hostile = expected_runtime_dir(&base_path);
         std::os::unix::fs::symlink(target.path(), &hostile).expect("symlink should be created");
 
-        let saved_runtime = env::var("XDG_RUNTIME_DIR").ok();
-        let saved_tmpdir = env::var("TMPDIR").ok();
-        // SAFETY: serialised via #[serial]; both variables are restored below.
-        unsafe {
-            env::remove_var("XDG_RUNTIME_DIR");
-            env::set_var("TMPDIR", &base_path);
-        }
+        let _runtime = EnvGuard::unset("XDG_RUNTIME_DIR");
+        let _tmpdir = EnvGuard::set("TMPDIR", base_path.as_os_str());
 
         // SAFETY: serialised via #[serial]; no other thread touches the env here.
         unsafe { apply_xdg_runtime_dir() };
 
-        let after = env::var("XDG_RUNTIME_DIR").ok();
-
-        // SAFETY: serialised via #[serial]; restore the pre-existing values.
-        unsafe {
-            match saved_runtime {
-                Some(v) => env::set_var("XDG_RUNTIME_DIR", v),
-                None => env::remove_var("XDG_RUNTIME_DIR"),
-            }
-            match saved_tmpdir {
-                Some(v) => env::set_var("TMPDIR", v),
-                None => env::remove_var("TMPDIR"),
-            }
-        }
-
         assert_eq!(
-            after, None,
+            std::env::var_os("XDG_RUNTIME_DIR"),
+            None,
             "XDG_RUNTIME_DIR must stay unset when the only candidate is a symlink"
         );
         assert!(
