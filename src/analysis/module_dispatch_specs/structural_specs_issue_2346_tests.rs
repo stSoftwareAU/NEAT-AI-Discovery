@@ -25,7 +25,7 @@ use crate::{CreatureJson, NeuronJson, SynapseJson};
 const CORRELATED_ERROR_SPEC_NAME: &str = "correlated_error_detection";
 
 /// Matches the private `RecordCacheLoader` alias in `cache::mod` (not exported,
-/// so the test re-declares it locally) to keep `correlated_loader`'s return
+/// so the test redeclares it locally) to keep `correlated_loader`'s return
 /// type readable.
 type TestRecordLoader = dyn Fn(&str, &str) -> anyhow::Result<Vec<DiscoverRecord>> + Send + Sync;
 
