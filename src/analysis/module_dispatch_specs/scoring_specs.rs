@@ -60,7 +60,7 @@ pub(crate) fn append_scoring_specs(
         records: cache.load_records_for_neuron_types(&creature, &["input", "hidden"]),
         guard_records,
         detect: |records| bounded_range::detect_bounded_range_neurons(&creature, &records),
-        convert: |detected| bounded_range::bounded_range_to_coordinated_candidates(&detected),
+        convert: |detected| bounded_range::bounded_range_to_coordinated_candidates(&detected, &creature),
     );
 
     // Issue #400: Sentinel value gating

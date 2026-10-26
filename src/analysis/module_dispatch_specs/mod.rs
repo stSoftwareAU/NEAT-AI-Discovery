@@ -46,6 +46,9 @@ use super::{
 /// Issue #2183: `deadline` is captured by the recommendation-core scans
 /// (multi-hop, fan-in, gradient) so each stops mid-scan once it passes.
 /// Issue #2348: it is also captured by the co-adaptation pairwise scan.
+/// Issue #2349: `deadline` is also forwarded to the symmetry-breaking pair
+/// scan, so it stops at the deadline or on global cancellation too.
+/// Issue #2358: it is also forwarded to the output-conflict candidate conversion.
 /// Issue #2350: it is also captured by the fan-in polarity conflict converter,
 /// which stops mid-candidate once it passes.
 pub(crate) fn build_discovery_module_specs(

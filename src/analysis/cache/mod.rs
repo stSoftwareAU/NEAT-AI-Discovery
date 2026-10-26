@@ -83,6 +83,30 @@ pub const LAZY_OVERBOOK_SKIP_RATIO: u64 = 10;
 /// How often lazy/analysis cache progress emits an INFO heartbeat (Issue #2013).
 const ANALYSIS_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(60);
 
+/// Typed error returned by [`RecordCache::get`] when the shared analysis
+/// deadline has passed (or host cancellation was requested) before a lookup.
+///
+/// A deadline bail is a normal timeout, not a record-store fault: callers can
+/// tell the two apart with `err.downcast_ref::<AnalysisDeadlineExceeded>()`
+/// (PR #2407 review of Issue #2352).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AnalysisDeadlineExceeded {
+    /// The neuron whose lookup was refused.
+    pub neuron_uuid: String,
+}
+
+impl std::fmt::Display for AnalysisDeadlineExceeded {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "analysis deadline exceeded during lazy parquet load for neuron '{}' (Issue #2013)",
+            self.neuron_uuid
+        )
+    }
+}
+
+impl std::error::Error for AnalysisDeadlineExceeded {}
+
 type RecordCacheLoader = dyn Fn(&str, &str) -> Result<Vec<DiscoverRecord>> + Send + Sync + 'static;
 type CachedNeuronRecords = OnceLock<Result<Arc<Vec<DiscoverRecord>>, String>>;
 
@@ -337,13 +361,19 @@ impl RecordCache {
     ///
     /// After obtaining the cell, uses `OnceLock::get_or_try_init()` for thread-safe
     /// lazy initialisation without holding the cache lock.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AnalysisDeadlineExceeded`] (before any load is attempted, in
+    /// pre-loaded mode too) when the deadline has passed or cancellation was
+    /// requested, and a load error when the neuron's records fail to load.
     pub fn get(&self, neuron_uuid: &str) -> Result<Arc<Vec<DiscoverRecord>>> {
         // Issue #2013: poll the shared analysis deadline before each (potentially
         // multi-minute) per-neuron parquet scan on the lazy path.
         if deadline_passed(&self.deadline) {
-            anyhow::bail!(
-                "analysis deadline exceeded during lazy parquet load for neuron '{neuron_uuid}' (Issue #2013)"
-            );
+            return Err(anyhow::Error::new(AnalysisDeadlineExceeded {
+                neuron_uuid: neuron_uuid.to_string(),
+            }));
         }
         self.emit_progress_heartbeat(neuron_uuid);
 
