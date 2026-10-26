@@ -20,6 +20,16 @@
 //!   closer to an output, shortening the effective path.
 //! - **Connectivity imbalance → addSynapse**: Add inputs to starved neurons
 //!   to balance information flow.
+//!
+//! ## Bounds (Issue #2369)
+//!
+//! The analysis deadline/global cancellation (via `deadline_passed`) is checked
+//! before the scan, once per qualified hidden neuron in the long-path loop, and
+//! once per starved neuron in the connectivity-imbalance loop. A deadline that
+//! fires mid-scan returns the partial candidates found so far, reported via
+//! `TopologyScan::truncation`. The nearest-unconnected-output search stops at the
+//! first unconnected output, so each long-path neuron costs O(its fan-out) rather
+//! than O(outputs).
 
 #![allow(
     clippy::cast_possible_truncation,
@@ -27,7 +37,10 @@
     clippy::cast_sign_loss
 )] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::time::SystemTime;
 
+use crate::analysis::recommendation::epistatic::ScanTruncation;
+use crate::analysis::utils::deadline_passed;
 use crate::types::DiscoverRecord;
 use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson, CreatureJson};
 
@@ -67,6 +80,16 @@ pub struct TopologyCandidate {
     pub skip_target_uuid: Option<String>,
     /// Suggested source neuron for an added synapse (if applicable).
     pub add_source_uuid: Option<String>,
+}
+
+/// Candidates from a deadline-bounded topology scan, plus whether it stopped early
+/// (Issue #2369), mirroring `CorrelatedErrorScan`.
+#[derive(Debug, Clone)]
+pub struct TopologyScan {
+    /// Detected topology candidates, sorted by estimated improvement (best first).
+    pub candidates: Vec<TopologyCandidate>,
+    /// `Some` when the scan stopped early because the deadline elapsed or cancellation was requested.
+    pub truncation: Option<ScanTruncation>,
 }
 
 /// Compute shortest path lengths from every neuron to any output neuron using
@@ -114,6 +137,11 @@ fn compute_shortest_paths_to_output(creature: &CreatureJson) -> HashMap<String, 
 
 /// Detect topology issues from the creature's network structure and recorded activations.
 ///
+/// Unbounded by an explicit deadline: this is a thin wrapper over
+/// [`detect_topology_issues_with_deadline`] with `deadline` set to `None`. It still
+/// honours global cancellation (via `deadline_passed`), so a cancelled host stops the
+/// scan early and receives the partial candidates found so far.
+///
 /// # Arguments
 /// * `creature` - The creature's network topology (neurons and synapses).
 /// * `neuron_records` - List of `(neuron_uuid, records)` tuples with recorded activations.
@@ -125,6 +153,35 @@ pub fn detect_topology_issues(
     neuron_records: &[(String, impl AsRef<[DiscoverRecord]>)],
     topo: Option<&CreatureTopologyCache>,
 ) -> Vec<TopologyCandidate> {
+    detect_topology_issues_with_deadline(creature, neuron_records, topo, &None).candidates
+}
+
+/// Detect topology issues, bounded by `deadline` (Issue #2369).
+///
+/// # Arguments
+/// * `creature` - The creature's network topology (neurons and synapses).
+/// * `neuron_records` - List of `(neuron_uuid, records)` tuples with recorded activations.
+/// * `topo` - Optional pre-computed topology cache; built locally when `None`.
+/// * `deadline` - When set, the scan stops early once the deadline elapses or global
+///   cancellation is requested, keeping the candidates found so far and reporting
+///   `ScanTruncation::DeadlinePassed` via `TopologyScan::truncation`.
+///
+/// # Returns
+/// A [`TopologyScan`] whose candidates are sorted by estimated improvement (best first).
+pub fn detect_topology_issues_with_deadline(
+    creature: &CreatureJson,
+    neuron_records: &[(String, impl AsRef<[DiscoverRecord]>)],
+    topo: Option<&CreatureTopologyCache>,
+    deadline: &Option<SystemTime>,
+) -> TopologyScan {
+    // Issue #2369: an elapsed deadline or cancellation stops the scan before any work.
+    if deadline_passed(deadline) {
+        return TopologyScan {
+            candidates: Vec::new(),
+            truncation: Some(ScanTruncation::DeadlinePassed),
+        };
+    }
+
     // Use pre-computed cache or build locally.
     let local_cache;
     let topo = match topo {
@@ -136,7 +193,10 @@ pub fn detect_topology_issues(
     };
 
     if topo.hidden_uuids.is_empty() {
-        return Vec::new();
+        return TopologyScan {
+            candidates: Vec::new(),
+            truncation: None,
+        };
     }
 
     // Build records lookup
@@ -155,7 +215,10 @@ pub fn detect_topology_issues(
         .collect();
 
     if qualified_hidden.is_empty() {
-        return Vec::new();
+        return TopologyScan {
+            candidates: Vec::new(),
+            truncation: None,
+        };
     }
 
     // Compute shortest path to any output for each neuron
@@ -181,9 +244,16 @@ pub fn detect_topology_issues(
         .collect();
 
     let mut candidates = Vec::with_capacity(qualified_hidden.len());
+    let mut truncation: Option<ScanTruncation> = None;
 
     // --- Detection 1: Long path to output ---
     for &uuid in &qualified_hidden {
+        // Issue #2369: stop at the deadline or on cancellation, keeping the candidates so far.
+        if deadline_passed(deadline) {
+            truncation = Some(ScanTruncation::DeadlinePassed);
+            break;
+        }
+
         let path_len = match path_distances.get(uuid) {
             Some(&d) => d,
             None => continue, // unreachable from any output
@@ -197,17 +267,11 @@ pub fn detect_topology_issues(
         let fan_out = topo.fan_out_for(uuid).len();
         let mean_err = mean_errors.get(uuid).copied().unwrap_or(0.0);
 
-        // Find the best output to connect to (closest that isn't already connected)
+        // Outputs are all seeded at distance 0, so the first unconnected output is the nearest; `find` stops there within fan_out + 1 steps.
         let skip_target = topo
             .output_uuids
             .iter()
-            .filter(|out| !topo.synapse_exists(uuid, out))
-            .min_by_key(|out| {
-                path_distances
-                    .get(out.as_str())
-                    .copied()
-                    .unwrap_or(usize::MAX)
-            })
+            .find(|out| !topo.synapse_exists(uuid, out))
             .cloned();
 
         // Estimated improvement: longer paths with higher error benefit more.
@@ -243,7 +307,8 @@ pub fn detect_topology_issues(
         })
         .collect();
 
-    if fan_ins.len() >= 2 {
+    // Issue #2369: a deadline-truncated long-path loop skips this detection entirely.
+    if truncation.is_none() && fan_ins.len() >= 2 {
         let max_fan_in = fan_ins.iter().map(|(_, fi)| *fi).max().unwrap_or(0);
         let min_fan_in = fan_ins
             .iter()
@@ -259,6 +324,12 @@ pub fn detect_topology_issues(
             for &(uuid, fi) in &fan_ins {
                 if fi > starved_threshold {
                     continue;
+                }
+
+                // Issue #2369: stop at the deadline or on cancellation, keeping the candidates so far.
+                if deadline_passed(deadline) {
+                    truncation = Some(ScanTruncation::DeadlinePassed);
+                    break;
                 }
 
                 let fan_out = topo.fan_out_for(uuid).len();
@@ -300,7 +371,10 @@ pub fn detect_topology_issues(
     // Sort by estimated improvement (best first)
     candidates.sort_by(|a, b| b.estimated_improvement.total_cmp(&a.estimated_improvement));
 
-    candidates
+    TopologyScan {
+        candidates,
+        truncation,
+    }
 }
 
 /// Convert topology candidates into coordinated structural candidates.
@@ -387,3 +461,7 @@ pub fn topology_issues_to_coordinated_candidates(
 
     results
 }
+
+#[cfg(test)]
+#[path = "topology_deadline_tests.rs"]
+mod deadline_tests;

@@ -17,8 +17,9 @@ use super::super::{cache, discovery_dispatch};
 /// Append structural discovery module specs to the provided vector.
 ///
 /// `deadline` is forwarded into the multi-hop and fan-in scans (Issue #2183),
-/// the correlated-error scan (Issue #2346), and the output-conflict conversion
-/// (Issue #2358) so they stop at the discovery deadline or on global cancellation.
+/// the correlated-error scan (Issue #2346), the topology structure scan (Issue #2369),
+/// and the output-conflict conversion (Issue #2358) so they stop at the discovery
+/// deadline or on global cancellation.
 pub(crate) fn append_structural_specs(
     modules: &mut Vec<discovery_dispatch::DiscoveryModuleSpec>,
     creature: &Arc<crate::CreatureJson>,
@@ -75,7 +76,14 @@ pub(crate) fn append_structural_specs(
         cache = shared_cache, hidden = hidden_neurons, creature = creature, topo = topo =>
         guard: hidden,
         records: cache.load_records_for_all_neurons(&creature),
-        detect: |records| topology::detect_topology_issues(&creature, &records, Some(&topo)),
+        detect: |records| {
+            let scan = topology::detect_topology_issues_with_deadline(&creature, &records, Some(&topo), &deadline);
+            // Issue #2369: report (and return) partial results rather than failing silently.
+            if let Some(reason) = scan.truncation {
+                tracing::warn!(reason = ?reason, returned = scan.candidates.len(), "Topology scan stopped early; returning partial candidates.");
+            }
+            scan.candidates
+        },
         convert: |detected| topology::topology_issues_to_coordinated_candidates(&detected, &creature, Some(&topo)),
     );
 
@@ -158,3 +166,7 @@ pub(crate) fn append_structural_specs(
 #[cfg(test)]
 #[path = "structural_specs_issue_2346_tests.rs"]
 mod structural_specs_issue_2346_tests;
+
+#[cfg(test)]
+#[path = "structural_specs_issue_2369_tests.rs"]
+mod structural_specs_issue_2369_tests;
