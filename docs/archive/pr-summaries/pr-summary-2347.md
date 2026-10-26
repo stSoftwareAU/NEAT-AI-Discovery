@@ -147,9 +147,9 @@ Every remaining hit on the head, with current line numbers:
 - `src/analysis/detection/weight_coherence.rs:512`, `:582` — the fan-in cap and candidate ceiling checks.
 - `src/analysis/detection/weight_coherence.rs:734` — the `correlation_from_maps` doc, which states as history that the removed `calculate_correlation` rebuilt both maps on every call.
 - `src/analysis/module_dispatch_specs/synapse_specs.rs:31`, `:49`, `:54`, `:167`, `:291`, `:292` — the production call into the bounded scan, the partial-scan helper's doc and signature, and the test doc and fixture for it.
-- `tests/detection/issue_437_weight_coherence_validation.rs` — calls the legacy wrapper, which keeps its signature and results.
-- `tests/detection/issue_770_weight_coherence_topology_cache.rs` — calls the legacy wrapper with and without the topology cache.
-- `tests/infrastructure/issue_776_hashset_hashmap_iteration.rs` — calls the legacy wrapper, which is kept and still produces correct results.
+- `tests/detection/issue_437_weight_coherence_validation.rs:289`, `:365` — still true because they call the legacy wrapper, which keeps its signature and results.
+- `tests/detection/issue_770_weight_coherence_topology_cache.rs:158` (and `:184`, `:185`) — still true because the comment names the legacy wrapper, which is kept and returns the same results with and without the cache.
+- `tests/infrastructure/issue_776_hashset_hashmap_iteration.rs:98` (and `:125`, `:163`) — still true because the comment names the legacy wrapper, which is kept and still produces correct results.
 - `tests/issue_2347_symmetric_cancellation_growth.rs` — module doc and calls to the legacy wrapper (the two base-compilable tests).
 - `tests/issue_2347_symmetric_cancellation_growth_test.rs` — module doc, imports and calls to the bounded scan; added by this diff.
 
