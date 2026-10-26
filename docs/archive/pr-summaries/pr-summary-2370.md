@@ -57,13 +57,17 @@ flowchart LR
 Security Fix Evidence
 
 - Regression test:
+  `tests/issue_2370_dead_neuron_allocation.rs::scan_time_grows_linearly_with_dead_count`
+  uses only the pre-existing `detect_dead_neurons` entry point, so it compiles
+  and runs on the base as well as the head. It compares the scan time of a
+  1,000-neuron and a 4,000-neuron dead chain in one process (fastest of three
+  repetitions, ratio bound 9x; linear is ~4x, a search per neuron is ~16x).
+- Executed on the base versions of `dead_neuron.rs` and `neuron_specs.rs`: the
+  test fails (N=1000 took 306 ms, N=4000 took 4.96 s, ratio 16.2). At the head it passes with a ratio near 4.
   `tests/issue_2370_dead_neuron_reachability.rs::reachability_grows_linearly_with_dead_count`
-  counts reachability steps on an N=64 and an N=256 dead chain.
-- Against the fixed code: 191 and 767 steps (4.02×, linear). With the shared memo
-  deliberately reset before every dead neuron (the old per-neuron-search work
-  profile), the same test fails: 6176 and 98432 steps (15.9×). On the base branch
-  itself the test file does not compile, because `detect_dead_neurons_observed`
-  does not exist there; the behavioural red above is the discriminating run.
+  additionally counts reachability steps via the new observer (191 and 767 steps,
+  4.02x; 15.9x with the memo reset per dead neuron) but needs the new API, so it
+  does not compile on the base.
 - The original trigger is closed with no equivalent bypass: the per-neuron DFS
   and its per-call allocations are removed, so reachability work no longer
   multiplies by the dead count; cycles are handled by the SCC pass (tested), the
