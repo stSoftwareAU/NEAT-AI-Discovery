@@ -23,6 +23,9 @@ use crossbeam_channel::Receiver;
 
 use super::staleness::caller_liveness_pair;
 
+type ActivationResponse = Receiver<Result<(f32, f32, f32, u32)>>;
+type ActivationBatchResponse = Receiver<Result<Vec<(f32, f32, f32, u32)>>>;
+
 /// Enqueue a request, failing loudly if the bounded channel cannot take it.
 fn enqueue(work_tx: &Sender<GpuWorkRequest>, request: GpuWorkRequest) {
     work_tx
@@ -96,7 +99,7 @@ fn harmful_request() -> (GpuWorkRequest, Receiver<Result<Vec<HarmfulStats>>>) {
 }
 
 /// Build a general activation evaluation request, returning its response receiver.
-fn activation_request() -> (GpuWorkRequest, Receiver<Result<(f32, f32, f32, u32)>>) {
+fn activation_request() -> (GpuWorkRequest, ActivationResponse) {
     let (response_tx, response_rx) = bounded(1);
     let (guard, liveness) = caller_liveness_pair();
     std::mem::forget(guard);
@@ -118,7 +121,7 @@ fn activation_request() -> (GpuWorkRequest, Receiver<Result<(f32, f32, f32, u32)
 }
 
 /// Build a batched activation evaluation request, returning its response receiver.
-fn activation_batch_request() -> (GpuWorkRequest, Receiver<Result<Vec<(f32, f32, f32, u32)>>>) {
+fn activation_batch_request() -> (GpuWorkRequest, ActivationBatchResponse) {
     let (response_tx, response_rx) = bounded(1);
     let (guard, liveness) = caller_liveness_pair();
     std::mem::forget(guard);

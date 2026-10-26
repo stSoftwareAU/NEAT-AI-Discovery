@@ -9,8 +9,8 @@ use neat_ai_discovery::analysis::gpu::{is_device_lost_error, is_memory_exhaustio
 /// Issue #2363: wgpu-core's "Not enough memory left." must route to device-lost recovery.
 #[test]
 fn not_enough_memory_left_is_device_lost() {
-    let err = anyhow::anyhow!("Not enough memory left.")
-        .context("Helpful batch buffer creation failed");
+    let err =
+        anyhow::anyhow!("Not enough memory left.").context("Helpful batch buffer creation failed");
     assert!(
         is_device_lost_error(&err),
         "expected device-lost classification for: {err:#}"
@@ -20,8 +20,8 @@ fn not_enough_memory_left_is_device_lost() {
 /// Issue #2363: wgpu-core's "Not enough memory left." must trigger #1083 batch halving.
 #[test]
 fn not_enough_memory_left_is_memory_exhaustion() {
-    let err = anyhow::anyhow!("Not enough memory left.")
-        .context("Helpful batch buffer creation failed");
+    let err =
+        anyhow::anyhow!("Not enough memory left.").context("Helpful batch buffer creation failed");
     assert!(
         is_memory_exhaustion_error(&err),
         "expected memory-exhaustion classification for: {err:#}"
