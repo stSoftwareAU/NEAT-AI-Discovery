@@ -15,9 +15,11 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use super::executor::{EvaluatorFactory, RequestEvaluator};
-use super::staleness::{CallerGuard, caller_liveness_pair};
+use super::recovery::is_device_lost_error;
+use super::staleness::{CallerGuard, CallerLiveness, caller_liveness_pair};
 use super::{GpuWorkQueue, GpuWorkRequest};
 use crate::analysis::gpu::budget::GpuTimeBudget;
+use crate::analysis::gpu::device::GPU_BUFFER_MAP_TIMEOUT_MARGIN_SECS;
 use crate::analysis::gpu::heartbeat::GpuHeartbeat;
 use crate::analysis::samples::{
     HarmfulStats, HelpfulSample, HelpfulStats, ReluOrientation, ReluStats,
@@ -29,6 +31,9 @@ use crate::observability::global_gpu_metrics;
 enum StubOutcome {
     Succeed,
     DeviceLost,
+    /// A map wait that ran out of the request's budget (Issue #2365). Carries
+    /// the crate's own wait-timeout text, which also matches device-lost.
+    BudgetCappedTimeout,
 }
 
 /// Stub evaluator that counts calls instead of touching a GPU.
@@ -76,6 +81,9 @@ impl CountingEvaluator {
         match self.outcome {
             StubOutcome::Succeed => Ok(value),
             StubOutcome::DeviceLost => Err(anyhow!("Device is lost")),
+            StubOutcome::BudgetCappedTimeout => Err(anyhow!(
+                "GPU buffer mapping timed out after 0.0s. The GPU driver may be unresponsive."
+            )),
         }
     }
 }
@@ -139,12 +147,24 @@ impl RequestEvaluator for CountingEvaluator {
 /// recovery attempt that *is* made is unmistakable in the count.
 struct CountingFactory {
     creates: AtomicUsize,
+    /// When set, each `create` busy-waits until this instant before failing,
+    /// modelling a re-initialisation that takes real time (Issue #2365).
+    spin_until: Option<Instant>,
 }
 
 impl CountingFactory {
     fn new() -> Self {
         Self {
             creates: AtomicUsize::new(0),
+            spin_until: None,
+        }
+    }
+
+    /// A factory whose every `create` takes until `deadline` to fail.
+    fn spinning_until(deadline: Instant) -> Self {
+        Self {
+            spin_until: Some(deadline),
+            ..Self::new()
         }
     }
 
@@ -156,6 +176,11 @@ impl CountingFactory {
 impl EvaluatorFactory<CountingEvaluator> for CountingFactory {
     fn create(&self, _batch_size_override: Option<usize>) -> Result<CountingEvaluator> {
         self.creates.fetch_add(1, Ordering::Relaxed);
+        if let Some(deadline) = self.spin_until {
+            while Instant::now() < deadline {
+                std::thread::yield_now();
+            }
+        }
         Err(anyhow!("stub factory never recovers"))
     }
 }
@@ -359,4 +384,253 @@ fn expired_budget_request_fails_loudly_without_analysis() {
         err.to_string().contains("budget expired"),
         "error should name the expired budget, got: {err}"
     );
+}
+
+/// A budget with just under one second left from `start`: live at dequeue,
+/// exhausted for budget-capped waits (Issue #2365).
+fn nearly_exhausted_budget(start: Instant) -> GpuTimeBudget {
+    GpuTimeBudget::from_caller_timeout_at(
+        start,
+        Duration::from_secs(GPU_BUFFER_MAP_TIMEOUT_MARGIN_SECS) + Duration::from_secs(1),
+    )
+}
+
+/// A non-helpful request, the guard that keeps its caller live, and a reader
+/// for the error the caller eventually receives on its typed channel.
+struct Probe {
+    label: &'static str,
+    request: GpuWorkRequest,
+    _guard: CallerGuard,
+    take_error: Box<dyn Fn() -> Option<anyhow::Error>>,
+}
+
+/// Build a probe for one request variant. `build` receives the response sender,
+/// budget and liveness handle, so each variant keeps its own typed channel.
+fn probe<T: 'static>(
+    label: &'static str,
+    budget: GpuTimeBudget,
+    build: impl FnOnce(Sender<Result<T>>, GpuTimeBudget, CallerLiveness) -> GpuWorkRequest,
+) -> Probe {
+    let (response_tx, response_rx) = bounded(1);
+    let (guard, liveness) = caller_liveness_pair();
+    Probe {
+        label,
+        request: build(response_tx, budget, liveness),
+        _guard: guard,
+        take_error: Box::new(move || response_rx.try_recv().ok().and_then(Result::err)),
+    }
+}
+
+/// Issue #2365: a map-wait timeout caused by the request's own budget running
+/// out is answered as a budget error and never routed to device recovery.
+#[test]
+#[serial(gpu_stale_skip)]
+fn budget_capped_map_timeout_is_not_device_loss() {
+    let (work_tx, work_rx) = bounded::<GpuWorkRequest>(2);
+
+    let submitted = helpful_request_with_budget(nearly_exhausted_budget(Instant::now()));
+    enqueue(&work_tx, submitted.request);
+    enqueue(&work_tx, GpuWorkRequest::Shutdown);
+
+    let evaluator = CountingEvaluator::new(StubOutcome::BudgetCappedTimeout);
+    let calls = evaluator.counter();
+    let factory = CountingFactory::new();
+    GpuWorkQueue::run_work_loop(evaluator, work_rx, &factory, &GpuHeartbeat::new());
+
+    assert_eq!(
+        calls.load(Ordering::Relaxed),
+        1,
+        "the live request is evaluated once"
+    );
+    assert_eq!(
+        factory.create_count(),
+        0,
+        "a budget-exhausted wait timeout must not re-initialise the device"
+    );
+    let err = submitted
+        .response_rx
+        .try_recv()
+        .expect("caller must receive a response, not silence")
+        .expect_err("the budget-capped timeout must surface as an error");
+    assert!(
+        err.to_string().contains("budget"),
+        "error should name the budget, got: {err}"
+    );
+    assert!(
+        !is_device_lost_error(&err),
+        "budget error must not match device-lost patterns, got: {err}"
+    );
+}
+
+/// Issue #2365 control: with no caller budget the same timeout is a genuine
+/// wedge and still runs the full device-recovery budget.
+#[test]
+#[serial(gpu_stale_skip)]
+fn unbounded_map_timeout_still_recovers_as_wedge() {
+    let (work_tx, work_rx) = bounded::<GpuWorkRequest>(2);
+
+    let submitted = helpful_request();
+    enqueue(&work_tx, submitted.request);
+    enqueue(&work_tx, GpuWorkRequest::Shutdown);
+
+    let evaluator = CountingEvaluator::new(StubOutcome::BudgetCappedTimeout);
+    let factory = CountingFactory::new();
+    GpuWorkQueue::run_work_loop(evaluator, work_rx, &factory, &GpuHeartbeat::new());
+
+    assert_eq!(
+        factory.create_count(),
+        crate::config::gpu_retry_limit() as usize,
+        "an unbounded wait timeout is a wedge and must still be recovered"
+    );
+}
+
+/// Issue #2365 control: a timeout with plenty of budget left is not a budget
+/// exhaustion, so it still runs the full device-recovery budget.
+#[test]
+#[serial(gpu_stale_skip)]
+fn bounded_budget_with_time_left_map_timeout_still_recovers() {
+    let (work_tx, work_rx) = bounded::<GpuWorkRequest>(2);
+
+    let submitted =
+        helpful_request_with_budget(GpuTimeBudget::from_caller_timeout(Duration::from_secs(300)));
+    enqueue(&work_tx, submitted.request);
+    enqueue(&work_tx, GpuWorkRequest::Shutdown);
+
+    let evaluator = CountingEvaluator::new(StubOutcome::BudgetCappedTimeout);
+    let factory = CountingFactory::new();
+    GpuWorkQueue::run_work_loop(evaluator, work_rx, &factory, &GpuHeartbeat::new());
+
+    assert_eq!(
+        factory.create_count(),
+        crate::config::gpu_retry_limit() as usize,
+        "a wait timeout with budget left is a wedge and must still be recovered"
+    );
+}
+
+/// Issue #2365: once the budget expires between recovery attempts, the retry
+/// loop stops with a budget error instead of re-initialising again.
+#[test]
+#[serial(gpu_stale_skip)]
+fn recovery_stops_when_budget_expires_between_attempts() {
+    let (work_tx, work_rx) = bounded::<GpuWorkRequest>(2);
+
+    // The ~1 s wait below is the real clock: the budget is Instant-based and
+    // the factory spins on it, so this test pays that cost.
+    // SIMPLE-ON-PURPOSE: a real one-second wait per run; upgrade when a budget
+    // clock seam exists so the deadline can be advanced without sleeping.
+    let start = Instant::now();
+    let submitted = helpful_request_with_budget(nearly_exhausted_budget(start));
+    enqueue(&work_tx, submitted.request);
+    enqueue(&work_tx, GpuWorkRequest::Shutdown);
+
+    let evaluator = CountingEvaluator::new(StubOutcome::DeviceLost);
+    let factory = CountingFactory::spinning_until(start + Duration::from_secs(1));
+    GpuWorkQueue::run_work_loop(evaluator, work_rx, &factory, &GpuHeartbeat::new());
+
+    assert_eq!(
+        factory.create_count(),
+        1,
+        "recovery must stop after the attempt that ran past the budget"
+    );
+    let err = submitted
+        .response_rx
+        .try_recv()
+        .expect("the caller must be told recovery was abandoned")
+        .expect_err("abandoned recovery must surface as an error");
+    assert!(
+        err.to_string().contains("budget"),
+        "error should name the budget, got: {err}"
+    );
+    assert!(
+        !is_device_lost_error(&err),
+        "the abandonment error must not match device-lost patterns, got: {err}"
+    );
+}
+
+/// Issue #2365: the budget-capped timeout is answered as a budget error in
+/// every `execute_request` arm, not just the helpful-batch one.
+#[test]
+#[serial(gpu_stale_skip)]
+fn budget_capped_timeout_reclassified_in_every_arm() {
+    let budget = nearly_exhausted_budget(Instant::now());
+    let probes = vec![
+        probe("harmful_batch", budget, |response_tx, budget, liveness| {
+            GpuWorkRequest::HarmfulBatch {
+                samples_with_weights: vec![],
+                response_tx,
+                budget,
+                liveness,
+            }
+        }),
+        probe("relu_eval", budget, |response_tx, budget, liveness| {
+            GpuWorkRequest::ReluEval {
+                samples: vec![],
+                threshold: 0.0,
+                response_tx,
+                budget,
+                liveness,
+            }
+        }),
+        probe(
+            "activation_eval",
+            budget,
+            |response_tx, budget, liveness| GpuWorkRequest::ActivationEval {
+                samples: vec![],
+                activation_type: 0,
+                orientation: 1.0,
+                scale: 1.0,
+                response_tx,
+                budget,
+                liveness,
+            },
+        ),
+        probe(
+            "activation_batch_eval",
+            budget,
+            |response_tx, budget, liveness| GpuWorkRequest::ActivationBatchEval {
+                samples: vec![],
+                activation_configs: vec![],
+                response_tx,
+                budget,
+                liveness,
+            },
+        ),
+    ];
+
+    for probe in probes {
+        let (work_tx, work_rx) = bounded::<GpuWorkRequest>(2);
+        enqueue(&work_tx, probe.request);
+        enqueue(&work_tx, GpuWorkRequest::Shutdown);
+
+        let evaluator = CountingEvaluator::new(StubOutcome::BudgetCappedTimeout);
+        let calls = evaluator.counter();
+        let factory = CountingFactory::new();
+        GpuWorkQueue::run_work_loop(evaluator, work_rx, &factory, &GpuHeartbeat::new());
+
+        assert_eq!(
+            calls.load(Ordering::Relaxed),
+            1,
+            "{}: the live request is evaluated once",
+            probe.label
+        );
+        assert_eq!(
+            factory.create_count(),
+            0,
+            "{}: a budget-exhausted wait timeout must not re-initialise the device",
+            probe.label
+        );
+        let err = (probe.take_error)().unwrap_or_else(|| {
+            panic!("{}: caller must receive an error, not silence", probe.label)
+        });
+        assert!(
+            err.to_string().contains("budget"),
+            "{}: error should name the budget, got: {err}",
+            probe.label
+        );
+        assert!(
+            !is_device_lost_error(&err),
+            "{}: budget error must not match device-lost patterns, got: {err}",
+            probe.label
+        );
+    }
 }

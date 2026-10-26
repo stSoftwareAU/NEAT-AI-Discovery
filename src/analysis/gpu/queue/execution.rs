@@ -15,8 +15,13 @@
 //! A dequeued request whose caller has already gone (dropped receiver) or whose
 //! own time budget has expired is skipped before the analyser is touched, and
 //! the device-lost retry loop aborts as soon as the caller disappears — no
-//! re-initialisation, no back-off sleeps for work nobody will collect. See
-//! [`super::staleness`].
+//! re-initialisation, no back-off sleeps for work nobody will collect. The same
+//! loop also stops recovery once the request's time budget expires (Issue
+//! #2365): the caller is answered with a budget error and the device is not
+//! re-initialised again. A map wait or poll that times out because the budget
+//! ran out is likewise answered as a budget error rather than routed to
+//! recovery, because its "timed out after" text also matches the device-lost
+//! patterns. See [`super::staleness`].
 
 #![allow(clippy::cast_possible_truncation)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use anyhow::Result;
@@ -27,11 +32,12 @@ use std::time::{Duration, Instant};
 use super::executor::{EvaluatorFactory, GpuAnalyzerFactory, RequestEvaluator};
 use super::recovery::{
     DEFAULT_BACKOFF_INITIAL_MS, DEFAULT_BACKOFF_MAX_MS, MINIMUM_GPU_BATCH_SIZE, backoff_delay_ms,
-    get_gpu_retry_limit, is_device_lost_error, is_memory_exhaustion_error,
+    get_gpu_retry_limit, is_device_lost_error, is_memory_exhaustion_error, is_wait_timeout_error,
 };
-use super::staleness::{StaleReason, has_live_receiver, stale_reason};
+use super::staleness::{StaleReason, stale_reason};
 use super::{GpuWorkQueue, GpuWorkRequest};
 use crate::analysis::gpu::analyzer::{GpuAnalyzer, GpuEvaluator};
+use crate::analysis::gpu::budget::GpuTimeBudget;
 use crate::analysis::gpu::heartbeat::{
     GpuHeartbeat, STEP_RECOVERY_ATTEMPT, STEP_REQUEST_COMPLETED, STEP_REQUEST_DEQUEUED,
     global_gpu_heartbeat,
@@ -58,6 +64,30 @@ fn request_label(request: &GpuWorkRequest) -> &'static str {
         GpuWorkRequest::ActivationEval { .. } => "activation_eval",
         GpuWorkRequest::ActivationBatchEval { .. } => "activation_batch_eval",
         GpuWorkRequest::Shutdown => "shutdown",
+    }
+}
+
+/// Answer a budget-capped wait timeout as a budget error, not a device loss
+/// (Issue #2365).
+///
+/// A map wait or poll capped by the request's budget that runs out reports the
+/// crate's own "timed out after" text, which also matches `is_device_lost_error`.
+/// Left alone it would re-initialise a healthy device for a request that simply
+/// has no time left. Only the budget-exhausted case is reclassified; an
+/// unbounded budget keeps the genuine wedge-recovery path.
+fn reclassify_budget_timeout<T>(result: Result<T>, budget: &GpuTimeBudget) -> Result<T> {
+    match result {
+        Err(e) if is_wait_timeout_error(&e) && budget.is_exhausted_for_waits() => {
+            tracing::warn!(
+                error = %e,
+                "GPU wait ran out of the request's time budget — abandoning without device recovery"
+            );
+            Err(anyhow::anyhow!(
+                "GPU time budget exhausted during evaluation — the request ran out of its time \
+                 budget while waiting on the GPU, so it is abandoned without device recovery."
+            ))
+        }
+        other => other,
     }
 }
 
@@ -88,6 +118,7 @@ fn execute_request<E: RequestEvaluator>(
             let samples_refs: Vec<&[HelpfulSample]> =
                 samples.iter().map(|s| s.as_slice()).collect();
             let result = analyzer.evaluate_helpful_batch(&samples_refs, *budget);
+            let result = reclassify_budget_timeout(result, budget);
 
             if let Some(start) = start {
                 let metrics = global_gpu_metrics();
@@ -123,6 +154,7 @@ fn execute_request<E: RequestEvaluator>(
                 .map(|(samples, weight)| (samples.as_slice(), *weight))
                 .collect();
             let result = analyzer.evaluate_harmful_batch(&batch_refs, *budget);
+            let result = reclassify_budget_timeout(result, budget);
 
             if let Some(start) = start {
                 let metrics = global_gpu_metrics();
@@ -155,6 +187,7 @@ fn execute_request<E: RequestEvaluator>(
             };
 
             let result = analyzer.evaluate_relu(samples, *threshold, *budget);
+            let result = reclassify_budget_timeout(result, budget);
 
             if let Some(start) = start {
                 let metrics = global_gpu_metrics();
@@ -195,6 +228,7 @@ fn execute_request<E: RequestEvaluator>(
                 *scale,
                 *budget,
             );
+            let result = reclassify_budget_timeout(result, budget);
 
             if let Some(start) = start {
                 let metrics = global_gpu_metrics();
@@ -229,6 +263,7 @@ fn execute_request<E: RequestEvaluator>(
 
             let result =
                 analyzer.evaluate_activations_batched(samples, activation_configs, *budget);
+            let result = reclassify_budget_timeout(result, budget);
 
             if let Some(start) = start {
                 let metrics = global_gpu_metrics();
@@ -432,16 +467,35 @@ impl GpuWorkQueue {
                         // Issue #1929: re-check before every attempt. Recovery
                         // costs a device re-initialisation plus a back-off
                         // sleep; none of it is worth spending once the caller
-                        // has gone.
-                        if !has_live_receiver(&request) {
-                            global_gpu_metrics().record_stale_skip();
-                            tracing::debug!(
-                                request_type = label,
-                                attempt = attempt,
-                                "GPU recovery abandoned — caller dropped its receiver"
-                            );
-                            abandoned = true;
-                            break;
+                        // has gone, or once the request's budget has run out
+                        // (Issue #2365).
+                        match stale_reason(&request) {
+                            Some(StaleReason::ReceiverGone) => {
+                                global_gpu_metrics().record_stale_skip();
+                                tracing::debug!(
+                                    request_type = label,
+                                    attempt = attempt,
+                                    "GPU recovery abandoned — caller dropped its receiver"
+                                );
+                                abandoned = true;
+                                break;
+                            }
+                            Some(StaleReason::BudgetExpired) => {
+                                global_gpu_metrics().record_stale_skip();
+                                tracing::warn!(
+                                    request_type = label,
+                                    attempt = attempt,
+                                    "GPU recovery abandoned — request budget expired"
+                                );
+                                send_error_to_request(
+                                    &request,
+                                    "GPU time budget exhausted during device recovery — \
+                                     the request is abandoned without further re-initialisation.",
+                                );
+                                abandoned = true;
+                                break;
+                            }
+                            None => {}
                         }
 
                         let delay_ms = backoff_delay_ms(
@@ -612,11 +666,85 @@ impl GpuEvaluator for GpuWorkQueue {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::analysis::gpu::budget::GpuTimeBudget;
+    use crate::analysis::gpu::device::GPU_BUFFER_MAP_TIMEOUT_MARGIN_SECS;
     use crate::analysis::samples::{HarmfulStats, HelpfulStats};
     use crossbeam_channel::bounded;
 
     use super::super::staleness::caller_liveness_pair;
+
+    /// A budget with just under one second left: live at dequeue, exhausted
+    /// for budget-capped waits (Issue #2365).
+    fn nearly_exhausted_budget() -> GpuTimeBudget {
+        GpuTimeBudget::from_caller_timeout_at(
+            Instant::now(),
+            Duration::from_secs(GPU_BUFFER_MAP_TIMEOUT_MARGIN_SECS) + Duration::from_secs(1),
+        )
+    }
+
+    /// Issue #2365: a budget-capped wait timeout with the budget spent is
+    /// answered as a budget error, and the replacement text does not match the
+    /// device-lost or memory-exhaustion patterns.
+    #[test]
+    fn reclassify_turns_exhausted_wait_timeout_into_budget_error() {
+        let timed_out: Result<()> = Err(anyhow::anyhow!(
+            "GPU buffer mapping timed out after 0.0s. The GPU driver may be unresponsive."
+        ));
+        let err = reclassify_budget_timeout(timed_out, &nearly_exhausted_budget())
+            .expect_err("an exhausted wait timeout must stay an error");
+
+        let msg = format!("{err:#}");
+        assert!(msg.contains("budget"), "must name the budget: {msg}");
+        assert!(
+            !is_device_lost_error(&err),
+            "budget error must not route to device recovery: {msg}"
+        );
+        assert!(
+            !is_memory_exhaustion_error(&err),
+            "budget error must not route to batch-size reduction: {msg}"
+        );
+    }
+
+    /// Issue #2365: an unbounded budget never reclassifies, so a genuine wedge
+    /// still takes the device-recovery path.
+    #[test]
+    fn reclassify_leaves_unbounded_wait_timeout_for_recovery() {
+        let timed_out: Result<()> = Err(anyhow::anyhow!(
+            "GPU buffer mapping timed out after 0.0s. The GPU driver may be unresponsive."
+        ));
+        let err = reclassify_budget_timeout(timed_out, &GpuTimeBudget::unbounded())
+            .expect_err("error must pass through");
+        assert!(is_device_lost_error(&err));
+    }
+
+    /// Issue #2365: a bounded budget with time left does not reclassify.
+    #[test]
+    fn reclassify_leaves_wait_timeout_with_time_left_for_recovery() {
+        let start = Instant::now();
+        let budget = GpuTimeBudget::from_caller_timeout_at(start, Duration::from_secs(300));
+        let timed_out: Result<()> = Err(anyhow::anyhow!(
+            "GPU buffer mapping timed out after 0.0s. The GPU driver may be unresponsive."
+        ));
+        let err =
+            reclassify_budget_timeout(timed_out, &budget).expect_err("error must pass through");
+        assert!(is_device_lost_error(&err));
+    }
+
+    /// Issue #2365: genuine device loss is never reclassified, even with the
+    /// budget spent.
+    #[test]
+    fn reclassify_leaves_device_loss_alone_when_budget_spent() {
+        let lost: Result<()> = Err(anyhow::anyhow!("Device is lost"));
+        let err = reclassify_budget_timeout(lost, &nearly_exhausted_budget())
+            .expect_err("error must pass through");
+        assert_eq!(format!("{err:#}"), "Device is lost");
+    }
+
+    /// Issue #2365: successful results pass through untouched.
+    #[test]
+    fn reclassify_passes_success_through() {
+        let ok = reclassify_budget_timeout(Ok(7_u32), &nearly_exhausted_budget());
+        assert_eq!(ok.expect("success must pass through"), 7);
+    }
 
     /// Verify that the GPU thread exits cleanly when the sender is dropped
     /// without sending a `Shutdown` request (Issue #1082). The

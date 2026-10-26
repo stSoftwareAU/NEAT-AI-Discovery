@@ -81,6 +81,19 @@ pub fn is_memory_exhaustion_error(error: &anyhow::Error) -> bool {
     msg.contains("out of memory") || msg.contains("allocation failed")
 }
 
+/// Check whether an error is one of the crate's own GPU wait-timeout messages
+/// (Issue #2365).
+///
+/// The buffer-map and poll waits in `device.rs` report "… timed out after Xs.
+/// The GPU driver may be unresponsive." That text also matches
+/// [`is_device_lost_error`], so a wait that ran out of a request's time budget
+/// must be told apart from a genuine wedge before the device-lost path sees it.
+pub(crate) fn is_wait_timeout_error(error: &anyhow::Error) -> bool {
+    format!("{error:#}")
+        .to_lowercase()
+        .contains("timed out after")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -245,5 +258,35 @@ mod tests {
     fn test_is_memory_exhaustion_error_case_insensitive() {
         let err = anyhow::anyhow!("OUT OF MEMORY");
         assert!(is_memory_exhaustion_error(&err));
+    }
+
+    /// Issue #2365: the three wait-timeout messages `device.rs` produces.
+    #[test]
+    fn test_is_wait_timeout_error_matches_crate_wait_messages() {
+        let cases = [
+            "GPU device poll timed out after 3.0s (warm-up). The GPU driver may be unresponsive.",
+            "GPU buffer mapping timed out after 0.0s. The GPU driver may be unresponsive.",
+            "GPU batch buffer mapping timed out after 12.5s. The GPU driver may be unresponsive.",
+        ];
+        for msg in cases {
+            let err = anyhow::anyhow!("{msg}");
+            assert!(
+                is_wait_timeout_error(&err),
+                "Expected wait-timeout match for: {msg}"
+            );
+        }
+    }
+
+    /// Issue #2365: genuine device loss is not a wait timeout, so it keeps
+    /// routing to device recovery.
+    #[test]
+    fn test_is_wait_timeout_error_ignores_device_loss() {
+        for msg in ["Device is lost", "device lost after timeout"] {
+            let err = anyhow::anyhow!("{msg}");
+            assert!(
+                !is_wait_timeout_error(&err),
+                "Should not detect a wait timeout for: {msg}"
+            );
+        }
     }
 }

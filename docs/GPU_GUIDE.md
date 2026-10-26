@@ -361,8 +361,8 @@ liveness guard, so the GPU thread can tell — before it starts work — that no
 is left to receive the result. On dequeue the worker skips any request whose
 caller has gone (dropped silently) or whose own `GpuTimeBudget` expired while it
 queued (returned to the still-waiting caller as an error, rather than letting it
-sit out its full timeout). The device-lost retry loop re-checks liveness before
-every attempt, so an abandoned request never costs a `GpuAnalyzer`
+sit out its full timeout). The device-lost retry loop re-checks liveness and the
+budget before every attempt, so an abandoned request never costs a `GpuAnalyzer`
 re-initialisation or a back-off sleep. Skips are counted as `stale_skipped` in
 `global_gpu_metrics()` and printed by `NEAT_AI_DISCOVERY_GPU_METRICS=1`; a
 sustained rise alongside `GPU work queue full - send timed out` means the queue
@@ -382,10 +382,20 @@ flowchart LR
     S -- caller gone --> X[Drop silently<br/>count stale_skipped]
     S -- budget expired --> E[Send error to caller<br/>count stale_skipped]
     S -- no --> G[Evaluate on GPU]
-    G -- device lost --> R{Caller still live?}
+    G -- device lost --> R{Caller live and budget left?}
     R -- no --> A[Abandon recovery<br/>count stale_skipped]
     R -- yes --> T[Re-init + retry, up to the retry limit]
 ```
+
+**Budget-capped wait timeouts** (Issue #2365): a map wait or poll that times out
+because the request's budget ran out is answered as a budget error (`GPU time
+budget exhausted during evaluation …`) and does not trigger device
+re-initialisation. The crate's wait-timeout text ("… timed out after Xs. The GPU
+driver may be unresponsive.") also matches the device-lost patterns, so without
+this a healthy device would be re-initialised for a request with no time left.
+Recovery also stops once the budget expires between attempts, and the caller
+receives a budget error. A request with no caller deadline keeps the full
+recovery path, so a genuinely wedged device is still recovered.
 
 **Process-wide circuit breaker** (Issue #1930): the library used to have no
 memory that the GPU had already wedged. Each analysis called
