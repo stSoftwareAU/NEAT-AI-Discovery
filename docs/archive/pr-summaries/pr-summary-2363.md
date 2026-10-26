@@ -49,3 +49,5 @@ flowchart LR
 - `cargo test --test gpu issue_2363`: 3 passed at head; 2 failed with `recovery.rs` restored to base.
 - `cargo clippy --all-targets --all-features -- -D warnings` and `cargo fmt --all`: clean.
 - New tests: `tests/gpu/issue_2363_device_lost_classification_test.rs`, `src/analysis/gpu/queue/device_lost_flag_test.rs`, unit tests in `recovery.rs`, `execution.rs`, `executor.rs`.
+- `./quality.sh`: stops at `cargo deny` on RUSTSEC-2026-0391/-0398/-0403/-0410 for the locked `zstd-sys 2.1.0` (via `parquet`); this branch changes no dependency, so it is already on the base branch. The test stage was not reached; the targeted tests above were run instead.
+<!-- vibe-quality-gate-skipped reason="cargo deny advisories on zstd-sys already on the base branch stop quality.sh before the test stage; targeted fmt, clippy and tests passed" -->
