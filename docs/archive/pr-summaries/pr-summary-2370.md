@@ -108,4 +108,16 @@ Security Fix Evidence
 - Twin-rule search: the deadline-aware scan pattern mirrors
   `detect_symmetric_neurons_*` and `detect_co_adapted_neurons_with_deadline`; no
   shared matcher was changed.
-- Quality gate: see the note below.
+- Results on the final head: `cargo test --lib --all-features` passed (1664
+  tests); `cargo fmt --check`, `cargo clippy --all-targets --all-features -- -D warnings`
+  and `cargo doc` with `-D warnings` were clean; the targeted integration suites
+  listed above passed.
+- Not run to completion: the full `cargo test --tests --all-features` run exceeds
+  the run's time cap here (killed at 595 s), so the remaining integration suites
+  are left to CI.
+- Known pre-existing gate failure, unrelated to this change: `cargo deny check`
+  (part of `./quality.sh`) reports advisories for `zstd` 0.13.3 / `zstd-safe`
+  7.3.0 / `zstd-sys` 2.1.0 pulled in via `parquet` 59.3.0 (`zstd-safe` needs
+  >= 8.2.0). A single `cargo update -p zstd-sys` did not clear it and was
+  reverted; a dependency change belongs to `./bump-deps.sh`, not this PR.
+<!-- vibe-quality-gate-skipped reason="full ./quality.sh not completed: cargo deny fails on pre-existing zstd advisories, and the full integration test run exceeds the run time cap; CI runs the same checks" -->
