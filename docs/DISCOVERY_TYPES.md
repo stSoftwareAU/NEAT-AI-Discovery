@@ -338,6 +338,20 @@ proximity to zero (40%), and sample count (20%, plateaus at 1000 samples).
 **Output**: Emitted as `coordinatedStructuralCandidates` with `removeNeuron`
 operations.
 
+**Scan bounds (Issue #2370)**: the output-reachability of the dead hidden
+neurons is computed in one shared, memoised O(V+E) pass over the creature
+graph, not one traversal per dead neuron. The pass uses an iterative Tarjan
+strongly-connected-components decomposition and computes each component's
+reachable-output set once, so it is cycle-safe and cannot recurse without
+bound. `detect_dead_neurons_with_deadline` takes the analysis deadline and
+checks it and the global cancellation flag; when either stops the scan early it
+returns a `DeadNeuronScan` whose `truncation` is `ScanTruncation::DeadlinePassed`.
+Candidates found before the stop are returned. A stop during the dead-criteria
+pass returns no candidates, because their output reachability cannot be
+computed. The discovery spec uses the deadline variant and logs a tracing
+warning on truncation. `detect_dead_neurons` keeps its signature and runs with
+no deadline.
+
 ---
 
 ### Dormant Synapse Detection

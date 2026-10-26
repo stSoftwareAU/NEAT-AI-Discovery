@@ -59,7 +59,14 @@ pub(crate) fn append_neuron_specs(
         cache = shared_cache, hidden = hidden_neurons, creature = creature, topo = topo =>
         guard: hidden,
         records: cache.load_records_for_hidden(&hidden),
-        detect: |records| dead_neuron::detect_dead_neurons(&creature, &records, Some(&topo)),
+        detect: |records| {
+            // Issue #2370: bound the shared reachability pass by the discovery deadline.
+            let scan = dead_neuron::detect_dead_neurons_with_deadline(&creature, &records, Some(&topo), &deadline);
+            if let Some(reason) = scan.truncation {
+                tracing::warn!(reason = ?reason, returned = scan.candidates.len(), "Dead-neuron scan stopped early; returning partial candidates.");
+            }
+            scan.candidates
+        },
         convert: |detected| dead_neuron::dead_neurons_to_coordinated_candidates(&detected),
     );
 

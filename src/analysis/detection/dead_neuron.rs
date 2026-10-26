@@ -21,15 +21,28 @@
 //!
 //! Dead neurons consume GPU resources during both training and inference without contributing
 //! useful information, so removal is the primary recommendation.
+//!
+//! ## Bounded reachability (Issue #2370)
+//!
+//! Each dead neuron's connected outputs are read from one shared, memoised
+//! strongly-connected-component pass over the fan-out graph. The whole creature
+//! costs O(V + E) instead of one depth-first search (with fresh allocations) per
+//! dead neuron. The pass checks the discovery deadline and global cancellation
+//! once per step, and every stop is reported via [`DeadNeuronScan::truncation`]:
+//! a stop during the hidden-neuron scan returns no candidates, while a stop during
+//! the reachability pass keeps only the candidates whose outputs were already
+//! complete.
 
 #![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
-use std::collections::HashSet;
+use std::{collections::HashMap, time::SystemTime};
 
 use super::helpers::{
     ConfidenceFactor, build_record_map, compute_activation_stats, compute_mean_abs_activation,
     sort_candidates_by_score_gain, weighted_confidence,
 };
 
+use crate::analysis::recommendation::epistatic::ScanTruncation;
+use crate::analysis::utils::deadline_passed;
 use crate::types::DiscoverRecord;
 use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson, CreatureJson};
 
@@ -73,7 +86,30 @@ pub struct DeadNeuronCandidate {
     pub estimated_improvement: f32,
 }
 
+/// Result of a deadline- and cancellation-bounded dead-neuron scan (Issue #2370).
+#[derive(Debug, Clone)]
+pub struct DeadNeuronScan {
+    /// Candidates whose connected outputs are complete, sorted by removal
+    /// confidence (highest first).
+    pub candidates: Vec<DeadNeuronCandidate>,
+    /// `Some` when the scan stopped before finishing every dead neuron.
+    pub truncation: Option<ScanTruncation>,
+}
+
+/// A dead hidden neuron whose activation statistics are known but whose
+/// connected outputs are not yet computed (Issue #2370).
+struct DeadNeuronDraft<'a> {
+    uuid: &'a str,
+    mean_abs_activation: f32,
+    activation_std_dev: f32,
+    sample_count: usize,
+    removal_confidence: f32,
+}
+
 /// Detect dead neurons from the creature topology and recorded activations.
+///
+/// Unbounded by deadline; use [`detect_dead_neurons_with_deadline`] on the
+/// discovery hot path.
 ///
 /// # Arguments
 /// * `creature` - The creature's network topology (neurons and synapses).
@@ -89,6 +125,31 @@ pub fn detect_dead_neurons(
     neuron_records: &[(String, impl AsRef<[DiscoverRecord]>)],
     topo: Option<&CreatureTopologyCache>,
 ) -> Vec<DeadNeuronCandidate> {
+    detect_dead_neurons_with_deadline(creature, neuron_records, topo, &None).candidates
+}
+
+/// [`detect_dead_neurons`] that stops at `deadline` or on global cancellation,
+/// and reports why it stopped via [`DeadNeuronScan::truncation`] (Issue #2370).
+pub fn detect_dead_neurons_with_deadline(
+    creature: &CreatureJson,
+    neuron_records: &[(String, impl AsRef<[DiscoverRecord]>)],
+    topo: Option<&CreatureTopologyCache>,
+    deadline: &Option<SystemTime>,
+) -> DeadNeuronScan {
+    detect_dead_neurons_observed(creature, neuron_records, topo, deadline, || {})
+}
+
+/// [`detect_dead_neurons_with_deadline`] with `on_reachability_step` called once
+/// per edge examined and once per element merged by the shared reachability
+/// pass, so a test can assert on how the work grows without timing it
+/// (Issue #2370).
+pub fn detect_dead_neurons_observed(
+    creature: &CreatureJson,
+    neuron_records: &[(String, impl AsRef<[DiscoverRecord]>)],
+    topo: Option<&CreatureTopologyCache>,
+    deadline: &Option<SystemTime>,
+    mut on_reachability_step: impl FnMut(),
+) -> DeadNeuronScan {
     // Use pre-computed cache or build locally.
     let local_cache;
     let topo = match topo {
@@ -102,9 +163,19 @@ pub fn detect_dead_neurons(
     // Build records lookup
     let records_map = build_record_map(neuron_records);
 
-    let mut candidates = Vec::with_capacity(topo.hidden_uuids.len());
+    // Phase 1: classify hidden neurons by their activation statistics.
+    let mut dead: Vec<DeadNeuronDraft<'_>> = Vec::with_capacity(topo.hidden_uuids.len());
 
     for uuid in &topo.hidden_uuids {
+        // Issue #2370: checked before each hidden neuron. Outputs cannot be
+        // computed for a partial hidden scan, so stop with no candidates.
+        if deadline_passed(deadline) {
+            return DeadNeuronScan {
+                candidates: Vec::new(),
+                truncation: Some(ScanTruncation::DeadlinePassed),
+            };
+        }
+
         let Some(records) = records_map.get(uuid.as_str()) else {
             continue;
         };
@@ -142,23 +213,42 @@ pub fn detect_dead_neurons(
             continue;
         }
 
-        // Find output neurons reachable from this neuron (BFS)
-        let connected_outputs = find_connected_outputs_cached(uuid, topo);
-
         // Compute removal confidence based on how dead the neuron is
-        let confidence = compute_removal_confidence(mean_abs_activation, activation_std_dev, n);
+        let removal_confidence =
+            compute_removal_confidence(mean_abs_activation, activation_std_dev, n);
 
-        // Estimated improvement: removing a dead neuron saves computation.
-        // The improvement is small but positive (reduced overhead).
-        let estimated_improvement = confidence * 0.001;
-
-        candidates.push(DeadNeuronCandidate {
-            neuron_uuid: uuid.clone(),
+        dead.push(DeadNeuronDraft {
+            uuid: uuid.as_str(),
             mean_abs_activation,
             activation_std_dev,
             sample_count: records.len(),
-            connected_outputs,
-            removal_confidence: confidence,
+            removal_confidence,
+        });
+    }
+
+    // Phase 2: connected outputs for each dead neuron, from one shared pass
+    // (Issue #2370). Completed candidates are kept if the pass stops early.
+    let mut reachability = OutputReachability::new(topo);
+    let mut candidates = Vec::with_capacity(dead.len());
+    let mut truncation = None;
+
+    for draft in dead {
+        if !reachability.explore(draft.uuid, deadline, &mut on_reachability_step) {
+            truncation = Some(ScanTruncation::DeadlinePassed);
+            break;
+        }
+
+        // Estimated improvement: removing a dead neuron saves computation.
+        // The improvement is small but positive (reduced overhead).
+        let estimated_improvement = draft.removal_confidence * 0.001;
+
+        candidates.push(DeadNeuronCandidate {
+            neuron_uuid: draft.uuid.to_string(),
+            mean_abs_activation: draft.mean_abs_activation,
+            activation_std_dev: draft.activation_std_dev,
+            sample_count: draft.sample_count,
+            connected_outputs: reachability.connected_outputs(draft.uuid),
+            removal_confidence: draft.removal_confidence,
             estimated_improvement,
         });
     }
@@ -166,38 +256,215 @@ pub fn detect_dead_neurons(
     // Sort by removal confidence (highest first)
     candidates.sort_by(|a, b| b.removal_confidence.total_cmp(&a.removal_confidence));
 
-    candidates
+    DeadNeuronScan {
+        candidates,
+        truncation,
+    }
 }
 
-/// Find output neurons reachable from a given neuron via BFS using the topology cache.
+/// Sentinel for "not yet visited" (`index`) and "not yet in a closed component"
+/// (`comp`) in [`OutputReachability`] (Issue #2370).
+const UNSET: usize = usize::MAX;
+
+/// One explicit-stack frame of the iterative Tarjan walk (Issue #2370).
+struct TarjanFrame<'a> {
+    node: usize,
+    edges: &'a [String],
+    next_edge: usize,
+}
+
+/// Memoised output reachability over the fan-out graph (Issue #2370).
 ///
-/// Uses `HashSet<&str>` keyed on borrowed slices from the topology cache to
-/// avoid allocating a new `String` at every BFS step (Issue #755).
-fn find_connected_outputs_cached(start_uuid: &str, topo: &CreatureTopologyCache) -> Vec<String> {
-    let neuron_count = topo.hidden_uuids.len() + topo.output_uuids.len();
-    let mut visited: HashSet<&str> = HashSet::with_capacity(neuron_count);
-    let mut queue: Vec<&str> = Vec::with_capacity(neuron_count);
-    queue.push(start_uuid);
-    let mut connected: Vec<String> = Vec::new();
+/// Runs an iterative Tarjan strongly-connected-components pass, lazily from each
+/// dead neuron and sharing its memo across them. When a component closes, its
+/// output set is computed once from its members' direct edges and from the
+/// already-closed components they reach. A node's connected outputs are the
+/// output set of its component: outputs reachable via at least one edge, through
+/// any node type, with cycles allowed.
+///
+/// The Tarjan walk uses an explicit call stack, so a corrupt, cyclic or very deep
+/// creature cannot overflow the thread stack.
+struct OutputReachability<'a> {
+    topo: &'a CreatureTopologyCache,
+    /// Lazily interned node names mapped to dense ids.
+    ids: HashMap<&'a str, usize>,
+    names: Vec<&'a str>,
+    /// Tarjan discovery index per node (`UNSET` = not yet visited).
+    index: Vec<usize>,
+    /// Tarjan low-link per node.
+    low: Vec<usize>,
+    /// Closed component per node (`UNSET` = not yet in a closed component).
+    comp: Vec<usize>,
+    /// Tarjan node stack.
+    stack: Vec<usize>,
+    /// Next Tarjan discovery index.
+    counter: usize,
+    /// Output-node ids reachable from each closed component (sorted, deduplicated).
+    comp_sets: Vec<Vec<usize>>,
+}
 
-    while let Some(current) = queue.pop() {
-        if !visited.insert(current) {
-            continue;
-        }
-
-        for next in topo.fan_out_for(current) {
-            if topo.output_uuids.contains(next.as_str()) {
-                connected.push(next.clone());
-            }
-            if !visited.contains(next.as_str()) {
-                queue.push(next.as_str());
-            }
+impl<'a> OutputReachability<'a> {
+    fn new(topo: &'a CreatureTopologyCache) -> Self {
+        Self {
+            topo,
+            ids: HashMap::new(),
+            names: Vec::new(),
+            index: Vec::new(),
+            low: Vec::new(),
+            comp: Vec::new(),
+            stack: Vec::new(),
+            counter: 0,
+            comp_sets: Vec::new(),
         }
     }
 
-    connected.sort();
-    connected.dedup();
-    connected
+    /// Return the dense id for `name`, interning it on first sight.
+    fn intern(&mut self, name: &'a str) -> usize {
+        if let Some(&id) = self.ids.get(name) {
+            return id;
+        }
+        let id = self.names.len();
+        self.ids.insert(name, id);
+        self.names.push(name);
+        self.index.push(UNSET);
+        self.low.push(UNSET);
+        self.comp.push(UNSET);
+        id
+    }
+
+    /// Start a Tarjan visit of node `id`.
+    fn open(&mut self, id: usize) {
+        self.index[id] = self.counter;
+        self.low[id] = self.counter;
+        self.counter += 1;
+        self.stack.push(id);
+    }
+
+    /// Make the outputs reachable from `root` available.
+    ///
+    /// Returns `false` if the deadline passed or cancellation was requested
+    /// before the walk finished; the caller must then stop using this memo.
+    /// `deadline_passed` is checked once per main-loop iteration.
+    fn explore(
+        &mut self,
+        root: &'a str,
+        deadline: &Option<SystemTime>,
+        on_step: &mut impl FnMut(),
+    ) -> bool {
+        let root_id = self.intern(root);
+        if self.comp[root_id] != UNSET {
+            return true;
+        }
+
+        let topo = self.topo;
+        let mut call: Vec<TarjanFrame<'a>> = Vec::new();
+        self.open(root_id);
+        call.push(TarjanFrame {
+            node: root_id,
+            edges: topo.fan_out_for(root),
+            next_edge: 0,
+        });
+
+        while let Some(top) = call.last_mut() {
+            if deadline_passed(deadline) {
+                return false;
+            }
+
+            let v = top.node;
+            let edges = top.edges;
+            if top.next_edge < edges.len() {
+                let target: &'a str = edges[top.next_edge].as_str();
+                top.next_edge += 1;
+                on_step();
+
+                let w = self.intern(target);
+                if self.index[w] == UNSET {
+                    self.open(w);
+                    call.push(TarjanFrame {
+                        node: w,
+                        edges: topo.fan_out_for(target),
+                        next_edge: 0,
+                    });
+                } else if self.comp[w] == UNSET {
+                    // `w` is visited and still on the Tarjan stack.
+                    self.low[v] = self.low[v].min(self.index[w]);
+                }
+                // Otherwise `w` is in a closed component: nothing to propagate.
+            } else {
+                call.pop();
+                if self.low[v] == self.index[v] {
+                    self.close(v, on_step);
+                }
+                if let Some(parent) = call.last() {
+                    let p = parent.node;
+                    self.low[p] = self.low[p].min(self.low[v]);
+                }
+            }
+        }
+
+        true
+    }
+
+    /// Close the component whose root is `v`, computing its output set once.
+    fn close(&mut self, v: usize, on_step: &mut impl FnMut()) {
+        let c = self.comp_sets.len();
+
+        // Assign every member before computing the set, so an edge inside the
+        // component is recognised by `comp == c` and skipped.
+        let mut members: Vec<usize> = Vec::new();
+        while let Some(x) = self.stack.pop() {
+            self.comp[x] = c;
+            members.push(x);
+            if x == v {
+                break;
+            }
+        }
+
+        let topo = self.topo;
+        let mut set: Vec<usize> = Vec::new();
+        for &m in &members {
+            for target in topo.fan_out_for(self.names[m]) {
+                on_step();
+                let t = self.ids[target.as_str()];
+                if topo.output_uuids.contains(target.as_str()) {
+                    set.push(t);
+                }
+                let tc = self.comp[t];
+                if tc != UNSET && tc != c {
+                    // Already-closed component: its set already covers everything
+                    // reachable from it.
+                    for &o in &self.comp_sets[tc] {
+                        on_step();
+                        set.push(o);
+                    }
+                }
+            }
+        }
+
+        set.sort_unstable();
+        set.dedup();
+        self.comp_sets.push(set);
+    }
+
+    /// Output names reachable from `root`, sorted ascending.
+    ///
+    /// Only meaningful after `explore(root)` has returned `true`.
+    fn connected_outputs(&self, root: &str) -> Vec<String> {
+        let Some(&id) = self.ids.get(root) else {
+            return Vec::new();
+        };
+        let c = self.comp[id];
+        if c == UNSET {
+            return Vec::new();
+        }
+        let mut outputs: Vec<String> = self.comp_sets[c]
+            .iter()
+            .map(|&o| self.names[o].to_string())
+            .collect();
+        outputs.sort_unstable();
+        outputs.dedup();
+        outputs
+    }
 }
 
 /// Compute removal confidence based on activation statistics.
@@ -267,3 +534,7 @@ pub fn dead_neurons_to_coordinated_candidates(
 
     results
 }
+
+#[cfg(test)]
+#[path = "dead_neuron_deadline_tests.rs"]
+mod deadline_tests;
