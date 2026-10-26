@@ -116,11 +116,16 @@ fn imbalance_creature() -> (CreatureJson, Vec<(String, Vec<DiscoverRecord>)>) {
     )
 }
 
+/// Sorted `(neuron, issue)` pairs. Candidates with equal estimated gain tie, and
+/// the qualified-neuron order comes from a `HashSet` with a per-instance random
+/// seed, so the raw order can differ between two scans.
 fn uuids(candidates: &[TopologyCandidate]) -> Vec<(String, String)> {
-    candidates
+    let mut pairs: Vec<(String, String)> = candidates
         .iter()
         .map(|c| (c.neuron_uuid.clone(), c.issue_type.clone()))
-        .collect()
+        .collect();
+    pairs.sort();
+    pairs
 }
 
 /// An elapsed deadline stops the scan before any work, returning no candidates
@@ -158,7 +163,11 @@ fn elapsed_deadline_up_front_returns_no_candidates_and_reports_truncation() {
 fn long_path_loop_deadline_check_keeps_partial_candidates() {
     let (creature, records) = long_path_creature(2);
     let control = detect_topology_issues(&creature, &records, None);
-    assert_eq!(control.len(), 2, "fixture must yield two long-path candidates");
+    assert_eq!(
+        control.len(),
+        2,
+        "fixture must yield two long-path candidates"
+    );
 
     // [up-front, hidden-0 check, hidden-1 check -> true]
     let _guard = DeadlineOverrideGuard::with_sequence(vec![false, false, true]);

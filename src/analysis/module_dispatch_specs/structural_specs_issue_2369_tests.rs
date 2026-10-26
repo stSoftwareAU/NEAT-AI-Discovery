@@ -77,9 +77,7 @@ fn topology_loader() -> Arc<TestRecordLoader> {
                 return Ok(Vec::new());
             }
             Ok((0..20u32)
-                .map(|i| {
-                    DiscoverRecord::new(i, neuron_uuid.to_string(), Some(0.0), 0.2, vec![0.2])
-                })
+                .map(|i| DiscoverRecord::new(i, neuron_uuid.to_string(), Some(0.0), 0.2, vec![0.2]))
                 .collect())
         },
     )
@@ -123,7 +121,8 @@ fn run_topology_spec(
 #[test]
 fn topology_spec_stops_at_elapsed_deadline() {
     let without_deadline = run_topology_spec(None);
-    let result = without_deadline.expect("the long-path neuron must be detected without a deadline");
+    let result =
+        without_deadline.expect("the long-path neuron must be detected without a deadline");
     assert!(
         result.detected_count >= 1,
         "expected at least one topology candidate, got {}",

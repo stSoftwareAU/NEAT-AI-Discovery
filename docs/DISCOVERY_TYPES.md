@@ -1244,6 +1244,15 @@ suggest structural changes that improve information flow.
 **Output**: Emitted as `coordinatedStructuralCandidates` with `addSynapse`
 operations.
 
+**Scan bounds** (Issue #2369): The analysis deadline and global cancellation
+are checked before the scan and once per hidden neuron in each detection loop
+(once per qualified neuron in the long-path loop, once per starved neuron in
+the connectivity-imbalance loop). A scan that hits the deadline returns its
+partial candidates with a `ScanTruncation::DeadlinePassed` truncation, which
+the dispatch spec logs. The nearest-unconnected-output search stops at the
+first unconnected output, so each hidden neuron costs O(its fan-out) rather
+than O(outputs).
+
 **Expected improvement**: 10–15% success rate for topology-based suggestions,
 complementing existing activation-based discovery.
 
