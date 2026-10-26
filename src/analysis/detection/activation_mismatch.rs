@@ -212,7 +212,8 @@ fn check_bounded_underutilisation(
 
     let utilisation = observed_range / theoretical;
 
-    if utilisation >= UTILISATION_THRESHOLD {
+    // Issue #2351: all-NaN or all-inf activations give a non-finite utilisation.
+    if !utilisation.is_finite() || utilisation >= UTILISATION_THRESHOLD {
         return None;
     }
 
