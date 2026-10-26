@@ -500,3 +500,20 @@ fn test_present_target_neuron_keeps_its_squash() {
     let coordinated = fanin_polarity_conflicts_to_coordinated_candidates(&candidates, &creature);
     assert_eq!(first_add_neuron_squash(&coordinated), "RELU");
 }
+
+#[test]
+fn test_duplicate_target_uuid_uses_first_neuron_squash() {
+    let (mut creature, records) = conflict_fixture(Some("RELU"));
+    let target_index = creature
+        .neurons
+        .iter()
+        .position(|n| n.uuid == "h-0")
+        .expect("target neuron exists");
+    creature
+        .neurons
+        .insert(target_index + 1, hidden("h-0", "LOGISTIC"));
+
+    let candidates = detect_fanin_polarity_conflicts(&creature, &records);
+    let coordinated = fanin_polarity_conflicts_to_coordinated_candidates(&candidates, &creature);
+    assert_eq!(first_add_neuron_squash(&coordinated), "RELU");
+}

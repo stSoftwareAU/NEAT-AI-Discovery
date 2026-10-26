@@ -4,21 +4,14 @@
 //! scan performed once per candidate, giving `O(C·N)` work for `C` candidates
 //! over `N` neurons.
 //!
-//! This test is deliberately written against only the pre-existing public API
-//! (`fanin_polarity_conflicts_to_coordinated_candidates`) so that it compiles
-//! and runs against both the unfixed base code and the fixed code: it times
-//! the conversion at `N` hidden neurons/candidates vs `4N`, and asserts that
-//! wall-clock time grows no faster than roughly linearly (`ratio < 8.0`,
-//! comfortably below the unfixed quadratic blow-up of ~16x and above the
-//! fixed linear ~4x). Hidden neurons are placed early in creature evaluation
-//! order so the unfixed linear `find` scans roughly half the neuron list on
-//! average per candidate.
+//! The regression checks observable output sizes at N and 4N. Deterministic
+//! lookup-work counts live beside the private converter helper, while elapsed
+//! time is measured by the Criterion benchmark in `benches/`.
 
 mod common;
 
-use std::time::Instant;
-
 use common::{make_creature, neuron, output, synapse};
+use neat_ai_discovery::CoordinatedStructuralOpJson;
 use neat_ai_discovery::analysis::detection::fanin_polarity_conflict::{
     FaninPolarityConflictCandidate, fanin_polarity_conflicts_to_coordinated_candidates,
 };
@@ -67,45 +60,50 @@ fn build_candidates(count: usize) -> Vec<FaninPolarityConflictCandidate> {
         .collect()
 }
 
-/// Time `fanin_polarity_conflicts_to_coordinated_candidates` over `repeats`
-/// runs and return the minimum duration, to minimise scheduling noise.
-fn min_duration_for(count: usize, repeats: u32) -> std::time::Duration {
+fn converted_candidate_count(count: usize) -> usize {
     let creature = build_creature_with_conflicted_hidden(count);
     let candidates = build_candidates(count);
-
-    let mut best = std::time::Duration::MAX;
-    for _ in 0..repeats {
-        let start = Instant::now();
-        let results = fanin_polarity_conflicts_to_coordinated_candidates(&candidates, &creature);
-        let elapsed = start.elapsed();
-        assert_eq!(
-            results.len(),
-            count,
-            "every conflicted hidden neuron should convert to a coordinated candidate"
-        );
-        best = best.min(elapsed);
-    }
-    best
+    fanin_polarity_conflicts_to_coordinated_candidates(&candidates, &creature).len()
 }
 
-/// Guards against CWE-407 (algorithmic complexity): quadrupling the number of
-/// candidates (and hidden neurons) must not quadratically blow up the
-/// wall-clock time spent converting them — growth must stay roughly linear
-/// once the per-candidate squash lookup is `O(1)`.
 #[test]
-fn squash_lookup_work_grows_linearly_with_candidates() {
-    const N: usize = 2000;
-    const BIG_N: usize = N * 4;
-    const REPEATS: u32 = 5;
+fn squash_lookup_conversion_preserves_output_at_n_and_4n() {
+    const N: usize = 2_000;
+    assert_eq!(converted_candidate_count(N), N);
+    assert_eq!(converted_candidate_count(N * 4), N * 4);
+}
 
-    let small = min_duration_for(N, REPEATS);
-    let big = min_duration_for(BIG_N, REPEATS);
+#[test]
+fn conversion_keeps_gain_order_and_inserts_each_neuron_before_its_target() {
+    let creature = build_creature_with_conflicted_hidden(2);
+    let mut candidates = build_candidates(2);
+    candidates[0].estimated_improvement = 0.01;
+    candidates[1].estimated_improvement = 0.02;
 
-    let ratio = big.as_secs_f64() / small.as_secs_f64().max(1e-9);
+    let converted = fanin_polarity_conflicts_to_coordinated_candidates(&candidates, &creature);
+    let inserted_targets: Vec<_> = converted
+        .iter()
+        .map(|candidate| {
+            candidate
+                .operations
+                .iter()
+                .find_map(|operation| match operation {
+                    CoordinatedStructuralOpJson::AddNeuron {
+                        neuron_uuid,
+                        insert_before_neuron_uuid,
+                        ..
+                    } => Some((neuron_uuid.as_str(), insert_before_neuron_uuid.as_deref())),
+                    _ => None,
+                })
+                .expect("each candidate adds a split neuron")
+        })
+        .collect();
 
-    assert!(
-        ratio < 8.0,
-        "conversion time must grow no faster than roughly linearly in the candidate count, \
-         got {small:?} at N={N} and {big:?} at 4N={BIG_N} (ratio {ratio:.2})",
+    assert_eq!(
+        inserted_targets,
+        [
+            ("fanin-split-h1", Some("h1")),
+            ("fanin-split-h0", Some("h0"))
+        ]
     );
 }

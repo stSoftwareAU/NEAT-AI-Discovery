@@ -216,6 +216,20 @@ pub fn fanin_polarity_conflicts_to_coordinated_candidates_with_deadline(
     creature: &CreatureJson,
     deadline: &Option<std::time::SystemTime>,
 ) -> Vec<CoordinatedStructuralCandidateJson> {
+    fanin_polarity_conflicts_to_coordinated_candidates_with_observer(
+        candidates,
+        creature,
+        deadline,
+        &mut || {},
+    )
+}
+
+fn fanin_polarity_conflicts_to_coordinated_candidates_with_observer(
+    candidates: &[FaninPolarityConflictCandidate],
+    creature: &CreatureJson,
+    deadline: &Option<std::time::SystemTime>,
+    work_observer: &mut impl FnMut(),
+) -> Vec<CoordinatedStructuralCandidateJson> {
     // Build incoming synapses lookup: target_uuid -> Vec<(from_uuid, weight)>
     let mut incoming_synapses: HashMap<&str, Vec<(&str, f32)>> = HashMap::new();
     for synapse in &creature.synapses {
@@ -231,6 +245,7 @@ pub fn fanin_polarity_conflicts_to_coordinated_candidates_with_deadline(
     // neurons share a uuid.
     let mut squash_by_uuid: HashMap<&str, &str> = HashMap::new();
     for n in &creature.neurons {
+        work_observer();
         squash_by_uuid
             .entry(n.uuid.as_str())
             .or_insert(n.squash.as_str());
@@ -272,9 +287,8 @@ pub fn fanin_polarity_conflicts_to_coordinated_candidates_with_deadline(
 
         // Determine the activation function from the original neuron (Issue #2350:
         // O(1) map lookup rather than a per-candidate linear scan of `creature.neurons`).
-        let squash = squash_by_uuid
-            .get(c.neuron_uuid.as_str())
-            .map_or_else(|| "TANH".to_string(), |s| (*s).to_string());
+        let squash = lookup_squash(&squash_by_uuid, c.neuron_uuid.as_str(), work_observer)
+            .map_or_else(|| "TANH".to_string(), str::to_string);
 
         // Generate a deterministic UUID for the new neuron
         let new_neuron_uuid = format!("fanin-split-{}", c.neuron_uuid);
@@ -338,4 +352,108 @@ pub fn fanin_polarity_conflicts_to_coordinated_candidates_with_deadline(
     });
 
     results
+}
+
+fn lookup_squash<'a>(
+    squash_by_uuid: &'a HashMap<&'a str, &'a str>,
+    neuron_uuid: &str,
+    work_observer: &mut impl FnMut(),
+) -> Option<&'a str> {
+    work_observer();
+    squash_by_uuid.get(neuron_uuid).copied()
+}
+
+#[cfg(test)]
+mod issue_2350_tests {
+    use super::*;
+
+    #[test]
+    fn squash_lookup_work_scales_linearly_at_n_and_4n() {
+        const N: usize = 128;
+
+        let measured_work = |count: usize| {
+            let mut neurons = vec![
+                crate::NeuronJson {
+                    uuid: "positive".to_string(),
+                    neuron_type: "input".to_string(),
+                    squash: "IDENTITY".to_string(),
+                    bias: 0.0,
+                },
+                crate::NeuronJson {
+                    uuid: "negative".to_string(),
+                    neuron_type: "input".to_string(),
+                    squash: "IDENTITY".to_string(),
+                    bias: 0.0,
+                },
+            ];
+            let mut synapses = Vec::with_capacity(count * 3);
+            let mut candidates = Vec::with_capacity(count);
+            for i in 0..count {
+                let uuid = format!("h{i}");
+                neurons.push(crate::NeuronJson {
+                    uuid: uuid.clone(),
+                    neuron_type: "hidden".to_string(),
+                    squash: "RELU".to_string(),
+                    bias: 0.0,
+                });
+                synapses.push(crate::SynapseJson {
+                    from_uuid: "positive".to_string(),
+                    to_uuid: uuid.clone(),
+                    weight: 2.0,
+                    synapse_type: None,
+                });
+                synapses.push(crate::SynapseJson {
+                    from_uuid: "negative".to_string(),
+                    to_uuid: uuid.clone(),
+                    weight: -2.0,
+                    synapse_type: None,
+                });
+                candidates.push(FaninPolarityConflictCandidate {
+                    neuron_uuid: uuid,
+                    positive_weight_sum: 2.0,
+                    negative_weight_sum: 2.0,
+                    positive_count: 1,
+                    negative_count: 1,
+                    conflict_score: 1.0,
+                    sample_count: 30,
+                    estimated_improvement: 0.01,
+                });
+            }
+            neurons.push(crate::NeuronJson {
+                uuid: "output".to_string(),
+                neuron_type: "output".to_string(),
+                squash: "IDENTITY".to_string(),
+                bias: 0.0,
+            });
+            for i in 0..count {
+                synapses.push(crate::SynapseJson {
+                    from_uuid: format!("h{i}"),
+                    to_uuid: "output".to_string(),
+                    weight: 1.0,
+                    synapse_type: None,
+                });
+            }
+            let creature = CreatureJson {
+                neurons,
+                synapses,
+                input: 2,
+                output: 1,
+            };
+            let mut work = 0;
+            let result = fanin_polarity_conflicts_to_coordinated_candidates_with_observer(
+                &candidates,
+                &creature,
+                &None,
+                &mut || work += 1,
+            );
+            assert_eq!(result.len(), count);
+            work
+        };
+
+        let small_work = measured_work(N);
+        let large_work = measured_work(N * 4);
+        assert_eq!(small_work, (N + 3) + N);
+        assert_eq!(large_work, (N * 4 + 3) + N * 4);
+        assert_eq!(large_work - 3, (small_work - 3) * 4);
+    }
 }
