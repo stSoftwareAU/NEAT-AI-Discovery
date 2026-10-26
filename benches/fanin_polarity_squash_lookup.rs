@@ -2,11 +2,12 @@
 
 #![allow(clippy::cast_precision_loss)]
 
-use criterion::{BenchmarkId, Criterion, black_box, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use neat_ai_discovery::analysis::detection::fanin_polarity_conflict::{
     FaninPolarityConflictCandidate, fanin_polarity_conflicts_to_coordinated_candidates,
 };
 use neat_ai_discovery::{CreatureJson, NeuronJson, SynapseJson};
+use std::hint::black_box;
 
 fn fixture(count: usize) -> (CreatureJson, Vec<FaninPolarityConflictCandidate>) {
     let mut neurons = vec![

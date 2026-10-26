@@ -4,11 +4,19 @@
 //! scan performed once per candidate, giving `O(C·N)` work for `C` candidates
 //! over `N` neurons.
 //!
-//! The regression checks observable output sizes at N and 4N. Deterministic
-//! lookup-work counts live beside the private converter helper, while elapsed
-//! time is measured by the Criterion benchmark in `benches/`.
+//! The growth test is a ratio test, following
+//! `tests/issue_2358_output_conflict_converter_growth.rs`: it is the only check
+//! that compiles and runs against the unfixed converter, because the fix adds no
+//! observable output difference. Absolute timings vary across machines, but
+//! t(4N)/t(N) is stable: linear growth gives about 4x, quadratic about 16x. Each
+//! size is timed as the best of five runs. Deterministic lookup-work counts live
+//! beside the private converter helper (`src/analysis/detection/fanin_polarity_conflict.rs`,
+//! module `issue_2350_tests`), and the Criterion benchmark in `benches/` measures
+//! absolute cost.
 
 mod common;
+
+use std::time::{Duration, Instant};
 
 use common::{make_creature, neuron, output, synapse};
 use neat_ai_discovery::CoordinatedStructuralOpJson;
@@ -60,17 +68,46 @@ fn build_candidates(count: usize) -> Vec<FaninPolarityConflictCandidate> {
         .collect()
 }
 
-fn converted_candidate_count(count: usize) -> usize {
+fn best_of_five(count: usize) -> Duration {
     let creature = build_creature_with_conflicted_hidden(count);
     let candidates = build_candidates(count);
-    fanin_polarity_conflicts_to_coordinated_candidates(&candidates, &creature).len()
+    (0..5)
+        .map(|_| {
+            let start = Instant::now();
+            let out = fanin_polarity_conflicts_to_coordinated_candidates(&candidates, &creature);
+            let elapsed = start.elapsed();
+            std::hint::black_box(out);
+            elapsed
+        })
+        .min()
+        .expect("five runs")
 }
 
 #[test]
-fn squash_lookup_conversion_preserves_output_at_n_and_4n() {
+fn squash_lookup_work_grows_linearly_with_candidates() {
     const N: usize = 2_000;
-    assert_eq!(converted_candidate_count(N), N);
-    assert_eq!(converted_candidate_count(N * 4), N * 4);
+
+    // Correctness at both sizes so the timing assertion is not vacuous.
+    for count in [N, N * 4] {
+        let creature = build_creature_with_conflicted_hidden(count);
+        let candidates = build_candidates(count);
+        let converted = fanin_polarity_conflicts_to_coordinated_candidates(&candidates, &creature);
+        assert_eq!(
+            converted.len(),
+            count,
+            "one coordinated candidate per conflict"
+        );
+    }
+
+    let small = best_of_five(N);
+    let large = best_of_five(N * 4);
+    let ratio = large.as_secs_f64() / small.as_secs_f64().max(1e-9);
+    eprintln!("t(N)={small:?} t(4N)={large:?} ratio={ratio:.2}");
+    assert!(
+        ratio < 10.0,
+        "squash lookup should grow ~linearly: t({N})={small:?}, t({})={large:?}, ratio={ratio:.2} (linear ~4, quadratic ~16)",
+        N * 4
+    );
 }
 
 #[test]
