@@ -28,16 +28,18 @@ Backend-only change. `cargo test --test issue_2096_env_readers_outside_config` p
 - **met** — `runtime_dir_rejects_other_uid` exists, asserts `false` for `geteuid()+1`, asserts the refusal log line, and passes without root. — evidence: `src/analysis/utils/platform.rs::runtime_dir_rejects_other_uid`; 0700 directory refusal and same-owner positive control passed — reviewer: met
 - **met** — A serial test asserts that `XDG_RUNTIME_DIR` is unset after `apply_xdg_runtime_dir()` when `expected_runtime_dir(TMPDIR)` is a symlink. — evidence: `src/analysis/utils/platform.rs::xdg_runtime_dir_apply_rejects_symlink`; passed — reviewer: met
 - **met** — `tests/issue_2096_env_readers_outside_config.rs` exists, with at least one test per accessor listed in B. Each test is `#[serial_test::serial]` and restores the environment. — evidence: `tests/issue_2096_env_readers_outside_config.rs` (12 serial tests cover all 11 accessors and both noise-floor overrides); passed — reviewer: met
-- **met** — Every float probe asserts `is_finite()` for NaN, inf and -inf. Every integer probe asserts the `[floor, ceiling]` bound for 0, oversize, padded and unparsable input. — evidence: `tests/issue_2096_env_readers_outside_config.rs`; all probes passed — reviewer: met
+- **met** — Every float probe asserts `is_finite()` for NaN, inf and -inf. Every integer probe asserts the `[floor, ceiling]` bound for 0, oversize, padded and unparsable input. — evidence: `tests/issue_2096_env_readers_outside_config.rs::assert_non_finite_falls_back`, `assert_probes`; all probes passed — reviewer: met
 - **met** — Any probe that exposes a real defect is `#[ignore = "finding: …"]` with its assertion intact, and is listed in the PR body for 13d-2 to adjudicate. There are no production-code changes in this PR. — evidence: no probe exposed a defect, no probe is ignored, and the diff changes test code only — reviewer: met
-- **met** — `./quality.sh` passes. — evidence: gate run to `cargo deny check`; see Test Plan — reviewer: met
+- **partial** — `./quality.sh` passes. — evidence: gate run to `cargo deny check`; see Test Plan — reviewer: not verified (the reviewer did not run it) — reason: my status departs from the earlier "met": the gate stops at `cargo deny check` on RUSTSEC-2026-0391/0398/0403/0410, which predates this PR and is tracked in #2432; the stages after it were run individually
+- **unrequested** — `xdg_runtime_dir_rejects_preexisting_world_writable` now uses the new `EnvGuard` instead of manual save/restore — reviewer: unrequested — reason: panic-safe restore the issue's drop-guard requirement asks for; every assertion is unchanged
+- **unrequested** — extra control assertions (same-owner positive control, symlink left in place, `-1`, `99999999`, `4294967295` cases) — reviewer: unrequested — reason: they make the probes fail if the variable name or refusal rule is wrong, per the issue's "every probe asserts a concrete value" rule
 
 ## Standards Review
 
 <!-- vibe-standards-review inputs="diff+CODING-STANDARDS.md" -->
 
-- **violation** — CONTRIBUTING "An Assertion That Holds Either Way Is Not Coverage" (#1799): the symlink apply test did not pin the refusal reason — evidence: `src/analysis/utils/platform.rs` (`xdg_runtime_dir_apply_rejects_symlink`) — reason: fixed in this diff; it now captures logs and asserts the "not a directory" refusal
-- **clean** — Australian English, symbol-based citations, `#[serial]` on every env-mutating test, no production changes, no new dependencies, named tests exist (no `CODING-STANDARDS.md` in this repo, so `CONTRIBUTING.md` and `AGENTS.md` were used)
+- **violation** — CONTRIBUTING "An Assertion That Holds Either Way Is Not Coverage" (#1799): the symlink apply test did not pin the refusal reason — evidence: `src/analysis/utils/platform.rs::xdg_runtime_dir_apply_rejects_symlink` — reason: fixed in this diff; it now captures logs and asserts the "not a directory" refusal. The Standards reviewer re-run over the new diff reported no breach on any added or changed line.
+- **clean** — Australian English, symbol-based citations, `#[serial]` on every env-mutating test, `SAFETY:` comments on env writes, no production changes, no new dependencies, named tests exist (no `CODING-STANDARDS.md` in this repo, so `CONTRIBUTING.md` and `AGENTS.md` were used)
 
 ## Test Plan
 
