@@ -60,8 +60,8 @@ Docs sweep: grep `fanin_polarity_conflicts_to_coordinated_candidates`, "fan-in p
 - `src/analysis/module_dispatch_specs/mod.rs`: `fanin_polarity_spec_detects_conflicts_before_the_deadline`, `fanin_polarity_spec_honours_an_elapsed_deadline` (covers the `synapse_specs.rs` call site passing the deadline).
 - `benches/fanin_polarity_squash_lookup.rs`: Criterion benchmark of absolute cost.
 - Ran on the final head (after merging current `Develop`): `cargo test --test issue_2350_fanin_polarity_squash_lookup_growth` (2 passed), `cargo test --test detection issue_641` (11 passed), `cargo test --lib fanin_polarity` (3 passed), `cargo fmt --check` and `cargo clippy --all-targets --all-features -- -D warnings` clean.
-- `./quality.sh` on the final head passed its bash, shellcheck, pinning and PR-summary stages and then stopped at `cargo deny`: `advisories FAILED` on RUSTSEC-2026-0391, -0398, -0403 and -0410 against the locked `zstd-sys 2.1.0` (via `parquet`). This PR changes no dependency and `Cargo.lock` differs from `Develop` only in this crate's version, so the failure is already present on the base branch; the later test stage did not run through the gate.
-  <!-- vibe-quality-gate-skipped reason="quality.sh stops at cargo deny on RUSTSEC advisories for zstd-sys already on Develop; targeted tests, fmt and clippy were run directly" -->
+- `cargo audit` and `cargo deny check` pass after the advisory fix below; `./quality.sh` had previously stopped at `cargo deny` on the zstd advisories.
+- Dependency fix (Fixes #2432): `parquet` now uses `default-features = false` with every default feature except `zstd`, removing `zstd`, `zstd-safe`, `zstd-sys` (RUSTSEC-2026-0391, -0398, -0403, -0410) from `Cargo.lock`. The writer uses `WriterProperties::builder().build()` (uncompressed), so zstd was unused. `cargo check --all-targets` and `cargo test --lib parquet_format` (26 passed) pass.
 
 Removed assertions: none (the earlier output-count test was folded into the growth test, which still asserts one candidate per conflict at N and 4N).
 
