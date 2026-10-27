@@ -1102,6 +1102,19 @@ treating each output independently.
 4. **Find predictive inputs**: Identify which input neuron activations predict
    the shared error pattern.
 
+**Bounds** (Issue #2346): the n_outputs² correlation matrix is only built when
+eligible outputs (output neurons with at least 20 records, at least one
+carrying errors) are at or below `MAX_CORRELATED_ERROR_OUTPUTS` (1,000); above
+it the scan returns no groups (`OutputCeilingExceeded`). Above
+`MAX_CORRELATED_ERROR_INPUTS` (10,000) input-typed neurons, the
+predictive-input search is skipped per group (`InputCeilingExceeded`), so
+groups are still emitted with empty `predictive_input_uuids`. The
+deadline-aware entry point checks the shared analysis deadline before matrix
+allocation, per matrix row and pair, at the start and end of each group,
+and per candidate input. Cancellation while building the matrix returns no
+groups; cancellation during group analysis keeps groups completed before
+cancellation.
+
 **Recommended actions**:
 
 1. **Add shared hidden neuron**: A new neuron connecting predictive inputs to
