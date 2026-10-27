@@ -21,26 +21,6 @@ Added hostile environment-value probes for the numeric accessors and Linux runti
 
 Backend-only change. `cargo test --test issue_2096_env_readers_outside_config` passed all 12 probes. `cargo test --lib platform::tests` passed all 16 platform tests, including the other-uid refusal, same-owner control, symlink refusal, and existing world-writable case.
 
-## Acceptance Criteria
-
-<!-- vibe-spec-review inputs="diff+issue-body" -->
-
-- **met** — `runtime_dir_rejects_other_uid` exists, asserts `false` for `geteuid()+1`, asserts the refusal log line, and passes without root. — evidence: `src/analysis/utils/platform.rs::runtime_dir_rejects_other_uid`; 0700 directory refusal and same-owner positive control passed — reviewer: met
-- **met** — A serial test asserts that `XDG_RUNTIME_DIR` is unset after `apply_xdg_runtime_dir()` when `expected_runtime_dir(TMPDIR)` is a symlink. — evidence: `src/analysis/utils/platform.rs::xdg_runtime_dir_apply_rejects_symlink`; passed — reviewer: met
-- **met** — `tests/issue_2096_env_readers_outside_config.rs` exists, with at least one test per accessor listed in B. Each test is `#[serial_test::serial]` and restores the environment. — evidence: `tests/issue_2096_env_readers_outside_config.rs` (12 serial tests cover all 11 accessors and both noise-floor overrides); passed — reviewer: met
-- **met** — Every float probe asserts `is_finite()` for NaN, inf and -inf. Every integer probe asserts the `[floor, ceiling]` bound for 0, oversize, padded and unparsable input. — evidence: `tests/issue_2096_env_readers_outside_config.rs::assert_non_finite_falls_back`, `assert_probes`; all probes passed — reviewer: met
-- **met** — Any probe that exposes a real defect is `#[ignore = "finding: …"]` with its assertion intact, and is listed in the PR body for 13d-2 to adjudicate. There are no production-code changes in this PR. — evidence: no probe exposed a defect, no probe is ignored, and the diff changes test code only — reviewer: met
-- **partial** — `./quality.sh` passes. — evidence: gate run to `cargo deny check`; see Test Plan — reviewer: not verified (the reviewer did not run it) — reason: my status departs from the earlier "met": the gate stops at `cargo deny check` on RUSTSEC-2026-0391/0398/0403/0410, which predates this PR and is tracked in #2432; the stages after it were run individually
-- **unrequested** — `xdg_runtime_dir_rejects_preexisting_world_writable` now uses the new `EnvGuard` instead of manual save/restore — reviewer: unrequested — reason: panic-safe restore the issue's drop-guard requirement asks for; every assertion is unchanged
-- **unrequested** — extra control assertions (same-owner positive control, symlink left in place, `-1`, `99999999`, `4294967295` cases) — reviewer: unrequested — reason: they make the probes fail if the variable name or refusal rule is wrong, per the issue's "every probe asserts a concrete value" rule
-
-## Standards Review
-
-<!-- vibe-standards-review inputs="diff+CODING-STANDARDS.md" -->
-
-- **violation** — CONTRIBUTING "An Assertion That Holds Either Way Is Not Coverage" (#1799): the symlink apply test did not pin the refusal reason — evidence: `src/analysis/utils/platform.rs::xdg_runtime_dir_apply_rejects_symlink` — reason: fixed in this diff; it now captures logs and asserts the "not a directory" refusal. The Standards reviewer re-run over the new diff reported no breach on any added or changed line.
-- **clean** — Australian English, symbol-based citations, `#[serial]` on every env-mutating test, `SAFETY:` comments on env writes, no production changes, no new dependencies, named tests exist (no `CODING-STANDARDS.md` in this repo, so `CONTRIBUTING.md` and `AGENTS.md` were used)
-
 ## Test Plan
 
 - `cargo fmt --all -- --check` — passed.
@@ -53,3 +33,21 @@ Backend-only change. `cargo test --test issue_2096_env_readers_outside_config` p
 - Red checks: `xdg_runtime_dir_apply_rejects_symlink` — not re-run with the guard broken; its sibling world-writable test is unchanged in what it asserts.
 
 **Docs sweep** — grep: `XDG_RUNTIME_DIR`, `TMPDIR`, and the 11 accessor names in `README.md`, `docs/` excluding `docs/archive/`, and source doc comments; section: `docs/GPU_GUIDE.md#xdg_runtime_dir-warnings-on-linux` and matching `docs/CONFIGURATION.md` variable rows read; siblings: `max_add_neuron_candidates_per_target` and `max_coordinated_per_target_output` confirm the existing accessor/configuration set; updated: none — the manual already describes symlink, ownership, permissions and unset behaviour, and this test-only change adds no setting or runtime behaviour.
+
+## Acceptance Criteria
+
+<!-- vibe-spec-review inputs="diff+issue-body" -->
+
+- **met** — runtime dir rejects other uid exists, asserts false for geteuid()+1 , asserts the refusal log line, and passes without root. — evidence: `src/analysis/utils/platform.rs::runtime dir rejects other uid (asserts !trusted for geteuid().wrapping add(1) and the "owned by another user" log line, with a same-owner positive control); cargo test --lib platform::tests passed 16/16 as a non-root user` — reviewer: met
+- **met** — A serial test asserts that XDG RUNTIME DIR is unset after apply xdg runtime dir() when expected runtime dir(TMPDIR) is a symlink. — evidence: `src/analysis/utils/platform.rs::xdg runtime dir apply rejects symlink ( [serial], plants a symlink at expected runtime dir(TMPDIR), asserts XDG RUNTIME DIR is None, the "not a directory" refusal log, and the symlink left in place); passed` — reviewer: met
+- **met** — tests/issue 2096 env readers outside config.rs exists, with at least one test per accessor listed in B. Each test is [serial test::serial] and restores the environment. — evidence: `tests/issue 2096 env readers outside config.rs: 12 [serial] hostile values tests, one per accessor (max add neuron candidates per target through the two remove low impact noise floor overrides), restoring env through a Drop guard` — reviewer: met
+- **met** — Every float probe asserts is finite() for NaN, inf and -inf. Every integer probe asserts the [floor, ceiling] bound for 0, oversize, padded and unparsable input. — evidence: `tests/issue 2096 env readers outside config.rs::assert non finite falls back (is finite for NaN/inf/-inf), assert probes (floor/ceiling for 0, oversize, padded, unparsable) and the noise-floor tests' is finite assertions` — reviewer: met
+- **met** — Any probe that exposes a real defect is [ignore = "finding: …"] with its assertion intact, and is listed in the PR body for 13d-2 to adjudicate. There are no production-code changes in this PR. — evidence: `No probe is ignored, because none exposed a defect. The diff against the milestone base touches only src/analysis/utils/platform.rs under mod tests , tests/issue 2096 env readers outside config.rs and the PR summary files, so there are no production-code changes.` — reviewer: met
+- **partial** — ./quality.sh passes. — evidence: `The PR summary Test Plan records fmt, clippy and the two touched test targets passing individually.` — reviewer: partial — reason: The full ./quality.sh gate stopped at cargo deny check on RUSTSEC-2026-0391/0398/0403/0410. That failure predates this diff and is tracked in #2432. The stages after it were run individually, not through the gate.
+- **unrequested** — Change not traceable to the issue: xdg runtime dir rejects preexisting world writable was refactored to use the new EnvGuard . — evidence: `src/analysis/utils/platform.rs::xdg runtime dir rejects preexisting world writable` — reviewer: unrequested — reason: Panic-safe env restore replaces manual save/restore, and every assertion is unchanged.
+
+## Standards Review
+
+<!-- vibe-standards-review inputs="diff+CODING-STANDARDS.md" -->
+
+- **clean** — Checked against CONTRIBUTING.md and AGENTS.md, since the repo has no CODING-STANDARDS.md. Australian English, [serial] on every env-mutating test, SAFETY: comments on env writes, and drop-guard env restore are all compliant. The symlink test now pins the refusal reason, which satisfies "An Assertion
