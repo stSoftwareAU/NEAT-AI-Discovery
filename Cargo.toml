@@ -21,7 +21,7 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 anyhow = "1.0"
 thiserror = "2"  # Typed domain error enums (Issue #677)
-parquet = "59.1"  # Apache Parquet format (viewable with standard tools)
+parquet = { version = "59.1", default-features = false, features = ["arrow", "snap", "brotli", "flate2-zlib-rs", "lz4", "base64", "simdutf8"] }  # Apache Parquet format; zstd omitted (RUSTSEC-2026-0391 et al., files are written uncompressed)
 arrow = { version = "59.1", default-features = false }  # Arrow arrays for Parquet
 wgpu = "30"
 pollster = "1.0"
