@@ -8,25 +8,30 @@
 //! deliberate test edit rather than a silent drift.
 //!
 //! `timing`, `profile_mode` and `gpu_metrics` are memoised in a process-wide
-//! `OnceLock`, so their value is frozen by whichever test reads it first. They
-//! cannot be exercised in-process here; their trimming and parsing are covered
-//! by the helper unit tests in `src/config/helpers.rs` instead.
+//! `OnceLock`, so whichever test reads them first freezes the value and they
+//! cannot be exercised in-process here. They do not go through `parse_env`:
+//! `timing` and `gpu_metrics` are presence-only `env::var(..).is_ok()` reads,
+//! and `profile_mode` lowercases without trimming. The helper unit tests in
+//! `src/config/helpers.rs` therefore do not cover them either. Their
+//! presence-only and opt-out behaviour is out of scope for this file and is
+//! tracked under #2213.
 //!
-//! Whitespace-padded values are not repeated here.
-//! `tests/issue_2006_numeric_env_override_trim.rs` already covers the trim on
-//! these accessors.
+//! Whitespace cases for `noise_signal_threshold`, `dominance_threshold` and
+//! `gradient_threshold` are not repeated here.
+//! `tests/issue_2006_numeric_env_override_trim.rs` covers the trim for those
+//! three accessors only.
 //!
 //! The detection-threshold pins (`noise_signal_threshold`,
 //! `dominance_threshold`, `gradient_threshold`) record a defect filed as
 //! Issue #2438: a non-finite or negative threshold is passed straight through
 //! to the consumer gates. Those gates are:
 //!
-//! - `src/analysis/detection/noise_signal.rs:164` (`ratio <= threshold`, with
-//!   the division at :171);
-//! - `src/analysis/detection/input_sensitivity.rs:277` (`score <=
-//!   dominance_threshold`, with the division at :291-293);
-//! - `src/analysis/detection/input_sensitivity.rs:449` (`gradient <
-//!   gradient_threshold`, with the division at :484-486).
+//! - `noise_signal.rs::detect_noisy_neurons` (gate `noise_to_signal_ratio <=
+//!   threshold`, then the improvement factor divides by the threshold);
+//! - `input_sensitivity.rs::detect_dominant_inputs` (gate `sensitivity_score <=
+//!   config.dominance_threshold`, factor divides by it);
+//! - `input_sensitivity.rs::detect_threshold_effects` (gate `effective_gradient <
+//!   config.gradient_threshold`, factor divides by it).
 //!
 //! When Issue #2438 is fixed, the fix must update the pins below deliberately.
 
