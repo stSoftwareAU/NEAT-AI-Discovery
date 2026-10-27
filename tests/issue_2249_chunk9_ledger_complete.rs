@@ -404,6 +404,12 @@ fn ledger_rows_are_sorted_by_severity_within_each_region() {
     let rows = ledger_rows(&doc);
     assert!(!rows.is_empty(), "`## Ledger` must carry at least one row");
 
+    let intro = section(&doc, "## Ledger");
+    assert!(
+        intro.contains("Rows are sorted by severity"),
+        "`## Ledger` must state its severity-sort rule (Issue #2250)"
+    );
+
     let mut last_rank: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
     let mut markers: Vec<String> = Vec::new();
     for (region, cells) in &rows {
@@ -543,18 +549,23 @@ fn the_outcome_mermaid_block_is_a_flowchart_with_no_semicolon() {
 #[test]
 fn each_named_candidate_keeps_a_ledger_or_refuted_row() {
     let doc = read(RECORD);
-    const CANDIDATES: [(&str, &str); 6] = [
+    // Every keyword must appear in the same row's first cell (the finding-id or the
+    // candidate description), so a stray mention elsewhere in a row cannot satisfy it.
+    const CANDIDATES: [(&str, &[&str]); 6] = [
         (
             "dispatch-limit overflow",
-            "max_compute_workgroups_per_dimension",
+            &[
+                "Dispatch-limit overflow",
+                "max_compute_workgroups_per_dimension",
+            ],
         ),
-        ("`bias_evaluation` `num_steps`", "num_steps"),
-        ("uninitialised pool buffers", "pool"),
-        ("SEC-fe0b268a3799", "SEC-fe0b268a3799"),
-        ("CPU-fallback visibility", "fallback"),
+        ("`bias_evaluation` `num_steps`", &["num_steps"]),
+        ("uninitialised pool buffers", &["pool slot"]),
+        ("SEC-fe0b268a3799", &["SEC-fe0b268a3799"]),
+        ("CPU-fallback visibility", &["falls back"]),
         (
             "`is_device_lost_error` mis-classification",
-            "is_device_lost_error",
+            &["device loss"],
         ),
     ];
 
@@ -580,12 +591,16 @@ fn each_named_candidate_keeps_a_ledger_or_refuted_row() {
     let ledger_data = data_rows(section(&doc, "## Ledger"));
     let refuted_data = data_rows(section(&doc, "## Refuted / not findings"));
 
-    for (description, keyword) in CANDIDATES {
-        let ledger_hit = ledger_data
-            .iter()
-            .any(|cells| cells.iter().any(|c| c.contains(keyword)));
+    for (description, keywords) in CANDIDATES {
+        let ledger_hit = ledger_data.iter().any(|cells| {
+            cells
+                .first()
+                .is_some_and(|c| keywords.iter().all(|k| c.contains(k)))
+        });
         let refuted_hit = refuted_data.iter().any(|cells| {
-            cells.iter().any(|c| c.contains(keyword))
+            cells
+                .first()
+                .is_some_and(|c| keywords.iter().all(|k| c.contains(k)))
                 && cells.len() >= 3
                 && cells.get(1).is_some_and(|cite| {
                     cite.find(':').is_some_and(|at| {
@@ -598,7 +613,7 @@ fn each_named_candidate_keeps_a_ledger_or_refuted_row() {
         });
         assert!(
             ledger_hit || refuted_hit,
-            "{description} (`{keyword}`) must keep a row in `## Ledger` or a \
+            "{description} (`{keywords:?}`) must keep a row in `## Ledger` or a \
              `## Refuted / not findings` row citing a file:line"
         );
     }
