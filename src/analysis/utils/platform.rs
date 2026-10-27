@@ -695,8 +695,12 @@ mod tests {
         let _tmpdir = EnvGuard::set("TMPDIR", base_path.as_os_str());
 
         // SAFETY: serialised via #[serial]; no other thread touches the env here.
-        unsafe { apply_xdg_runtime_dir() };
+        let ((), logs) = capture_logs(|| unsafe { apply_xdg_runtime_dir() });
 
+        assert!(
+            logs.contains("refusing pre-existing XDG_RUNTIME_DIR: not a directory"),
+            "the symlink must be refused by the not-a-directory rule, got: {logs}"
+        );
         assert_eq!(
             std::env::var_os("XDG_RUNTIME_DIR"),
             None,

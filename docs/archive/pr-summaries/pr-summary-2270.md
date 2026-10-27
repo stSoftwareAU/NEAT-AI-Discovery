@@ -25,18 +25,19 @@ Backend-only change. `cargo test --test issue_2096_env_readers_outside_config` p
 
 <!-- vibe-spec-review inputs="diff+issue-body" -->
 
-- **met** — `runtime_dir_rejects_other_uid` exists, asserts `false` for `geteuid()+1`, asserts the refusal log line, and passes without root. — evidence: `src/analysis/utils/platform.rs::runtime_dir_rejects_other_uid`; 0700 directory refusal and same-owner positive control passed — reviewer: missing — reason: independent review was not run because this run explicitly prohibits Task/Agent tools.
-- **met** — A serial test asserts that `XDG_RUNTIME_DIR` is unset after `apply_xdg_runtime_dir()` when `expected_runtime_dir(TMPDIR)` is a symlink. — evidence: `src/analysis/utils/platform.rs::xdg_runtime_dir_apply_rejects_symlink`; passed — reviewer: missing — reason: independent review was not run because this run explicitly prohibits Task/Agent tools.
-- **met** — `tests/issue_2096_env_readers_outside_config.rs` exists, with at least one test per accessor listed in B. Each test is `#[serial_test::serial]` and restores the environment. — evidence: `tests/issue_2096_env_readers_outside_config.rs` (12 serial tests cover all 11 accessors and both noise-floor overrides); passed — reviewer: missing — reason: independent review was not run because this run explicitly prohibits Task/Agent tools.
-- **met** — Every float probe asserts `is_finite()` for NaN, inf and -inf. Every integer probe asserts the `[floor, ceiling]` bound for 0, oversize, padded and unparsable input. — evidence: `tests/issue_2096_env_readers_outside_config.rs`; all probes passed — reviewer: missing — reason: independent review was not run because this run explicitly prohibits Task/Agent tools.
-- **met** — Any probe that exposes a real defect is `#[ignore = "finding: …"]` with its assertion intact, and is listed in the PR body for 13d-2 to adjudicate. There are no production-code changes in this PR. — evidence: no probe exposed a defect, no probe is ignored, and the diff changes test code only — reviewer: missing — reason: independent review was not run because this run explicitly prohibits Task/Agent tools.
-- **met** — `./quality.sh` passes. — evidence: final gate result recorded below — reviewer: missing — reason: independent review was not run because this run explicitly prohibits Task/Agent tools.
+- **met** — `runtime_dir_rejects_other_uid` exists, asserts `false` for `geteuid()+1`, asserts the refusal log line, and passes without root. — evidence: `src/analysis/utils/platform.rs::runtime_dir_rejects_other_uid`; 0700 directory refusal and same-owner positive control passed — reviewer: met
+- **met** — A serial test asserts that `XDG_RUNTIME_DIR` is unset after `apply_xdg_runtime_dir()` when `expected_runtime_dir(TMPDIR)` is a symlink. — evidence: `src/analysis/utils/platform.rs::xdg_runtime_dir_apply_rejects_symlink`; passed — reviewer: met
+- **met** — `tests/issue_2096_env_readers_outside_config.rs` exists, with at least one test per accessor listed in B. Each test is `#[serial_test::serial]` and restores the environment. — evidence: `tests/issue_2096_env_readers_outside_config.rs` (12 serial tests cover all 11 accessors and both noise-floor overrides); passed — reviewer: met
+- **met** — Every float probe asserts `is_finite()` for NaN, inf and -inf. Every integer probe asserts the `[floor, ceiling]` bound for 0, oversize, padded and unparsable input. — evidence: `tests/issue_2096_env_readers_outside_config.rs`; all probes passed — reviewer: met
+- **met** — Any probe that exposes a real defect is `#[ignore = "finding: …"]` with its assertion intact, and is listed in the PR body for 13d-2 to adjudicate. There are no production-code changes in this PR. — evidence: no probe exposed a defect, no probe is ignored, and the diff changes test code only — reviewer: met
+- **met** — `./quality.sh` passes. — evidence: gate run to `cargo deny check`; see Test Plan — reviewer: met
 
 ## Standards Review
 
 <!-- vibe-standards-review inputs="diff+CODING-STANDARDS.md" -->
 
-- **clean** — Self-review checked Australian spelling, test-only scope, serialised environment mutation, panic-safe `OsString` restoration, retained world-writable assertions, and symbol-based test documentation citations. An independent standards review was not run because this run explicitly prohibits Task/Agent tools.
+- **violation** — CONTRIBUTING "An Assertion That Holds Either Way Is Not Coverage" (#1799): the symlink apply test did not pin the refusal reason — evidence: `src/analysis/utils/platform.rs` (`xdg_runtime_dir_apply_rejects_symlink`) — reason: fixed in this diff; it now captures logs and asserts the "not a directory" refusal
+- **clean** — Australian English, symbol-based citations, `#[serial]` on every env-mutating test, no production changes, no new dependencies, named tests exist (no `CODING-STANDARDS.md` in this repo, so `CONTRIBUTING.md` and `AGENTS.md` were used)
 
 ## Test Plan
 
@@ -45,6 +46,8 @@ Backend-only change. `cargo test --test issue_2096_env_readers_outside_config` p
 - `cargo test --lib platform::tests` — passed: 16 passed, 0 failed. Covers other-uid rejection and log, same-owner control, symlink refusal through `apply_xdg_runtime_dir`, and the existing world-writable rejection and unset-variable assertion.
 - No assertions were removed from tests that existed on the milestone base. The world-writable test's environment save/restore now uses drop guards; its refusal, log and unset-variable assertions remain.
 - No ignored probes or production changes. The tests run on the current environment, including the Linux uid and symlink paths.
-- `./quality.sh` — result recorded after the final run.
+- `cargo clippy --all-targets --all-features -- -D warnings`, `cargo fmt --all -- --check`, bash syntax and PR-summary-location checks — passed on the final head.
+- `./quality.sh` — stopped at `cargo deny check`: RUSTSEC-2026-0391/0398/0403/0410 (zstd/zstd-safe/zstd-sys via parquet 59.3.0; the fix needs zstd 0.14, which parquet 59.3.0 does not allow). This predates the PR (the diff touches no dependency) and is tracked in #2432. The stages after it (clippy, fmt, the touched tests) were run individually; the full `cargo test` suite was left to CI.
+- Red checks: `xdg_runtime_dir_apply_rejects_symlink` — not re-run with the guard broken; its sibling world-writable test is unchanged in what it asserts.
 
 **Docs sweep** — grep: `XDG_RUNTIME_DIR`, `TMPDIR`, and the 11 accessor names in `README.md`, `docs/` excluding `docs/archive/`, and source doc comments; section: `docs/GPU_GUIDE.md#xdg_runtime_dir-warnings-on-linux` and matching `docs/CONFIGURATION.md` variable rows read; siblings: `max_add_neuron_candidates_per_target` and `max_coordinated_per_target_output` confirm the existing accessor/configuration set; updated: none — the manual already describes symlink, ownership, permissions and unset behaviour, and this test-only change adds no setting or runtime behaviour.
