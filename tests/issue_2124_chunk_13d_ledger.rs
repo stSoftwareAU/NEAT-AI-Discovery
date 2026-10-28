@@ -19,8 +19,8 @@
 //!
 //! These tests read the record and check its 13d shape, and fail if a 13d region
 //! is empty or contains a standalone `pending`, a named reader loses its settings
-//! row or verdict, a cited test no longer exists in `platform.rs`, or the
-//! `LIB_PATH` drift entry is dropped. `tests/issue_2211_chunk_13_ledger_scaffold.rs`
+//! row or verdict, a cited test no longer exists in `platform.rs`, a 13d region
+//! cites code by line number, or the `LIB_PATH` drift entry is dropped. `tests/issue_2211_chunk_13_ledger_scaffold.rs`
 //! covers the shape shared by every region; this file covers only 13d.
 
 use std::path::PathBuf;
@@ -220,6 +220,36 @@ fn has_standalone_pending(text: &str) -> bool {
         let after = bytes.get(i + WORD.len()).copied();
         !before.is_some_and(is_word) && !after.is_some_and(is_word)
     })
+}
+
+/// True when `line` cites a line number, which CONTRIBUTING.md forbids (Issue
+/// #1942). Three shapes are flagged: `.rs:` or `.md:` followed by a digit, and a
+/// standalone `L` followed by digits, with no word character before the `L` and
+/// none after the digits. Scanned by hand over the chars in one pass, so it is
+/// linear in the length of `line` and needs no regex crate.
+fn cites_a_line_number(line: &str) -> bool {
+    let chars: Vec<char> = line.chars().collect();
+    let is_word = |c: char| c.is_ascii_alphanumeric() || c == '_';
+    for (i, &c) in chars.iter().enumerate() {
+        if c == ':'
+            && i >= 3
+            && matches!(&chars[i - 3..i], ['.', 'r', 's'] | ['.', 'm', 'd'])
+            && chars.get(i + 1).is_some_and(char::is_ascii_digit)
+        {
+            return true;
+        }
+        if c == 'L' && !(i > 0 && is_word(chars[i - 1])) {
+            let digits = chars[i + 1..]
+                .iter()
+                .take_while(|d| d.is_ascii_digit())
+                .count();
+            let after_digits = chars.get(i + 1 + digits).copied();
+            if digits > 0 && !after_digits.is_some_and(is_word) {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 #[test]
@@ -453,12 +483,12 @@ fn the_named_dispositions_are_recorded() {
 
     for needle in [
         "NEURON_RANKING_BANDS",
-        "thresholds.rs:176",
+        "samples/thresholds.rs::get_constant_source_threshold",
         "XDG_RUNTIME_DIR",
         "RUST_LOG",
         "temp_dir",
         "#2118",
-        "utils/mod.rs:95",
+        "utils/mod.rs::verbose_enabled",
         "option_env!",
         "CARGO_PKG_VERSION",
         "LIB_PATH",
@@ -554,6 +584,54 @@ fn pending_check_flags_a_standalone_word_and_ignores_identifiers() {
         assert!(
             !has_standalone_pending(text),
             "`{text}` does not carry a standalone `pending` and must not be flagged"
+        );
+    }
+}
+
+#[test]
+fn the_13d_regions_cite_no_line_numbers() {
+    // CONTRIBUTING.md § Cite Code by Symbol, Never by Line Number (Issue #1942),
+    // applied to the five 13d texts. Modelled on the chunk 8b record check.
+    let doc = read(RECORD);
+    let texts = [
+        ("files region 13d", files_region(&doc)),
+        ("settings region 13d", settings_region(&doc)),
+        ("13d issues text", issues_text(&doc)),
+        ("13d drift text", drift_text(&doc)),
+        ("probe dispositions (13d)", dispositions(&doc)),
+    ];
+    for (label, text) in texts {
+        let offenders: Vec<&str> = text
+            .lines()
+            .filter(|line| cites_a_line_number(line))
+            .collect();
+        assert!(
+            offenders.is_empty(),
+            "{label} in {RECORD} cites code by line number, which CONTRIBUTING.md forbids \
+             (Issue #1942); cite `file.rs::symbol` instead: {offenders:?}"
+        );
+    }
+}
+
+#[test]
+fn the_line_number_scanner_flags_citations_and_ignores_identifiers() {
+    for text in ["x.rs:12", "see L59", "(L1528)", "a.md:104"] {
+        assert!(
+            cites_a_line_number(text),
+            "`{text}` cites a line number and must be flagged"
+        );
+    }
+    for text in [
+        "L",
+        "LIB_PATH",
+        "SOLID",
+        "2L",
+        "NEAT_AI_DISCOVERY_LIB_PATH",
+        "0o700",
+    ] {
+        assert!(
+            !cites_a_line_number(text),
+            "`{text}` does not cite a line number and must not be flagged"
         );
     }
 }
