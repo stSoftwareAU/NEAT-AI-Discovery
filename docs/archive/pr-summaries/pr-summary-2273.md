@@ -27,30 +27,6 @@ Version bump: not changed here (docs and test only); CI's `version-increment` jo
 
 Backend/docs only. Comments posted: [#2096](https://github.com/stSoftwareAU/NEAT-AI-Discovery/issues/2096#issuecomment-6472996686), [#2125](https://github.com/stSoftwareAU/NEAT-AI-Discovery/issues/2125#issuecomment-6472994227).
 
-## Acceptance Criteria
-
-<!-- vibe-spec-review inputs="diff+issue-body" -->
-
-- **met** — All five 13a `Files swept` rows show an outcome and a reason — evidence: `tests/issue_2211_chunk_13_ledger_scaffold.rs::region_13a_files_swept_rows_are_decided` — reviewer: met
-- **met** — There are 12 settings rows, each with all 10 columns filled — evidence: `tests/issue_2211_chunk_13_ledger_scaffold.rs::region_13a_settings_rows_cover_the_twelve_variables_with_filled_cells` — reviewer: met
-- **met** — The probe (a) and probe (b) outcomes are recorded in the ledger — evidence: `tests/issue_2211_chunk_13_ledger_scaffold.rs::region_13a_probe_dispositions_record_probe_a_and_probe_b` — reviewer: met
-- **met** — `MODULE_TIERING_HIDDEN_THRESHOLD` appears under Doc drift observed — evidence: `tests/issue_2211_chunk_13_ledger_scaffold.rs::region_13a_issues_filed_and_doc_drift_are_recorded_without_pending` — reviewer: met
-- **met** — The #2213 and #2272-finding links appear under Issues filed, and the #2096 comment has been posted — evidence: same test; comment URL above — reviewer: met
-- **met** — The extended scaffold test fails on a re-inserted `pending` row, and passes on the finished ledger — evidence: red checks in Test Plan — reviewer: met
-- **met** — `./quality.sh` passes — evidence: full gate run on the head before the final wording edits, "All quality checks passed!"; the three ledger test targets were re-run after the later edits (12, 10 and 9 passed) — reviewer: partial — reason: departure from the reviewer: it reported "not assessed" because it saw only the diff and could not run the gate; this entry is `met` on the gate run recorded as evidence, and the worker re-runs the gate over the final tree
-- **met** — Doc drift: "re-checked against the parent's list" — evidence: ledger "Doc drift observed" 13a, bullet "Re-checked against the parent's list (#2121)", pinned by `tests/issue_2211_chunk_13_ledger_scaffold.rs::region_13a_issues_filed_and_doc_drift_are_recorded_without_pending` — reviewer: met
-- **met** — Test-quality note: "suggest a follow-up only if it is not already tracked" — evidence: ledger "Probe dispositions (13a)", test-quality note (searched, untracked, "Suggested follow-up (untracked, so recommended)" names the rewrite) — reviewer: met
-- **unrequested** — extra tests `region_13a_issues_filed_and_doc_drift_are_recorded_without_pending`, `region_13a_probe_dispositions_record_probe_a_and_probe_b` and two helper self-tests — reviewer: unrequested — reason: they gate the issue's own acceptance criteria and the helpers' linear-time behaviour
-- **unrequested** — comment on #2125 — reviewer: unrequested — reason: feeds #2125 as the issue states
-
-## Standards Review
-
-<!-- vibe-standards-review inputs="diff+CODING-STANDARDS.md" -->
-
-- **violation** — test nit: `region_13a_issues_filed_and_doc_drift_are_recorded_without_pending` did not pin the new parent's-list bullet — evidence: `tests/issue_2211_chunk_13_ledger_scaffold.rs` — reason: fixed in this diff (assertion added)
-- **violation** — test nit: the `for index in [4, 5]` block in `region_13a_settings_rows_cover_the_twelve_variables_with_filled_cells` repeats the all-cells empty check — reviewer-reported, not blocking — reason: left as is, it names the two columns the issue singles out in its failure message
-- **clean** — no `CODING-STANDARDS.md` in the repo, so reviewed against `CONTRIBUTING.md` and `AGENTS.md`: code cited by symbol, Australian English, linear scanning, no duplicate imports, named tests exist. Findings reported as non-violations (mod.rs test count, `Once` vs `OnceLock`, `pub(crate)` wording, helper-test wording) were fixed in this diff.
-
 ## Test Plan
 
 - Added in `tests/issue_2211_chunk_13_ledger_scaffold.rs`: `region_13a_files_swept_rows_are_decided`, `region_13a_settings_rows_cover_the_twelve_variables_with_filled_cells`, `region_13a_issues_filed_and_doc_drift_are_recorded_without_pending`, `region_13a_probe_dispositions_record_probe_a_and_probe_b`, `pending_detection_matches_standalone_word_only`, `region_text_stops_at_the_next_marker_bold_heading_or_heading`. The top doc comment was reworded (it said regions start empty).
@@ -58,3 +34,21 @@ Backend/docs only. Comments posted: [#2096](https://github.com/stSoftwareAU/NEAT
 - Existing marker test `each_section_marker_appears_exactly_once_in_its_section` stayed green once the status paragraph no longer contains the literal `## Issues filed` (the helper matches the first occurrence of a heading string).
 - Run: `cargo test --test issue_2211_chunk_13_ledger_scaffold --test issue_2124_chunk_13d_ledger --test issue_2088_sweep_ledger_contract` → 12, 10 and 9 passed. `./quality.sh` → passed.
 - Not run: nothing skipped.
+
+## Acceptance Criteria
+
+<!-- vibe-spec-review inputs="diff+issue-body" -->
+
+- **met** — All five 13a Files swept rows show an outcome and a reason. — evidence: `tests/issue 2211 chunk 13 ledger scaffold.rs::region 13a files swept rows are decided; docs/audits/security-sweep-chunk-13-config-env.md small modules rows (helpers, detection, drought mitigation, observability, mod.rs), each swept (Issue #2273) — <reason>` — reviewer: met
+- **met** — There are 12 settings rows, each with all 10 columns filled. — evidence: `tests/issue 2211 chunk 13 ledger scaffold.rs::region 13a settings rows cover the twelve variables with filled cells (passes on the branch)` — reviewer: met
+- **met** — The probe (a) and probe (b) outcomes are recorded in the ledger. — evidence: `docs/audits/security-sweep-chunk-13-config-env.md Probe dispositions (13a) ; tests/issue 2211 chunk 13 ledger scaffold.rs::region 13a probe dispositions record probe a and probe b` — reviewer: met
+- **met** — MODULE TIERING HIDDEN THRESHOLD appears under Doc drift observed. — evidence: `tests/issue 2211 chunk 13 ledger scaffold.rs::region 13a issues filed and doc drift are recorded without pending (asserts the 13a region of Doc drift observed names it)` — reviewer: met
+- **met** — The #2213 and #2272-finding links appear under Issues filed, and the #2096 comment has been posted. — evidence: `tests/issue 2211 chunk 13 ledger scaffold.rs::region 13a issues filed and doc drift are recorded without pending (asserts #2438, #2213 and #2096 in the 13a Issues filed region); comment https://github.com/stSoftwareAU/NEAT-AI-Discovery/issues/2096 issuecomment-6472996686 resolves via the GitHub API` — reviewer: met
+- **met** — The extended scaffold test fails on a re-inserted pending row, and passes on the finished ledger. — evidence: `tests/issue 2211 chunk 13 ledger scaffold.rs: region 13a files swept rows are decided and the settings-rows test assert !has standalone pending(..) on every 13a row and cell; cargo test --test issue 2211 chunk 13 ledger scaffold gives 12 passed, 0 failed on the finished ledger. I did not re-run the` — reviewer: met
+- **partial** — ./quality.sh passes. — evidence: `tests/issue 2211 chunk 13 ledger scaffold.rs (12 passed on this tree)` — reviewer: partial — reason: I did not run ./quality.sh this turn; the PR summary records a full gate run before the final wording edits, and only the three ledger test targets were re-run after them.
+
+## Standards Review
+
+<!-- vibe-standards-review inputs="diff+CODING-STANDARDS.md" -->
+
+- **clean** — Checked against CONTRIBUTING.md, because the repo has no CODING-STANDARDS.md: Australian English, code cited by symbol, no new dead levers or config surface, no FFI or invariant change (docs and test only), a ledger test that fails loudly with named rows and cells, and no vacuous assertion. One repo
