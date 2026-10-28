@@ -31,7 +31,7 @@
 //! with a single closed successor and no direct output edge shares that
 //! successor's set without copying, so a long chain above a wide fan-out does not
 //! copy the fan-out set per chain node. The elements merged are totalled and
-//! capped by a ceiling ([`MAX_REACHABILITY_MERGE_WORK`] on the production path),
+//! capped by a ceiling (`MAX_REACHABILITY_MERGE_WORK` on the production path),
 //! which bounds the memo's memory (CWE-400).
 //!
 //! The pass checks the discovery deadline and global cancellation once per step,
