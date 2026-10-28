@@ -2,8 +2,9 @@
 
 /// Parse a boolean-style environment variable.
 ///
-/// Truthy values: `"1"`, `"true"`, `"yes"` (case-insensitive).
-/// Falsy values: `"0"`, `"false"`, `"no"` (case-insensitive), unset, or empty.
+/// Truthy values: `"1"`, `"true"`, `"yes"` (case-insensitive, surrounding
+/// whitespace trimmed). Every other value is false: `"0"`, `"false"`, `"no"`,
+/// unset, empty, and any unrecognised value such as `"on"`, `"y"` or `"enabled"`.
 pub(crate) fn parse_bool_env(name: &str) -> bool {
     std::env::var(name)
         .ok()
