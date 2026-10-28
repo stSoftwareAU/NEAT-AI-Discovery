@@ -25,7 +25,7 @@ prefers symbols. This record cites `file:line` **alongside** the symbol because
 it is pinned to one baseline commit and carries the command that falsifies it
 (see *Verify this record*): a citation here is a claim about `b85a551`, not
 about HEAD. Where a file has drifted since (see #1048 below), the lines are
-those of `b85a551`.
+those of `b85a551`. Issue #2279 explicitly requires the `File:line` column and the guard and comment line numbers, so the departure is required, not elective.
 
 ### Sweep status — IN PROGRESS
 
@@ -162,6 +162,11 @@ git grep -n -e 'validate_parquet_schema(' -e 'DecodeBudget::resolve' \
   -e 'charge_record(' -e 'is_cancelled' -e 'deadline' b85a551 -- \
   src/parquet_format/reader.rs src/parquet_format/activation_summary.rs \
   src/parquet_format/writer.rs src/parquet_format/shared_records.rs
+
+# Guard definitions cited under Related remediations and the batch decoder
+git grep -n -e 'fn resolve_for_alias_check' -e 'fn data_type_matches' \
+  -e 'fn for_path' -e 'static CACHE' -e 'fn resolve' -e 'fn charge_record' \
+  -e 'fn projected_in_memory_bytes' -e 'fn decode_row' b85a551 -- src/parquet_format
 
 # Staleness — an empty diff means this record still describes the current code
 git diff b85a551..HEAD -- src/parquet_format
