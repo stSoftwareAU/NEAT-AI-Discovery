@@ -12,7 +12,11 @@
 //!   with a diamond, a shared descendant, a cycle and an output-to-output edge;
 //! - an elapsed deadline stops the scan and reports `DeadlinePassed`, and a
 //!   far-future deadline does not truncate;
-//! - the cache-backed and cache-free entry points agree.
+//! - the cache-backed and cache-free entry points agree;
+//! - a live chain above a wide fan-out shares its output set instead of copying
+//!   it per chain node, so the work does not grow as chain length x outputs;
+//! - a merge ceiling stops the scan with `CandidateCeiling`, and only the ceiling
+//!   does (the same input with an unbounded ceiling completes).
 //!
 //! Deterministic throughout: no timing thresholds and no sleeps. An elapsed
 //! deadline is `UNIX_EPOCH`, a live one is a day ahead.
@@ -31,8 +35,14 @@ use neat_ai_discovery::analysis::recommendation::epistatic::ScanTruncation;
 use neat_ai_discovery::types::DiscoverRecord;
 use neat_ai_discovery::{CreatureJson, NeuronJson, SynapseJson};
 
+/// Per-neuron recorded activations.
+type Records = Vec<(String, Vec<DiscoverRecord>)>;
+
 /// Clears `MIN_DISCOVERY_SAMPLE_COUNT` (20).
 const SAMPLES: u32 = 30;
+
+/// Production-sized merge ceiling (`MAX_REACHABILITY_MERGE_WORK`).
+const PRODUCTION_MERGE_CEILING: usize = 8_000_000;
 
 fn neuron(uuid: &str, neuron_type: &str) -> NeuronJson {
     NeuronJson {
@@ -197,7 +207,16 @@ fn count_reachability_steps(
     records: &[(String, Vec<DiscoverRecord>)],
 ) -> (usize, DeadNeuronScan) {
     let mut steps = 0_usize;
-    let scan = detect_dead_neurons_observed(creature, records, None, &None, || steps += 1);
+    let scan = detect_dead_neurons_observed(
+        creature,
+        records,
+        None,
+        &None,
+        PRODUCTION_MERGE_CEILING,
+        || {
+            steps += 1;
+        },
+    );
     (steps, scan)
 }
 
@@ -372,4 +391,113 @@ fn without_a_cache_and_with_a_cache_agree() {
 
     assert_eq!(uncached.len(), 7);
     assert_eq!(summary(&cached), summary(&uncached));
+}
+
+/// One dead hidden root `d`, a chain of `n` live hidden nodes (no records), and
+/// a last chain node feeding `k` outputs.
+fn live_chain_above_fan_out(n: usize, k: usize) -> (CreatureJson, Records, Vec<String>) {
+    let chain_nodes: Vec<String> = (0..n).map(|i| format!("c{i}")).collect();
+    let outputs: Vec<String> = (0..k).map(|i| format!("out-{i:03}")).collect();
+
+    let mut hidden: Vec<&str> = vec!["d"];
+    hidden.extend(chain_nodes.iter().map(String::as_str));
+    let output_refs: Vec<&str> = outputs.iter().map(String::as_str).collect();
+
+    let mut edges: Vec<(&str, &str)> = vec![("input-0", "d"), ("d", chain_nodes[0].as_str())];
+    for pair in chain_nodes.windows(2) {
+        edges.push((pair[0].as_str(), pair[1].as_str()));
+    }
+    let last = chain_nodes[n - 1].as_str();
+    edges.extend(output_refs.iter().map(|&o| (last, o)));
+
+    let creature = build_creature(&hidden, &output_refs, &edges);
+    // Only `d` has records, so only `d` is a dead candidate.
+    let records = vec![records_of("d", 0.0)];
+    (creature, records, outputs)
+}
+
+#[test]
+fn live_chain_above_wide_fan_out_does_not_copy_sets_per_component() {
+    const K: usize = 64;
+    let (small, small_records, outputs) = live_chain_above_fan_out(64, K);
+    let (large, large_records, _) = live_chain_above_fan_out(256, K);
+
+    let (count_n, scan_n) = count_reachability_steps(&small, &small_records);
+    let (count_4n, scan_4n) = count_reachability_steps(&large, &large_records);
+
+    assert!(scan_n.truncation.is_none() && scan_4n.truncation.is_none());
+    for scan in [&scan_n, &scan_4n] {
+        assert_eq!(scan.candidates.len(), 1, "only d is a dead candidate");
+        assert_eq!(scan.candidates[0].neuron_uuid, "d");
+        assert_eq!(
+            scan.candidates[0].connected_outputs, outputs,
+            "d reaches all {K} outputs"
+        );
+    }
+
+    assert!(
+        count_n > 0 && count_4n < 6 * count_n,
+        "work must grow linearly in chain length: N=64 took {count_n} steps, \
+         N=256 took {count_4n} steps"
+    );
+    assert!(
+        count_4n < 256 * K,
+        "work must not be chain length x outputs: N=256 took {count_4n} steps, \
+         copying the set per chain node would take over {}",
+        256 * K
+    );
+}
+
+/// `d -> x -> out-0` and `d -> y -> out-1`, with `x` and `y` live, so closing
+/// `d` must merge two non-empty successor sets.
+fn merging_graph() -> (CreatureJson, Vec<(String, Vec<DiscoverRecord>)>) {
+    let edges = [
+        ("input-0", "d"),
+        ("d", "x"),
+        ("d", "y"),
+        ("x", "out-0"),
+        ("y", "out-1"),
+    ];
+    let creature = build_creature(&["d", "x", "y"], &["out-0", "out-1"], &edges);
+    (creature, vec![records_of("d", 0.0)])
+}
+
+#[test]
+fn merge_ceiling_stops_the_scan_and_reports_candidate_ceiling() {
+    let (creature, records) = merging_graph();
+
+    let ceiling_one = detect_dead_neurons_observed(&creature, &records, None, &None, 1, || {});
+    assert_eq!(
+        ceiling_one.truncation,
+        Some(ScanTruncation::CandidateCeiling),
+        "a ceiling of 1 element cannot hold the merge"
+    );
+    assert!(
+        ceiling_one.candidates.is_empty(),
+        "d never completed, so it is not a candidate"
+    );
+
+    // Positive control: only the ceiling stops the scan.
+    let unbounded =
+        detect_dead_neurons_observed(&creature, &records, None, &None, usize::MAX, || {});
+    assert!(unbounded.truncation.is_none());
+    assert_eq!(unbounded.candidates.len(), 1);
+    assert_eq!(
+        unbounded.candidates[0].connected_outputs,
+        ["out-0", "out-1"]
+    );
+
+    let production = detect_dead_neurons_observed(
+        &creature,
+        &records,
+        None,
+        &None,
+        PRODUCTION_MERGE_CEILING,
+        || {},
+    );
+    assert!(production.truncation.is_none());
+    assert_eq!(
+        summary(&production.candidates),
+        summary(&unbounded.candidates)
+    );
 }

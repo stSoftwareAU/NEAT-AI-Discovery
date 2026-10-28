@@ -25,16 +25,24 @@
 //! ## Bounded reachability (Issue #2370)
 //!
 //! Each dead neuron's connected outputs are read from one shared, memoised
-//! strongly-connected-component pass over the fan-out graph. The whole creature
-//! costs O(V + E) instead of one depth-first search (with fresh allocations) per
-//! dead neuron. The pass checks the discovery deadline and global cancellation
-//! once per step, and every stop is reported via [`DeadNeuronScan::truncation`]:
-//! a stop during the hidden-neuron scan returns no candidates, while a stop during
-//! the reachability pass keeps only the candidates whose outputs were already
-//! complete.
+//! strongly-connected-component pass over the fan-out graph, instead of one
+//! depth-first search (with fresh allocations) per dead neuron. The cost is
+//! O(V + E) plus the sizes of the output sets that have to be merged: a component
+//! with a single closed successor and no direct output edge shares that
+//! successor's set without copying, so a long chain above a wide fan-out does not
+//! copy the fan-out set per chain node. The elements merged are totalled and
+//! capped by a ceiling ([`MAX_REACHABILITY_MERGE_WORK`] on the production path),
+//! which bounds the memo's memory (CWE-400).
+//!
+//! The pass checks the discovery deadline and global cancellation once per step,
+//! and every stop is reported via [`DeadNeuronScan::truncation`]: a stop during
+//! the hidden-neuron scan returns no candidates, while a stop during the
+//! reachability pass (deadline, cancellation or the merge ceiling, which reports
+//! `ScanTruncation::CandidateCeiling`) keeps only the candidates whose outputs
+//! were already complete.
 
 #![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
-use std::{collections::HashMap, time::SystemTime};
+use std::{collections::HashMap, rc::Rc, time::SystemTime};
 
 use super::helpers::{
     ConfidenceFactor, build_record_map, compute_activation_stats, compute_mean_abs_activation,
@@ -54,6 +62,13 @@ use crate::analysis::constants::MIN_DISCOVERY_SAMPLE_COUNT as MIN_SAMPLES_FOR_DE
 /// Threshold for mean absolute activation to consider a neuron dead.
 /// Activations below this are effectively zero.
 const DEAD_ACTIVATION_THRESHOLD: f32 = 1e-6;
+
+/// Cap on the output-set elements the reachability memo may merge and retain
+/// (Issue #2370). Each element is one `usize` id, so the memo holds at most about
+/// 64 MB of ids; reaching the cap stops the scan with
+/// `ScanTruncation::CandidateCeiling`, keeping the candidates already completed
+/// (CWE-400 memory bound).
+const MAX_REACHABILITY_MERGE_WORK: usize = 8_000_000;
 
 /// Maximum activation standard deviation for a dead neuron.
 /// If output varies significantly, the neuron is not truly dead.
@@ -92,7 +107,11 @@ pub struct DeadNeuronScan {
     /// Candidates whose connected outputs are complete, sorted by removal
     /// confidence (highest first).
     pub candidates: Vec<DeadNeuronCandidate>,
-    /// `Some` when the scan stopped before finishing every dead neuron.
+    /// `Some` when the scan stopped before finishing every dead neuron:
+    /// `DeadlinePassed` for the deadline or cancellation, `CandidateCeiling` when
+    /// the reachability merge work reached its ceiling. Candidates completed
+    /// before the stop are kept, except that a stop during the hidden-neuron scan
+    /// returns none.
     pub truncation: Option<ScanTruncation>,
 }
 
@@ -136,18 +155,31 @@ pub fn detect_dead_neurons_with_deadline(
     topo: Option<&CreatureTopologyCache>,
     deadline: &Option<SystemTime>,
 ) -> DeadNeuronScan {
-    detect_dead_neurons_observed(creature, neuron_records, topo, deadline, || {})
+    detect_dead_neurons_observed(
+        creature,
+        neuron_records,
+        topo,
+        deadline,
+        MAX_REACHABILITY_MERGE_WORK,
+        || {},
+    )
 }
 
 /// [`detect_dead_neurons_with_deadline`] with `on_reachability_step` called once
 /// per edge examined and once per element merged by the shared reachability
 /// pass, so a test can assert on how the work grows without timing it
 /// (Issue #2370).
+///
+/// The reachability cost is O(V + E) plus the sizes of the merged output sets.
+/// `merge_ceiling` caps the total elements merged: once a merge would exceed it,
+/// the scan stops with `ScanTruncation::CandidateCeiling` and keeps the
+/// candidates completed so far.
 pub fn detect_dead_neurons_observed(
     creature: &CreatureJson,
     neuron_records: &[(String, impl AsRef<[DiscoverRecord]>)],
     topo: Option<&CreatureTopologyCache>,
     deadline: &Option<SystemTime>,
+    merge_ceiling: usize,
     mut on_reachability_step: impl FnMut(),
 ) -> DeadNeuronScan {
     // Use pre-computed cache or build locally.
@@ -228,13 +260,13 @@ pub fn detect_dead_neurons_observed(
 
     // Phase 2: connected outputs for each dead neuron, from one shared pass
     // (Issue #2370). Completed candidates are kept if the pass stops early.
-    let mut reachability = OutputReachability::new(topo);
+    let mut reachability = OutputReachability::new(topo, merge_ceiling);
     let mut candidates = Vec::with_capacity(dead.len());
     let mut truncation = None;
 
     for draft in dead {
-        if !reachability.explore(draft.uuid, deadline, &mut on_reachability_step) {
-            truncation = Some(ScanTruncation::DeadlinePassed);
+        if let Err(t) = reachability.explore(draft.uuid, deadline, &mut on_reachability_step) {
+            truncation = Some(t);
             break;
         }
 
@@ -278,7 +310,10 @@ struct TarjanFrame<'a> {
 /// Runs an iterative Tarjan strongly-connected-components pass, lazily from each
 /// dead neuron and sharing its memo across them. When a component closes, its
 /// output set is computed once from its members' direct edges and from the
-/// already-closed components they reach. A node's connected outputs are the
+/// already-closed components they reach. A component with no direct output edge
+/// and exactly one closed successor shares that successor's set (`Rc`, no copy);
+/// any other component merges, and the merged size is charged against a ceiling.
+/// A node's connected outputs are the
 /// output set of its component: outputs reachable via at least one edge, through
 /// any node type, with cycles allowed.
 ///
@@ -300,11 +335,15 @@ struct OutputReachability<'a> {
     /// Next Tarjan discovery index.
     counter: usize,
     /// Output-node ids reachable from each closed component (sorted, deduplicated).
-    comp_sets: Vec<Vec<usize>>,
+    comp_sets: Vec<Rc<Vec<usize>>>,
+    /// Upper bound of the elements merged so far (the memo's retained size).
+    merge_work: usize,
+    /// Cap on `merge_work`; a merge that would exceed it is refused.
+    merge_ceiling: usize,
 }
 
 impl<'a> OutputReachability<'a> {
-    fn new(topo: &'a CreatureTopologyCache) -> Self {
+    fn new(topo: &'a CreatureTopologyCache, merge_ceiling: usize) -> Self {
         Self {
             topo,
             ids: HashMap::new(),
@@ -315,6 +354,8 @@ impl<'a> OutputReachability<'a> {
             stack: Vec::new(),
             counter: 0,
             comp_sets: Vec::new(),
+            merge_work: 0,
+            merge_ceiling,
         }
     }
 
@@ -342,18 +383,20 @@ impl<'a> OutputReachability<'a> {
 
     /// Make the outputs reachable from `root` available.
     ///
-    /// Returns `false` if the deadline passed or cancellation was requested
-    /// before the walk finished; the caller must then stop using this memo.
+    /// Returns `Err(DeadlinePassed)` if the deadline passed or cancellation was
+    /// requested before the walk finished, or `Err(CandidateCeiling)` if a merge
+    /// would exceed the merge ceiling. After an `Err` the memo is left mid-walk
+    /// (open nodes on the Tarjan stack) and must not be reused.
     /// `deadline_passed` is checked once per main-loop iteration.
     fn explore(
         &mut self,
         root: &'a str,
         deadline: &Option<SystemTime>,
         on_step: &mut impl FnMut(),
-    ) -> bool {
+    ) -> Result<(), ScanTruncation> {
         let root_id = self.intern(root);
         if self.comp[root_id] != UNSET {
-            return true;
+            return Ok(());
         }
 
         let topo = self.topo;
@@ -367,7 +410,7 @@ impl<'a> OutputReachability<'a> {
 
         while let Some(top) = call.last_mut() {
             if deadline_passed(deadline) {
-                return false;
+                return Err(ScanTruncation::DeadlinePassed);
             }
 
             let v = top.node;
@@ -393,7 +436,7 @@ impl<'a> OutputReachability<'a> {
             } else {
                 call.pop();
                 if self.low[v] == self.index[v] {
-                    self.close(v, on_step);
+                    self.close(v, on_step)?;
                 }
                 if let Some(parent) = call.last() {
                     let p = parent.node;
@@ -402,11 +445,14 @@ impl<'a> OutputReachability<'a> {
             }
         }
 
-        true
+        Ok(())
     }
 
     /// Close the component whose root is `v`, computing its output set once.
-    fn close(&mut self, v: usize, on_step: &mut impl FnMut()) {
+    ///
+    /// Returns `Err(CandidateCeiling)`, before copying anything, if merging would
+    /// push the total merge work past the ceiling.
+    fn close(&mut self, v: usize, on_step: &mut impl FnMut()) -> Result<(), ScanTruncation> {
         let c = self.comp_sets.len();
 
         // Assign every member before computing the set, so an edge inside the
@@ -421,34 +467,64 @@ impl<'a> OutputReachability<'a> {
         }
 
         let topo = self.topo;
-        let mut set: Vec<usize> = Vec::new();
+        let mut direct: Vec<usize> = Vec::new();
+        let mut succ: Vec<usize> = Vec::new();
         for &m in &members {
             for target in topo.fan_out_for(self.names[m]) {
                 on_step();
                 let t = self.ids[target.as_str()];
                 if topo.output_uuids.contains(target.as_str()) {
-                    set.push(t);
+                    direct.push(t);
                 }
                 let tc = self.comp[t];
                 if tc != UNSET && tc != c {
-                    // Already-closed component: its set already covers everything
-                    // reachable from it.
-                    for &o in &self.comp_sets[tc] {
-                        on_step();
-                        set.push(o);
-                    }
+                    succ.push(tc);
                 }
             }
         }
+        succ.sort_unstable();
+        succ.dedup();
 
+        // Nothing to merge: share the single closed successor's set, or use an
+        // empty one. No copy, no per-element step, no budget charge.
+        if direct.is_empty() {
+            match succ.as_slice() {
+                [] => {
+                    self.comp_sets.push(Rc::new(Vec::new()));
+                    return Ok(());
+                }
+                [only] => {
+                    let shared = Rc::clone(&self.comp_sets[*only]);
+                    self.comp_sets.push(shared);
+                    return Ok(());
+                }
+                _ => {}
+            }
+        }
+
+        // Charge the upper bound before copying, so the ceiling bounds memory.
+        let bound = direct.len() + succ.iter().map(|&s| self.comp_sets[s].len()).sum::<usize>();
+        if self.merge_work.saturating_add(bound) > self.merge_ceiling {
+            return Err(ScanTruncation::CandidateCeiling);
+        }
+        self.merge_work += bound;
+
+        let mut set = direct;
+        for &sc in &succ {
+            for &o in self.comp_sets[sc].iter() {
+                on_step();
+                set.push(o);
+            }
+        }
         set.sort_unstable();
         set.dedup();
-        self.comp_sets.push(set);
+        self.comp_sets.push(Rc::new(set));
+        Ok(())
     }
 
     /// Output names reachable from `root`, sorted ascending.
     ///
-    /// Only meaningful after `explore(root)` has returned `true`.
+    /// Only meaningful after `explore(root)` has returned `Ok`.
     fn connected_outputs(&self, root: &str) -> Vec<String> {
         let Some(&id) = self.ids.get(root) else {
             return Vec::new();

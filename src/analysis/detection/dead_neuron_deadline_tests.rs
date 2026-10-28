@@ -95,10 +95,16 @@ fn phase_one_deadline_check_truncates_and_returns_no_candidates() {
     let _guard = DeadlineOverrideGuard::with_sequence(vec![false, true]);
 
     let mut steps = 0;
-    let scan =
-        detect_dead_neurons_observed(&creature, &records, None, &unused_live_deadline(), || {
+    let scan = detect_dead_neurons_observed(
+        &creature,
+        &records,
+        None,
+        &unused_live_deadline(),
+        usize::MAX,
+        || {
             steps += 1;
-        });
+        },
+    );
 
     assert_eq!(
         scan.truncation,
@@ -133,10 +139,16 @@ fn reachability_deadline_check_stops_mid_scan() {
     let _guard = DeadlineOverrideGuard::with_sequence(vec![false, false, false, false, true]);
 
     let mut steps = 0;
-    let scan =
-        detect_dead_neurons_observed(&creature, &records, None, &unused_live_deadline(), || {
+    let scan = detect_dead_neurons_observed(
+        &creature,
+        &records,
+        None,
+        &unused_live_deadline(),
+        usize::MAX,
+        || {
             steps += 1;
-        });
+        },
+    );
 
     assert_eq!(
         scan.truncation,

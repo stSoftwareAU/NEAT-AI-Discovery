@@ -339,15 +339,21 @@ proximity to zero (40%), and sample count (20%, plateaus at 1000 samples).
 operations.
 
 **Scan bounds (Issue #2370)**: the output-reachability of the dead hidden
-neurons is computed in one shared, memoised O(V+E) pass over the creature
-graph, not one traversal per dead neuron. The pass uses an iterative Tarjan
-strongly-connected-components decomposition and computes each component's
-reachable-output set once, so it is cycle-safe and cannot recurse without
-bound. `detect_dead_neurons_with_deadline` takes the analysis deadline and
-checks it and the global cancellation flag; when either stops the scan early it
-returns a `DeadNeuronScan` whose `truncation` is `ScanTruncation::DeadlinePassed`.
-Candidates found before the stop are returned. A stop during the dead-criteria
-pass returns no candidates, because their output reachability cannot be
+neurons is computed in one shared pass over the creature's fan-out graph, not
+one traversal per dead neuron. The pass is an iterative Tarjan
+strongly-connected-components decomposition, so it is cycle-safe and cannot
+recurse without bound. Its cost is O(V+E) plus the size of the output sets it
+merges: each component's reachable-output set is built once, and a component
+that adds no direct outputs and has a single successor shares that successor's
+set without copying it. Total merged work is capped at 8,000,000 elements
+(`MAX_REACHABILITY_MERGE_WORK` in `src/analysis/detection/dead_neuron.rs`). When
+the cap is hit, the scan stops with `ScanTruncation::CandidateCeiling` and keeps
+the candidates whose outputs were already complete.
+`detect_dead_neurons_with_deadline` also takes the analysis deadline and checks
+it and the global cancellation flag; a stop for either reason reports
+`ScanTruncation::DeadlinePassed` on the returned `DeadNeuronScan`, and keeps the
+candidates completed so far. A stop during the hidden-neuron (dead-criteria)
+scan returns no candidates, because their output reachability cannot be
 computed. The discovery spec uses the deadline variant and logs a tracing
 warning on truncation. `detect_dead_neurons` keeps its signature and runs with
 no deadline.
