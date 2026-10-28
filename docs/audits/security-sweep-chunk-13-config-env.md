@@ -77,7 +77,7 @@ The `user_facing.rs` split is by line: L1–664 is row 13b and L665–1396 at ba
 | `src/focus/ranking/mod.rs` | 2011 | swept (Issue #2271) — test fixture only (`FocusBudgetEnvGuard::set`), no runtime reader |
 | `src/analysis/synapse/structural_patterns.rs` | 804 | swept (Issue #2271) — test fixture only (`BypassFloorGuard::new`), no runtime reader |
 
-**Line counts and citation.** Line counts in this region are HEAD (`1e78d69`) counts, not baseline counts: the baseline commit pinned in this record covers `src/config` only. Code is cited as `file.rs::symbol` with its HEAD line beside it (CONTRIBUTING.md "Cite Code by Symbol, Never by Line Number", Issue #1942).
+**Line counts and citation.** Line counts in this region are HEAD (`1e78d69`) counts, not baseline counts: the baseline commit pinned in this record covers `src/config` only. Code is cited as `file.rs::symbol`, never by line number (CONTRIBUTING.md "Cite Code by Symbol, Never by Line Number", Issue #1942). The line numbers in the sub-issue's scope text were re-verified at HEAD and are replaced by symbols here.
 
 **Inventory command**, run from the repository root at HEAD `1e78d69`:
 
@@ -87,38 +87,38 @@ rg -n 'env::var|var_os|vars\(\)|option_env!|env!\(|temp_dir\(' src --glob '!src/
 
 **Hit count: 28 hits.** Every hit is classified in the table below: 6 reader, 1 doc-only, 4 compile-time, 14 write, 3 cross-referenced, 0 unclassified. `write` means a fixture inside a `#[cfg(test)]` module that saves, sets, restores or asserts the variable.
 
-**Companion searches.** The command above finds only direct `std::env` calls. The twelve numeric readers in `src/analysis/constants/` read through `crate::config::helpers::parse_env`, and `RUST_LOG` is read by `EnvFilter::try_from_default_env`, so neither appears in the 28. Two companion searches close the gap. `grep -rn 'parse_env\|parse_bool_env\|parse_optional_bool_env' src --include=*.rs`, with `src/config/` and the `use` lines removed, gives 11 hits: nine call sites in `candidate_scoring.rs` (L59, L110, L156, L506, L846, L992, L1051, L1204 and the shared `env_f32_non_negative` at L1529) and two in `detection_thresholds.rs` (L236, L250). All are runtime readers, and the shared helper serves two variables, so they cover twelve variables. `grep -rn 'RUST_LOG\|EnvFilter' src` finds the `observability/mod.rs` reader at L68. `option_env!` has 0 hits in the tree.
+**Companion searches.** The command above finds only direct `std::env` calls. The twelve numeric readers in `src/analysis/constants/` read through `crate::config::helpers::parse_env`, and `RUST_LOG` is read by `EnvFilter::try_from_default_env`, so neither appears in the 28. Two companion searches close the gap. `grep -rn 'parse_env\|parse_bool_env\|parse_optional_bool_env' src --include=*.rs`, with `src/config/` and the `use` lines removed, gives 11 hits: nine call sites in `candidate_scoring.rs` (`max_add_neuron_candidates_per_target`, `max_coordinated_per_target_output`, `min_distinct_targets_per_batch`, `risky_squash_prior`, `min_expected_creature_score_gain`, `neuron_ranking_reliability_bands`, `min_bypass_weight_for_collapse`, `coordinated_noise_floor_multiplier` and the shared `env_f32_non_negative`) and two in `detection_thresholds.rs` (the two cooldown divisor accessors). All are runtime readers, and the shared helper serves two variables, so they cover twelve variables. `grep -rn 'RUST_LOG\|EnvFilter' src` finds the `observability/mod.rs::init_tracing` reader. `option_env!` has 0 hits in the tree.
 
-| # | hit | symbol | class | note |
+| # | file | symbol | class | note |
 | --- | --- | --- | --- | --- |
-| 1 | `src/ffi_internal/mod.rs:235` | `tests::get_library_version_internal_returns_well_formed_json` | compile-time | `env!("CARGO_PKG_VERSION")` in a test assertion |
-| 2 | `src/parquet_format/schema.rs:29` | `CRATE_VERSION` | compile-time | build-time constant |
-| 3 | `src/lib.rs:178` | `LIB_VERSION` | compile-time | build-time constant |
-| 4 | `src/export/snapshot.rs:349` | `export_visualisation_snapshot` | compile-time | the `discovery_version` field |
-| 5 | `src/debug/sample_dir.rs:46` | `SampleDir::create` | cross-referenced | production `temp_dir()`, audited under #2118 and in the chunk 11 record |
-| 6 | `src/debug/sample_capture.rs:357` | `tests::run_external_command_with_timeout_does_not_hang_and_preserves_partial_output` | cross-referenced | test-only `temp_dir()`, #2118 |
-| 7 | `src/debug/sample_capture.rs:451` | `tests::an_empty_output_file_is_not_readable_content` | cross-referenced | test-only `temp_dir()`, #2118 |
-| 8 | `src/focus/ranking/mod.rs:1755` | `FocusBudgetEnvGuard::set` | write | test fixture, saves the prior `FOCUS_RANKING_BUDGET_MS` |
-| 9 | `src/analysis/utils/platform.rs:17` | module comment | doc-only | the process-environment safety note |
-| 10 | `src/analysis/utils/platform.rs:55` | `set_env_if_unset` | reader | presence check before a write, the key is `XDG_RUNTIME_DIR` or a Mesa variable |
-| 11 | `src/analysis/utils/platform.rs:290` | `apply_xdg_runtime_dir` | reader | `XDG_RUNTIME_DIR` presence |
-| 12 | `src/analysis/utils/platform.rs:294` | `apply_xdg_runtime_dir` | reader | `std::env::temp_dir()` reads `TMPDIR` on Unix, then the result is canonicalised |
-| 13 | `src/analysis/utils/platform.rs:366` | `env_setup_pending` | reader | `XDG_RUNTIME_DIR` presence |
-| 14 | `src/analysis/utils/platform.rs:372` | `env_setup_pending` | reader | the three Mesa variables, when `NEAT_AI_DISCOVERY_QUIET_GPU` is on |
-| 15 | `src/analysis/utils/platform.rs:450` | `tests::EnvGuard::set` | write | test fixture |
-| 16 | `src/analysis/utils/platform.rs:457` | `tests::EnvGuard::unset` | write | test fixture |
-| 17 | `src/analysis/utils/platform.rs:610` | `tests::xdg_runtime_dir_rejects_preexisting_world_writable` | write | test assertion that the variable stays unset |
-| 18 | `src/analysis/utils/platform.rs:705` | `tests::xdg_runtime_dir_apply_rejects_symlink` | write | test assertion that the variable stays unset |
-| 19 | `src/analysis/utils/platform.rs:742` | `tests::xdg_runtime_dir_preserves_host_value` | write | test fixture, saves the host value |
-| 20 | `src/analysis/utils/platform.rs:749` | `tests::xdg_runtime_dir_preserves_host_value` | write | test assertion on the host value |
-| 21 | `src/analysis/utils/platform.rs:879` | `tests::test_setup_gpu_environment_skips_when_other_threads_live` | write | test fixture, saves the prior value |
-| 22 | `src/analysis/utils/platform.rs:899` | `tests::test_setup_gpu_environment_skips_when_other_threads_live` | write | test assertion that the variable stays unset |
-| 23 | `src/analysis/utils/platform.rs:931` | `tests::test_set_env_if_unset_sets_when_absent` | write | test assertion on the written value |
-| 24 | `src/analysis/utils/platform.rs:957` | `tests::test_set_env_if_unset_preserves_existing` | write | test assertion that the value is preserved |
-| 25 | `src/analysis/utils/platform.rs:974` | `tests::test_apply_xdg_runtime_dir_sets_when_unset` | write | test fixture, saves the prior value |
-| 26 | `src/analysis/utils/platform.rs:981` | `tests::test_apply_xdg_runtime_dir_sets_when_unset` | write | test assertion on the written value |
-| 27 | `src/analysis/samples/thresholds.rs:176` | `get_constant_source_threshold` | reader | the presence check over `crate::config::constant_source_effect_threshold()` |
-| 28 | `src/analysis/synapse/structural_patterns.rs:582` | `tests::BypassFloorGuard::new` | write | test fixture, saves the prior `MIN_BYPASS_WEIGHT_FOR_COLLAPSE` |
+| 1 | `src/ffi_internal/mod.rs` | `tests::get_library_version_internal_returns_well_formed_json` | compile-time | `env!("CARGO_PKG_VERSION")` in a test assertion |
+| 2 | `src/parquet_format/schema.rs` | `CRATE_VERSION` | compile-time | build-time constant |
+| 3 | `src/lib.rs` | `LIB_VERSION` | compile-time | build-time constant |
+| 4 | `src/export/snapshot.rs` | `export_visualisation_snapshot` | compile-time | the `discovery_version` field |
+| 5 | `src/debug/sample_dir.rs` | `SampleDir::create` | cross-referenced | production `temp_dir()`, audited under #2118 and in the chunk 11 record |
+| 6 | `src/debug/sample_capture.rs` | `tests::run_external_command_with_timeout_does_not_hang_and_preserves_partial_output` | cross-referenced | test-only `temp_dir()`, #2118 |
+| 7 | `src/debug/sample_capture.rs` | `tests::an_empty_output_file_is_not_readable_content` | cross-referenced | test-only `temp_dir()`, #2118 |
+| 8 | `src/focus/ranking/mod.rs` | `FocusBudgetEnvGuard::set` | write | test fixture, saves the prior `FOCUS_RANKING_BUDGET_MS` |
+| 9 | `src/analysis/utils/platform.rs` | module comment | doc-only | the process-environment safety note |
+| 10 | `src/analysis/utils/platform.rs` | `set_env_if_unset` | reader | presence check before a write, the key is `XDG_RUNTIME_DIR` or a Mesa variable |
+| 11 | `src/analysis/utils/platform.rs` | `apply_xdg_runtime_dir` | reader | `XDG_RUNTIME_DIR` presence |
+| 12 | `src/analysis/utils/platform.rs` | `apply_xdg_runtime_dir` | reader | `std::env::temp_dir()` reads `TMPDIR` on Unix, then the result is canonicalised |
+| 13 | `src/analysis/utils/platform.rs` | `env_setup_pending` | reader | `XDG_RUNTIME_DIR` presence |
+| 14 | `src/analysis/utils/platform.rs` | `env_setup_pending` | reader | the three Mesa variables, when `NEAT_AI_DISCOVERY_QUIET_GPU` is on |
+| 15 | `src/analysis/utils/platform.rs` | `tests::EnvGuard::set` | write | test fixture |
+| 16 | `src/analysis/utils/platform.rs` | `tests::EnvGuard::unset` | write | test fixture |
+| 17 | `src/analysis/utils/platform.rs` | `tests::xdg_runtime_dir_rejects_preexisting_world_writable` | write | test assertion that the variable stays unset |
+| 18 | `src/analysis/utils/platform.rs` | `tests::xdg_runtime_dir_apply_rejects_symlink` | write | test assertion that the variable stays unset |
+| 19 | `src/analysis/utils/platform.rs` | `tests::xdg_runtime_dir_preserves_host_value` | write | test fixture, saves the host value |
+| 20 | `src/analysis/utils/platform.rs` | `tests::xdg_runtime_dir_preserves_host_value` | write | test assertion on the host value |
+| 21 | `src/analysis/utils/platform.rs` | `tests::test_setup_gpu_environment_skips_when_other_threads_live` | write | test fixture, saves the prior value |
+| 22 | `src/analysis/utils/platform.rs` | `tests::test_setup_gpu_environment_skips_when_other_threads_live` | write | test assertion that the variable stays unset |
+| 23 | `src/analysis/utils/platform.rs` | `tests::test_set_env_if_unset_sets_when_absent` | write | test assertion on the written value |
+| 24 | `src/analysis/utils/platform.rs` | `tests::test_set_env_if_unset_preserves_existing` | write | test assertion that the value is preserved |
+| 25 | `src/analysis/utils/platform.rs` | `tests::test_apply_xdg_runtime_dir_sets_when_unset` | write | test fixture, saves the prior value |
+| 26 | `src/analysis/utils/platform.rs` | `tests::test_apply_xdg_runtime_dir_sets_when_unset` | write | test assertion on the written value |
+| 27 | `src/analysis/samples/thresholds.rs` | `get_constant_source_threshold` | reader | the presence check over `crate::config::constant_source_effect_threshold()` |
+| 28 | `src/analysis/synapse/structural_patterns.rs` | `tests::BypassFloorGuard::new` | write | test fixture, saves the prior `MIN_BYPASS_WEIGHT_FOR_COLLAPSE` |
 
 ## Defect classes probed
 
@@ -217,11 +217,11 @@ The reader column gives `file.rs::symbol` only, the header keeps the agreed sche
 
 <!-- section: 13d -->
 
-The reader column gives `file.rs::symbol` and the HEAD (`1e78d69`) line. Names carry the `NEAT_AI_DISCOVERY_` prefix except `XDG_RUNTIME_DIR`, `TMPDIR`, `RUST_LOG` and the three Mesa variables. The numeric accessors read the environment on each call (live) and none is cached in a `OnceLock`; the process-setup readers (`XDG_RUNTIME_DIR`, the Mesa variables and `RUST_LOG`) act once. For the numeric accessors the "on invalid input" cell cites the 13d-1 probe in `tests/issue_2096_env_readers_outside_config.rs` (#2270). "Class" means the silent guard opt-out class, #2213 (closed) and #2276 (open). `parse_env` (`src/config/helpers.rs`) trims, parses, and returns `None` for anything unparsable, so every numeric default below is the fallback for an empty, non-numeric, negative (for unsigned types) or fractional (for integer types) value. Each row's doc-versus-code verdict is in the table after the settings rows.
+The reader column gives `file.rs::symbol` only; the header keeps the agreed schema name. Names carry the `NEAT_AI_DISCOVERY_` prefix except `XDG_RUNTIME_DIR`, `TMPDIR`, `RUST_LOG` and the three Mesa variables. The numeric accessors read the environment on each call (live) and none is cached in a `OnceLock`; the process-setup readers (`XDG_RUNTIME_DIR`, the Mesa variables and `RUST_LOG`) act once. For the numeric accessors the "on invalid input" cell cites the 13d-1 probe in `tests/issue_2096_env_readers_outside_config.rs` (#2270). "Class" means the silent guard opt-out class, #2213 (closed) and #2276 (open). `parse_env` (`src/config/helpers.rs`) trims, parses, and returns `None` for anything unparsable, so every numeric default below is the fallback for an empty, non-numeric, negative (for unsigned types) or fractional (for integer types) value. Each row's doc-versus-code verdict is in the table after the settings rows.
 
 | variable | reader file:line | type | default | accepted range / validation | on invalid input | 0 / opt-out semantics | can weaken a guard? (which) | cached (OnceLock) or live | logged how |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `NEAT_AI_DISCOVERY_MAX_ADD_NEURON_PER_TARGET` | `candidate_scoring.rs::max_add_neuron_candidates_per_target` L59 | `usize` | 3 (`MAX_ADD_NEURON_CANDIDATES_PER_TARGET`) | trimmed, clamped to 1–32 | default 3, silent. Probe `max_add_neuron_candidates_per_target_hostile_values` | none: `0` clamps up to 1 | no: a within-batch cap on add-neuron candidates per target, bounded at 32 | live | none |
+| `NEAT_AI_DISCOVERY_MAX_ADD_NEURON_PER_TARGET` | `candidate_scoring.rs::max_add_neuron_candidates_per_target` | `usize` | 3 (`MAX_ADD_NEURON_CANDIDATES_PER_TARGET`) | trimmed, clamped to 1–32 | default 3, silent. Probe `max_add_neuron_candidates_per_target_hostile_values` | none: `0` clamps up to 1 | no: a within-batch cap on add-neuron candidates per target, bounded at 32 | live | none |
 | `NEAT_AI_DISCOVERY_MAX_COORDINATED_PER_TARGET` | `candidate_scoring.rs::max_coordinated_per_target_output` L110 | `usize` | 3 (`MAX_COORDINATED_PER_TARGET_OUTPUT`) | trimmed, clamped to 1–32 | default 3, silent. Probe `max_coordinated_per_target_output_hostile_values` | none: `0` clamps up to 1 | no: a within-batch cap on coordinated-structural candidates per final target, bounded at 32 | live | none |
 | `NEAT_AI_DISCOVERY_MIN_DISTINCT_TARGETS_PER_BATCH` | `candidate_scoring.rs::min_distinct_targets_per_batch` L156 | `usize` | 3 (`MIN_DISTINCT_TARGETS_PER_BATCH`) | trimmed, clamped to 1–32 | default 3, silent. Probe `min_distinct_targets_per_batch_hostile_values` | none: `0` clamps up to 1 | no: a diversity spread floor, bounded at 32 | live | none |
 | `NEAT_AI_DISCOVERY_RISKY_SQUASH_PRIOR` | `candidate_scoring.rs::risky_squash_prior` L506 | `f32` | 0.25 (`RISKY_SQUASH_PRIOR_DEFAULT`) | finite, trimmed, clamped to 0.001–1.0 | empty, non-numeric, `NaN` or `inf`: default 0.25, silent. Probe `risky_squash_prior_hostile_values` | none: `0` and negatives clamp up to 0.001 | no: a cold-start discount multiplier; `1.0` removes the discount, an operator tuning choice bounded at 1.0 | live | none |
