@@ -85,7 +85,7 @@ probed classes.
 - **met** — Every surviving finding has exactly one `SEC-2091-NN` issue with `severity:*` and `confidence:high` labels, a named failing-first test path and (for parsing findings) a fuzz corpus requirement — evidence: #2446 and #2447 bodies and labels, read with `gh issue view` on the final head — reviewer: partial — reason: the reviewer could not see the issue bodies from the diff; they were read here and carry all the named items
 - **met** — The external-`parquet`-crate question (batch materialised before `charge_record`) is answered in the ledger either way — evidence: ledger row `reader.rs:314-318` under Decode-budget completeness — reviewer: met
 - **met** — No `.rs` change and no `Cargo.toml` change in this sub-issue's PR — evidence: no `src/` file and no `Cargo.toml` in the diff; the only `.rs` file is the ledger guard test `tests/issue_2143_chunk_07b_read_side_sweep.rs` — reviewer: missing — reason: the reviewer read the criterion literally and counted the test file; it is there only because the security-fix gate blocks PR creation without a test file, and it changes no production code
-- **partial** — Tests and quality checks pass (`./quality.sh`) — evidence: `cargo test --test issue_2143_chunk_07b_read_side_sweep` passes, markdownlint reports 0 issues — reviewer: partial — reason: quality gate not yet run to completion, it hit the 590 s foreground cap during the unit tests; CI runs it on the PR — remaining: merge-verification-only
+- **met** — Tests and quality checks pass (`./quality.sh`) — evidence: a full, uninterrupted `./quality.sh` run on the branch head ended `All quality checks passed!` with exit 0 (shellcheck, licence audit, build, fmt, clippy, type check and the whole test suite, 0 failed across 49 test binaries); `tests/issue_2143_chunk_07b_read_side_sweep.rs` ran 5 tests, all passing — reviewer: met
 - **unrequested** — `tests/issue_2143_chunk_07b_read_side_sweep.rs` — reviewer: unrequested — reason: required by the security-fix gate, see above
 
 ## Standards Review
@@ -106,8 +106,7 @@ probed classes.
   `parser_rejects_a_missing_section_loudly`.
 - Red check: with the base (staged) ledger swapped in, the first three fail and the parser test
   passes; with the new ledger all pass.
-- Quality gate: `./quality.sh` was started and stopped by the 590 s foreground cap while running unit
-  tests; <!-- vibe-quality-gate-skipped reason="foreground cap reached, CI runs the gate" -->
+- Quality gate: `./quality.sh` run to completion on the branch head (run in the background to avoid the 590 s foreground cap): `All quality checks passed!`, exit 0, 0 failed tests.
 - Related existing ledger contract `tests/issue_2088_sweep_ledger_contract.rs`: the record stays
   under `docs/audits/in-progress/`, which that test does not scan.
 - Callers/siblings: no shared helper or call site changed.
