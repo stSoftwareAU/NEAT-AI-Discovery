@@ -183,9 +183,9 @@ impl GpuMetrics {
         (busy / total) * 100.0
     }
 
-    /// Print GPU metrics to stderr.
-    ///
-    /// Output format: `[gpu] batches: N, samples: N, utilisation: N.N%`
+    /// Emit GPU metrics as one `tracing::info!` event (message `GPU metrics`),
+    /// carrying the `batches`, `samples`, `utilisation_percent` and related
+    /// fields. It is hidden under the default `RUST_LOG=warn`.
     pub fn report(&self) {
         let reductions = self.batch_size_reductions();
         let effective = self.effective_batch_size();

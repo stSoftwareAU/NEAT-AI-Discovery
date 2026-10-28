@@ -390,7 +390,7 @@ operator's "when to change" guidance so the two cannot drift apart.
 | `NEAT_AI_DISCOVERY_TARGET_COOLDOWN_EPOCHS` | Lower to free targets faster after a failure streak. This is the **Normal-mode** base — Conservative and Extended Drought divide it by the two divisors below (Issue #1204). |
 | `NEAT_AI_DISCOVERY_COOLDOWN_CONSERVATIVE_DIVISOR` | Raise to free targets faster once Conservative mode engages; leave at `1` to keep the Normal-mode window through the whole drought. |
 | `NEAT_AI_DISCOVERY_COOLDOWN_EXTENDED_DROUGHT_DIVISOR` | Raise for a more aggressive last-ditch relaxation once the streak passes `CONSERVATIVE_MODE_MAX_EPOCHS`, before reaching for the operator reset. The effective window is floored at 2 epochs, so values past that point change nothing. |
-| `NEAT_AI_DISCOVERY_MH_TEMPERATURE` | Raise to accept lower-gain candidates during a drought, lower to be stricter. Values outside the range are ignored with a warn log. |
+| `NEAT_AI_DISCOVERY_MH_TEMPERATURE` | Raise to accept lower-gain candidates during a drought, lower to be stricter. Values outside the range leave the feature off and are logged at debug level. |
 | `NEAT_AI_DISCOVERY_MODULE_TIERING_HIDDEN_THRESHOLD` | Hidden-neuron count above which **expensive**-tier discovery modules are skipped at dispatch on non-escalation passes (Issue #1547). Lower it to tier out sooner on mid-size creatures; set `0` to always run every module. Skipping is suppressed whenever the rolling success rate is below `LOW_SUCCESS_RATE_THRESHOLD`, so the full set is re-enabled for the whole drought — including Extended Drought, after the Conservative bias has reverted (Issue #1803). |
 
 ## Module tiering during drought (Issue #1547)

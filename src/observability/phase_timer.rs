@@ -1,6 +1,7 @@
 //! RAII-based phase timing for analysis profiling.
 //!
-//! [`PhaseTimer`] prints duration on drop when timing is enabled, while
+//! [`PhaseTimer`] emits a debug event with the duration on drop when timing is
+//! enabled, while
 //! [`ScopedPhaseTimer`] records into a [`super::profile::ProfileData`] instance
 //! for structured JSON output.
 
@@ -13,10 +14,13 @@ use super::{profile::ProfileData, timing_enabled};
 // PhaseTimer - RAII-based phase timing
 // =============================================================================
 
-/// RAII-based phase timer that prints duration on drop when timing is enabled.
+/// RAII-based phase timer that emits a debug event with the duration on drop
+/// when timing is enabled.
 ///
-/// When `NEAT_AI_DISCOVERY_TIMING=1` is set, dropping a `PhaseTimer` will print
-/// a timing line to stderr in the format: `[timing] phase_name: duration`.
+/// When `NEAT_AI_DISCOVERY_TIMING` is set (any value), dropping a `PhaseTimer`
+/// emits a `tracing::debug!` event (message `phase timing`) with the `phase` and
+/// `duration` fields. It is hidden under the default `RUST_LOG=warn`; use
+/// `RUST_LOG=neat_ai_discovery=debug` to see it.
 ///
 /// ## Example
 ///
@@ -28,11 +32,11 @@ use super::{profile::ProfileData, timing_enabled};
 ///         let _phase = PhaseTimer::new("parquet_loading");
 ///         load_parquet(...)?;
 ///     }
-///     // Prints: [timing] parquet_loading: 156ms
+///     // Emits a debug event: phase = parquet_loading, duration = 156ms
 ///
 ///     // ...
 /// }
-/// // Prints: [timing] total_analysis: 1234ms
+/// // Emits a debug event: phase = total_analysis, duration = 1234ms
 /// ```
 pub struct PhaseTimer {
     phase: &'static str,
