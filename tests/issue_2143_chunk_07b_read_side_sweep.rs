@@ -145,6 +145,18 @@ fn panic_message(payload: &(dyn Any + Send)) -> String {
         .map_or_else(String::new, |text| (*text).to_string())
 }
 
+/// The data rows of a Markdown table in `block`: each line starting with `| `
+/// that comes after the first separator line (one starting with `| ---`). The
+/// header row and the separator are not counted.
+fn data_rows(block: &str) -> usize {
+    block
+        .lines()
+        .skip_while(|line| !line.starts_with("| ---"))
+        .skip(1)
+        .filter(|line| line.starts_with("| "))
+        .count()
+}
+
 #[test]
 fn each_read_side_file_has_exactly_one_settled_outcome() {
     let doc = read(RECORD);
@@ -161,7 +173,9 @@ fn each_read_side_file_has_exactly_one_settled_outcome() {
         );
         let outcome = outcome_of(&rows, path);
         assert!(
-            outcome.starts_with("clean") || leading_finding(&outcome).is_some(),
+            outcome == "clean"
+                || outcome.starts_with("clean ")
+                || leading_finding(&outcome).is_some(),
             "{path}: `## Files swept` outcome must start with `clean` or \
              `finding #<digits>` (Issue #2143), found: {outcome}"
         );
@@ -224,16 +238,23 @@ fn defect_classes_probed_records_every_read_side_class() {
             lines.by_ref().any(|line| line.trim_end() == heading),
             "`## Defect classes probed` must carry the heading `{heading}` (Issue #2143)"
         );
-        let rows = lines
+        let body = lines
             .take_while(|line| !line.starts_with("### "))
-            .filter(|line| line.starts_with("| "))
-            .count();
+            .collect::<Vec<_>>()
+            .join("\n");
+        let rows = data_rows(&body);
         assert!(
             rows > 0,
             "`{heading}` must record at least one table row before the next `### ` \
              heading (Issue #2143)"
         );
     }
+}
+
+#[test]
+fn header_only_table_has_no_data_rows() {
+    assert_eq!(data_rows("| A | B |\n| --- | --- |\n"), 0);
+    assert_eq!(data_rows("| A | B |\n| --- | --- |\n| x | y |\n"), 1);
 }
 
 #[test]
