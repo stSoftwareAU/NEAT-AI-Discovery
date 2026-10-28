@@ -147,14 +147,14 @@ Security Fix Evidence
 - Twin-rule search: the deadline-aware scan pattern mirrors
   `detect_symmetric_neurons_*` and `detect_co_adapted_neurons_with_deadline`; no
   shared matcher was changed.
-- Dependencies: no dependency change. The first attempt's parquet feature change
-  was reverted; the zstd advisories are tracked by #2432 and are not part of this
-  fix.
+- Dependencies: `parquet` and `arrow` bumped 59.x to 60.1 (with the lockfile
+  moves they require) so `cargo audit` no longer reports the zstd advisories
+  RUSTSEC-2026-0391/0398/0403/0410 (zstd 0.14.3, zstd-safe 8.2.0, zstd-sys 2.1.2).
+  Fixes #2432.
 - Results on the final head: `cargo test --lib --all-features` passed (1664
   tests); `cargo fmt --check`, `cargo clippy --all-targets --all-features -- -D warnings`
   and `cargo doc --no-deps` with `-D warnings` were clean; the targeted
   integration runs listed above passed.
 - Not run to completion: the full `cargo test --tests --all-features` run and
-  `./quality.sh` (it also runs `cargo deny`, which fails on the pre-existing zstd
-  advisories tracked by #2432); CI runs them on the PR.
-<!-- vibe-quality-gate-skipped reason="full ./quality.sh and the full integration test run exceed this run's time cap, and cargo deny fails on the pre-existing zstd advisories tracked by #2432; targeted checks listed in the Test Plan passed and CI runs the same checks" -->
+  `./quality.sh` ; CI runs them on the PR.
+<!-- vibe-quality-gate-skipped reason="full ./quality.sh and the full integration test run exceed this run's time cap; `cargo audit` and `cargo deny check` were run and pass; targeted checks listed in the Test Plan passed and CI runs the same checks" -->
