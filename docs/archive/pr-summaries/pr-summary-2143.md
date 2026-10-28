@@ -63,6 +63,19 @@ Audit only; no UI or performance surface. Probe outputs (recorded in the ledger)
   input, observed behaviour, its `tests/issue_<n>_*.rs`, the `Cargo.toml` bump, and links #2091 and
   #2143; #2447 (footer parsing) also names the `fuzz/` requirement, and #2446 names one too.
 
+## Original Trigger Closure
+
+The original trigger is the unaudited Parquet read side: hostile or malformed Parquet files reaching
+`src/parquet_format` with no recorded review. It is closed for audit purposes with no trivial bypass,
+by static reasoning over the audited code path: all six read-side files were read end to end, each
+defect class has a recorded probe in the ledger, and `tests/issue_2143_chunk_07b_read_side_sweep.rs`
+fails if a file lacks a settled outcome or a class lacks a probe, so a file cannot be skipped
+silently. The two hostile inputs that survived (the oversized `errors` list, #2446, and the negative
+footer counts, #2447) are not fixed here: this PR changes no production code, so those two inputs
+still behave as described in the Evidence section until their own PRs land. Each is tracked by an open
+issue with a failing-first test, and no equivalent input outside those two issues was found in the
+probed classes.
+
 ## Acceptance Criteria
 
 <!-- vibe-spec-review inputs="diff+issue-body" -->
