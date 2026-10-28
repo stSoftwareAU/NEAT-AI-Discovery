@@ -4,24 +4,30 @@
 //! - The long-path scan searched every output per neuron (O(H·O)).
 //! - The starved scan searched every input per neuron (O(H·I)).
 //!
-//! Neither checked the deadline. The fix builds sorted candidate lists once,
-//! stops each scan at the first unconnected candidate, and checks the deadline at
-//! the start of every iteration. These tests pin the chosen candidates (which are
-//! now deterministic) and the deadline behaviour.
+//! The fix builds sorted candidate lists once and stops each scan at the first
+//! unconnected candidate. These tests pin the chosen candidates, which are now
+//! deterministic (smallest uuid). The deadline checks are covered in-crate by
+//! `topology_deadline_tests.rs`, which needs the `#[cfg(test)]` deadline seam.
+//!
+//! Only the pre-existing `detect_topology_issues` API is used, so these tests
+//! compile and run against the base too. There the candidate followed `HashSet`
+//! iteration order, which is random per set, so each test repeats the run
+//! `REPEATS` times to make a base pass by luck vanishingly unlikely.
 
 use neat_ai_discovery::analysis::constants::MIN_DISCOVERY_SAMPLE_COUNT;
-use neat_ai_discovery::analysis::detection::topology::{
-    TopologyCandidate, detect_topology_issues, detect_topology_issues_with_deadline,
-};
+use neat_ai_discovery::analysis::detection::topology::{TopologyCandidate, detect_topology_issues};
 use neat_ai_discovery::types::DiscoverRecord;
 use neat_ai_discovery::{CreatureJson, NeuronJson, SynapseJson};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 /// Observations per hidden neuron. Must be at least `MIN_DISCOVERY_SAMPLE_COUNT`
 /// so the neuron qualifies for topology analysis.
 const SAMPLES: u32 = 30;
 
 const _: () = assert!(SAMPLES as usize >= MIN_DISCOVERY_SAMPLE_COUNT);
+
+/// Repeats per test. On base each run picks the smallest uuid with probability
+/// at most 1/4 per candidate, so 40 runs cannot all pass by chance.
+const REPEATS: usize = 40;
 
 type Records = Vec<(String, Vec<DiscoverRecord>)>;
 
@@ -145,36 +151,6 @@ fn starved_creature() -> (CreatureJson, Records) {
     )
 }
 
-/// The long-path chain and the starved fixture together, so one run yields
-/// both kinds of candidate.
-fn combined_creature() -> (CreatureJson, Records) {
-    let mut neurons = input_neurons();
-    let mut synapses = Vec::new();
-    neurons.push(neuron("output-0", "output"));
-    push_chain(&mut neurons, &mut synapses, "output-0");
-    push_rich_and_starved(&mut neurons, &mut synapses, "output-0");
-    let records = records_for(&[
-        "h0",
-        "h1",
-        "h2",
-        "h3",
-        "h4",
-        "rich",
-        "starved-0",
-        "starved-1",
-        "starved-2",
-    ]);
-    (
-        CreatureJson {
-            neurons,
-            synapses,
-            input: 6,
-            output: 1,
-        },
-        records,
-    )
-}
-
 fn of_kind<'a>(
     candidates: &'a [TopologyCandidate],
     issue_type: &'a str,
@@ -186,6 +162,12 @@ fn of_kind<'a>(
 
 #[test]
 fn long_path_skip_target_is_the_smallest_unconnected_output() {
+    for _ in 0..REPEATS {
+        assert_long_path_targets_smallest_output();
+    }
+}
+
+fn assert_long_path_targets_smallest_output() {
     let (creature, records) = long_path_creature();
     let candidates = detect_topology_issues(&creature, &records, None);
 
@@ -206,6 +188,12 @@ fn long_path_skip_target_is_the_smallest_unconnected_output() {
 
 #[test]
 fn starved_neuron_source_is_the_smallest_unconnected_input() {
+    for _ in 0..REPEATS {
+        assert_starved_sources_smallest_input();
+    }
+}
+
+fn assert_starved_sources_smallest_input() {
     let (creature, records) = starved_creature();
     let candidates = detect_topology_issues(&creature, &records, None);
 
@@ -223,34 +211,4 @@ fn starved_neuron_source_is_the_smallest_unconnected_input() {
             c.neuron_uuid
         );
     }
-}
-
-#[test]
-fn expired_deadline_stops_both_scans() {
-    let (creature, records) = combined_creature();
-
-    let control = detect_topology_issues(&creature, &records, None);
-    assert!(
-        of_kind(&control, "long_path").next().is_some(),
-        "positive control: fixture must yield long-path candidates, got: {control:?}"
-    );
-    assert!(
-        of_kind(&control, "connectivity_imbalance").next().is_some(),
-        "positive control: fixture must yield connectivity-imbalance candidates, got: {control:?}"
-    );
-
-    let expired =
-        detect_topology_issues_with_deadline(&creature, &records, None, &Some(UNIX_EPOCH));
-    assert!(
-        expired.is_empty(),
-        "an elapsed deadline must stop both scans before any candidate is found, got: {expired:?}"
-    );
-
-    let far_future = Some(SystemTime::now() + Duration::from_secs(86_400));
-    let live = detect_topology_issues_with_deadline(&creature, &records, None, &far_future);
-    assert_eq!(
-        live.len(),
-        control.len(),
-        "a far-future deadline must give the same candidates as no deadline"
-    );
 }

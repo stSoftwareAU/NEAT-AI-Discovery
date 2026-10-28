@@ -30,21 +30,20 @@
 
 Backend-only change; no UI files touched.
 
-- `tests/issue_2369_topology_scan_bounds.rs::expired_deadline_stops_both_scans` — with `UNIX_EPOCH` as the deadline the detector returns nothing, while `&None` yields both `long_path` and `connectivity_imbalance` candidates.
-- `tests/issue_2369_topology_scan_bounds.rs::long_path_skip_target_is_the_smallest_unconnected_output`, `tests/issue_2369_topology_scan_bounds.rs::starved_neuron_source_is_the_smallest_unconnected_input` — the sorted scans choose the smallest unconnected output/input.
+- `tests/issue_2369_topology_scan_bounds.rs::long_path_skip_target_is_the_smallest_unconnected_output`, `tests/issue_2369_topology_scan_bounds.rs::starved_neuron_source_is_the_smallest_unconnected_input` — the sorted scans choose the smallest unconnected output/input. They use only the pre-existing `detect_topology_issues`, so they compile and run on base, and repeat 40 times because base order is a random `HashSet` order.
 - `src/analysis/detection/topology_deadline_tests.rs` — two `#[serial]` tests using `DeadlineOverrideGuard` prove each loop's own deadline check stops the scan (loop 1: `[false, true]`; loop 2: N×`false` then `true`).
 
 Original trigger is closed with no trivial bypass: the only per-neuron work left is a `find` over a pre-sorted list bounded by that neuron's own degree, and both loops check `deadline_passed` on every iteration before doing it, so a hostile creature can neither force an O(H·O)/O(H·I) pass nor keep the loops running past the deadline. The one-off sort is O(O log O) / O(I log I) over capped (≤ 1,000,000) lists and runs lazily after a deadline check; the BFS and fan-in passes were already linear.
 
-No wall-clock or ratio assertion is used (CONTRIBUTING forbids timing in tests); the red-able properties are the deadline behaviour and the deterministic choice.
+No wall-clock or ratio assertion is used (CONTRIBUTING forbids timing in tests); the integration tests pin the deterministic choice and the in-crate tests pin the deadline behaviour.
 
 ## Test Plan
 
-- `cargo test --test issue_2369_topology_scan_bounds`: 3 passed.
+- `cargo test --test issue_2369_topology_scan_bounds`: 2 passed.
 - `cargo test --lib topology`: 7 passed (includes both new in-crate tests).
 - `cargo test --test recommendation` (249), `--test infrastructure` (223), `--test issue_2351_sibling_detectors_non_finite_gain_a` (7): all passed.
 - `cargo clippy --all-targets -- -D warnings` and `cargo fmt --check`: clean.
-- Red on base (base `topology.rs` plus a shim ignoring the deadline, since the new symbol does not exist on base): `expired_deadline_stops_both_scans` failed 6/6 runs; the smallest-output test failed 5/6 and the smallest-input test 3/6 (HashSet order is random on base); both in-crate deadline tests failed (loop-1 test saw 2 long-path candidates where 1 expected).
+- Red on base (base `topology.rs` and `structural_specs.rs` restored, test file unchanged): both integration tests failed in 3 of 3 runs; both pass on head. The deadline checks are proven by the two in-crate tests in `topology_deadline_tests.rs`, which need the `#[cfg(test)]` deadline seam and cannot run on base (the new symbol and module do not exist there).
 - Callers checked: `structural_specs.rs` dispatch (now passes `&deadline`); tests in `tests/recommendation/issue_422_topology_aware_discovery.rs`, `tests/infrastructure/issue_754_topology_cache.rs`, `tests/issue_2351_sibling_detectors_non_finite_gain_a.rs` use the unchanged wrapper.
 - Quality gate: `./quality.sh` run on the final head fails at `cargo deny` (advisories: RUSTSEC-2026-0410 and the other `zstd` advisories via `parquet`), before reaching fmt/clippy/tests; the same step fails on the base branch. The equivalent fmt, clippy and test commands above were run directly and pass.
 
