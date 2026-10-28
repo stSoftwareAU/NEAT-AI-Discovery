@@ -40,7 +40,7 @@ Backend/docs only. No UI file is touched.
 - **met** — The dispositions for `NEURON_RANKING_BANDS`, `thresholds.rs:176`, `XDG_RUNTIME_DIR`, `RUST_LOG`, `temp_dir` (#2118), `utils/mod.rs:95`, `env!`/`option_env!` and `LIB_PATH` are each recorded. — evidence: `tests/issue_2124_chunk_13d_ledger.rs::the_named_dispositions_are_recorded` — reviewer: met — reason: the two line-number headings are recorded as `samples/thresholds.rs::get_constant_source_threshold` and `utils/mod.rs::verbose_enabled` per CONTRIBUTING #1942
 - **met** — Candidates (a)–(d) are each either filed in #2078 shape, linked in the ledger and commented on #2096, or recorded as refuted with a reason. — evidence: #2463 filed; (a), (b) refuted and (d) none under `## Probe dispositions (13d)`; `tests/issue_2124_chunk_13d_ledger.rs::the_filed_finding_is_linked_and_has_its_probe` — reviewer: met
 - **met** — The ledger test exists and fails if a 13d region contains `pending` or is missing a named variable. — evidence: `tests/issue_2124_chunk_13d_ledger.rs`; with `pending` inserted into a 13d disposition, with the 13d `LIB_PATH` entry renamed, and with the `XDG_RUNTIME_DIR` settings row removed, the matching test went red — reviewer: met
-- **met** — `./quality.sh` passes. — evidence: `./quality.sh` run in full on the head before the final symbol-citation edit, "All quality checks passed!"; re-run on the final head is recorded under Test Plan — reviewer: met
+- **met** — `./quality.sh` passes. — evidence: `./quality.sh` run in full on the head before the final symbol-citation edit, "All quality checks passed!"; re-run on the final head (after the symbol-citation edit) also printed "All quality checks passed!" — reviewer: met
 
 ## Standards Review
 
@@ -57,4 +57,5 @@ Backend/docs only. No UI file is touched.
 - `the_13d_regions_cite_no_line_numbers` and the scanner test are covered by `the_line_number_scanner_flags_citations_and_ignores_identifiers`; the 13d text before the edit had 85 matching lines.
 - Probe `explicit_default_override_is_honoured_like_its_twin` goes red against production (see Evidence); the controls pin the rest of the behaviour table so only the default-valued override fails.
 - `cargo test --test issue_2124_chunk_13d_ledger --test issue_2211_chunk_13_ledger_scaffold --test issue_2088_sweep_ledger_contract`: 25 passed.
+- `./quality.sh` on the final head: All quality checks passed.
 - Not checked: the exact lines of `docs/CONFIGURATION.md` are no longer cited, so a later edit to that file cannot stale them; the `set_var` thread race in `platform.rs` is not re-audited (chunk 9 owns it).
