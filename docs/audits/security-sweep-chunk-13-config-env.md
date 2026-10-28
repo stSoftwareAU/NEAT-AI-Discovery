@@ -281,7 +281,9 @@ Write `negative-result` when the sweep found nothing. An empty section is indist
 
 <!-- section: 13a-findings -->
 
-- #2276 (existing, open class issue; the closed planning issue is #2213) — the class findings for the config readers: presence-only booleans where `=0` turns the switch on, and silent opt-out or silent fallback on an unrecognised value. The individual instances are linked in the regions below (#2213, #2438, #2404, #2405, #2460, #2463). Linked, not refiled: no further class finding survived the 13e documentation reconcile, and the code-side fixes are tracked on #2276.
+- #2276 (existing, open class issue; the closed planning issue is #2213) — the class findings for the config readers: presence-only booleans where `=0` turns the switch on, and silent opt-out or silent fallback on an unrecognised value. The individual instances are linked in the regions below (#2213, #2438, #2404, #2405, #2460, #2463). Linked, not refiled: no further class finding survived the 13e documentation reconcile, and the code-side fixes are tracked on the class issues #2467 and #2468.
+- #2467 (`security`, `lang:rust`, `severity:low`, `confidence:high`, filed by #2276) — class finding: six presence-only booleans (`std::env::var(..).is_ok()`) where `=0`, `=false` and `=no` turn the toggle on. Owns the code-side fix and its failing-first test.
+- #2468 (`security`, `lang:rust`, `severity:low`, `confidence:high`, filed by #2276) — class finding: silent guard opt-outs, where `0` or an invalid value disables a guard and nothing is logged at the default `warn` level. Owns the code-side fix and its failing-first test.
 
 **Small modules (13a)**
 
