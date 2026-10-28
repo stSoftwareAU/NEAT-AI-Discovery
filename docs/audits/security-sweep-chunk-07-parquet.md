@@ -1,20 +1,21 @@
 # Security sweep — chunk `7`: Parquet reader/writer/schema (`src/parquet_format`)
 
-Ledger rules: [`README.md`](../README.md). Index entry:
-[`lib-sweep-coverage.json`](../lib-sweep-coverage.json) (chunk `7`).
+Ledger rules: [`README.md`](README.md). Index entry:
+[`lib-sweep-coverage.json`](lib-sweep-coverage.json) (chunk `7`).
 
 ## Record
 
 - **Chunk id:** `7` — matches the `id` in the index.
 - **Human name:** Parquet reader/writer/schema.
-- **Sweep date:** `2026-10-28` (date this staged record was written; the sweep
-  date proper is set by #2145 when the sweep completes).
+- **Sweep date:** `2026-10-28` (date the sweep was completed and the record
+  finalised, Issue #2145).
 - **Baseline commit:** `b85a551ed2521ed327469b20eb88aeda828357d2` — every line
   count and `file:line` citation below is a claim about this commit.
   `git diff b85a551..HEAD -- src/parquet_format` is empty at the time of
   writing.
 - **Exposure:** `internal` — as recorded in the index.
-- **Swept by:** Issue #2279 staged this record. The read side (`footer.rs`, `schema.rs`, `decode_budget.rs`, `reader.rs`, `batch_columns.rs`, `activation_summary.rs`) was swept by Issue #2143; the write side and cache (`mod.rs`, `writer.rs`, `shared_records.rs`) was swept by Issue #2144.
+- **Swept by:** Issue #2279 staged this record and Issue #2145 finalised it and
+  promoted it from `docs/audits/in-progress/`. The read side (`footer.rs`, `schema.rs`, `decode_budget.rs`, `reader.rs`, `batch_columns.rs`, `activation_summary.rs`) was swept by Issue #2143; the write side and cache (`mod.rs`, `writer.rs`, `shared_records.rs`) was swept by Issue #2144.
 - **Tracker issue:** `#2091` (chunk 7), under the overflow tracker `#2083`.
 
 ### Citation convention — a deliberate departure
@@ -26,20 +27,16 @@ it is pinned to one baseline commit and carries the command that falsifies it
 about HEAD. Where a file has drifted since (see #1048 below), the lines are
 those of `b85a551`. Issue #2279 explicitly requires the `File:line` column and the guard and comment line numbers, so the departure is required, not elective.
 
-### Sweep status — IN PROGRESS
+### Sweep status — COMPLETE
 
-This is a **partly swept** record: the header, the verified related remediations and
-the decode-entry-point inventory are filled, and #2143 has filled the read-side rows, probes, outcome and issues. #2144 has filled the write-side rows, probes, outcome and issues. The file lives in `docs/audits/in-progress/` on purpose, because
-`tests/issue_2088_sweep_ledger_contract.rs` scans only the top level of
-`docs/audits/` for `security-sweep-chunk-*.md` records and would reject a record
-whose index entry still reads `last_swept: null`. #2145 later runs `git mv` to
-the top level and flips chunk `7` in `lib-sweep-coverage.json`. Until then the
-index entry keeps `last_swept`, `baseline_commit` and `record` as `null`, and
-**nothing here counts as sweep coverage**.
+All nine files in `src/parquet_format` were swept: the read side under #2143 and
+the write side and cache under #2144. The record was promoted to the top level of
+`docs/audits/` and chunk `7` in `lib-sweep-coverage.json` was populated in the same
+commit by #2145.
 
 ## Files swept
 
-Line counts as at the baseline commit `b85a551`. The Outcome column is `<outcome> — <reason>`; the three write-side rows were settled by #2144.
+Line counts as at the baseline commit `b85a551`. The Outcome column is `<outcome> — <reason>`; read-side rows were settled by #2143 and write-side rows by #2144.
 
 | Path | Lines | Outcome |
 | --- | --- | --- |
@@ -222,9 +219,49 @@ Caller trace of `ParquetRecordWriter`, `write_records_to_parquet` and `write_rec
 
 ## Outcome
 
-Read side (#2143): `footer.rs` finding #2447; `decode_budget.rs`, `reader.rs` and `activation_summary.rs` finding #2446; `batch_columns.rs` and `schema.rs` clean. Write side and cache (#2144): `writer.rs` findings #2449 and #2450 (the live-file truncation in `src/record/mod.rs` is #2451), `shared_records.rs` finding #2452, `mod.rs` finding #2453. No file of the write side is claimed clean; the offset budget and `validate_records` in `writer.rs` were probed clean.
+All nine files in `src/parquet_format` were swept against baseline `b85a551`, reading
+2,642 lines in total. The read side was settled by #2143 and the write side and
+cache by #2144.
+
+| Result | Files (lines) | Lines |
+| --- | --- | --- |
+| Clean | `schema.rs` (95), `batch_columns.rs` (324) | 419 |
+| Findings | `mod.rs` (393), `footer.rs` (106), `decode_budget.rs` (135), `reader.rs` (558), `writer.rs` (596), `shared_records.rs` (276), `activation_summary.rs` (159) | 2,223 |
+| Total | 9 files | 2,642 |
+
+Findings by file: `footer.rs` #2447; `decode_budget.rs`, `reader.rs` and
+`activation_summary.rs` #2446; `writer.rs` #2449 and #2450 (the live-file truncation
+in `src/record/mod.rs` is #2451); `shared_records.rs` #2452; `mod.rs` #2453. No file
+of the write side is claimed clean. The offset budget and `validate_records` in
+`writer.rs` were probed clean.
+
+Seven findings were filed: #2446, #2447, #2449, #2450, #2451, #2452 and #2453. Two
+are medium (#2446 and #2449) and five are low. This is not a negative result,
+because findings survived the sweep, so the `negative-result` label was not applied
+to #2091.
+
+Out of scope or accepted, and not filed:
+
+- The external `parquet` crate builds the whole `RecordBatch` before the first
+  `charge_record` and has no per-list cap, so a crate-level fix is out of scope. The
+  repo-side footer pre-check is #2446.
+- Consumers of non-finite values in chunks 8a and 8b were not traced.
+- Durability (`sync_all`) and the default file mode are accepted for an internal
+  artefact.
+- A footer `.parquet.tmp` is accepted by `read_footer_stats`, but no caller is
+  affected.
+- Cosmetic, noted but not filed: the "characters" wording in the `schema.rs`
+  messages (they report bytes), and the `mod.rs` module doc, which omits four
+  sub-modules.
+
+The `## Defect classes probed` section holds 60 probe rows in 12 defect-class
+sections (the 60 include six caller-trace rows in *Write-path atomicity*). The
+`## Decode entry points` table has 22 rows.
 
 ## Issues filed
+
+Each issue carries the labels `bug`, `security`, `confidence:high`, `lang:rust` and
+the `severity:*` label shown below.
 
 | Issue | Severity | Defect |
 | --- | --- | --- |
@@ -235,6 +272,8 @@ Read side (#2143): `footer.rs` finding #2447; `decode_budget.rs`, `reader.rs` an
 | #2451 (SEC-2091-05) | low | `record_discovery_data` truncates the live `discovery_data.parquet` in place |
 | #2452 (SEC-2091-06) | low | shared-decode cache serves a stale decode after an in-place rewrite with a restored mtime |
 | #2453 (SEC-2091-07) | low | `mod.rs` writer tests assert vacuous conditions and cannot go red |
+
+These issues are tracked under #2091 (chunk 7), under the overflow tracker #2083.
 
 ## Related remediations (not sweep coverage)
 
@@ -266,8 +305,9 @@ sweep and never justify a non-null `last_swept`. All lines are as at `b85a551`.
 
 ## Verify this record
 
-Run from the repository root. Every command reads `b85a551` directly, so the
-result does not depend on HEAD.
+Run from the repository root. Every command in the first block reads `b85a551`
+directly, so the result does not depend on HEAD. The reviewer checks at the end
+read GitHub and the working tree instead.
 
 ```bash
 # Line counts (Files swept) — expect 393 106 95 135 558 324 596 276 159, total 2,642
@@ -296,4 +336,16 @@ git grep -n -e 'fn resolve_for_alias_check' -e 'fn data_type_matches' \
 
 # Staleness — an empty diff means this record still describes the current code
 git diff b85a551..HEAD -- src/parquet_format
+
+# Finding issues — expect one severity:* label each: medium for 2446 and 2449, low for the others
+for n in 2446 2447 2449 2450 2451 2452 2453; do
+  gh issue view "$n" --json number,labels --jq '[.number, ([.labels[].name] | sort | join(","))] | @tsv'
+done
+
+# Test contracts (the second file is added by Issue #2145)
+cargo test --test issue_2088_sweep_ledger_contract
+cargo test --test issue_2145_chunk_07d_finalisation
+
+# Index entry — expect last_swept 2026-10-28, baseline b85a551ed2521ed327469b20eb88aeda828357d2 and the record path
+grep '"id": "7"' docs/audits/lib-sweep-coverage.json
 ```
