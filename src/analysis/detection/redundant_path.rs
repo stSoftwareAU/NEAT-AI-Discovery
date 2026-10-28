@@ -19,11 +19,23 @@
 //!
 //! `COORDINATED_PRUNE_AND_REWEIGHT` – a coordinated structural candidate that
 //! removes one synapse and adjusts the weight of the surviving synapse.
+//!
+//! ## Scan bounds (Issue #2374)
+//!
+//! The pairwise comparison is `O(P²·S)` in the number of valid paths `P` and the
+//! shared sample count `S`. [`MAX_REDUNDANT_PATH_FAN_IN`] caps how many valid
+//! paths are compared (keeping the strongest by `|weight|`, bounding pairs to
+//! 64·63/2 = 2,016), [`MAX_REDUNDANT_PATH_CANDIDATES`] caps how many redundant
+//! pairs are emitted, and [`detect_redundant_paths_with_deadline`] checks the
+//! shared analysis deadline / global cancellation before every pair so a hung
+//! or oversized scan can be stopped mid-flight.
 
 #![allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use crate::CoordinatedStructuralCandidateJson;
 use crate::CoordinatedStructuralOpJson;
+use crate::analysis::recommendation::epistatic::ScanTruncation;
 use crate::analysis::samples::HelpfulSample;
+use crate::analysis::utils::deadline_passed;
 
 /// Minimum Pearson correlation between activation patterns to consider two paths redundant.
 const MIN_ACTIVATION_CORRELATION: f64 = 0.85;
@@ -34,6 +46,17 @@ const MIN_SAMPLES_FOR_REDUNDANT_PATH: usize = 30;
 /// Minimum combined absolute weight for the pair to be worth pruning.
 /// Very small weights are not worth the structural change.
 const MIN_COMBINED_WEIGHT: f32 = 0.01;
+
+/// Ceiling on the number of valid paths (with at least
+/// `MIN_SAMPLES_FOR_REDUNDANT_PATH` samples) compared in the redundant-path
+/// pairwise scan (Issue #2374). The strongest paths by `|existing_weight|` are
+/// kept. Bounds the number of pairs evaluated to 64·63/2 = 2,016, regardless of
+/// fan-in.
+pub const MAX_REDUNDANT_PATH_FAN_IN: usize = 64;
+
+/// Ceiling on the number of redundant path candidates emitted by the scan
+/// (Issue #2374).
+pub const MAX_REDUNDANT_PATH_CANDIDATES: usize = 256;
 
 /// Result of detecting a redundant path pair.
 #[derive(Debug, Clone)]
@@ -69,6 +92,19 @@ pub struct ExistingPathContribution {
     pub samples: Vec<HelpfulSample>,
 }
 
+/// Result of a deadline- and ceiling-bounded redundant-path scan (Issue #2374).
+#[derive(Debug, Clone)]
+pub struct RedundantPathScan {
+    /// Redundant path candidates found before the scan finished or stopped,
+    /// sorted by estimated improvement (highest first).
+    pub candidates: Vec<RedundantPathCandidate>,
+    /// `Some` when the scan stopped before visiting every pair.
+    pub truncation: Option<ScanTruncation>,
+    /// Number of valid paths dropped because [`MAX_REDUNDANT_PATH_FAN_IN`] was
+    /// exceeded. The weakest paths by `|existing_weight|` are the ones skipped.
+    pub paths_skipped: usize,
+}
+
 /// Detect redundant paths feeding the same target neuron (Issue #164).
 ///
 /// Two existing synapses `(A → T, weight_a)` and `(B → T, weight_b)` are redundant when:
@@ -77,6 +113,10 @@ pub struct ExistingPathContribution {
 ///
 /// When detected, we propose pruning the weaker synapse and scaling the survivor's weight
 /// so the combined contribution is preserved.
+///
+/// Applies the fan-in and candidate ceilings (Issue #2374) but no deadline —
+/// equivalent to calling [`detect_redundant_paths_with_deadline`] with a `None`
+/// deadline.
 ///
 /// # Arguments
 /// * `target_uuid` – The target neuron UUID.
@@ -90,27 +130,84 @@ pub fn detect_redundant_paths(
     paths: &[ExistingPathContribution],
     target_impact: f32,
 ) -> Vec<RedundantPathCandidate> {
+    detect_redundant_paths_with_deadline(target_uuid, paths, target_impact, &None).candidates
+}
+
+/// Deadline- and cancellation-aware variant of [`detect_redundant_paths`]
+/// (Issue #2374).
+///
+/// Bounds the O(P²·S) pairwise comparison with the fan-in cap
+/// ([`MAX_REDUNDANT_PATH_FAN_IN`]) and the candidate ceiling
+/// ([`MAX_REDUNDANT_PATH_CANDIDATES`]), and checks `deadline` before every pair
+/// so the scan stops promptly on an elapsed deadline or global cancellation.
+pub fn detect_redundant_paths_with_deadline(
+    target_uuid: &str,
+    paths: &[ExistingPathContribution],
+    target_impact: f32,
+    deadline: &Option<std::time::SystemTime>,
+) -> RedundantPathScan {
+    detect_redundant_paths_observed(target_uuid, paths, target_impact, deadline, || {})
+}
+
+/// Instrumented core of [`detect_redundant_paths_with_deadline`] (Issue #2374).
+///
+/// `on_pair` is invoked once for every pair actually evaluated, so callers and
+/// tests can observe how much of the O(P²) comparison really ran.
+pub fn detect_redundant_paths_observed(
+    target_uuid: &str,
+    paths: &[ExistingPathContribution],
+    target_impact: f32,
+    deadline: &Option<std::time::SystemTime>,
+    mut on_pair: impl FnMut(),
+) -> RedundantPathScan {
     if paths.len() < 2 {
-        return Vec::new();
+        return RedundantPathScan {
+            candidates: Vec::new(),
+            truncation: None,
+            paths_skipped: 0,
+        };
     }
 
-    // Filter to paths with enough samples
-    let valid_paths: Vec<&ExistingPathContribution> = paths
+    // Filter to paths with enough samples, keeping each path's original index
+    let mut valid_paths: Vec<(usize, &ExistingPathContribution)> = paths
         .iter()
-        .filter(|p| p.samples.len() >= MIN_SAMPLES_FOR_REDUNDANT_PATH)
+        .enumerate()
+        .filter(|(_, p)| p.samples.len() >= MIN_SAMPLES_FOR_REDUNDANT_PATH)
         .collect();
 
     if valid_paths.len() < 2 {
-        return Vec::new();
+        return RedundantPathScan {
+            candidates: Vec::new(),
+            truncation: None,
+            paths_skipped: 0,
+        };
     }
 
-    let mut candidates = Vec::with_capacity(valid_paths.len());
+    // Issue #2374: cap fan-in, keeping the strongest paths by |weight| and then
+    // restoring their original relative order.
+    let paths_skipped = valid_paths.len().saturating_sub(MAX_REDUNDANT_PATH_FAN_IN);
+    if paths_skipped > 0 {
+        valid_paths
+            .sort_by(|(_, a), (_, b)| b.existing_weight.abs().total_cmp(&a.existing_weight.abs()));
+        valid_paths.truncate(MAX_REDUNDANT_PATH_FAN_IN);
+        valid_paths.sort_by_key(|(original_index, _)| *original_index);
+    }
+
+    let mut candidates = Vec::with_capacity(valid_paths.len().min(MAX_REDUNDANT_PATH_CANDIDATES));
+    let mut truncation: Option<ScanTruncation> = None;
 
     // Check pairs for redundancy
-    for i in 0..valid_paths.len() {
+    'outer: for i in 0..valid_paths.len() {
         for j in (i + 1)..valid_paths.len() {
-            let path_a = valid_paths[i];
-            let path_b = valid_paths[j];
+            if candidates.len() >= MAX_REDUNDANT_PATH_CANDIDATES {
+                truncation = Some(ScanTruncation::CandidateCeiling);
+                break 'outer;
+            }
+
+            on_pair();
+
+            let path_a = valid_paths[i].1;
+            let path_b = valid_paths[j].1;
 
             if let Some(candidate) =
                 evaluate_pair_for_redundancy(target_uuid, path_a, path_b, target_impact)
@@ -123,7 +220,11 @@ pub fn detect_redundant_paths(
     // Sort by estimated improvement (descending)
     candidates.sort_by(|a, b| b.estimated_improvement.total_cmp(&a.estimated_improvement));
 
-    candidates
+    RedundantPathScan {
+        candidates,
+        truncation,
+        paths_skipped,
+    }
 }
 
 /// Evaluate a pair of existing paths for redundancy.
@@ -698,3 +799,7 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "redundant_path_deadline_tests.rs"]
+mod deadline_tests;

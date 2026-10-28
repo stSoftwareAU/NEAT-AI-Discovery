@@ -177,10 +177,12 @@ complexity without degrading fitness.
 - **Shared downstream synapses** – Both sources feed the same target neuron
 
 **How it works**:
-1. For each target neuron, collect activation samples from all existing incoming synapses
+1. For each target neuron, collect activation samples from the existing incoming synapses with at least 30 samples, keeping only the 64 with the largest absolute weight (see Bounds)
 2. Compute pairwise activation correlation between sources
 3. If correlation ≥ 0.85, the weaker synapse (by absolute weight) is a prune candidate
 4. The survivor's weight is renormalised to `keep_weight + prune_weight`
+
+**Bounds (Issue #2374)**: each target compares only its 64 strongest incoming paths (by |weight|), so at most 2,016 pairs per target. The scan stops after 256 candidates, and checks the analysis deadline and host cancellation before each pair, returning partial results and logging a warning that names the stop reason (`DeadlinePassed` for the deadline, `CandidateCeiling` for the candidate cap).
 
 **Output**: Redundant path candidates appear in `coordinatedStructuralCandidates` with a
 `removeSynapse` operation (for the pruned path) and a `setWeight` operation (for the
