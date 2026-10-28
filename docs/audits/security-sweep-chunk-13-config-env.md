@@ -127,7 +127,8 @@ Write `negative-result` when the sweep found nothing. An empty section is indist
 
 <!-- section: 13b -->
 
-- pending — no findings recorded yet
+- #2404 (low) — `config/user_facing.rs::watchdog_abort_delay` accepts any `u64` and `watchdog.rs::watchdog_loop` sleeps that long before `std::process::abort()`, so the abort becomes a hang. The fix lives in the accessor, not in `watchdog.rs`. Cross-links #2119 and #2252.
+- #2405 (medium) — `watchdog.rs::watchdog_loop` truncates `config.stall_timeout.as_millis() as u64`, so a huge `NEAT_AI_DISCOVERY_WATCHDOG_STALL_SECS` yields a near-zero threshold and aborts a healthy process (CWE-197). Cross-links #2252.
 
 **user_facing L665-end (13c)**
 
