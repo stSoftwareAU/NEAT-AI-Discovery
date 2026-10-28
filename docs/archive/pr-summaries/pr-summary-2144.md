@@ -48,5 +48,5 @@ Backend/doc-only change; no UI. Probes were run with `cargo test --test <scratch
 
 - No test added or modified (audit-only; the issue forbids `.rs` changes). Each finding's regression test is named in its issue.
 - `cargo test --test issue_2143_chunk_07b_read_side_sweep --test issue_2088_sweep_ledger_contract`: 14 passed (ledger contract still holds).
-- `markdownlint-cli2` on the ledger: 0 issues.
+- `./quality.sh < /dev/null`: "All quality checks passed!" (run before the final docs-only lint and citation fixes; `markdownlint-cli2` on the ledger was re-run after them: 0 issues).
 - Not covered: a real 2 GB `i32::MAX` offset probe was not run; the offset budget is argued by a scaled-limit round trip and the arithmetic, and the ledger says so.
