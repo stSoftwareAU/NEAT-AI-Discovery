@@ -1,6 +1,6 @@
 ## Summary
 
-Chunk 13e of the #2096 config sweep: reconciles `docs/CONFIGURATION.md` and the `src/config/mod.rs` doc table against the live `NEAT_AI_DISCOVERY_*` readers, collapses the duplicated `mod.rs` table into a pointer, adds a code-vs-doc parity gate, finalises the chunk-13 ledger, and records the outcome for #2096 and #2083. Closes #2125.
+Chunk 13e of the #2096 config sweep: reconciles `docs/CONFIGURATION.md` and the `src/config/mod.rs` doc table against the live `NEAT_AI_DISCOVERY_*` readers, collapses the duplicated `mod.rs` table into a pointer, adds a code-vs-doc parity gate, finalises the chunk-13 ledger (status now COMPLETE, no `pending` entries), and records the outcome for #2096 and #2083. Closes #2125.
 
 Version bump: no `Cargo.toml` edit here. The diff changes doc comments, docs and tests only (no runtime behaviour), and CI's `version-increment` job owns the patch bump on the PR.
 
@@ -23,7 +23,7 @@ flowchart LR
 
 - The gate matches exact tokens (no regex crate) and ignores trailing-underscore prefix literals, so `FOO` cannot be satisfied by a documented `FOO_BAR`.
 - `NEAT_AI_DISCOVERY_LIB_PATH` is kept and labelled a host-loader variable (as the issue says); the parity test exempts it through `HOST_LOADER_VARS`. Three test-only names are allowlisted with a reason each, and a stale allowlist entry fails the gate.
-- Confirmed no live variable is absent from `CONFIGURATION.md`, so no new guard-weakening finding was filed; the class findings are owned by #2276 (the `13a-findings` ledger bullet stays `pending` for that reason).
+- Confirmed no live variable is absent from `CONFIGURATION.md`, so no new guard-weakening finding was filed; the class findings are owned by #2276 (the `13a-findings` ledger bullet now links #2276 instead of reading `pending`).
 - Hand-rolled `std::env::var` readers in `user_facing.rs` (19 variables) are documented as such; routing them through `parse_env` is a refactor and is left as a follow-up note, per the issue. No issue was filed for it.
 
 ### Undiscoverable Facts
@@ -49,7 +49,7 @@ Issue numbers cited as provenance were all looked up and appear in the issue's o
 - **met** — `docs/CONFIGURATION.md` lists exactly the live variables (plus the labelled host-loader `LIB_PATH` and the new internally-set section), with the clamp-vs-fallback and `parse_env` claims corrected; `src/config/mod.rs` carries a pointer, not a table — evidence: `docs/CONFIGURATION.md`, `src/config/mod.rs`, `tests/issue_2096_config_doc_parity.rs::config_module_doc_is_a_pointer_not_a_second_table` — reviewer: met
 - **met** — `tests/issue_2096_config_doc_parity.rs` fails when a `NEAT_AI_DISCOVERY_*` literal is added to `src/` without a `CONFIGURATION.md` row (verified by a temporary local edit, not committed) and passes on the reconciled tree — evidence: `tests/issue_2096_config_doc_parity.rs::every_src_variable_is_documented_or_allowlisted_as_test_only`; a temporary `ZZZ_DOC_ONLY`-style edit went red and was restored — reviewer: met
 - **met** — Every live-but-undocumented switch that can weaken a guard is filed as a finding; every doc/code range mismatch is either fixed or filed — evidence: ledger `## Documentation reconciliation (13e)` (22-entry disposition table; no live variable was undocumented, so no new guard-weakening switch exists to file) — reviewer: met
-- **partial** — Ledger has no `pending` rows; settings table complete; outcome comment posted on #2096 and #2083 — evidence: `docs/audits/security-sweep-chunk-13-config-env.md`, `tests/issue_2124_chunk_13d_ledger.rs::every_named_reader_has_one_ten_column_settings_row_and_a_verdict` — reviewer: partial — reason: the `13a-findings` bullet stays `pending` because #2276 owns it; the #2096 and #2083 comments are posted after the PR is raised
+- **met** — Ledger has no `pending` rows; settings table complete; outcome comment posted on #2096 and #2083 — evidence: `docs/audits/security-sweep-chunk-13-config-env.md`, `tests/issue_2124_chunk_13d_ledger.rs::every_named_reader_has_one_ten_column_settings_row_and_a_verdict`, comments [#2096](https://github.com/stSoftwareAU/NEAT-AI-Discovery/issues/2096#issuecomment-6477257903) and [#2083](https://github.com/stSoftwareAU/NEAT-AI-Discovery/issues/2083#issuecomment-6477258315) — reviewer: met
 - **met** — `./quality.sh` passes — evidence: a full gate run passed on the near-final tree; targeted fmt, clippy and contract tests re-run on the final head — reviewer: partial — reason: the reviewer could not run the gate; the final-head full gate re-run was cut off by the tool time limit, so CI re-runs it on the PR
 
 ## Standards Review
