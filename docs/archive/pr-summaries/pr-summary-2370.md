@@ -4,12 +4,16 @@
 
 `detect_dead_neurons` no longer runs one allocating depth-first search per dead
 hidden neuron. Connected outputs for all dead neurons now come from one shared,
-memoised, iterative Tarjan strongly-connected-component pass (O(V + E) plus the
-size of the output sets), and the pass stops at the analysis deadline or on
-global cancellation. The discovery spec uses the new deadline-aware variant and
-logs a warning when a scan stops early. Version bump: `Cargo.toml` and
-`Cargo.lock` updated for this change; the merged commit records the final
-version. Closes #2370.
+iterative Tarjan strongly-connected-component pass. Its cost is O(V + E) plus the
+size of the output sets it merges, with two bounds: the analysis deadline and
+global cancellation are checked on every walk iteration, and total merged work is
+capped at `MAX_REACHABILITY_MERGE_WORK` (8,000,000 elements). A component that
+adds no direct outputs and has a single closed successor shares that successor's
+set without copying it, so a long live chain above a wide fan-out costs no
+per-component copy. The discovery spec uses the deadline-aware variant and logs a
+warning when a scan stops early. Version bump: `Cargo.toml` and `Cargo.lock`
+updated for this change; the merged commit records the final version. Closes
+#2370.
 
 ## Spec
 
@@ -21,6 +25,9 @@ version. Closes #2370.
 - Tarjan SCC (not a plain reverse-topological memo) keeps the old DFS's cycle
   tolerance: a corrupt creature with cycles still terminates and gives each
   neuron in a cycle the same reachable outputs.
+- Review of the first attempt (PR #2435) found that copying each closed
+  successor's output set into every intermediate component made memory O(live
+  components × outputs). Set sharing plus a merged-work ceiling fixes that.
 
 ### Essential Design Decisions
 
@@ -30,15 +37,26 @@ version. Closes #2370.
 - Stop during the hidden-neuron statistics pass returns no candidates (outputs
   cannot be computed for a partial scan, so fail closed). Stop during the
   reachability pass keeps only candidates whose outputs completed.
-- The `on_reachability_step` observer is called once per edge examined and once
-  per set element merged; it is the production no-op closure in
-  `detect_dead_neurons_with_deadline`, and lets the regression test count work
-  rather than time it.
+- Hitting the merged-work ceiling reports `ScanTruncation::CandidateCeiling`
+  (the existing "work ceiling reached" variant; no new variant added). The
+  ceiling is checked against an upper bound before any copy, so it bounds memory.
+  A ladder-shaped graph (each node feeds its own output and the next node) needs
+  quadratic distinct sets and stops at the ceiling instead of exhausting memory.
+- `detect_dead_neurons_observed` takes the ceiling and a step observer so tests
+  can count work and force the ceiling; production passes the constant and a
+  no-op observer through `detect_dead_neurons_with_deadline`.
+- No wall-clock test: the repo's CONTRIBUTING.md keeps timing out of unit tests,
+  so the regression guard counts reachability steps.
 
 ### Undiscoverable Facts
 
 - `hidden_uuids` is a `HashSet`, so root order (and the order of equal-confidence
-  candidates) is arbitrary; tests compare candidates sorted by UUID.
+  candidates) is arbitrary; tests compare candidates sorted by UUID, and a test
+  of "an earlier root completes, a later one hits the ceiling" cannot be made
+  deterministic.
+- The crate installs its own `#[global_allocator]`, so a test binary cannot add a
+  counting allocator; an allocation-bytes guard that also compiles on the base
+  branch was not possible.
 
 ## Evidence
 
@@ -48,38 +66,43 @@ Backend-only change; no visual surface is affected.
 flowchart LR
     A[Hidden neurons] --> B[Dead-criteria pass, deadline checked per neuron]
     B --> C[Dead drafts]
-    C --> D[Shared Tarjan SCC pass, memo across dead roots]
+    C --> D[Shared Tarjan SCC pass, sets shared or merged]
     D --> E[Candidates with connected outputs]
     B -- deadline --> F[No candidates, DeadlinePassed]
     D -- deadline --> G[Completed candidates, DeadlinePassed]
+    D -- merge ceiling --> H[Completed candidates, CandidateCeiling]
 ```
 
 Security Fix Evidence
 
 - Regression test:
-  `tests/issue_2370_dead_neuron_allocation.rs::scan_time_grows_linearly_with_dead_count`
-  uses only the pre-existing `detect_dead_neurons` entry point, so it compiles
-  and runs on the base as well as the head. It compares the scan time of a
-  1,000-neuron and a 4,000-neuron dead chain in one process (fastest of three
-  repetitions, ratio bound 9x; linear is ~4x, a search per neuron is ~16x).
-- Executed on the base versions of `dead_neuron.rs` and `neuron_specs.rs`: the
-  test fails (N=1000 took 306 ms, N=4000 took 4.96 s, ratio 16.2). At the head it passes with a ratio near 4.
   `tests/issue_2370_dead_neuron_reachability.rs::reachability_grows_linearly_with_dead_count`
-  additionally counts reachability steps via the new observer (191 and 767 steps,
-  4.02x; 15.9x with the memo reset per dead neuron) but needs the new API, so it
-  does not compile on the base.
+  runs the same dead chain at N=64 and N=256 and counts reachability steps through
+  the `detect_dead_neurons_observed` observer: 128 and 512 steps (exactly 4x).
+  Resetting the memo per dead neuron (the old per-neuron work profile) gives a
+  roughly 16x growth and turns the test red. Against the base branch the test file
+  does not compile, because `detect_dead_neurons_observed` does not exist there;
+  that is the base-branch failure, not a runtime red.
+- Memory regression test:
+  `tests/issue_2370_dead_neuron_reachability.rs::live_chain_above_wide_fan_out_does_not_copy_sets_per_component`
+  (one dead root, a live chain, then 64 outputs: 256 steps at N=64, 640 at N=256;
+  disabling the sharing branch gave 17,024 steps and turned it red against its
+  `N × outputs` bound of 16,384).
 - The original trigger is closed with no equivalent bypass: the per-neuron DFS
   and its per-call allocations are removed, so reachability work no longer
   multiplies by the dead count; cycles are handled by the SCC pass (tested), the
-  walk uses an explicit stack (a 20,000-deep chain is tested), and the deadline
-  and cancellation are checked once per walk iteration and once per hidden
-  neuron. Remaining cost is O(V + E) plus output-set sizes, which are bounded by
-  the output width (capped by `validate_creature`).
+  walk uses an explicit stack (a 20,000-deep chain is tested), the deadline and
+  cancellation are checked once per walk iteration and once per hidden neuron,
+  and merged output-set work is capped, so a hostile fan-out stops at
+  `CandidateCeiling` rather than exhausting memory. Remaining retained memory is
+  bounded by the 8,000,000-element ceiling plus the candidates' own output lists.
 
 ## Test Plan
 
-- Added `tests/issue_2370_dead_neuron_reachability.rs` (7 tests, all pass):
+- Added `tests/issue_2370_dead_neuron_reachability.rs` (9 tests, all pass):
   `reachability_grows_linearly_with_dead_count`,
+  `live_chain_above_wide_fan_out_does_not_copy_sets_per_component`,
+  `merge_ceiling_stops_the_scan_and_reports_candidate_ceiling`,
   `deep_chain_does_not_overflow_the_stack`,
   `cycle_among_dead_neurons_terminates_with_correct_outputs`,
   `matches_a_reference_traversal_on_a_branching_graph`,
@@ -91,37 +114,47 @@ Security Fix Evidence
   `reachability_deadline_check_stops_mid_scan`. Their sequence-scripted deadline
   seam makes each check the one that stops the scan.
 - Red checks run: resetting the memo per root turned
-  `reachability_grows_linearly_with_dead_count` red (15.9×). Disabling the
-  hidden-neuron deadline check turned both deadline unit tests red. Disabling the
-  walk's deadline check turned `reachability_deadline_check_stops_mid_scan` red
-  (the other stayed green, as expected).
-- Existing dead-neuron suites re-run and pass: `tests/detection/issue_341_*`,
-  `tests/infrastructure/issue_754_topology_cache.rs`, `tests/analysis/issue_424_*`,
-  `tests/analysis/issue_481_*`.
+  `reachability_grows_linearly_with_dead_count` red. Disabling the set-sharing
+  branch in `close()` turned `live_chain_above_wide_fan_out_does_not_copy_sets_per_component`
+  red (17,024 steps against 16,384); its `4n < 6n` assertion did not fail, the
+  `N × outputs` bound is the discriminating one. Disabling the hidden-neuron
+  deadline check turned both deadline unit tests red; disabling the walk's
+  deadline check turned `reachability_deadline_check_stops_mid_scan` red.
+  The ceiling test uses a ceiling of 1 against `usize::MAX` and the production
+  ceiling on the same graph, so only the ceiling distinguishes the outcomes; I did
+  not separately break the ceiling comparison.
+- Removed from the first attempt: the wall-clock test
+  `scan_time_grows_linearly_with_dead_count` (CONTRIBUTING.md forbids timing
+  assertions in tests); the step-count tests above replace it.
+- Existing dead-neuron suites re-run and pass: `tests/detection/issue_341_*`
+  (`--test detection dead`, 19 passed), `tests/analysis/issue_424_*` and
+  `issue_481_*` (`--test analysis dead`, 16 passed),
+  `tests/infrastructure/issue_754_topology_cache.rs` (`--test infrastructure
+  topology`, 6 passed).
 - Not covered by a test: the discovery spec in `neuron_specs.rs` passing
-  `&deadline` (`detect_dead_neurons_with_deadline` vs the legacy call). I searched
-  the tests that reach spec construction (`tests/detection/issue_571_co_adaptation_detection.rs`,
+  `&deadline`. I searched the tests that reach spec construction
+  (`tests/detection/issue_571_co_adaptation_detection.rs`,
   `src/analysis/module_dispatch_specs/mod.rs`); none runs a spec with an elapsed
-  deadline, so `neuron_specs.rs` `detect:` block is
-  `exempt (untestable)`: no existing harness can stage an elapsed deadline through the dispatch.
-  A mid-reachability stop that keeps *completed* candidates is likewise not
-  separately asserted; the chain fixture cannot complete a root in two iterations.
-- Docs: `docs/DISCOVERY_TYPES.md` "Dead Neuron Detection" gained a
-  `Scan bounds (Issue #2370)` paragraph; `docs/discoveries/dead-neuron.md` and
-  `docs/ANALYSIS_DEEP_DIVE.md` were read and have no reachability claims.
+  deadline, so the `detect:` block is `exempt (untestable)`: no existing harness
+  can stage an elapsed deadline through the dispatch. A ceiling stop that keeps an
+  earlier completed candidate is not asserted either (root order is random).
+- Docs: `docs/DISCOVERY_TYPES.md` "Dead Neuron Detection" has a
+  `Scan bounds (Issue #2370)` paragraph describing the shared pass, the set
+  sharing, the merged-work cap and both truncation reasons;
+  `docs/discoveries/dead-neuron.md` and `docs/ANALYSIS_DEEP_DIVE.md` were read and
+  have no reachability claims. The module docs in `dead_neuron.rs` were updated to
+  match.
 - Twin-rule search: the deadline-aware scan pattern mirrors
   `detect_symmetric_neurons_*` and `detect_co_adapted_neurons_with_deadline`; no
   shared matcher was changed.
+- Dependencies: no dependency change. The first attempt's parquet feature change
+  was reverted; the zstd advisories are tracked by #2432 and are not part of this
+  fix.
 - Results on the final head: `cargo test --lib --all-features` passed (1664
   tests); `cargo fmt --check`, `cargo clippy --all-targets --all-features -- -D warnings`
-  and `cargo doc` with `-D warnings` were clean; the targeted integration suites
-  listed above passed.
-- Not run to completion: the full `cargo test --tests --all-features` run exceeds
-  the run's time cap here (killed at 595 s), so the remaining integration suites
-  are left to CI.
-- Known pre-existing gate failure, unrelated to this change: `cargo deny check`
-  (part of `./quality.sh`) reports advisories for `zstd` 0.13.3 / `zstd-safe`
-  7.3.0 / `zstd-sys` 2.1.0 pulled in via `parquet` 59.3.0 (`zstd-safe` needs
-  >= 8.2.0). A single `cargo update -p zstd-sys` did not clear it and was
-  reverted; a dependency change belongs to `./bump-deps.sh`, not this PR.
-<!-- vibe-quality-gate-skipped reason="full ./quality.sh not completed: cargo deny fails on pre-existing zstd advisories, and the full integration test run exceeds the run time cap; CI runs the same checks" -->
+  and `cargo doc --no-deps` with `-D warnings` were clean; the targeted
+  integration runs listed above passed.
+- Not run to completion: the full `cargo test --tests --all-features` run and
+  `./quality.sh` (it also runs `cargo deny`, which fails on the pre-existing zstd
+  advisories tracked by #2432); CI runs them on the PR.
+<!-- vibe-quality-gate-skipped reason="full ./quality.sh and the full integration test run exceed this run's time cap, and cargo deny fails on the pre-existing zstd advisories tracked by #2432; targeted checks listed in the Test Plan passed and CI runs the same checks" -->
