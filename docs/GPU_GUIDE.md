@@ -24,6 +24,24 @@ landing):
 - **`AdapterInfo` test helper** — `transient_saves_memory` became
   `Option<bool>` and a `limit_bucket: Option<AdapterLimitBucketInfo>` field was
   added.
+- **Uncaptured errors and device loss (Issue #2363).** wgpu 30's default
+  uncaptured-error handler panics on an error that no error scope captures, which
+  would kill the GPU thread. Each evaluation the GPU work queue runs is now
+  wrapped in `push_error_scope` for `Validation` (outermost), `OutOfMemory` and
+  `Internal`. A buffer-creation out-of-memory does not lose the device: wgpu
+  hands back an invalid buffer, and the evaluation's next use of it (for example
+  `create_bind_group`) raises a validation error, so the validation scope is
+  what stops that follow-on error from panicking. A popped error becomes a typed
+  `Err` with one of three prefixes, each followed by a colon:
+  "GPU out of memory: ...", "GPU internal error: ...", or
+  "GPU device error: ..." (a validation or any other captured error). When
+  several scopes captured an error, out-of-memory is reported in preference to
+  internal, and internal in preference to validation. A genuine validation bug
+  therefore surfaces as an `Err` too, rather than a panic. Device loss is also
+  signalled by `Device::set_device_lost_callback`, which sets the flag
+  exposed as `RequestEvaluator::device_lost()`, so an opaque `BufferAsyncError`
+  map failure still reaches device-lost recovery. `is_device_lost_error()` and
+  `is_memory_exhaustion_error()` also match wgpu-core's "Not enough memory left."
 
 When the next major wgpu bump lands, migrate `src/analysis/gpu/*` in the same PR
 (the #1613 dependency-bump flow) or revert the bump — never commit a
