@@ -21,7 +21,7 @@ Version bump: not changed here (docs and test only); CI's `version-increment` jo
 ### Undiscoverable Facts
 
 - `docs/CONFIGURATION.md`, `mod.rs` and several doc comments say `TIMING`, `GPU_METRICS` and `PROFILE` write to stderr. The code emits `tracing::debug!` / `info!`, which the default `RUST_LOG=warn` hides.
-- The "parent's list" of `mod.rs` doc-table drift was not retrievable (GitHub API rate limit). Every 13a reader was checked against the `mod.rs` tables directly. Only `MODULE_TIERING_HIDDEN_THRESHOLD` is missing among them.
+- The "parent's list" of `mod.rs` doc-table drift (the 15 variables in #2121) was re-fetched and re-checked: all 15 are absent from the `mod.rs` tables, no other live variable is, and only `MODULE_TIERING_HIDDEN_THRESHOLD` is read by a 13a file. The other 14 have settings rows in 13b, 13c and 13d.
 
 ## Evidence
 
@@ -37,9 +37,9 @@ Backend/docs only. Comments posted: [#2096](https://github.com/stSoftwareAU/NEAT
 - **met** — `MODULE_TIERING_HIDDEN_THRESHOLD` appears under Doc drift observed — evidence: `tests/issue_2211_chunk_13_ledger_scaffold.rs::region_13a_issues_filed_and_doc_drift_are_recorded_without_pending` — reviewer: met
 - **met** — The #2213 and #2272-finding links appear under Issues filed, and the #2096 comment has been posted — evidence: same test; comment URL above — reviewer: met
 - **met** — The extended scaffold test fails on a re-inserted `pending` row, and passes on the finished ledger — evidence: red checks in Test Plan — reviewer: met
-- **met** — `./quality.sh` passes — evidence: full gate run on the head before the final wording edits, "All quality checks passed!"; the three ledger test targets were re-run after them — reviewer: not assessed — reason: the reviewer saw only the diff and could not run the gate
-- **partial** — Doc drift: "re-checked against the parent's list" — evidence: ledger "Doc drift observed" 13a — reviewer: partial — reason: the parent's list could not be retrieved; the tables were checked against the readers directly (see Undiscoverable Facts)
-- **partial** — Test-quality note: "suggest a follow-up only if it is not already tracked" — evidence: ledger "Probe dispositions (13a)" — reviewer: partial — reason: recorded as untracked; no follow-up issue filed, since an approved issue is not split into new issues and the record is the trace
+- **met** — `./quality.sh` passes — evidence: full gate run on the head before the final wording edits, "All quality checks passed!"; the three ledger test targets were re-run after the later edits (12, 10 and 9 passed) — reviewer: partial — reason: departure from the reviewer: it reported "not assessed" because it saw only the diff and could not run the gate; this entry is `met` on the gate run recorded as evidence, and the worker re-runs the gate over the final tree
+- **met** — Doc drift: "re-checked against the parent's list" — evidence: ledger "Doc drift observed" 13a, bullet "Re-checked against the parent's list (#2121)", pinned by `tests/issue_2211_chunk_13_ledger_scaffold.rs::region_13a_issues_filed_and_doc_drift_are_recorded_without_pending` — reviewer: met
+- **met** — Test-quality note: "suggest a follow-up only if it is not already tracked" — evidence: ledger "Probe dispositions (13a)", test-quality note (searched, untracked, "Suggested follow-up (untracked, so recommended)" names the rewrite) — reviewer: met
 - **unrequested** — extra tests `region_13a_issues_filed_and_doc_drift_are_recorded_without_pending`, `region_13a_probe_dispositions_record_probe_a_and_probe_b` and two helper self-tests — reviewer: unrequested — reason: they gate the issue's own acceptance criteria and the helpers' linear-time behaviour
 - **unrequested** — comment on #2125 — reviewer: unrequested — reason: feeds #2125 as the issue states
 
@@ -47,6 +47,8 @@ Backend/docs only. Comments posted: [#2096](https://github.com/stSoftwareAU/NEAT
 
 <!-- vibe-standards-review inputs="diff+CODING-STANDARDS.md" -->
 
+- **violation** — test nit: `region_13a_issues_filed_and_doc_drift_are_recorded_without_pending` did not pin the new parent's-list bullet — evidence: `tests/issue_2211_chunk_13_ledger_scaffold.rs` — reason: fixed in this diff (assertion added)
+- **violation** — test nit: the `for index in [4, 5]` block in `region_13a_settings_rows_cover_the_twelve_variables_with_filled_cells` repeats the all-cells empty check — reviewer-reported, not blocking — reason: left as is, it names the two columns the issue singles out in its failure message
 - **clean** — no `CODING-STANDARDS.md` in the repo, so reviewed against `CONTRIBUTING.md` and `AGENTS.md`: code cited by symbol, Australian English, linear scanning, no duplicate imports, named tests exist. Findings reported as non-violations (mod.rs test count, `Once` vs `OnceLock`, `pub(crate)` wording, helper-test wording) were fixed in this diff.
 
 ## Test Plan

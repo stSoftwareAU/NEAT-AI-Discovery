@@ -632,6 +632,11 @@ fn region_13a_issues_filed_and_doc_drift_are_recorded_without_pending() {
         "the 13a region of `## Doc drift observed` in {RECORD} must record the \
          `MODULE_TIERING_HIDDEN_THRESHOLD` drift"
     );
+    assert!(
+        drift.contains("Re-checked against the parent's list (#2121)"),
+        "the 13a region of `## Doc drift observed` in {RECORD} must record the re-check \
+         against the parent's list of missing `mod.rs` variables"
+    );
 }
 
 #[test]
