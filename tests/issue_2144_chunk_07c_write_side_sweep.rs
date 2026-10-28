@@ -1,5 +1,5 @@
 //! Contract test for the write-side half of the chunk 7 sweep record,
-//! `docs/audits/in-progress/security-sweep-chunk-07-parquet.md` (Issue #2144).
+//! `docs/audits/security-sweep-chunk-07-parquet.md` (Issue #2144; promoted by Issue #2145).
 //!
 //! It pins, for the three write-side files (`mod.rs`, `writer.rs` and
 //! `shared_records.rs`):
@@ -20,8 +20,8 @@ use std::fs;
 use std::panic;
 use std::path::PathBuf;
 
-/// The chunk 7 sweep record, still staged under `in-progress/`.
-const RECORD: &str = "docs/audits/in-progress/security-sweep-chunk-07-parquet.md";
+/// The chunk 7 sweep record, promoted out of `in-progress/` by Issue #2145.
+const RECORD: &str = "docs/audits/security-sweep-chunk-07-parquet.md";
 
 /// The three write-side files swept under #2144, in record order.
 const WRITE_SIDE: [&str; 3] = [

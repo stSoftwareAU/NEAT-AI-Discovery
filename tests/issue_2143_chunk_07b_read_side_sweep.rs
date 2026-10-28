@@ -1,5 +1,5 @@
 //! Contract test for the read-side half of the chunk 7 sweep record,
-//! `docs/audits/in-progress/security-sweep-chunk-07-parquet.md` (Issue #2143).
+//! `docs/audits/security-sweep-chunk-07-parquet.md` (Issue #2143; promoted by Issue #2145).
 //!
 //! It pins, for the six read-side files (`footer`, `schema`, `decode_budget`,
 //! `reader`, `batch_columns` and `activation_summary`):
@@ -22,8 +22,8 @@ use std::fs;
 use std::panic;
 use std::path::PathBuf;
 
-/// The chunk 7 sweep record, still staged under `in-progress/`.
-const RECORD: &str = "docs/audits/in-progress/security-sweep-chunk-07-parquet.md";
+/// The chunk 7 sweep record, promoted out of `in-progress/` by Issue #2145.
+const RECORD: &str = "docs/audits/security-sweep-chunk-07-parquet.md";
 
 /// The six read-side files swept under #2143, in record order.
 const READ_SIDE: [&str; 6] = [
