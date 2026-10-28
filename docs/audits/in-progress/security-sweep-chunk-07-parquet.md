@@ -154,7 +154,7 @@ Probes use hand-built Parquet files written with the `write_custom_parquet` / `f
 
 ### Write-path atomicity
 
-Caller trace of `ParquetRecordWriter`, `write_records_to_parquet` and `write_records_to_parquet_with_limit` outside `src/parquet_format` (`git grep -n -e ParquetRecordWriter -e write_records_to_parquet -e merge_parquet_files -- src`):
+Caller trace of `ParquetRecordWriter`, `write_records_to_parquet` and `write_records_to_parquet_with_limit` outside `src/parquet_format` (`git grep -n -e ParquetRecordWriter -e write_records_to_parquet -e merge_parquet_files -- src`; it also matches `write_records_to_parquet_with_limit`, which is `#[cfg(test)]`):
 
 | Call site | Destination | Temp-then-rename? |
 | --- | --- | --- |
@@ -179,7 +179,7 @@ Caller trace of `ParquetRecordWriter`, `write_records_to_parquet` and `write_rec
 | `writer.rs:418-426` | output a hard link to input `a.parquet` (different directory entry, same inode) | merge returns `Ok(())` and `a.parquet` is still readable: the temp-then-rename replaces the output entry and never opens the input for writing — clean |
 | `writer.rs:428`, `:365` | input `out.parquet.tmp` (a valid 1,624-byte retained recording), output `out.parquet` | input truncated to 0 bytes before it is read, merge fails "Parquet file too small", the cleanup then deletes it — finding #2450 |
 | `writer.rs:365` | `out.parquet.tmp` pre-created as a symlink to an 8-byte `victim.txt` | merge `Ok(())`, `victim.txt` now 1,624 bytes of merged Parquet — finding #2450 |
-| `writer.rs:428-431` vs `reader.rs:80-107` | merge failure or crash leaves `{output}.tmp` | the reader refuses `*.parquet.tmp`, and `remove_merge_temp_file` (L347-357) removes it on every `Err` path; a hard kill can leave it, which the reader then rejects — no partial file is ever served; clean |
+| `writer.rs:428-431` vs `reader.rs:80-107` | merge failure or crash leaves `{output}.tmp` | the reader refuses `*.parquet.tmp` (the merge temp name ends in `.parquet.tmp` for any `*.parquet` output; another output name is not recognised by that rejection, but the temp file is still removed on every `Err` path), and `remove_merge_temp_file` (L347-357) removes it on every `Err` path; a hard kill can leave it, which the reader then rejects — no partial file is ever served; clean |
 | `writer.rs:372` | merge opens inputs with `File::open`, not `open_parquet_file` | a complete retained `.parquet.tmp` is accepted as an input, an incomplete one fails at the missing footer — by design, no finding |
 | `writer.rs:371-388` | one-row input whose `errors` list holds 20,000,000 zeros (1,653 bytes), `NEAT_AI_DISCOVERY_MAX_PARQUET_DECODE_MB=1` | the reader refuses it (`MemoryExhausted`, 77 MB); `merge_parquet_files` returns `Ok(())` and `VmHWM` grew by 600,244,224 bytes. Merge streams batch by batch, so the input count does not accumulate memory; the per-batch materialisation is unbounded — finding #2449 |
 | `writer.rs:371-388` | foreign file with a 5,000-byte `neuron_uuid` | merged unvalidated (the writer's `validate_neuron_uuid` is not applied to merged rows). Consistent with the read-side verdict that the UUID bounds are a write-side contract no consumer trusts — no finding |
@@ -215,7 +215,7 @@ Caller trace of `ParquetRecordWriter`, `write_records_to_parquet` and `write_rec
 | File:line | Input | Outcome |
 | --- | --- | --- |
 | `mod.rs:31-32` | `#[cfg(test)] pub(crate) use writer::write_records_to_parquet_with_limit` | gated on `cfg(test)`; no test-only item reaches the non-test API — clean |
-| `mod.rs:20-29` | every re-exported reader | each opens through `open_parquet_file` (`reader.rs:307`, `:403`, `:500`; `activation_summary.rs:85`) and so inherits the `.parquet.tmp` rejection. The exceptions are `merge_parquet_files` (`writer.rs:372`, by design above) and `footer::read_footer_stats` (`footer.rs:73`, recorded by #2143 as affecting no caller) |
+| `mod.rs:19-29` | every re-exported reader | each opens through `open_parquet_file` (`reader.rs:307`, `:403`, `:500`; `activation_summary.rs:85`) and so inherits the `.parquet.tmp` rejection. The exceptions are `merge_parquet_files` (`writer.rs:372`, by design above) and `footer::read_footer_stats` (`footer.rs:73`, recorded by #2143 as affecting no caller) |
 | `shared_records.rs:206-217` | `decodes_for_path` and `invalidate` are `pub` | used by `tests/issue_1406_shared_parquet_decode.rs` and `tests/issue_1907_shared_records_cache_key.rs` as the crate's public surface; kept — no finding beyond #2452 |
 | `mod.rs:1-7` | module doc | lists four sub-modules and omits `activation_summary`, `decode_budget`, `footer` and `shared_records` (cosmetic, no outcome changes) — noted, not filed |
 | `mod.rs:41-392` | tests that mask a failure | no `is_ok() || is_err()` pattern; the masking assertions are the vacuous `exists()` checks and `is_ok()`-only chunking tests — finding #2453 |
@@ -235,7 +235,6 @@ Read side (#2143): `footer.rs` finding #2447; `decode_budget.rs`, `reader.rs` an
 | #2451 (SEC-2091-05) | low | `record_discovery_data` truncates the live `discovery_data.parquet` in place |
 | #2452 (SEC-2091-06) | low | shared-decode cache serves a stale decode after an in-place rewrite with a restored mtime |
 | #2453 (SEC-2091-07) | low | `mod.rs` writer tests assert vacuous conditions and cannot go red |
-
 
 ## Related remediations (not sweep coverage)
 
