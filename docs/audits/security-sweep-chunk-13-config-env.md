@@ -12,6 +12,10 @@ Ledger rules: [`README.md`](README.md). Index entry:
 - **Swept by:** Issue #2224 (scaffold for chunk 13 of the #2083 overflow tracker; regions filled by later sub-issues)
 - **Tracker issue:** #2096 (parent #2121)
 
+### Sweep status — IN PROGRESS
+
+The index carries a `last_swept` date because the ledger contract (`tests/issue_2088_sweep_ledger_contract.rs`) requires a record for any index entry with a record. This record is a scaffold: every outcome below reads `pending`. The date is not a completed-sweep claim until the rows are decided, the same approach as the chunk 8b record (Issue #2103). The date will stand as a completed sweep only once no row reads `pending`.
+
 **Re-check note.** HEAD differs from the baseline commit. Three commits since the baseline touch `src/config`: `7694130` (#2195, removed `outlier_analysis` and `outlier_percentile`), `8c5639e` (#2402, GPU_RETRY_LIMIT warning, for #2364) and `2660968` (#2407, for #2352). Net: `user_facing.rs` 1396 → 1445 lines and `mod.rs` 426 → 416 lines at HEAD at the time of writing. All line counts in this record are baseline counts unless labelled HEAD, and later citations must say which they are.
 
 ## Files swept
@@ -72,6 +76,8 @@ The classes are probed by later sub-issues; none has been probed yet.
 ## Settings table
 
 One row per environment variable read under `src/config`, filled region by region by the sub-issue that owns it. Each region starts with its header row and no data rows.
+
+The `reader file:line` column is fixed by the agreed schema. Each sub-issue must give the symbol (`file.rs::symbol`) beside the line and say whether the line is baseline or HEAD, because lines drift (CONTRIBUTING.md "Cite Code by Symbol, Never by Line Number", Issue #1942).
 
 ### small modules
 
@@ -174,9 +180,9 @@ Prior fixes touching this chunk, for context only. These do **not** count as a s
 - #1385 — Reconcile focus-ranking budget clamp: code doesn't clamp but README claims [1000, 3600000]
 - #1408 — Reserve a guaranteed minimum analysis budget so focus selection + parquet load cannot starve synapse/neuron analysis
 - #1420 — Low-memory gate disables discovery on ~8 GB hosts — make the available-memory floor configurable / reclaim-aware
-- #1869 — Parquet pre-load bound is estimated from compressed size and only checked after the allocation (src/analysis/utils/memory.rs:402-405)
+- #1869 — Parquet pre-load bound is estimated from compressed size and only checked after the allocation (src/analysis/utils/memory.rs)
 - #1873 — Safe GPU setup fns assert an unenforceable thread-free invariant around unsafe env writes
-- #1904 — XDG_RUNTIME_DIR fallback adopts a pre-existing /tmp directory of any ownership or mode (src/analysis/utils/platform.rs:163-183)
+- #1904 — XDG_RUNTIME_DIR fallback adopts a pre-existing /tmp directory of any ownership or mode (src/analysis/utils/platform.rs)
 - #2006 — Numeric env-override parse chain duplicated across 35 accessors with inconsistent trimming
 
 ## Verify this record

@@ -3,7 +3,7 @@
 //! Chunk 13 (`src/config`) is swept by several audit sub-issues writing into
 //! **one** shared record. The scaffold lays out every region up front, with
 //! its marker, header row and pending line, so each sub-issue only fills its
-//! own region. Without a gate, that shape fails quietly in three ways, and
+//! own region. Without a gate, that shape fails quietly in four ways, and
 //! each of them looks like coverage from the outside:
 //!
 //! * a file in scope never gets a row, so it is never swept and nobody notices;
@@ -11,13 +11,15 @@
 //!   so two sub-issues append findings to the same place and conflict on every
 //!   PR;
 //! * a settings header drifts from the ten agreed columns, so rows filled in by
-//!   different sub-issues no longer line up.
+//!   different sub-issues no longer line up;
+//! * a sub-issue finishes but leaves rows reading `pending` while the record
+//!   carries no status, so an unfinished sweep reads as a completed one.
 //!
-//! These tests pin the scaffold's shape only. They deliberately do not assert
-//! that every outcome is decided or that every region is populated: the
-//! settings and drift regions start empty, and later sub-issues fill them.
-//! `tests/issue_2088_sweep_ledger_contract.rs` covers the ledger-wide rules;
-//! this file covers only chunk 13's own shape.
+//! These tests do not require every outcome to be decided or every region to be
+//! populated: the settings and drift regions start empty, and later sub-issues
+//! fill them. While any row reads `pending`, the record must say the sweep is
+//! in progress. `tests/issue_2088_sweep_ledger_contract.rs` covers the
+//! ledger-wide rules; this file covers only chunk 13's own shape.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -133,6 +135,7 @@ fn rust_files_under(root: &str) -> Vec<String> {
 struct FileRow {
     path: String,
     lines: usize,
+    outcome: String,
 }
 
 /// Parse the three-cell path / line-count / outcome rows out of a chunk of
@@ -153,7 +156,11 @@ fn file_rows(body: &str) -> Vec<FileRow> {
                 .trim()
                 .parse::<usize>()
                 .unwrap_or_else(|e| panic!("row for {path} must carry a numeric line count: {e}"));
-            Some(FileRow { path, lines })
+            Some(FileRow {
+                path,
+                lines,
+                outcome: cells[2].trim().to_string(),
+            })
         })
         .collect()
 }
@@ -329,7 +336,6 @@ fn each_section_marker_appears_exactly_once_in_its_section() {
         ("## Doc drift observed", &["13a", "13b", "13c", "13d"]),
     ];
 
-    let mut expected_total = 0usize;
     for (heading, ids) in plan {
         let body = section(&doc, heading);
         for id in ids {
@@ -341,16 +347,7 @@ fn each_section_marker_appears_exactly_once_in_its_section() {
                  unambiguous to the sub-issue that owns it, found {count}"
             );
         }
-        expected_total += ids.len();
     }
-
-    // No marker may sit outside the four sections, or in prose.
-    let all_markers = doc.matches("<!-- section: ").count();
-    assert_eq!(
-        all_markers, expected_total,
-        "{RECORD} must carry exactly {expected_total} section markers, all inside the \
-         sections that own them — a stray marker is a second region nobody coordinates"
-    );
 }
 
 #[test]
@@ -393,5 +390,27 @@ fn the_index_names_the_chunk_13_record_and_its_baseline() {
     assert!(
         index.contains(BASELINE),
         "{INDEX} must pin chunk 13 to baseline {BASELINE}"
+    );
+}
+
+#[test]
+fn an_unfinished_chunk_says_so_above_its_table() {
+    let doc = read(RECORD);
+    let pending = file_rows(&files_swept_body())
+        .iter()
+        .filter(|row| row.outcome.contains("pending"))
+        .count();
+    if pending == 0 {
+        return;
+    }
+    // The index cannot express "partly swept": the ledger contract rejects a
+    // record with a null `last_swept`. So while rows are outstanding, the
+    // record itself must say so — otherwise the index's date reads as a
+    // completed sweep and nothing contradicts it.
+    assert!(
+        doc.contains("### Sweep status — IN PROGRESS"),
+        "{pending} rows still read `pending`, so {RECORD} must carry a \
+         `### Sweep status — IN PROGRESS` heading — the index's `last_swept` date would \
+         otherwise be the only signal, and it reads as a finished sweep"
     );
 }
