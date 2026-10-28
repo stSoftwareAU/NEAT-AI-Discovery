@@ -31,8 +31,8 @@ This is a redo of the closed PR #2433, rebuilt on the current `Develop`. It carr
 
 ## Security Fix Evidence
 
-- Cited regression test: `tests/gpu/issue_2363_device_lost_classification_test.rs::not_enough_memory_left_is_device_lost` (companion: `not_enough_memory_left_is_memory_exhaustion`). It uses only the existing public classifiers.
-- Red at base: with `src/analysis/gpu/queue/recovery.rs` restored to `Develop`, `cargo test --test gpu issue_2363` fails 2 of 3 (`not_enough_memory_left_is_device_lost`, `not_enough_memory_left_is_memory_exhaustion`: "expected device-lost classification for: Helpful batch buffer creation failed: Not enough memory left."). Green at head: 3 passed.
+- Cited regression test: `tests/issue_2363_device_lost_classification.rs::not_enough_memory_left_is_device_lost` (companion: `not_enough_memory_left_is_memory_exhaustion`). It uses only the existing public classifiers.
+- Red at base: with `src/analysis/gpu/queue/recovery.rs` restored to `Develop`, `cargo test --test issue_2363_device_lost_classification` fails 2 of 3 (`not_enough_memory_left_is_device_lost`, `not_enough_memory_left_is_memory_exhaustion`: "expected device-lost classification for: Helpful batch buffer creation failed: Not enough memory left."). Green at head: 3 passed.
 - Flag routing is covered by `src/analysis/gpu/queue/device_lost_flag_test.rs::flagged_opaque_map_error_enters_recovery` (and one test per request kind) on the `FakeGpuEvaluator` harness, with the unflagged control `unflagged_opaque_map_error_reaches_caller_unchanged`. These use the new `device_lost()` trait method, so they do not compile at base.
 - Original trigger closed: a lost device that returns the opaque map error now sets the callback flag, so `routes_to_recovery` is true and the request enters the retry loop; wgpu-core's out-of-memory wording and wgpu's `Out of Memory` scope error match both memory classifiers. A device-loss reason that wgpu reports only by panic on the poll path is not covered here (see Essential Design Decisions).
 
@@ -49,10 +49,10 @@ flowchart LR
 ## Test Plan
 
 - `cargo test --lib analysis::gpu`: 185 passed, 0 failed (run at head).
-- `cargo test --test gpu issue_2363`: 3 passed at head; 2 failed with `recovery.rs` restored to `Develop`.
+- `cargo test --test issue_2363_device_lost_classification`: 3 passed at head; 2 failed with `recovery.rs` restored to `Develop`.
 - `select_scoped_error` precedence: `out_of_memory_outranks_internal_and_validation`, `internal_outranks_validation` and `validation_alone_is_reported_and_none_is_none` in `src/analysis/gpu/queue/executor.rs` (carried from PR #2433, where flipping the precedence to `validation.or(internal).or(oom)` turned the first two red).
 - GPU-gated, in `src/analysis/gpu/queue/executor.rs`: `invalid_buffer_use_inside_scopes_returns_err_not_panic` and `real_analyzer_device_lost_flag_follows_the_device_lost_callback`. **Not run on a GPU**: this worker has no GPU, so both skip (`Skipping test: no GPU available`) and pass vacuously; their GPU behaviour is unverified here.
 - `cargo clippy --all-targets --all-features -- -D warnings` and `cargo fmt --all --check`: clean at head.
-- New test files: `tests/gpu/issue_2363_device_lost_classification_test.rs`, `src/analysis/gpu/queue/device_lost_flag_test.rs`; unit tests in `recovery.rs`, `execution.rs`, `executor.rs`.
+- New test files: `tests/issue_2363_device_lost_classification.rs`, `src/analysis/gpu/queue/device_lost_flag_test.rs`; unit tests in `recovery.rs`, `execution.rs`, `executor.rs`.
 
 <!-- vibe-quality-gate-skipped reason="./quality.sh was run at head and stops at cargo deny on RUSTSEC-2026-0391, -0398, -0403 and -0410 (zstd 0.13.3, zstd-safe 7.3.0, zstd-sys 2.1.0 via parquet 59.3.0). The advisories are already on the base branch (this branch changes no dependency) and are tracked by #2432. fmt, clippy and the touched tests passed; CI runs the full gate." -->
