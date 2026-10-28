@@ -20,6 +20,14 @@
 //!   closer to an output, shortening the effective path.
 //! - **Connectivity imbalance → addSynapse**: Add inputs to starved neurons
 //!   to balance information flow.
+//!
+//! ## Deadline (Issue #2369)
+//!
+//! Both per-neuron scans check the analysis deadline and global cancellation
+//! (via `deadline_passed`) at the start of every iteration. On expiry the
+//! detector stops and returns the candidates found so far, sorted best first;
+//! each candidate is valid on its own. Expiry during the long-path scan also
+//! skips connectivity-imbalance detection.
 
 #![allow(
     clippy::cast_possible_truncation,
@@ -27,7 +35,9 @@
     clippy::cast_sign_loss
 )] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::time::SystemTime;
 
+use crate::analysis::utils::deadline_passed;
 use crate::types::DiscoverRecord;
 use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson, CreatureJson};
 
@@ -112,7 +122,20 @@ fn compute_shortest_paths_to_output(creature: &CreatureJson) -> HashMap<String, 
     distances
 }
 
+/// Sort topology candidates by estimated improvement, best first (Issue #2369).
+///
+/// Every non-empty return path of [`detect_topology_issues_with_deadline`] goes
+/// through this helper, so partial results on expiry are ordered the same way as
+/// complete ones.
+fn sort_best_first(mut candidates: Vec<TopologyCandidate>) -> Vec<TopologyCandidate> {
+    candidates.sort_by(|a, b| b.estimated_improvement.total_cmp(&a.estimated_improvement));
+    candidates
+}
+
 /// Detect topology issues from the creature's network structure and recorded activations.
+///
+/// Unbounded by deadline: this is a thin wrapper over
+/// [`detect_topology_issues_with_deadline`] with `deadline` set to `None`.
 ///
 /// # Arguments
 /// * `creature` - The creature's network topology (neurons and synapses).
@@ -124,6 +147,32 @@ pub fn detect_topology_issues(
     creature: &CreatureJson,
     neuron_records: &[(String, impl AsRef<[DiscoverRecord]>)],
     topo: Option<&CreatureTopologyCache>,
+) -> Vec<TopologyCandidate> {
+    detect_topology_issues_with_deadline(creature, neuron_records, topo, &None)
+}
+
+/// Detect topology issues, bounded by `deadline` (Issue #2369).
+///
+/// The deadline (and global cancellation) is checked at the start of every
+/// iteration of both per-neuron loops. On expiry the function stops and returns
+/// the candidates found so far, sorted best first; each candidate is valid on its
+/// own. Expiry during the long-path scan also skips connectivity-imbalance
+/// detection.
+///
+/// # Arguments
+/// * `creature` - The creature's network topology (neurons and synapses).
+/// * `neuron_records` - List of `(neuron_uuid, records)` tuples with recorded activations.
+/// * `topo` - Optional pre-computed topology cache; built locally when `None`.
+/// * `deadline` - When set, the scan stops early once the deadline elapses or global
+///   cancellation is requested.
+///
+/// # Returns
+/// A list of `TopologyCandidate` sorted by estimated improvement (best first).
+pub fn detect_topology_issues_with_deadline(
+    creature: &CreatureJson,
+    neuron_records: &[(String, impl AsRef<[DiscoverRecord]>)],
+    topo: Option<&CreatureTopologyCache>,
+    deadline: &Option<SystemTime>,
 ) -> Vec<TopologyCandidate> {
     // Use pre-computed cache or build locally.
     let local_cache;
@@ -182,8 +231,18 @@ pub fn detect_topology_issues(
 
     let mut candidates = Vec::with_capacity(qualified_hidden.len());
 
+    // Sorted uuid lists for the per-neuron "first unconnected" scans. Each is built
+    // once, on first use, so creatures with no long-path or imbalanced neurons
+    // never pay for them (Issue #2369).
+    let mut sorted_outputs: Option<Vec<&str>> = None;
+    let mut sorted_inputs: Option<Vec<&str>> = None;
+
     // --- Detection 1: Long path to output ---
     for &uuid in &qualified_hidden {
+        if deadline_passed(deadline) {
+            return sort_best_first(candidates);
+        }
+
         let path_len = match path_distances.get(uuid) {
             Some(&d) => d,
             None => continue, // unreachable from any output
@@ -197,18 +256,25 @@ pub fn detect_topology_issues(
         let fan_out = topo.fan_out_for(uuid).len();
         let mean_err = mean_errors.get(uuid).copied().unwrap_or(0.0);
 
-        // Find the best output to connect to (closest that isn't already connected)
-        let skip_target = topo
-            .output_uuids
+        // Find the best output to connect to (closest that isn't already connected).
+        // The list is ordered by (distance, uuid), so the first unconnected output is
+        // the best one. The scan stops after at most (number of already-connected
+        // candidates + 1) steps, so per-neuron cost is O(degree) rather than O(outputs).
+        // Sorting also makes the choice deterministic (previously HashSet iteration order).
+        let outputs = sorted_outputs.get_or_insert_with(|| {
+            let mut outs: Vec<&str> = topo.output_uuids.iter().map(String::as_str).collect();
+            outs.sort_by(|a, b| {
+                let da = path_distances.get(*a).copied().unwrap_or(usize::MAX);
+                let db = path_distances.get(*b).copied().unwrap_or(usize::MAX);
+                da.cmp(&db).then_with(|| a.cmp(b))
+            });
+            outs
+        });
+        let skip_target = outputs
             .iter()
-            .filter(|out| !topo.synapse_exists(uuid, out))
-            .min_by_key(|out| {
-                path_distances
-                    .get(out.as_str())
-                    .copied()
-                    .unwrap_or(usize::MAX)
-            })
-            .cloned();
+            .copied()
+            .find(|out| !topo.synapse_exists(uuid, out))
+            .map(str::to_string);
 
         // Estimated improvement: longer paths with higher error benefit more.
         // Scale: excess hops × error × small factor
@@ -257,6 +323,10 @@ pub fn detect_topology_issues(
             let starved_threshold = (max_fan_in as f32 / MIN_IMBALANCE_RATIO).ceil() as usize;
 
             for &(uuid, fi) in &fan_ins {
+                if deadline_passed(deadline) {
+                    return sort_best_first(candidates);
+                }
+
                 if fi > starved_threshold {
                     continue;
                 }
@@ -266,12 +336,20 @@ pub fn detect_topology_issues(
                 let path_len = path_distances.get(uuid).copied().unwrap_or(0);
 
                 // Find a good source to add a connection from.
-                // Prefer input neurons not already connected to this neuron.
-                let add_source = topo
-                    .input_uuids
+                // Prefer input neurons not already connected to this neuron. The list is
+                // ordered by uuid, and the scan stops after at most (number of
+                // already-connected candidates + 1) steps, as for the output scan above
+                // (Issue #2369).
+                let inputs = sorted_inputs.get_or_insert_with(|| {
+                    let mut inps: Vec<&str> = topo.input_uuids.iter().map(String::as_str).collect();
+                    inps.sort_unstable();
+                    inps
+                });
+                let add_source = inputs
                     .iter()
+                    .copied()
                     .find(|inp| !topo.synapse_exists(inp, uuid))
-                    .cloned();
+                    .map(str::to_string);
 
                 // Estimated improvement: imbalance ratio × error × factor
                 let imbalance_ratio = max_fan_in as f32 / fi.max(1) as f32;
@@ -298,9 +376,7 @@ pub fn detect_topology_issues(
     }
 
     // Sort by estimated improvement (best first)
-    candidates.sort_by(|a, b| b.estimated_improvement.total_cmp(&a.estimated_improvement));
-
-    candidates
+    sort_best_first(candidates)
 }
 
 /// Convert topology candidates into coordinated structural candidates.
@@ -387,3 +463,7 @@ pub fn topology_issues_to_coordinated_candidates(
 
     results
 }
+
+#[cfg(test)]
+#[path = "topology_deadline_tests.rs"]
+mod deadline_tests;

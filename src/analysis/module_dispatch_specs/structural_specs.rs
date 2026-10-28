@@ -75,7 +75,7 @@ pub(crate) fn append_structural_specs(
         cache = shared_cache, hidden = hidden_neurons, creature = creature, topo = topo =>
         guard: hidden,
         records: cache.load_records_for_all_neurons(&creature),
-        detect: |records| topology::detect_topology_issues(&creature, &records, Some(&topo)),
+        detect: |records| topology::detect_topology_issues_with_deadline(&creature, &records, Some(&topo), &deadline),
         convert: |detected| topology::topology_issues_to_coordinated_candidates(&detected, &creature, Some(&topo)),
     );
 

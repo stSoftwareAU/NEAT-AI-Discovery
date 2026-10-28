@@ -1244,6 +1244,8 @@ suggest structural changes that improve information flow.
 **Output**: Emitted as `coordinatedStructuralCandidates` with `addSynapse`
 operations.
 
+**Cost and cancellation** (Issue #2369): The skip-connection target and the extra-input source are chosen from output/input UUID lists sorted once (outputs by path distance then UUID, inputs by UUID), so each hidden neuron's scan stops after at most its already-connected candidates plus one step — per-neuron cost is O(degree) instead of O(outputs) or O(inputs). The choice is therefore deterministic (smallest UUID). `detect_topology_issues_with_deadline` checks the analysis deadline and global cancellation at the start of every per-neuron iteration in both detection loops; on expiry it returns the candidates found so far, sorted best-first. `detect_topology_issues` is the unbounded wrapper (no deadline).
+
 **Expected improvement**: 10–15% success rate for topology-based suggestions,
 complementing existing activation-based discovery.
 
