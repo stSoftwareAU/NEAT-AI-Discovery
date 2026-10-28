@@ -14,7 +14,7 @@ Ledger rules: [`README.md`](../README.md). Index entry:
   `git diff b85a551..HEAD -- src/parquet_format` is empty at the time of
   writing.
 - **Exposure:** `internal` — as recorded in the index.
-- **Swept by:** Issue #2279 staged this record. The read side (`footer.rs`, `schema.rs`, `decode_budget.rs`, `reader.rs`, `batch_columns.rs`, `activation_summary.rs`) was swept by Issue #2143; the write side and cache (`mod.rs`, `writer.rs`, `shared_records.rs`) is pending #2144.
+- **Swept by:** Issue #2279 staged this record. The read side (`footer.rs`, `schema.rs`, `decode_budget.rs`, `reader.rs`, `batch_columns.rs`, `activation_summary.rs`) was swept by Issue #2143; the write side and cache (`mod.rs`, `writer.rs`, `shared_records.rs`) was swept by Issue #2144.
 - **Tracker issue:** `#2091` (chunk 7), under the overflow tracker `#2083`.
 
 ### Citation convention — a deliberate departure
@@ -29,7 +29,7 @@ those of `b85a551`. Issue #2279 explicitly requires the `File:line` column and t
 ### Sweep status — IN PROGRESS
 
 This is a **partly swept** record: the header, the verified related remediations and
-the decode-entry-point inventory are filled, and #2143 has filled the read-side rows, probes, outcome and issues. #2144 (write side and cache) fills what is still marked `pending #2144`. The file lives in `docs/audits/in-progress/` on purpose, because
+the decode-entry-point inventory are filled, and #2143 has filled the read-side rows, probes, outcome and issues. #2144 has filled the write-side rows, probes, outcome and issues. The file lives in `docs/audits/in-progress/` on purpose, because
 `tests/issue_2088_sweep_ledger_contract.rs` scans only the top level of
 `docs/audits/` for `security-sweep-chunk-*.md` records and would reject a record
 whose index entry still reads `last_swept: null`. #2145 later runs `git mv` to
@@ -39,18 +39,18 @@ index entry keeps `last_swept`, `baseline_commit` and `record` as `null`, and
 
 ## Files swept
 
-Line counts as at the baseline commit `b85a551`. The Outcome column is `<outcome> — <reason>`; the three write-side rows stay `pending #2144`.
+Line counts as at the baseline commit `b85a551`. The Outcome column is `<outcome> — <reason>`; the three write-side rows were settled by #2144.
 
 | Path | Lines | Outcome |
 | --- | --- | --- |
-| `src/parquet_format/mod.rs` | 393 | pending #2144 |
+| `src/parquet_format/mod.rs` | 393 | finding #2453 — the writer tests assert `Path::exists()` on a `NamedTempFile` (L75, L104, L136, L320) and only `is_ok()` for the chunking tests (L121-140, L302-324), so they cannot go red when `determine_chunk_end` stops splitting; the re-exports are otherwise clean (every re-exported reader opens through `open_parquet_file`, the only test-only item is gated by `#[cfg(test)]`) |
 | `src/parquet_format/footer.rs` | 106 | finding #2447 — negative footer num_rows / total_byte_size / num_values read as 0 (footer.rs L79, L83, L98) and the file row count is not cross-checked against the row groups; the missing .parquet.tmp rejection (L73) affects no caller |
 | `src/parquet_format/schema.rs` | 95 | clean — validate_neuron_uuid was probed at 0, 1, 100 and 101 bytes and multi-byte UTF-8 at the boundary; truncate_utf8 is reached only for the 120-byte error preview (it truncates nothing at those lengths); the "characters" wording reports bytes (cosmetic, no outcome changes) |
 | `src/parquet_format/decode_budget.rs` | 135 | finding #2446 — the budget is charged only after the batch is materialised, so the module doc's "before the allocation that would exhaust the host completes" (L7-8) is false at batch granularity; the arithmetic itself is saturating and clean |
 | `src/parquet_format/reader.rs` | 558 | finding #2446 — build() at L315-318, L411-414 and L508-511 has no footer pre-check and no batch bound; charge_record (L370, L435, L552) runs after decode_row |
 | `src/parquet_format/batch_columns.rs` | 324 | clean — by-name column resolution, ErrorLists offset checks (L58-77) and NaN/inf pass-through probed; no panic or wrong value |
-| `src/parquet_format/writer.rs` | 596 | pending #2144 |
-| `src/parquet_format/shared_records.rs` | 276 | pending #2144 |
+| `src/parquet_format/writer.rs` | 596 | finding #2449 — `merge_into_temp_file` (L363-395) has no decode budget; finding #2450 — the merge temp file `{output}.tmp` (L365, L428) is truncated and symlink-followed. The offset budget (`write_chunk`, `determine_chunk_end`) and `validate_records` are clean |
+| `src/parquet_format/shared_records.rs` | 276 | finding #2452 — the key (L44-53) does not change for an in-place same-length rewrite with a restored mtime, and `invalidate` (L215-217) has no production caller; the #1907 stat-decode-stat window itself is clean |
 | `src/parquet_format/activation_summary.rs` | 159 | finding #2446 — no decode budget and no batch bound, so one hostile string column is materialised unchecked (L93-141); non-finite activations are correctly skipped (L134) |
 | **Total** | **2,642** | |
 
@@ -152,11 +152,77 @@ Probes use hand-built Parquet files written with the `write_custom_parquet` / `f
 | `schema.rs:46-66` | 34 x 3-byte (102 bytes), 33 x 3-byte (99 bytes), 99 ASCII + one 2-byte (101 bytes), 98 ASCII + one 2-byte (100 bytes) | the 102- and 101-byte ones are rejected on length, the 99- and 100-byte ones on the invalid-character rule; the length message calls bytes "characters" (a 34-character string reports "102 characters"). Cosmetic: the outcome is right, only the unit in the message is wrong — noted, not filed |
 | `reader.rs` | foreign file with an empty, a 5,000-byte and a non-charset UUID | the reader does not apply `validate_neuron_uuid`: all three are accepted as group keys (the 5,000-byte key is charged by `charge_record`). The bounds are a write-side contract; no consumer was found that trusts them — no finding |
 
-Write side (#2144): pending #2144.
+### Write-path atomicity
+
+Caller trace of `ParquetRecordWriter`, `write_records_to_parquet` and `write_records_to_parquet_with_limit` outside `src/parquet_format` (`git grep -n -e ParquetRecordWriter -e write_records_to_parquet -e merge_parquet_files -- src`; it also matches `write_records_to_parquet_with_limit`, which is `#[cfg(test)]`):
+
+| Call site | Destination | Temp-then-rename? |
+| --- | --- | --- |
+| `src/streaming.rs:160` (`RecordingSession::new`) | `{parquet_path}.tmp`, renamed in `finish_session`; `Drop` removes an incomplete `.tmp` and keeps a complete one (`preserve_tmp_on_drop`) | yes — clean |
+| `src/record/mod.rs:64` (`record_discovery_data`) | `temp_dir/discovery_data.parquet`, the live name | **no — truncated in place** (`File::create` at `writer.rs:111`); nothing cleans a failed run — finding #2451 |
+| `src/record/processing.rs:30` | takes the caller's `&mut ParquetRecordWriter` (the one above); no destination of its own | n/a |
+| `src/ffi_internal/utilities.rs:58` (`merge_parquet_files`) | `{output}.tmp` then `fs::rename` (`writer.rs:428-434`) | yes, but the temp name handling is finding #2450 |
+| `src/ffi_internal/mod.rs:34`, `:268`; `src/analysis/implementation_tests/*`; `src/focus/ranking/mod.rs:1881` | `write_records_to_parquet` in `#[cfg(test)]` fixtures only | n/a — test code |
+| `src/analysis/cache/*`, `src/export/*` | no writer or merge call (readers only) | n/a |
+
+| File:line | Input | Outcome |
+| --- | --- | --- |
+| `writer.rs:111` + `src/record/mod.rs:64` | seed a valid 1-record `live.parquet`, `ParquetRecordWriter::new(live, ..)`, drop it (an error before `finish`) | file is 4 bytes (`PAR1`), `read_all_records_from_parquet` fails with "Failed to create Parquet reader builder"; the earlier recording is gone and the name does not end in `.parquet.tmp` — finding #2451 |
+| `writer.rs:245-250` | `finish` closes the `ArrowWriter` with no `sync_all` | a power loss after `finish` (or after the streaming rename) can leave a short file. Accepted: durability across power loss is not a security property of an internal, re-recordable temp artefact, and every reader fails loud on a footerless file — no finding |
+| `writer.rs:111`, `:365` | `File::create` uses the default mode (`0666 & ~umask`) | recordings follow the host umask; the temp directory is the host's. Accepted, exposure `internal` — no finding |
+
+### Merge safety
+
+| File:line | Input | Outcome |
+| --- | --- | --- |
+| `writer.rs:418-426` | output a symlink to input `a.parquet` | refused: "refusing to merge a file onto itself" (canonical paths match) — clean |
+| `writer.rs:418-426` | output a hard link to input `a.parquet` (different directory entry, same inode) | merge returns `Ok(())` and `a.parquet` is still readable: the temp-then-rename replaces the output entry and never opens the input for writing — clean |
+| `writer.rs:428`, `:365` | input `out.parquet.tmp` (a valid 1,624-byte retained recording), output `out.parquet` | input truncated to 0 bytes before it is read, merge fails "Parquet file too small", the cleanup then deletes it — finding #2450 |
+| `writer.rs:365` | `out.parquet.tmp` pre-created as a symlink to an 8-byte `victim.txt` | merge `Ok(())`, `victim.txt` now 1,624 bytes of merged Parquet — finding #2450 |
+| `writer.rs:428-431` vs `reader.rs:80-107` | merge failure or crash leaves `{output}.tmp` | the reader refuses `*.parquet.tmp` (the merge temp name ends in `.parquet.tmp` for any `*.parquet` output; another output name is not recognised by that rejection, but the temp file is still removed on every `Err` path), and `remove_merge_temp_file` (L347-357) removes it on every `Err` path; a hard kill can leave it, which the reader then rejects — no partial file is ever served; clean |
+| `writer.rs:372` | merge opens inputs with `File::open`, not `open_parquet_file` | a complete retained `.parquet.tmp` is accepted as an input, an incomplete one fails at the missing footer — by design, no finding |
+| `writer.rs:371-388` | one-row input whose `errors` list holds 20,000,000 zeros (1,653 bytes), `NEAT_AI_DISCOVERY_MAX_PARQUET_DECODE_MB=1` | the reader refuses it (`MemoryExhausted`, 77 MB); `merge_parquet_files` returns `Ok(())` and `VmHWM` grew by 600,244,224 bytes. Merge streams batch by batch, so the input count does not accumulate memory; the per-batch materialisation is unbounded — finding #2449 |
+| `writer.rs:371-388` | foreign file with a 5,000-byte `neuron_uuid` | merged unvalidated (the writer's `validate_neuron_uuid` is not applied to merged rows). Consistent with the read-side verdict that the UUID bounds are a write-side contract no consumer trusts — no finding |
+
+### Offset budget
+
+| File:line | Input | Outcome |
+| --- | --- | --- |
+| `writer.rs:290-318` | `ParquetRecordWriter::new(p, 12, 3, 10)` with 10 records of 3-byte UUIDs and 0-3 errors each | every row and error list round-trips, so the boundary is cut before the limit; with `i32::MAX` limits the same comparison keeps a chunk's UUID bytes and error count at or below `i32::MAX`, so `OffsetBuffer::from_lengths` (L194-195) cannot overflow. `uuid_bytes + uuid_len` cannot wrap `usize` (at most `i32::MAX` + 100). The `end > start` guard (L305) always makes progress; a single record over the limit is rejected earlier by `validate_records`. A 2 GB probe was not run — the proof is by the scaled-limit round trip and the arithmetic |
+| `writer.rs:177-195` | a chunk of up to `i32::MAX` UUID bytes and error values | `write_chunk` clones every UUID and copies every error value, so a maximal chunk needs roughly double the chunk's size on top of the caller's slice. Bounded by the caller's own in-memory record set; noted, no finding |
+
+### Input validation on write
+
+| File:line | Input | Outcome |
+| --- | --- | --- |
+| `writer.rs:91-108` | `total_capacity` 0; `max_uuid_bytes_per_batch` 0; `max_error_values_per_batch` 0; `total_capacity` over `i32::MAX` | each is rejected before the file is created — clean |
+| `writer.rs:143-149` | one more record than the remaining capacity | rejected: "exceeding remaining capacity (0)" — clean |
+| `writer.rs:253-288` | UUID over the per-batch limit; error list over the per-batch limit | both bail with the 120-byte preview (`truncate_utf8`); nothing is truncated or written — clean |
+| `writer.rs:253-288`, `batch_columns.rs:145-164` | NaN `value`, `+inf` `activation` written | accepted on write and read back unchanged (NaN, `+inf`). This is the same pass-through the read side recorded under *NaN / infinity / null coercion*, so no second finding is filed; consumers that must not see non-finite values handle them downstream |
+| `writer.rs:138-175` | `write_chunk` fails after earlier chunks were appended | `remaining_capacity` is not decremented and the file holds the earlier chunks; a caller that retries would duplicate them. The only production caller (`record::processing`) aborts the run on the first error, so it is not reachable — no finding |
+
+### Cache-key soundness
+
+| File:line | Input | Outcome |
+| --- | --- | --- |
+| `shared_records.rs:44-76`, `:145-160` | write a 1-record file (`activation` 1.0), load it, rewrite the same path in place with the same shape (`activation` 9.0, same length, same inode), restore the original mtime with `File::set_modified` | the second load returns the first `Arc` (`ptr_eq` true) with `activation` 1.0 while the file holds 9.0 — finding #2452 |
+| `shared_records.rs` (fifth component) | decision | add `ctime` on unix (not settable by a user, so it closes the restored-mtime case). It does not close a same-length rewrite inside one coarse timestamp tick, which is accepted. A footer hash would not help: a same-shape rewrite changes only data pages |
+| `shared_records.rs:215-217` | `invalidate` callers | none outside tests (`git grep -n 'invalidate()' -- src`); `record_discovery_data` rewrites a path the cache may hold without calling it — included in finding #2452. The merge path replaces the file by rename, which changes the inode and so the key |
+| `shared_records.rs:162-200` | rewrite between the `stat` and the decode | covered by `rewrite_between_stat_and_decode_does_not_serve_stale_identity` (L243): the records are returned uncached — clean |
+
+### Public surface
+
+| File:line | Input | Outcome |
+| --- | --- | --- |
+| `mod.rs:31-32` | `#[cfg(test)] pub(crate) use writer::write_records_to_parquet_with_limit` | gated on `cfg(test)`; no test-only item reaches the non-test API — clean |
+| `mod.rs:19-29` | every re-exported reader | each opens through `open_parquet_file` (`reader.rs:307`, `:403`, `:500`; `activation_summary.rs:85`) and so inherits the `.parquet.tmp` rejection. The exceptions are `merge_parquet_files` (`writer.rs:372`, by design above) and `footer::read_footer_stats` (`footer.rs:73`, recorded by #2143 as affecting no caller) |
+| `shared_records.rs:206-217` | `decodes_for_path` and `invalidate` are `pub` | used by `tests/issue_1406_shared_parquet_decode.rs` and `tests/issue_1907_shared_records_cache_key.rs` as the crate's public surface; kept — no finding beyond #2452 |
+| `mod.rs:1-7` | module doc | lists four sub-modules and omits `activation_summary`, `decode_budget`, `footer` and `shared_records` (cosmetic, no outcome changes) — noted, not filed |
+| `mod.rs:41-392` | tests that mask a failure | no `is_ok() || is_err()` pattern; the masking assertions are the vacuous `exists()` checks and `is_ok()`-only chunking tests — finding #2453 |
 
 ## Outcome
 
-Read side (#2143): `footer.rs` finding #2447; `decode_budget.rs`, `reader.rs` and `activation_summary.rs` finding #2446; `batch_columns.rs` and `schema.rs` clean. Write side and cache (#2144): pending #2144; `mod.rs`, `writer.rs` and `shared_records.rs` are not claimed clean.
+Read side (#2143): `footer.rs` finding #2447; `decode_budget.rs`, `reader.rs` and `activation_summary.rs` finding #2446; `batch_columns.rs` and `schema.rs` clean. Write side and cache (#2144): `writer.rs` findings #2449 and #2450 (the live-file truncation in `src/record/mod.rs` is #2451), `shared_records.rs` finding #2452, `mod.rs` finding #2453. No file of the write side is claimed clean; the offset budget and `validate_records` in `writer.rs` were probed clean.
 
 ## Issues filed
 
@@ -164,8 +230,11 @@ Read side (#2143): `footer.rs` finding #2447; `decode_budget.rs`, `reader.rs` an
 | --- | --- | --- |
 | #2446 (SEC-2091-01) | medium | decode budget charged after the Arrow batch is materialised |
 | #2447 (SEC-2091-02) | low | `read_footer_stats` maps negative footer sizes to 0 |
-
-Write side and cache (#2144): pending #2144. Write `negative-result` there if that sweep finds nothing.
+| #2449 (SEC-2091-03) | medium | `merge_parquet_files` decodes inputs with no decode budget |
+| #2450 (SEC-2091-04) | low | merge temp file `{output}.tmp` is truncated and symlink-followed |
+| #2451 (SEC-2091-05) | low | `record_discovery_data` truncates the live `discovery_data.parquet` in place |
+| #2452 (SEC-2091-06) | low | shared-decode cache serves a stale decode after an in-place rewrite with a restored mtime |
+| #2453 (SEC-2091-07) | low | `mod.rs` writer tests assert vacuous conditions and cannot go red |
 
 ## Related remediations (not sweep coverage)
 
