@@ -1,4 +1,4 @@
-//! Issue #2096, chunk 13e of parent #2125: the `NEAT_AI_DISCOVERY_*` parity gate.
+//! Issue #2125 (chunk 13e of the #2096 config sweep): the `NEAT_AI_DISCOVERY_*` parity gate.
 //!
 //! `docs/CONFIGURATION.md` is the one place an operator learns that a variable
 //! exists. These tests keep that document and the source in step by reading real
