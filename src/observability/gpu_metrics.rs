@@ -223,7 +223,10 @@ pub fn global_gpu_metrics() -> &'static GpuMetrics {
     GLOBAL_GPU_METRICS.get_or_init(GpuMetrics::new)
 }
 
-/// Report global GPU metrics if `NEAT_AI_DISCOVERY_GPU_METRICS=1` is set.
+/// Report global GPU metrics if `NEAT_AI_DISCOVERY_GPU_METRICS` is set.
+///
+/// Presence-only: any set value enables it, `0` included. The report is a
+/// `tracing` event, hidden under the default `RUST_LOG=warn`.
 ///
 /// Call this at the end of analysis to output GPU utilisation metrics.
 pub fn report_global_gpu_metrics() {

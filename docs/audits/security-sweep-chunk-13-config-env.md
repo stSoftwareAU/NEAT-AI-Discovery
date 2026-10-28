@@ -453,7 +453,7 @@ Issue #2125 (chunk 13e) reconciled the configuration documentation with the code
 | Region | Drift entry | Disposition |
 | --- | --- | --- |
 | 13a | `mod.rs` doc table omits `MODULE_TIERING_HIDDEN_THRESHOLD` | fixed in doc comment: the table was removed and `mod.rs` points to `docs/CONFIGURATION.md`, which already had the row |
-| 13a | TIMING, GPU_METRICS and PROFILE described as stderr output, and TIMING and GPU_METRICS typed as `bool` with default `false` | fixed in docs/CONFIGURATION.md (tracing events, presence-only, `RUST_LOG` note) and fixed in doc comment (`observability.rs` accessors, `PhaseTimer`, `GpuMetrics::report`, `ProfileData::report`) |
+| 13a | TIMING, GPU_METRICS and PROFILE described as stderr output, and TIMING and GPU_METRICS typed as `bool` with default `false` | fixed in docs/CONFIGURATION.md (tracing events, presence-only, `RUST_LOG` note) and fixed in doc comment (`src/config/observability.rs` accessors, `PhaseTimer`, `GpuMetrics::report`, `ProfileData::report`). The second table in `src/observability/mod.rs`, which repeated these rows, was replaced by a pointer to `docs/CONFIGURATION.md` by Issue #2125 |
 | 13a | `mod.rs` module doc says accessors "validate values at read time" | fixed in doc comment: the module doc was replaced |
 | 13a | `mod.rs` rows for the cooldown, batch and calibration variables omit validity rules | fixed in doc comment: the table was removed. The `docs/CONFIGURATION.md` rows already state the rules, and this change did not alter them |
 | 13a | `strict_candidate_reconciliation` doc comment says `=1` states the default | fixed in doc comment (`observability.rs::strict_candidate_reconciliation`) |
@@ -513,7 +513,7 @@ Four items were found by the settings check and are not in the drift lists. They
 | `src/focus/ranking/mod.rs` | test fixture only, no finding |
 | `src/analysis/synapse/structural_patterns.rs` | test fixture only, no finding |
 
-Negative result: the findings that survived the sweep are five individual findings, #2438, #2404, #2405, #2460 and #2463, plus the class findings tracked by #2276 (the `13a-findings` entry, which still reads `pending`). The count is five filed or linked individual findings.
+Findings summary: five findings survived the sweep, #2438, #2404, #2405, #2460 and #2463, plus the class findings tracked by #2276 (the `13a-findings` entry, which still reads `pending`). The count is five filed or linked individual findings. The `negative-result` disposition does not apply, because findings survived.
 
 **(g) Settings table audit.** All 79 settings rows were checked: 12 in 13a, 32 in 13b (the 31 live variables plus the removed `NEAT_AI_DISCOVERY_OUTLIER_PERCENTILE` row), 18 in 13c, and 17 in 13d (the 13 prefixed readers, `XDG_RUNTIME_DIR`, `TMPDIR`, `RUST_LOG`, and the EGL and Mesa group row). Every row has ten non-empty cells, and none contains a standalone `pending`. Every numeric row states an accepted range. Ten of them state no numeric bound, which is the stated range: `MAX_CACHED_BLOCKS`, `PREFETCH_DEPTH`, `FOCUS_RANKING_MEMORY_BUDGET_MB`, `FOCUS_RANKING_MEMORY_MARGIN_MB`, `MAX_PARQUET_DECODE_MB`, `MAX_ACTIVATION_CONFIGS_PER_TARGET`, `MAX_SOURCES_PER_TARGET`, `DROUGHT_ALARM_EPOCHS`, `DROUGHT_RESET_AFTER_EPOCHS` and `WATCHDOG_ABORT_DELAY_SECS`. No row was incomplete, so no settings row was changed in this pass.
 
