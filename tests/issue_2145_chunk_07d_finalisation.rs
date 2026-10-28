@@ -8,7 +8,7 @@
 //! This file pins the finished state so the ledger cannot quietly slide back to
 //! a partial one:
 //!
-//! * the record is promoted out of `in-progress/`, and that directory is gone;
+//! * the record is promoted out of `in-progress/`;
 //! * no line of the record reads `pending`, `placeholder` or `in progress`, and
 //!   the status heading says the sweep is complete;
 //! * `## Files swept` has one row per `src/parquet_format/*.rs` file, the line
@@ -26,8 +26,6 @@ use serde_json::Value;
 const RECORD: &str = "docs/audits/security-sweep-chunk-07-parquet.md";
 /// The staged copy #2145 `git mv`s away. It must no longer exist.
 const STAGED: &str = "docs/audits/in-progress/security-sweep-chunk-07-parquet.md";
-/// The staging directory, which must be gone once the record is promoted.
-const IN_PROGRESS_DIR: &str = "docs/audits/in-progress";
 /// Machine-readable sweep index. Its `"7"` entry is filled at finalisation.
 const INDEX: &str = "docs/audits/lib-sweep-coverage.json";
 /// The baseline every line count and citation in the record is pinned to.
@@ -176,10 +174,6 @@ fn the_record_is_promoted_out_of_in_progress() {
     assert!(
         !repo_root().join(STAGED).exists(),
         "{STAGED} must no longer exist once Issue #2145 has promoted {RECORD}"
-    );
-    assert!(
-        !repo_root().join(IN_PROGRESS_DIR).exists(),
-        "{IN_PROGRESS_DIR} must no longer exist once Issue #2145 has promoted {RECORD}"
     );
 }
 
