@@ -67,7 +67,7 @@ flowchart LR
 Docs-only change; no test was added or edited, and no assertion was removed. Branch outcomes: none added.
 
 - `cargo test --test issue_2211_chunk_13_ledger_scaffold`: 6 passed after the final ledger edit.
-- `cargo test --test issue_2088_sweep_ledger_contract`: 9 passed (run before the last one-sentence edit to probe (b); the scaffold test was re-run after it).
-- `./quality.sh`: see the result line added after it ran.
+- `cargo test --test issue_2088_sweep_ledger_contract`: 9 passed (run before the last one-sentence edit to probe (b); the scaffold test and the full gate ran after it).
+- `timeout 900 ./quality.sh < /dev/null` exited 0 ("All quality checks passed!") on the final ledger text.
 
 Not done: nothing under `src/` is fixed (#2460 owns its fix and its failing-first test), and the 13a, 13b and 13d regions are untouched.
