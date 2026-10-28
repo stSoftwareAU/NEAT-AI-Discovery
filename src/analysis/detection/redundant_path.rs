@@ -199,6 +199,11 @@ pub fn detect_redundant_paths_observed(
     // Check pairs for redundancy
     'outer: for i in 0..valid_paths.len() {
         for j in (i + 1)..valid_paths.len() {
+            if deadline_passed(deadline) {
+                truncation = Some(ScanTruncation::DeadlinePassed);
+                break 'outer;
+            }
+
             if candidates.len() >= MAX_REDUNDANT_PATH_CANDIDATES {
                 truncation = Some(ScanTruncation::CandidateCeiling);
                 break 'outer;
