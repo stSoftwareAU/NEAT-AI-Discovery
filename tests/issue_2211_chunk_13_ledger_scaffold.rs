@@ -3,7 +3,7 @@
 //! Chunk 13 (`src/config`) is swept by several audit sub-issues writing into
 //! **one** shared record. The scaffold lays out every region up front, with
 //! its marker, header row and pending line, so each sub-issue only fills its
-//! own region. Without a gate, that shape fails quietly in four ways, and
+//! own region. Without a gate, that shape fails quietly in five ways, and
 //! each of them looks like coverage from the outside:
 //!
 //! * a file in scope never gets a row, so it is never swept and nobody notices;
@@ -13,11 +13,16 @@
 //! * a settings header drifts from the ten agreed columns, so rows filled in by
 //!   different sub-issues no longer line up;
 //! * a sub-issue finishes but leaves rows reading `pending` while the record
-//!   carries no status, so an unfinished sweep reads as a completed one.
+//!   carries no status, so an unfinished sweep reads as a completed one;
+//! * a 13a row reverts to `pending` or loses its validation or on-invalid cell,
+//!   so the region reads as swept when it is not.
 //!
-//! These tests do not require every outcome to be decided or every region to be
-//! populated: the settings and drift regions start empty, and later sub-issues
-//! fill them. While any row reads `pending`, the record must say the sweep is
+//! These shape tests do not require every region to be populated: an empty
+//! region is not a failure, and later sub-issues fill them. Region 13a is held
+//! to a stricter contract once it is filled (Issue #2273): no `pending` row or
+//! entry inside it, each of the twelve settings rows carries all ten cells
+//! filled (including the two validation cells), and its issues and drift are
+//! recorded. While any row reads `pending`, the record must say the sweep is
 //! in progress. `tests/issue_2088_sweep_ledger_contract.rs` covers the
 //! ledger-wide rules; this file covers only chunk 13's own shape.
 
@@ -64,6 +69,23 @@ const SETTINGS_COLUMNS: [&str; 10] = [
     "can weaken a guard? (which)",
     "cached (OnceLock) or live",
     "logged how",
+];
+
+/// The twelve variables the 13a region owns, each with the `NEAT_AI_DISCOVERY_`
+/// prefix.
+const REGION_13A_VARIABLES: [&str; 12] = [
+    "NEAT_AI_DISCOVERY_NOISE_SIGNAL_THRESHOLD",
+    "NEAT_AI_DISCOVERY_DOMINANCE_THRESHOLD",
+    "NEAT_AI_DISCOVERY_GRADIENT_THRESHOLD",
+    "NEAT_AI_DISCOVERY_MODULE_TIERING_HIDDEN_THRESHOLD",
+    "NEAT_AI_DISCOVERY_TARGET_COOLDOWN_FAILURES",
+    "NEAT_AI_DISCOVERY_TARGET_COOLDOWN_EPOCHS",
+    "NEAT_AI_DISCOVERY_BATCH_TARGET_FAILURE_LIMIT",
+    "NEAT_AI_DISCOVERY_TIMING",
+    "NEAT_AI_DISCOVERY_PROFILE",
+    "NEAT_AI_DISCOVERY_GPU_METRICS",
+    "NEAT_AI_DISCOVERY_STRICT_CANDIDATE_RECONCILIATION",
+    "NEAT_AI_DISCOVERY_CALIBRATION_MISS_THRESHOLD",
 ];
 
 fn repo_root() -> PathBuf {
@@ -180,6 +202,34 @@ fn settings_header_rows(body: &str) -> Vec<Vec<String>> {
         .collect()
 }
 
+/// The data rows of a settings table region: every `|` row except the header
+/// (first cell `variable`) and the `---` separator row.
+fn settings_data_rows(body: &str) -> Vec<Vec<String>> {
+    body.lines()
+        .filter(|line| line.trim_start().starts_with('|'))
+        .map(|line| {
+            let trimmed = line.trim();
+            let inner = trimmed.strip_prefix('|').unwrap_or(trimmed);
+            let inner = inner.strip_suffix('|').unwrap_or(inner);
+            inner
+                .split('|')
+                .map(|cell| cell.trim().to_string())
+                .collect::<Vec<String>>()
+        })
+        .filter(|cells| !is_header_or_separator(cells))
+        .collect()
+}
+
+/// True for the header row (first cell `variable`) and for the separator row,
+/// whose every cell is only `-` and optional `:`.
+fn is_header_or_separator(cells: &[String]) -> bool {
+    let is_header = cells.first().is_some_and(|c| c.as_str() == "variable");
+    let is_separator = cells
+        .iter()
+        .all(|c| c.contains('-') && c.chars().all(|ch| ch == '-' || ch == ':'));
+    is_header || is_separator
+}
+
 fn files_swept_body() -> String {
     section(&read(RECORD), "## Files swept").to_string()
 }
@@ -198,6 +248,35 @@ fn is_iso_date(value: &str) -> bool {
                 c.is_ascii_digit()
             }
         })
+}
+
+/// The text of one region of a shared record: from its `<!-- section: id -->`
+/// marker to the earliest of the next marker, a line starting `**` or a heading.
+/// Linear in the length of `body`.
+fn region_text<'a>(body: &'a str, id: &str) -> &'a str {
+    let marker = marker_for(id);
+    let Some(at) = body.find(&marker) else {
+        panic!("the section must carry `{marker}` for region {id}");
+    };
+    let rest = &body[at + marker.len()..];
+    let end = [
+        rest.find("<!-- section:"),
+        rest.find("\n**"),
+        rest.find("\n#"),
+    ]
+    .into_iter()
+    .flatten()
+    .min()
+    .unwrap_or(rest.len());
+    &rest[..end]
+}
+
+/// True when `text` carries `pending` as a whole word, so `env_setup_pending`
+/// and `spending` do not count. Linear in the length of `text`.
+fn has_standalone_pending(text: &str) -> bool {
+    text.to_ascii_lowercase()
+        .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+        .any(|token| token == "pending")
 }
 
 #[test]
@@ -412,5 +491,207 @@ fn an_unfinished_chunk_says_so_above_its_table() {
         "{pending} rows still read `pending`, so {RECORD} must carry a \
          `### Sweep status — IN PROGRESS` heading — the index's `last_swept` date would \
          otherwise be the only signal, and it reads as a finished sweep"
+    );
+}
+
+#[test]
+fn region_13a_files_swept_rows_are_decided() {
+    const SMALL_MODULES: [&str; 5] = [
+        "src/config/helpers.rs",
+        "src/config/detection.rs",
+        "src/config/drought_mitigation.rs",
+        "src/config/observability.rs",
+        "src/config/mod.rs",
+    ];
+    let body = files_swept_body();
+    let rows = file_rows(section(&body, "### small modules"));
+
+    let paths: BTreeSet<&str> = rows.iter().map(|row| row.path.as_str()).collect();
+    let expected: BTreeSet<&str> = SMALL_MODULES.into_iter().collect();
+    assert_eq!(
+        rows.len(),
+        SMALL_MODULES.len(),
+        "`### small modules` in {RECORD} must carry exactly {} rows, found {}",
+        SMALL_MODULES.len(),
+        rows.len()
+    );
+    assert_eq!(
+        paths, expected,
+        "`### small modules` in {RECORD} must carry the five 13a files"
+    );
+
+    for row in &rows {
+        assert!(
+            !has_standalone_pending(&row.outcome),
+            "{} still reads `pending` in the 13a region of {RECORD}: a pending row means \
+             the 13a sweep was reverted, so the file reads as swept when it is not",
+            row.path
+        );
+        let Some((outcome, reason)) = row.outcome.split_once(" — ") else {
+            panic!(
+                "{} must record its outcome as `<outcome> — <reason>`, found `{}`",
+                row.path, row.outcome
+            );
+        };
+        assert!(
+            !outcome.trim().is_empty() && outcome.trim() == outcome,
+            "{} must carry a non-empty, trimmed outcome before ` — `",
+            row.path
+        );
+        assert!(
+            !reason.trim().is_empty() && reason.trim() == reason,
+            "{} must carry a non-empty, trimmed reason after ` — `",
+            row.path
+        );
+    }
+}
+
+#[test]
+fn region_13a_settings_rows_cover_the_twelve_variables_with_filled_cells() {
+    let doc = read(RECORD);
+    let region = section(section(&doc, "## Settings table"), "### small modules");
+    let rows = settings_data_rows(region);
+    assert_eq!(
+        rows.len(),
+        REGION_13A_VARIABLES.len(),
+        "the 13a region of `## Settings table` in {RECORD} must carry one row per \
+         variable, found {}",
+        rows.len()
+    );
+
+    let mut seen: BTreeSet<String> = BTreeSet::new();
+    for row in &rows {
+        let variable = row[0].trim_matches('`').to_string();
+        assert_eq!(
+            row.len(),
+            SETTINGS_COLUMNS.len(),
+            "`{variable}` in the 13a settings region must carry {} cells, found {}",
+            SETTINGS_COLUMNS.len(),
+            row.len()
+        );
+        for (column, cell) in SETTINGS_COLUMNS.iter().zip(row) {
+            assert!(
+                !cell.is_empty(),
+                "`{variable}` leaves its `{column}` cell empty in 13a of {RECORD}"
+            );
+            assert!(
+                !has_standalone_pending(cell),
+                "`{variable}` still reads `pending` in its `{column}` cell in 13a of \
+                 {RECORD}: a pending row means the 13a sweep was reverted"
+            );
+        }
+        for index in [4, 5] {
+            assert!(
+                !row[index].is_empty(),
+                "`{variable}` must fill its `{}` cell in 13a: the validation cells say what \
+                 the reader accepts and what it does on invalid input",
+                SETTINGS_COLUMNS[index]
+            );
+        }
+        assert!(
+            seen.insert(variable.clone()),
+            "`{variable}` appears twice in the 13a settings region of {RECORD}"
+        );
+    }
+
+    let expected: BTreeSet<String> = REGION_13A_VARIABLES
+        .into_iter()
+        .map(str::to_string)
+        .collect();
+    assert_eq!(
+        seen, expected,
+        "the 13a settings region of {RECORD} must cover exactly the twelve 13a variables"
+    );
+}
+
+#[test]
+fn region_13a_issues_filed_and_doc_drift_are_recorded_without_pending() {
+    let doc = read(RECORD);
+
+    let issues = region_text(section(&doc, "## Issues filed"), "13a");
+    assert!(
+        !has_standalone_pending(issues),
+        "the 13a region of `## Issues filed` in {RECORD} still reads `pending`: a pending \
+         entry means the 13a sweep was reverted"
+    );
+    for needle in ["#2438", "#2213", "#2096"] {
+        assert!(
+            issues.contains(needle),
+            "the 13a region of `## Issues filed` in {RECORD} must record {needle}"
+        );
+    }
+
+    let drift = region_text(section(&doc, "## Doc drift observed"), "13a");
+    assert!(
+        !has_standalone_pending(drift),
+        "the 13a region of `## Doc drift observed` in {RECORD} still reads `pending`: a \
+         pending entry means the 13a sweep was reverted"
+    );
+    assert!(
+        drift.contains("MODULE_TIERING_HIDDEN_THRESHOLD"),
+        "the 13a region of `## Doc drift observed` in {RECORD} must record the \
+         `MODULE_TIERING_HIDDEN_THRESHOLD` drift"
+    );
+}
+
+#[test]
+fn region_13a_probe_dispositions_record_probe_a_and_probe_b() {
+    let doc = read(RECORD);
+    let probes = section(&doc, "## Probe dispositions (13a)");
+    for needle in [
+        "#2438",
+        "log_effective_drought_mitigation_config",
+        "info!",
+        "RUST_LOG",
+    ] {
+        assert!(
+            probes.contains(needle),
+            "`## Probe dispositions (13a)` in {RECORD} must record `{needle}` for probes (a) and (b)"
+        );
+    }
+}
+
+#[test]
+fn pending_detection_matches_standalone_word_only() {
+    for text in ["pending — x", "Pending.", "(pending)"] {
+        assert!(
+            has_standalone_pending(text),
+            "`{text}` must count as a pending row"
+        );
+    }
+    for text in ["env_setup_pending", "spending", "pendingx", ""] {
+        assert!(
+            !has_standalone_pending(text),
+            "`{text}` must not count as a pending row"
+        );
+    }
+    // Hostile inputs must scan in linear time and report no pending word.
+    assert!(!has_standalone_pending(&"a".repeat(200_000)));
+    assert!(!has_standalone_pending(&"_".repeat(200_000)));
+    assert!(!has_standalone_pending(&" ".repeat(200_000)));
+}
+
+#[test]
+fn region_text_stops_at_the_next_marker_bold_heading_or_heading() {
+    let by_marker = "<!-- section: 13a -->\nalpha\n<!-- section: 13b -->\nbeta";
+    assert_eq!(region_text(by_marker, "13a").trim(), "alpha");
+
+    let by_bold = "<!-- section: 13a -->\nalpha\n\n**next**\nbeta";
+    assert_eq!(region_text(by_bold, "13a").trim(), "alpha");
+
+    let by_heading = "<!-- section: 13a -->\nalpha\n# next\nbeta";
+    assert_eq!(region_text(by_heading, "13a").trim(), "alpha");
+
+    // The `13a-findings` marker is a different region and must not be selected.
+    let shared = "<!-- section: 13a-findings -->\n- pending\n\n**Small modules (13a)**\n\n\
+                  <!-- section: 13a -->\n- #2438 ok\n\n**next**";
+    let region = region_text(shared, "13a");
+    assert!(
+        region.contains("#2438"),
+        "region 13a must carry its own `#2438` entry, got `{region}`"
+    );
+    assert!(
+        !region.contains("pending"),
+        "region 13a must not pick up the `13a-findings` entries, got `{region}`"
     );
 }
