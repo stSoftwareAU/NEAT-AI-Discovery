@@ -157,9 +157,9 @@ Write `negative-result` when the sweep found nothing. An empty section is indist
 <!-- section: 13c -->
 
 - #2460 (low, proposed `severity:low`, `confidence:high`, exposure FFI caller only) — `analysis/utils/deadline.rs::cap_deadline_to_wall_clock` evaluates `minutes * 60` inside `Duration::from_secs(...)` with no overflow check, so the `checked_add` does not protect it. The FFI `max_discovery_wall_clock_minutes: Option<u64>` reaches it through `orchestration.rs::analyze_all` unbounded, unlike the env fallback clamped to 1-120. `307445734561825861` wraps to a 44 s cap in release builds (no `overflow-checks`) and panics in debug builds. Probe (e).
-- #2213 (existing, comment https://github.com/stSoftwareAU/NEAT-AI-Discovery/issues/2213#issuecomment-6467974556) — which zero spellings disable each of the six guard opt-outs: `00` and `+0` disable the integer guards, `0.0`, `-0` and `0e5` keep them armed, all six disable the two float guards; garbage never disables any. The open class issue is #2276. No new issue.
-- #2125 (existing, comment https://github.com/stSoftwareAU/NEAT-AI-Discovery/issues/2125#issuecomment-6467975056) — the `src/ffi_types/requests.rs` doc says `None` for `max_discovery_wall_clock_minutes` means no cap, but `analyze_all` falls back to the env value or the 20-minute default. See also the doc-drift section below.
-- Tracker comment on #2096: https://github.com/stSoftwareAU/NEAT-AI-Discovery/issues/2096#issuecomment-6467998495 — lists the three items above.
+- #2213 (existing, comment [#2213 comment](https://github.com/stSoftwareAU/NEAT-AI-Discovery/issues/2213#issuecomment-6467974556)) — which zero spellings disable each of the six guard opt-outs: `00` and `+0` disable the integer guards, `0.0`, `-0` and `0e5` keep them armed, all six disable the two float guards; garbage never disables any. The open class issue is #2276. No new issue.
+- #2125 (existing, comment [#2125 comment](https://github.com/stSoftwareAU/NEAT-AI-Discovery/issues/2125#issuecomment-6467975056)) — the `src/ffi_types/requests.rs` doc says `None` for `max_discovery_wall_clock_minutes` means no cap, but `analyze_all` falls back to the env value or the 20-minute default. See also the doc-drift section below.
+- Tracker comment on #2096: [#2096 comment](https://github.com/stSoftwareAU/NEAT-AI-Discovery/issues/2096#issuecomment-6467998495) — lists the three items above.
 
 **Readers outside src/config (13d)**
 
