@@ -33,7 +33,7 @@ This is a redo of the closed PR #2433, rebuilt on the current `Develop`. It carr
 
 - Cited regression test: `tests/issue_2363_device_lost_classification.rs::not_enough_memory_left_is_device_lost` (companion: `not_enough_memory_left_is_memory_exhaustion`). It uses only the existing public classifiers.
 - Red at base: with `src/analysis/gpu/queue/recovery.rs` restored to `Develop`, `cargo test --test issue_2363_device_lost_classification` fails 2 of 3 (`not_enough_memory_left_is_device_lost`, `not_enough_memory_left_is_memory_exhaustion`: "expected device-lost classification for: Helpful batch buffer creation failed: Not enough memory left."). Green at head: 3 passed.
-- Flag routing is covered by `src/analysis/gpu/queue/device_lost_flag_test.rs::flagged_opaque_map_error_enters_recovery` (and one test per request kind) on the `FakeGpuEvaluator` harness, with the unflagged control `unflagged_opaque_map_error_reaches_caller_unchanged`. These use the new `device_lost()` trait method, so they do not compile at base.
+- Flag routing is also covered by tests in `device_lost_flag_test.rs` (one per request kind, plus an unflagged control) on the `FakeGpuEvaluator` harness. They need the new `device_lost()` trait method, so they cannot build at the base and are supporting coverage, not the cited regression test.
 - Original trigger closed: a lost device that returns the opaque map error now sets the callback flag, so `routes_to_recovery` is true and the request enters the retry loop; wgpu-core's out-of-memory wording and wgpu's `Out of Memory` scope error match both memory classifiers. A device-loss reason that wgpu reports only by panic on the poll path is not covered here (see Essential Design Decisions).
 
 ## Evidence
