@@ -162,11 +162,21 @@ Security Fix Evidence
 - Twin-rule search: the deadline-aware scan pattern mirrors
   `detect_symmetric_neurons_*` and `detect_co_adapted_neurons_with_deadline`; no
   shared matcher was changed.
-- Dependencies: `parquet` and `arrow` bumped to 60.1 (with the lockfile moves
-  they require). After merging `Develop`, the zstd advisories
-  RUSTSEC-2026-0391/0398/0403/0410 stay cleared by the base's `parquet` feature
-  list that omits `zstd` (no zstd crates remain in `Cargo.lock`); the 60.1 bump
-  is kept on top of it. Fixes #2432.
+- Dependencies: the `parquet` and `arrow` manifest requirements advance from
+  60.0 to 60.1. `Develop` already resolves both to 60.1 and carries the zstd
+  advisory fix, so neither is a lockfile dependency change in the merged diff.
+  Cargo regenerated the lockfile from the base's resolved graph and the merged
+  manifest, retaining its dependency versions and updating only the crate version.
+- Merge reconciliation: retained #2368's skip-connection remediation alongside
+  #2370's dead-neuron remediation in the audit ledger. The combined inventory is
+  54 files and 81 production capacity sites (78 minus one for #2370, plus four
+  for #2368). No source conflict required a behaviour change.
+- Merge validation: the existing graph ledger suite (5 tests) and scaffold suite
+  (6 tests) passed, compiled directly with `rustc --test` and
+  `CARGO_MANIFEST_DIR` set to the repository root. `cargo metadata` successfully
+  reconciled the lockfile; the index has no unmerged paths and
+  `git diff --cached --check` passed. The full quality gate and detector suites
+  were not rerun during conflict resolution, as required by merge mode.
 - Current CI-fix validation: `timeout 900 ./quality.sh < /dev/null` passed
   shell syntax, ShellCheck, cargo-install pinning, PR-summary layout,
   `cargo deny check`, the debug build, formatting, Clippy and type checks.
