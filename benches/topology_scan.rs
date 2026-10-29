@@ -27,7 +27,10 @@ fn edge(from: String, to: String) -> SynapseJson {
     }
 }
 
-fn long_path(hidden_count: usize, dense: bool) -> (CreatureJson, Vec<(String, Vec<DiscoverRecord>)>) {
+fn long_path(
+    hidden_count: usize,
+    dense: bool,
+) -> (CreatureJson, Vec<(String, Vec<DiscoverRecord>)>) {
     let width = if dense { (hidden_count / 5).max(2) } else { 1 };
     let layers = (hidden_count / width).max(5);
     let actual_hidden = layers * width;
@@ -79,7 +82,11 @@ fn long_path(hidden_count: usize, dense: bool) -> (CreatureJson, Vec<(String, Ve
     )
 }
 
-fn starved(hidden_count: usize, input_count: usize, dense: bool) -> (CreatureJson, Vec<(String, Vec<DiscoverRecord>)>) {
+fn starved(
+    hidden_count: usize,
+    input_count: usize,
+    dense: bool,
+) -> (CreatureJson, Vec<(String, Vec<DiscoverRecord>)>) {
     let mut neurons = Vec::with_capacity(input_count + hidden_count + 1);
     let mut synapses = Vec::new();
     for i in 0..input_count {
@@ -143,7 +150,13 @@ fn bench_topology_scan(c: &mut Criterion) {
             ),
             &(&creature, &records),
             |b, (creature, records)| {
-                b.iter(|| black_box(detect_topology_issues(black_box(creature), black_box(records), None)));
+                b.iter(|| {
+                    black_box(detect_topology_issues(
+                        black_box(creature),
+                        black_box(records),
+                        None,
+                    ))
+                });
             },
         );
 
@@ -157,7 +170,13 @@ fn bench_topology_scan(c: &mut Criterion) {
             ),
             &(&creature, &records),
             |b, (creature, records)| {
-                b.iter(|| black_box(detect_topology_issues(black_box(creature), black_box(records), None)));
+                b.iter(|| {
+                    black_box(detect_topology_issues(
+                        black_box(creature),
+                        black_box(records),
+                        None,
+                    ))
+                });
             },
         );
     }

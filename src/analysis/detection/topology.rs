@@ -27,11 +27,13 @@
     clippy::cast_sign_loss
 )] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::time::SystemTime;
 
+use crate::analysis::recommendation::epistatic::{BoundedScan, ScanTruncation};
+use crate::analysis::utils::deadline::deadline_passed;
 use crate::types::DiscoverRecord;
 use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson, CreatureJson};
 
-use super::helpers::build_record_map;
 use super::topology_cache::CreatureTopologyCache;
 
 // MIN_SAMPLES_FOR_TOPOLOGY moved to constants.rs (Issue #424)
@@ -71,10 +73,16 @@ pub struct TopologyCandidate {
 
 /// Compute shortest path lengths from every neuron to any output neuron using
 /// reverse BFS from all outputs simultaneously.
-fn compute_shortest_paths_to_output(creature: &CreatureJson) -> HashMap<String, usize> {
+fn compute_shortest_paths_to_output(
+    creature: &CreatureJson,
+    deadline: &Option<SystemTime>,
+) -> Option<HashMap<String, usize>> {
     // Build reverse adjacency: to_uuid → [from_uuid, ...]
     let mut reverse_adj: HashMap<&str, Vec<&str>> = HashMap::new();
     for s in &creature.synapses {
+        if deadline_passed(deadline) {
+            return None;
+        }
         reverse_adj
             .entry(s.to_uuid.as_str())
             .or_default()
@@ -93,14 +101,23 @@ fn compute_shortest_paths_to_output(creature: &CreatureJson) -> HashMap<String, 
 
     // Seed: outputs are at distance 0
     for &uuid in &output_uuids {
+        if deadline_passed(deadline) {
+            return None;
+        }
         distances.insert(uuid.to_string(), 0);
         queue.push_back((uuid, 0));
     }
 
     // BFS backwards through the graph
     while let Some((current, dist)) = queue.pop_front() {
+        if deadline_passed(deadline) {
+            return None;
+        }
         if let Some(predecessors) = reverse_adj.get(current) {
             for &pred in predecessors {
+                if deadline_passed(deadline) {
+                    return None;
+                }
                 if !distances.contains_key(pred) {
                     distances.insert(pred.to_string(), dist + 1);
                     queue.push_back((pred, dist + 1));
@@ -109,7 +126,7 @@ fn compute_shortest_paths_to_output(creature: &CreatureJson) -> HashMap<String, 
         }
     }
 
-    distances
+    Some(distances)
 }
 
 /// Detect topology issues from the creature's network structure and recorded activations.
@@ -120,11 +137,32 @@ fn compute_shortest_paths_to_output(creature: &CreatureJson) -> HashMap<String, 
 ///
 /// # Returns
 /// A list of `TopologyCandidate` sorted by estimated improvement (best first).
+/// This compatibility wrapper has no analysis deadline but observes global cancellation.
 pub fn detect_topology_issues(
     creature: &CreatureJson,
     neuron_records: &[(String, impl AsRef<[DiscoverRecord]>)],
     topo: Option<&CreatureTopologyCache>,
 ) -> Vec<TopologyCandidate> {
+    detect_topology_issues_with_deadline(creature, neuron_records, topo, &None).candidates
+}
+
+/// Detect topology issues while observing the analysis deadline and global cancellation.
+///
+/// If interrupted, valid candidates found so far are returned with
+/// `truncation = Some(DeadlinePassed)`.
+pub fn detect_topology_issues_with_deadline(
+    creature: &CreatureJson,
+    neuron_records: &[(String, impl AsRef<[DiscoverRecord]>)],
+    topo: Option<&CreatureTopologyCache>,
+    deadline: &Option<SystemTime>,
+) -> BoundedScan<TopologyCandidate> {
+    if deadline_passed(deadline) {
+        return BoundedScan {
+            candidates: Vec::new(),
+            truncation: Some(ScanTruncation::DeadlinePassed),
+        };
+    }
+
     // Use pre-computed cache or build locally.
     let local_cache;
     let topo = match topo {
@@ -135,55 +173,124 @@ pub fn detect_topology_issues(
         }
     };
 
+    if deadline_passed(deadline) {
+        return BoundedScan {
+            candidates: Vec::new(),
+            truncation: Some(ScanTruncation::DeadlinePassed),
+        };
+    }
+
     if topo.hidden_uuids.is_empty() {
-        return Vec::new();
+        return BoundedScan {
+            candidates: Vec::new(),
+            truncation: None,
+        };
     }
 
     // Build records lookup
-    let records_map = build_record_map(neuron_records);
+    let mut records_map = HashMap::with_capacity(neuron_records.len());
+    for (uuid, records) in neuron_records {
+        if deadline_passed(deadline) {
+            return BoundedScan {
+                candidates: Vec::new(),
+                truncation: Some(ScanTruncation::DeadlinePassed),
+            };
+        }
+        records_map.insert(uuid.as_str(), records.as_ref());
+    }
 
     // Only consider hidden neurons with sufficient samples
-    let qualified_hidden: Vec<&str> = topo
-        .hidden_uuids
-        .iter()
-        .filter(|uuid| {
-            records_map
-                .get(uuid.as_str())
-                .is_some_and(|r| r.len() >= MIN_SAMPLES_FOR_TOPOLOGY)
-        })
-        .map(String::as_str)
-        .collect();
+    let mut qualified_hidden = Vec::with_capacity(topo.hidden_uuids.len());
+    for uuid in &topo.hidden_uuids {
+        if deadline_passed(deadline) {
+            return BoundedScan {
+                candidates: Vec::new(),
+                truncation: Some(ScanTruncation::DeadlinePassed),
+            };
+        }
+        if records_map
+            .get(uuid.as_str())
+            .is_some_and(|r| r.len() >= MIN_SAMPLES_FOR_TOPOLOGY)
+        {
+            qualified_hidden.push(uuid.as_str());
+        }
+    }
 
     if qualified_hidden.is_empty() {
-        return Vec::new();
+        return BoundedScan {
+            candidates: Vec::new(),
+            truncation: None,
+        };
     }
 
     // Compute shortest path to any output for each neuron
-    let path_distances = compute_shortest_paths_to_output(creature);
+    let Some(path_distances) = compute_shortest_paths_to_output(creature, deadline) else {
+        return BoundedScan {
+            candidates: Vec::new(),
+            truncation: Some(ScanTruncation::DeadlinePassed),
+        };
+    };
 
     // Compute mean absolute error for each qualified hidden neuron
-    let mean_errors: HashMap<&str, f32> = qualified_hidden
-        .iter()
-        .filter_map(|&uuid| {
-            let records = records_map.get(uuid)?;
-            let total_err: f32 = records
-                .iter()
-                .flat_map(|r| r.errors.iter())
-                .map(|e| e.abs())
-                .sum();
-            let count = records.iter().map(|r| r.errors.len()).sum::<usize>() as f32;
-            if count > 0.0 {
-                Some((uuid, total_err / count))
-            } else {
-                Some((uuid, 0.0))
+    let mut mean_errors = HashMap::with_capacity(qualified_hidden.len());
+    for &uuid in &qualified_hidden {
+        if deadline_passed(deadline) {
+            return BoundedScan {
+                candidates: Vec::new(),
+                truncation: Some(ScanTruncation::DeadlinePassed),
+            };
+        }
+        let Some(records) = records_map.get(uuid) else {
+            continue;
+        };
+        let mut total_err = 0.0_f32;
+        let mut count = 0_usize;
+        for record in *records {
+            if deadline_passed(deadline) {
+                return BoundedScan {
+                    candidates: Vec::new(),
+                    truncation: Some(ScanTruncation::DeadlinePassed),
+                };
             }
-        })
-        .collect();
+            for error in &record.errors {
+                total_err += error.abs();
+                count += 1;
+            }
+        }
+        let mean_error = if count > 0 {
+            total_err / count as f32
+        } else {
+            0.0
+        };
+        mean_errors.insert(uuid, mean_error);
+    }
+
+    // Copy HashSet iteration order once into compact storage, then stop at the
+    // first source without an existing incoming edge for each starved neuron.
+    let mut input_uuids = Vec::with_capacity(topo.input_uuids.len());
+    for input_uuid in &topo.input_uuids {
+        if deadline_passed(deadline) {
+            return BoundedScan {
+                candidates: Vec::new(),
+                truncation: Some(ScanTruncation::DeadlinePassed),
+            };
+        }
+        input_uuids.push(input_uuid.as_str());
+    }
+
+    // Every output has BFS distance zero. A >3-hop hidden neuron cannot already
+    // connect to an output, so one target can serve all long-path candidates.
+    let skip_target = topo.output_uuids.iter().next();
 
     let mut candidates = Vec::with_capacity(qualified_hidden.len());
+    let mut truncation = None;
 
     // --- Detection 1: Long path to output ---
     for &uuid in &qualified_hidden {
+        if deadline_passed(deadline) {
+            truncation = Some(ScanTruncation::DeadlinePassed);
+            break;
+        }
         let path_len = match path_distances.get(uuid) {
             Some(&d) => d,
             None => continue, // unreachable from any output
@@ -198,16 +305,8 @@ pub fn detect_topology_issues(
         let mean_err = mean_errors.get(uuid).copied().unwrap_or(0.0);
 
         // Find the best output to connect to (closest that isn't already connected)
-        let skip_target = topo
-            .output_uuids
-            .iter()
+        let candidate_target = skip_target
             .filter(|out| !topo.synapse_exists(uuid, out))
-            .min_by_key(|out| {
-                path_distances
-                    .get(out.as_str())
-                    .copied()
-                    .unwrap_or(usize::MAX)
-            })
             .cloned();
 
         // Estimated improvement: longer paths with higher error benefit more.
@@ -228,22 +327,31 @@ pub fn detect_topology_issues(
             fan_out,
             mean_abs_error: mean_err,
             estimated_improvement,
-            skip_target_uuid: skip_target,
+            skip_target_uuid: candidate_target,
             add_source_uuid: None,
         });
     }
 
+    if truncation.is_some() {
+        candidates.sort_by(|a, b| b.estimated_improvement.total_cmp(&a.estimated_improvement));
+        return BoundedScan {
+            candidates,
+            truncation,
+        };
+    }
+
     // --- Detection 2: Connectivity imbalance ---
     // Compute fan-in stats across all qualified hidden neurons
-    let fan_ins: Vec<(&str, usize)> = qualified_hidden
-        .iter()
-        .map(|&uuid| {
-            let fi = topo.fan_in_for(uuid).len();
-            (uuid, fi)
-        })
-        .collect();
+    let mut fan_ins = Vec::with_capacity(qualified_hidden.len());
+    for &uuid in &qualified_hidden {
+        if deadline_passed(deadline) {
+            truncation = Some(ScanTruncation::DeadlinePassed);
+            break;
+        }
+        fan_ins.push((uuid, topo.fan_in_for(uuid).len()));
+    }
 
-    if fan_ins.len() >= 2 {
+    if truncation.is_none() && fan_ins.len() >= 2 {
         let max_fan_in = fan_ins.iter().map(|(_, fi)| *fi).max().unwrap_or(0);
         let min_fan_in = fan_ins
             .iter()
@@ -257,6 +365,10 @@ pub fn detect_topology_issues(
             let starved_threshold = (max_fan_in as f32 / MIN_IMBALANCE_RATIO).ceil() as usize;
 
             for &(uuid, fi) in &fan_ins {
+                if deadline_passed(deadline) {
+                    truncation = Some(ScanTruncation::DeadlinePassed);
+                    break;
+                }
                 if fi > starved_threshold {
                     continue;
                 }
@@ -267,11 +379,13 @@ pub fn detect_topology_issues(
 
                 // Find a good source to add a connection from.
                 // Prefer input neurons not already connected to this neuron.
-                let add_source = topo
-                    .input_uuids
-                    .iter()
-                    .find(|inp| !topo.synapse_exists(inp, uuid))
-                    .cloned();
+                let add_source = match first_unconnected_input(uuid, &input_uuids, topo, deadline) {
+                    Ok(source) => source,
+                    Err(reason) => {
+                        truncation = Some(reason);
+                        break;
+                    }
+                };
 
                 // Estimated improvement: imbalance ratio × error × factor
                 let imbalance_ratio = max_fan_in as f32 / fi.max(1) as f32;
@@ -297,11 +411,35 @@ pub fn detect_topology_issues(
         }
     }
 
-    // Sort by estimated improvement (best first)
+    // Sort by estimated improvement (best first), including valid partial results.
     candidates.sort_by(|a, b| b.estimated_improvement.total_cmp(&a.estimated_improvement));
 
-    candidates
+    BoundedScan {
+        candidates,
+        truncation,
+    }
 }
+
+fn first_unconnected_input(
+    neuron_uuid: &str,
+    input_uuids: &[&str],
+    topo: &CreatureTopologyCache,
+    deadline: &Option<SystemTime>,
+) -> Result<Option<String>, ScanTruncation> {
+    for &input_uuid in input_uuids {
+        if deadline_passed(deadline) {
+            return Err(ScanTruncation::DeadlinePassed);
+        }
+        if !topo.synapse_exists(input_uuid, neuron_uuid) {
+            return Ok(Some(input_uuid.to_string()));
+        }
+    }
+    Ok(None)
+}
+
+#[cfg(test)]
+#[path = "topology_deadline_tests.rs"]
+mod topology_deadline_tests;
 
 /// Convert topology candidates into coordinated structural candidates.
 ///

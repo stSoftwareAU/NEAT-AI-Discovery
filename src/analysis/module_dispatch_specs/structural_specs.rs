@@ -17,8 +17,9 @@ use super::super::{cache, discovery_dispatch};
 /// Append structural discovery module specs to the provided vector.
 ///
 /// `deadline` is forwarded into the multi-hop and fan-in scans (Issue #2183),
-/// the correlated-error scan (Issue #2346), and the output-conflict conversion
-/// (Issue #2358) so they stop at the discovery deadline or on global cancellation.
+/// the correlated-error scan (Issue #2346), topology analysis (Issue #2369),
+/// and the output-conflict conversion (Issue #2358) so they stop at the
+/// discovery deadline or on global cancellation.
 pub(crate) fn append_structural_specs(
     modules: &mut Vec<discovery_dispatch::DiscoveryModuleSpec>,
     creature: &Arc<crate::CreatureJson>,
@@ -73,10 +74,29 @@ pub(crate) fn append_structural_specs(
     // Issue #422: Topology-aware network structure analysis
     discovery_spec!(modules, "topology structure analysis", "topology_structure_analysis",
         cache = shared_cache, hidden = hidden_neurons, creature = creature, topo = topo =>
-        guard: hidden,
-        records: cache.load_records_for_all_neurons(&creature),
-        detect: |records| topology::detect_topology_issues(&creature, &records, Some(&topo)),
-        convert: |detected| topology::topology_issues_to_coordinated_candidates(&detected, &creature, Some(&topo)),
+        custom: move || {
+            if hidden.is_empty() {
+                return None;
+            }
+            let records = cache.load_records_for_all_neurons(&creature);
+            let scan = topology::detect_topology_issues_with_deadline(
+                &creature, &records, Some(&topo), &deadline,
+            );
+            if let Some(reason) = scan.truncation {
+                tracing::warn!(reason = ?reason, returned = scan.candidates.len(), "Topology scan stopped early; returning partial candidates.");
+            }
+            if scan.candidates.is_empty() {
+                return None;
+            }
+            let detected = scan.candidates;
+            let candidates = topology::topology_issues_to_coordinated_candidates(
+                &detected, &creature, Some(&topo),
+            );
+            Some(discovery_dispatch::DiscoveryDetectionResult {
+                detected_count: detected.len(),
+                candidates,
+            })
+        },
     );
 
     // Issue #549: Topology diversification for structural jumps
@@ -158,3 +178,7 @@ pub(crate) fn append_structural_specs(
 #[cfg(test)]
 #[path = "structural_specs_issue_2346_tests.rs"]
 mod structural_specs_issue_2346_tests;
+
+#[cfg(test)]
+#[path = "structural_specs_issue_2369_tests.rs"]
+mod structural_specs_issue_2369_tests;
