@@ -1247,6 +1247,16 @@ operations.
 **Expected improvement**: 10–15% success rate for topology-based suggestions,
 complementing existing activation-based discovery.
 
+**Scan bounds**: After topology-cache setup, the detector selects one output UUID for long-path candidates
+because every output has reverse-BFS distance zero and a hidden neuron more
+than three hops away cannot already connect directly to an output. It copies
+the cached input UUID set into a compact vector once, then stops at the first
+input without an existing edge for each starved neuron. Deadline and global
+cancellation checks run before and after cache setup and throughout detector
+preparation, path traversal, and both detection loops; interrupted scans
+return valid candidates found before the check and log that the result is
+partial.
+
 ---
 
 ### Topology Diversification Detection

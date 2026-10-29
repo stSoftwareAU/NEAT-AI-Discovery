@@ -201,7 +201,8 @@ rows added by the section sub-issues.
 | `dead_neuron.rs::find_connected_outputs_cached` (`visited`) | capacity | `HashSet::with_capacity(neuron_count)`, `neuron_count = topo.hidden_uuids.len() + topo.output_uuids.len()` | no numeric cap — the bound is the already-deserialised `creature.neurons` `Vec`, split across the hidden and output UUID sets | n/a — sized once per call |
 | `dead_neuron.rs::find_connected_outputs_cached` (`queue`) | capacity | `Vec::with_capacity(neuron_count)`, the same `neuron_count` as `visited` | no numeric cap — same basis as `visited` above | n/a — sized once per call |
 | `dead_neuron.rs::dead_neurons_to_coordinated_candidates` (`results`) | capacity | `Vec::with_capacity(candidates.len())` | bounded — one push per entry of the live `candidates` slice | n/a — one pass over candidates |
-| `topology.rs::compute_shortest_paths_to_output` | traversal | a `HashMap` reverse-adjacency build, then a `VecDeque` BFS seeded from every output simultaneously, guarded by `distances.contains_key` | O(V+E), regardless of cycles — an already-visited predecessor is never re-queued | no (module-level only) |
+| `topology.rs::compute_shortest_paths_to_output` | traversal | a `HashMap` reverse-adjacency build, then a `VecDeque` BFS seeded from every output simultaneously, guarded by `distances.contains_key` | O(V+E), regardless of cycles — an already-visited predecessor is never re-queued | yes — checks the analysis deadline and global cancellation during adjacency construction, output seeding and BFS |
+| `topology.rs::detect_topology_issues_with_deadline` | traversal | qualified hidden neurons are checked once for long paths; one output is reused; cached input UUIDs are copied once to a compact vector, then each starved neuron stops at its first unconnected input | O(H + I + Eₛ) scan work in addition to O(V+E+R) preparation, where Eₛ is the existing input-edge count examined for starved neurons and R is the recorded sample count; no per-neuron scan across all outputs or input-set capacity | yes — checks during preparation, BFS, long-path, fan-in and input scans; returns valid partial candidates with `DeadlinePassed` |
 | `skip_connection.rs::compute_depths_from_inputs` | traversal | a forward `VecDeque` BFS seeded from every input simultaneously, re-pushing a successor only `if new_depth > *entry` | O(V+E) on forward-only, acyclic graphs (the FFI-validated invariant); no visited set and no cycle guard of its own — finding #2368 | no (module-level only) |
 | `dead_neuron.rs::find_connected_outputs_cached` | traversal | a `queue.pop()` (LIFO) stack traversal guarded by `visited.insert`, so each neuron expands at most once | O(V+E) via `topo.fan_out_for` O(1) lookups per edge; the doc comment's BFS label is inaccurate (finding #2370) but the bound holds regardless of traversal order | no (module-level only) |
 | `compound_degradation.rs::reachable_outputs` | traversal | a frontier BFS from `start`, expanding `downstream_of` lookups per hop | hard-capped at `max_depth = 3` at both call sites — bounded regardless of graph size | no (module-level only) |
@@ -395,10 +396,10 @@ Not a `negative-result` sweep.
 | #2383 | per-neuron-b | `topology_diversification.rs::dfs_max_hidden_depth` | medium |
 
 Fixes that landed after the audit HEAD: #2398 (the #2348 fix,
-`co_adaptation.rs`), #2400 (the #2349 fix, `symmetry_breaking.rs`) and #2410
-(the #2358 fix, `output_conflict.rs`). The finding rows above keep describing
-the audited code, and each affected `## Capacity and traversal table` row
-carries a post-finalisation note.
+`co_adaptation.rs`), #2400 (the #2349 fix, `symmetry_breaking.rs`), #2410
+(the #2358 fix, `output_conflict.rs`) and #2369 (`topology.rs`). The finding
+rows above preserve the audited findings; the #2369 scan and cancellation
+remediation is recorded in the affected `## Capacity and traversal table` row.
 
 The per-section log follows, as each sweep recorded it. Entries without
 "Filed by" are cross-references or sibling sites added to an existing issue,
@@ -430,9 +431,11 @@ not new findings.
   `validate_forward_only_synapses` guarantees. Filed by the `graph` sweep
   (Issue #2282).
 - `#2369` (`security`, `lang:rust`, `severity:low`, `confidence:high`) —
-  `topology.rs::detect_topology_issues` runs uncancellable O(H·O)
-  nearest-output and O(H·I) input `find` scans per hidden neuron. Filed by the
-  `graph` sweep (Issue #2282).
+  `topology.rs::detect_topology_issues` ran uncancellable O(H·O)
+  nearest-output and O(H·I) input `find` scans per hidden neuron. Fixed by
+  reusing one output, compacting the input set once, and checking cancellation
+  through preparation and both detection loops. Filed by the `graph` sweep
+  (Issue #2282).
 - `#2370` (`security`, `lang:rust`, `severity:low`, `confidence:high`) —
   `dead_neuron.rs::detect_dead_neurons` runs an uncancellable O(D·(V+E))
   reachability DFS — one `find_connected_outputs_cached` call and allocation

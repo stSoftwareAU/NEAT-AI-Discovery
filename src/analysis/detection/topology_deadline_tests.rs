@@ -64,6 +64,28 @@ fn long_path_fixture() -> (CreatureJson, Vec<(String, Vec<DiscoverRecord>)>) {
     (creature, records_for(&["h0", "h1"]))
 }
 
+fn imbalanced_fixture() -> (CreatureJson, Vec<(String, Vec<DiscoverRecord>)>) {
+    let creature = CreatureJson {
+        neurons: vec![
+            neuron("a", "hidden"),
+            neuron("b", "hidden"),
+            neuron("c", "hidden"),
+            neuron("rich", "hidden"),
+        ],
+        synapses: vec![
+            edge("a", "b"),
+            edge("b", "c"),
+            edge("c", "a"),
+            edge("a", "rich"),
+            edge("b", "rich"),
+            edge("c", "rich"),
+        ],
+        input: 0,
+        output: 0,
+    };
+    (creature, records_for(&["a", "b", "c", "rich"]))
+}
+
 #[test]
 #[serial]
 fn long_path_loop_deadline_keeps_candidates_found_before_interruption() {
@@ -123,4 +145,39 @@ fn elapsed_deadline_is_reported_before_preparation() {
 
     assert_eq!(scan.truncation, Some(ScanTruncation::DeadlinePassed));
     assert!(scan.candidates.is_empty());
+}
+
+#[test]
+#[serial]
+fn preparation_deadline_is_reported_during_record_lookup() {
+    let (creature, records) = long_path_fixture();
+    let topology = CreatureTopologyCache::new(&creature);
+    let _guard = DeadlineOverrideGuard::with_sequence(vec![false, false, true]);
+
+    let scan = detect_topology_issues_with_deadline(&creature, &records, Some(&topology), &None);
+
+    assert_eq!(scan.truncation, Some(ScanTruncation::DeadlinePassed));
+    assert!(scan.candidates.is_empty());
+}
+
+#[test]
+#[serial]
+fn imbalance_loop_deadline_keeps_candidates_found_before_interruption() {
+    let (creature, records) = imbalanced_fixture();
+    let topology = CreatureTopologyCache::new(&creature);
+    // All preparation, four long-path checks, four fan-in checks, and the
+    // first two imbalance rows complete before cancellation on row three.
+    let mut checks = vec![false; 110];
+    checks.push(true);
+    let _guard = DeadlineOverrideGuard::with_sequence(checks);
+
+    let scan = detect_topology_issues_with_deadline(&creature, &records, Some(&topology), &None);
+
+    assert_eq!(scan.truncation, Some(ScanTruncation::DeadlinePassed));
+    assert!(!scan.candidates.is_empty());
+    assert!(
+        scan.candidates
+            .iter()
+            .all(|candidate| candidate.issue_type == "connectivity_imbalance")
+    );
 }

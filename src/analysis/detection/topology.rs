@@ -304,7 +304,7 @@ pub fn detect_topology_issues_with_deadline(
         let fan_out = topo.fan_out_for(uuid).len();
         let mean_err = mean_errors.get(uuid).copied().unwrap_or(0.0);
 
-        // Find the best output to connect to (closest that isn't already connected)
+        // Keep the existing-edge exclusion even if a caller supplies a stale cache.
         let candidate_target = skip_target
             .filter(|out| !topo.synapse_exists(uuid, out))
             .cloned();
