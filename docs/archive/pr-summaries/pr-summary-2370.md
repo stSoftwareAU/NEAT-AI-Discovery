@@ -147,10 +147,11 @@ Security Fix Evidence
 - Twin-rule search: the deadline-aware scan pattern mirrors
   `detect_symmetric_neurons_*` and `detect_co_adapted_neurons_with_deadline`; no
   shared matcher was changed.
-- Dependencies: `parquet` and `arrow` bumped 59.x to 60.1 (with the lockfile
-  moves they require) so `cargo audit` no longer reports the zstd advisories
-  RUSTSEC-2026-0391/0398/0403/0410 (zstd 0.14.3, zstd-safe 8.2.0, zstd-sys 2.1.2).
-  Fixes #2432.
+- Dependencies: `parquet` and `arrow` bumped to 60.1 (with the lockfile moves
+  they require). After merging `Develop`, the zstd advisories
+  RUSTSEC-2026-0391/0398/0403/0410 stay cleared by the base's `parquet` feature
+  list that omits `zstd` (no zstd crates remain in `Cargo.lock`); the 60.1 bump
+  is kept on top of it. Fixes #2432.
 - Results on the final head: `cargo test --lib --all-features` passed (1664
   tests); `cargo fmt --check`, `cargo clippy --all-targets --all-features -- -D warnings`
   and `cargo doc --no-deps` with `-D warnings` were clean; the targeted

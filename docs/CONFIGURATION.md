@@ -10,26 +10,39 @@ variable that tunes `neat_ai_discovery`. The code-side origin is
 > [CONTRIBUTING.md](../CONTRIBUTING.md).
 
 All discovery variables use the `NEAT_AI_DISCOVERY_` prefix. Boolean toggles
-accept `1`/`true`/`yes` to enable unless noted otherwise; unset means the
-documented default applies. Invalid or out-of-range values fall back to the
-default rather than aborting.
+accept `1`/`true`/`yes` to enable, and any other value leaves them off, unless
+the row says otherwise. The toggles that default on,
+`NEAT_AI_DISCOVERY_CPU_PRE_REJECT` and `NEAT_AI_DISCOVERY_HIDDEN_SQUASH_PRUNE`,
+stay on for any value other than `0`/`false`/`no`. Unset means the documented
+default applies.
+
+Some toggles are **presence-only**: any set value enables them, `0` included.
+These are `NEAT_AI_DISCOVERY_VERBOSE`, `NEAT_AI_DISCOVERY_GPU_TIMING`,
+`NEAT_AI_DISCOVERY_QUIET_GPU`, `NEAT_AI_DISCOVERY_NEURON_TARGETS_OUTPUT_ONLY`,
+`NEAT_AI_DISCOVERY_TIMING` and `NEAT_AI_DISCOVERY_GPU_METRICS`.
+
+For numeric variables, an **unparsable** value is treated as unset, so the
+default applies. An **out-of-range** value either falls back to the default or
+is clamped, depending on the variable. Each row says which, and the row is
+authoritative for its variable.
 
 **Surrounding whitespace is always tolerated** on numeric variables
 (Issue #2006) — `" 5 "` and `"5\n"` tune the knob exactly as `"5"` does, so a
 value carried in from a shell heredoc or a YAML `env:` block is not silently
 dropped.
-Every numeric accessor goes through the one
+Most numeric readers go through the one
 [`config::helpers::parse_env`](../src/config/helpers.rs) rule: missing → unset,
-whitespace trimmed, unparsable → unset. The per-variable fallback, range filter
-and clamp documented in the tables below then apply on top of that.
+whitespace trimmed, unparsable → unset. The hand-rolled readers in
+[`src/config/user_facing.rs`](../src/config/user_facing.rs) also trim and parse;
+their fallback and range rules are those in the row.
 
 ## Library & logging
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `NEAT_AI_DISCOVERY_LIB_PATH` | `~/.cargo/lib/` | Path to the compiled library. |
-| `RUST_LOG` | `warn` | Structured log level via `tracing` (e.g. `neat_ai_discovery=info`). |
-| `NEAT_AI_DISCOVERY_VERBOSE` | off | Enable verbose logging (`1` to enable). |
+| `NEAT_AI_DISCOVERY_LIB_PATH` | host-defined | Host-loader variable: this library never reads it (no reader in `src/`). The host application's loader reads it to locate the compiled library; see [README.md](../README.md) and [GPU_GUIDE.md](GPU_GUIDE.md). |
+| `RUST_LOG` | `warn` | Structured log filter for `tracing` (e.g. `neat_ai_discovery=info`). An invalid filter silently falls back to `warn`. A subscriber the host installed before the library initialises wins, and this library does not apply `RUST_LOG`. |
+| `NEAT_AI_DISCOVERY_VERBOSE` | off | Enable verbose logging. Presence-only: any set value enables it, `0` included. |
 
 ## GPU
 
@@ -38,7 +51,7 @@ and clamp documented in the tables below then apply on top of that.
 | `NEAT_AI_DISCOVERY_GPU_BATCH_SIZE` | auto | Override GPU batch size (64–4096). |
 | `NEAT_AI_DISCOVERY_GPU_TIMING` | off | Enable GPU kernel profiling. |
 | `NEAT_AI_DISCOVERY_QUIET_GPU` | off | Suppress Mesa/libEGL debug output. |
-| `NEAT_AI_DISCOVERY_GPU_STALL_WINDOW_SECS` | 30 | How long a submitter tolerates **no GPU-thread progress** before declaring the device wedged (Issue #1933). The GPU thread publishes a liveness heartbeat at every observable step (request dequeued, sub-batch submitted, buffer map completed, device poll returning idle, request completed); a submitter waits in a bounded loop and gives up within this window instead of burning the full 60–300s batch timeout. A slow-but-advancing GPU keeps resetting the window and is never flagged. Accepted range `1–600`; `0` disables the guard, leaving the absolute batch timeout as the only bound; invalid values fall back to the default. Raise it on a genuinely slow machine. |
+| `NEAT_AI_DISCOVERY_GPU_STALL_WINDOW_SECS` | 30 | How long a submitter tolerates **no GPU-thread progress** before declaring the device wedged (Issue #1933). The GPU thread publishes a liveness heartbeat at every observable step (request dequeued, sub-batch submitted, buffer map completed, device poll returning idle, request completed); a submitter waits in a bounded loop and gives up within this window instead of burning the full 60–300s batch timeout. A slow-but-advancing GPU keeps resetting the window and is never flagged. `0` disables the guard, leaving the absolute batch timeout as the only bound; a positive value is clamped to `1–600` (so a value above 600 becomes 600); an unparsable value falls back to the default 30. Raise it on a genuinely slow machine. |
 | `NEAT_AI_DISCOVERY_GPU_RETRY_LIMIT` | 3 | Maximum consecutive device-lost recovery attempts on the GPU work queue before the pass fails. Accepted range `0–10`; invalid or above-10 values log a warning naming the variable and fall back to the default; `0` disables device-lost recovery and logs a warning saying so (Issue #2364). |
 | `NEAT_AI_DISCOVERY_ZERO_COPY` | auto-detect | Force-enable (`1`/`true`) or force-disable (`0`/`false`) zero-copy GPU buffers, overriding hardware auto-detection. Unset lets the library decide from the adapter. |
 
@@ -57,8 +70,8 @@ and clamp documented in the tables below then apply on top of that.
 | `NEAT_AI_DISCOVERY_MAX_CACHED_BLOCKS` | adaptive | Max blocks in the streaming Parquet cache. Defined, parsed, **not consumed by `analyze_parallel`**: the only in-tree `StreamingRecordCache::new` call site passes `None`, and `LruRecordCache` — its other reader — is never constructed in production. |
 | `NEAT_AI_DISCOVERY_PREFETCH_DEPTH` | 2 | Streaming prefetch depth. Defined, parsed, **not consumed by `analyze_parallel`**: read only by `get_streaming_config_from_env`, which has no caller. |
 | `NEAT_AI_DISCOVERY_PRELOAD_ALL` | off | Disable streaming and use full Parquet preload. Defined, parsed, **not consumed by `analyze_parallel`**: it feeds `is_streaming_enabled()`, which no production code calls. It does **not** force the production cache to pre-load, in either direction. |
-| `NEAT_AI_DISCOVERY_BLOCK_SIZE` | 10000 | Streaming block size in records. Defined, parsed, **not consumed by `analyze_parallel`**: only `StreamingRecordCache` reads it. |
-| `NEAT_AI_DISCOVERY_SESSION_TTL_SECS` | 3600 | Streaming session TTL for orphan cleanup. |
+| `NEAT_AI_DISCOVERY_BLOCK_SIZE` | 10000 | Streaming block size in records, clamped to `10–100000`. Defined, parsed, **not consumed by `analyze_parallel`**: only `StreamingRecordCache` reads it. |
+| `NEAT_AI_DISCOVERY_SESSION_TTL_SECS` | 3600 | Streaming session TTL for orphan cleanup, in seconds. Clamped to `60–86400`; an unparsable value falls back to `3600`. |
 
 ## Focus selection & ranking
 
@@ -71,7 +84,7 @@ and clamp documented in the tables below then apply on top of that.
 | `NEAT_AI_DISCOVERY_FOCUS_IMPACT_GATE` | off | Gate out neurons whose structural impact magnitude is below `NEAT_AI_DISCOVERY_FOCUS_IMPACT_GATE_THRESHOLD` from focus-slot eligibility. Complements the constant filter above by catching *non-constant* near-zero-impact neurons (~31.6% of neurons had `\|impact\| < 1e-6` in production, Issue #1631) that no change can move. Gated count is surfaced as `focus_ineligible_low_impact` (Issue #1635). |
 | `NEAT_AI_DISCOVERY_FOCUS_IMPACT_GATE_THRESHOLD` | 1e-6 | Impact-magnitude gate: neurons with `\|impact\| <` this value are gated out when the gate above is enabled (retain-on-equal at the boundary). Positive finite values only; invalid or non-positive values fall back to the default (Issue #1635). |
 | `NEAT_AI_DISCOVERY_CONSTANT_SOURCE_EFFECT_THRESHOLD` | dynamic | Constant-source folding threshold. |
-| `NEAT_AI_DISCOVERY_FOCUS_RANKING_MEMORY_BUDGET_MB` | unset | Cap focus-ranking eager pre-load size in MB. When set and projected size (file × 3) exceeds the budget, lazy mode is used with a structured `info` log (Issue #1172). |
+| `NEAT_AI_DISCOVERY_FOCUS_RANKING_MEMORY_BUDGET_MB` | unset | Cap focus-ranking eager pre-load size in MB. When set and projected size (file × 3) exceeds the budget, lazy mode is used with a structured `WARN` log (Issue #1172). |
 | `NEAT_AI_DISCOVERY_MAX_PARQUET_DECODE_MB` | half of total RAM | Hard ceiling on the records decoded from a single parquet file. Every materialised record is charged against the ceiling **inside** the reader's batch loop, so a file that decodes far larger than its compressed size suggested aborts mid-decode with a typed `MemoryExhausted` error instead of exhausting the host. The analysis phase's own memory budget takes precedence; this variable bounds the paths that carry no caller budget (visualisation snapshot export, focus gradients, and the streaming block loader — Issue #2005) and also caps the exporter's dense neuron × observation grid. Unset / invalid / `0` falls back to half of total system RAM (Issue #1869). |
 | `NEAT_AI_DISCOVERY_FOCUS_RANKING_MEMORY_MARGIN_MB` | 1024 | Safety margin (MB) reserved from OS-available memory when deciding eager-vs-lazy focus-ranking pre-load. `0` reserves no margin; unset / invalid values fall back to the default. |
 | `NEAT_AI_DISCOVERY_FOCUS_RANKING_BUDGET_MS` | 120000 (eager); scaled for lazy | Wall-clock budget for focus ranking; a run that exceeds it aborts with a structured `Timeout` error so the caller falls back to local ranking. When **unset**, the default is scaled by loading mode and projected dataset size — eager keeps the flat 120 s, while a *lazy* pass earns `4 × 120 s + 20 ms per projected MB` so a legitimate lazy fallback finishes instead of aborting into degraded recorded-error aggregation (Issue #3172). An explicit value **wins verbatim** and is never scaled; `0` disables the bound; other values clamp to `[1000, 3600000]` (Issue #1375). |
@@ -83,19 +96,19 @@ and clamp documented in the tables below then apply on top of that.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `NEAT_AI_DISCOVERY_NOISE_SIGNAL_THRESHOLD` | 2.0 | Noise-to-signal ratio threshold for the noise-signal detection module. Parsed as `f32`; unset uses the module default. |
-| `NEAT_AI_DISCOVERY_DOMINANCE_THRESHOLD` | 2.0 | Input-dominance threshold for input-sensitivity detection. Parsed as `f32`; unset uses the module default. |
-| `NEAT_AI_DISCOVERY_GRADIENT_THRESHOLD` | 10.0 | Gradient threshold for input-sensitivity detection. Parsed as `f32`; unset uses the module default. |
+| `NEAT_AI_DISCOVERY_NOISE_SIGNAL_THRESHOLD` | 2.0 | Noise-to-signal ratio threshold for the noise-signal detection module. Parsed as `f32`; unset or unparsable uses the module default. No validation: `NaN`, `inf`, zero and negative values are accepted as-is (#2438). |
+| `NEAT_AI_DISCOVERY_DOMINANCE_THRESHOLD` | 2.0 | Input-dominance threshold for input-sensitivity detection. Parsed as `f32`; unset or unparsable uses the module default. No validation: `NaN`, `inf`, zero and negative values are accepted as-is (#2438). |
+| `NEAT_AI_DISCOVERY_GRADIENT_THRESHOLD` | 10.0 | Gradient threshold for input-sensitivity detection. Parsed as `f32`; unset or unparsable uses the module default. No validation: `NaN`, `inf`, zero and negative values are accepted as-is (#2438). |
 
 ## Analysis budget & deadlines
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `NEAT_AI_DISCOVERY_MAX_WALL_CLOCK_MINUTES` | 20 | Overall wall-clock cap for discovery time in minutes (range 1–120). |
+| `NEAT_AI_DISCOVERY_MAX_WALL_CLOCK_MINUTES` | 20 | Overall wall-clock cap for discovery time in minutes. The environment value is clamped to 1–120. An FFI-supplied `max_discovery_wall_clock_minutes` takes precedence over it and is not clamped (#2460). |
 | `NEAT_AI_DISCOVERY_ANALYSIS_RESERVE_MS` | 60000 | Guaranteed minimum window (ms) reserved for synapse/neuron analysis so focus selection + Parquet loading cannot starve it (Issue #1408). Parquet loading is curtailed at `deadline − reserve`; if less than 1s would remain, `analyze_all` fails fast with an actionable error instead of analysing 0/N targets. `0` disables the reserve; other values clamp to `[1, 3600000]`. |
-| `NEAT_AI_DISCOVERY_ANALYSIS_RESERVE_FRACTION` | 0.5 | Fraction of the remaining discovery window the reserve may claim (Issue #1408). Effective reserve = `min(ANALYSIS_RESERVE_MS, remaining × fraction)`, so tight budgets are split rather than starving loading. Honoured in `(0.0, 0.9]`; invalid values fall back to `0.5`. |
-| `NEAT_AI_DISCOVERY_WATCHDOG_STALL_SECS` | off | Abort if no progress for N seconds. |
-| `NEAT_AI_DISCOVERY_WATCHDOG_ABORT_DELAY_SECS` | 2 | Delay between the diagnostic dump and abort. |
+| `NEAT_AI_DISCOVERY_ANALYSIS_RESERVE_FRACTION` | 0.5 | Fraction of the remaining discovery window the reserve may claim (Issue #1408). Effective reserve = `min(ANALYSIS_RESERVE_MS, remaining × fraction)`, so tight budgets are split rather than starving loading. Finite values above `0` are honoured up to `0.9`; values above `0.9` clamp to `0.9`. Non-finite, zero, negative or unparsable values fall back to `0.5`. |
+| `NEAT_AI_DISCOVERY_WATCHDOG_STALL_SECS` | off | Abort if no progress for N seconds. Any `u64` of 1 or more is accepted, with no upper bound (#2405). `0` and unset leave the watchdog off. An unparsable value also leaves it off, with no log (#2213, #2276). |
+| `NEAT_AI_DISCOVERY_WATCHDOG_ABORT_DELAY_SECS` | 2 | Delay between the diagnostic dump and abort, in seconds. Any `u64` is accepted, with no upper bound (#2404); an unparsable value falls back to `2`. |
 
 ## Candidate generation & pruning
 
@@ -108,14 +121,14 @@ and clamp documented in the tables below then apply on top of that.
 | `NEAT_AI_DISCOVERY_MAX_ACTIVATION_CONFIGS_PER_TARGET` | 0 (disabled) | Cap on (orientation × scale) activation configs scanned per (source, target) pair for hidden add-neuron evaluation, after squash-family filtering (Issue #1545). A positive value keeps the `N` configs whose scale is closest to `1.0` and drops numerically-unstable extreme scales first. |
 | `NEAT_AI_DISCOVERY_MAX_SOURCES_PER_TARGET` | unlimited | Cap the number of priority-ordered source neurons evaluated (sample-build + GPU) per focus target (Issue #1542). `0`/unset/invalid = unlimited (back-compat). |
 | `NEAT_AI_DISCOVERY_MIN_EXPECTED_GAIN` | `1e-5` | Minimum **pre-calibration** predicted creature error reduction for emitted add-neuron / add-synapse candidates. Predictions below this screen are dominated by floating-point round-off in the downstream evaluator. The filters compare post-calibration gains, so the screen is converted into that scale by the per-type calibration constant first — the effective floors are `3e-8` (add-neuron) and `3e-9` (add-synapse), never below the `1e-9` noise backstop. Clamped to `[0.0, 1e-2]`; `0.0` disables the floor (Issues #1191, #1778). |
-| `NEAT_AI_DISCOVERY_MIN_BYPASS_WEIGHT_FOR_COLLAPSE` | 0.01 | Minimum absolute bypass-synapse weight required to emit a 1-in/1-out hidden-neuron collapse candidate. Bypass weights below this floor mean the chain `a→h→b` contributed nothing meaningful through `h`, so the 4-op coordinated collapse is rejected. Clamped to `[0.0, 0.1]` (Issue #1270). |
+| `NEAT_AI_DISCOVERY_MIN_BYPASS_WEIGHT_FOR_COLLAPSE` | 0.01 | Minimum absolute bypass-synapse weight required to emit a 1-in/1-out hidden-neuron collapse candidate. Bypass weights below this floor mean the chain `a→h→b` contributed nothing meaningful through `h`, so the 4-op coordinated collapse is rejected. Clamped to `[0.0, 0.1]` (Issue #1270). `0` disables the floor. Negative, non-finite or unparsable values fall back to `0.01`. |
 | `NEAT_AI_DISCOVERY_CPU_PRE_REJECT` | on | CPU pre-reject screen that runs before the helpful GPU submit (Issue #1544); set `0`/`false`/`no` to disable. Drops helpful add-synapse candidates with no least-squares signal without changing which candidates survive. |
 | `NEAT_AI_DISCOVERY_HIDDEN_SQUASH_PRUNE` | on | Squash-aware hidden-target activation scan pruning (Issue #1545); set `0`/`false`/`no` to always scan the full cross-product. A drought escalates the scan back to the full set so pruning can never permanently starve a plateaued creature. |
 | `NEAT_AI_DISCOVERY_MODULE_TIERING_HIDDEN_THRESHOLD` | 1000 | Hidden-neuron count above which **expensive**-tier discovery modules are skipped at dispatch on non-escalation passes (Issue #1547). Suppressed during drought / novelty-escalation passes so the full set re-enables. `0` disables it entirely. |
-| `NEAT_AI_DISCOVERY_MH_TEMPERATURE` | off | Metropolis-Hastings temperature for probabilistic acceptance. |
+| `NEAT_AI_DISCOVERY_MH_TEMPERATURE` | off | Metropolis-Hastings temperature for probabilistic acceptance. Accepted range `0.01–5.0` (inclusive), read once per process. A value outside the range, or one that is non-finite or unparsable, leaves the feature off (deterministic acceptance) and logs at debug level. An empty or whitespace-only value is treated as unset: the feature stays off and nothing is logged. |
 | `NEAT_AI_DISCOVERY_BATCH_SUCCESSFUL` | off | Re-enable the disabled batch-successful module (Issue #1059). |
 | `NEAT_AI_DISCOVERY_REMOVE_LOW_IMPACT_NOISE_FLOOR` | unset | **Absolute** override for the minimum `net_improvement` a remove-low-impact candidate must clear to reach the FFI response. Applied verbatim, ignoring `costOfGrowth`, and takes precedence over the `_UNITS` form below. Non-negative finite values only; `0.0` disables the floor (test path); invalid values fall back to the denominated default. Sensible band `1e-8`–`1e-3` at the production `costOfGrowth` (Issues #1142, #1814). |
-| `NEAT_AI_DISCOVERY_REMOVE_LOW_IMPACT_NOISE_FLOOR_UNITS` | `1.0` | The remove-low-impact noise floor **in units of `costOfGrowth`** — the screened quantity (`boostedSavings − contribution`) is linear in `costOfGrowth`, so the floor is too (Issue #1814). Effective floor is `units × costOfGrowth`, clamped below by the `1e-9` gain-floor noise backstop. Must stay in `(0.664, 1.5)`: below `0.664` the #1142 numerical-noise class leaks through, at or above `1.5` a zero-contribution orphan can no longer be pruned. `0.0` disables the floor; invalid values fall back to `1.0`. |
+| `NEAT_AI_DISCOVERY_REMOVE_LOW_IMPACT_NOISE_FLOOR_UNITS` | `1.0` | The remove-low-impact noise floor **in units of `costOfGrowth`** — the screened quantity (`boostedSavings − contribution`) is linear in `costOfGrowth`, so the floor is too (Issue #1814). Effective floor is `units × costOfGrowth`, clamped below by the `1e-9` gain-floor noise backstop. Guidance, not validation: the code accepts any finite value of 0 or more. Values below `0.664` let the #1142 numerical-noise class through, and values at or above `1.5` stop a zero-contribution orphan from being pruned. `0.0` disables the floor; negative, non-finite or unparsable values fall back to `1.0`. |
 | `NEAT_AI_DISCOVERY_COORDINATED_NOISE_FLOOR_MULTIPLIER` | 1.0 | **Test-only escape hatch.** Multiplier applied to every per-op-count coordinated-structural noise floor; production callers leave it unset. Finite `> 0.0` values only, clamped to `[1e-3, 100.0]`; invalid values fall back to `1.0` (Issue #1142). |
 
 ## Drought & novelty escalation
@@ -149,12 +162,34 @@ and clamp documented in the tables below then apply on top of that.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `NEAT_AI_DISCOVERY_TIMING` | off | Print phase timing to stderr when set to any value (convention `=1`). |
-| `NEAT_AI_DISCOVERY_PROFILE` | off | Emit a structured profile to stderr. The only recognised value is `json` (case-insensitive); anything else disables profiling. |
-| `NEAT_AI_DISCOVERY_GPU_METRICS` | off | Print GPU metrics to stderr when set to any value (convention `=1`). |
+| `NEAT_AI_DISCOVERY_TIMING` | off | Phase timing, emitted as `tracing` debug events (message `phase timing`). Presence-only: any set value enables it, `0` included. Hidden under the default `RUST_LOG=warn`; set `RUST_LOG=neat_ai_discovery=debug` to see it. |
+| `NEAT_AI_DISCOVERY_PROFILE` | off | Emit a structured profile as a `tracing` info event (message `profile data`). The only recognised value is `json` (case-insensitive); anything else disables profiling. Hidden under the default `RUST_LOG=warn`; set `RUST_LOG=neat_ai_discovery=info` to see it. |
+| `NEAT_AI_DISCOVERY_GPU_METRICS` | off | GPU metrics, emitted as a `tracing` info event (message `GPU metrics`). Presence-only: any set value enables it, `0` included. Hidden under the default `RUST_LOG=warn`; set `RUST_LOG=neat_ai_discovery=info` to see it. |
 | `NEAT_AI_DISCOVERY_CALIBRATION_MISS_THRESHOLD` | 10.0 | `actual/expected` ratio above which prediction-vs-actual calibration mismatches are logged via `tracing::warn!`. Must be finite and `> 1.0`; invalid values fall back to the default so the log channel cannot be silenced by a malformed value. |
 | `NEAT_AI_DISCOVERY_STRICT_CANDIDATE_RECONCILIATION` | on for debug builds, off for release builds | Trip a `debug_assert!` when a discovery pass cannot account for every considered candidate (Issue #1802), so a newly-added silent drop path fails CI. Set to `0` to force warn-only. The `unaccounted_drop` rejection-breakdown entry and the `tracing::warn!` naming the surface and delta are emitted regardless, so a mismatch is never silent. See [docs/analysis/candidate-reconciliation-1802.md](analysis/candidate-reconciliation-1802.md). |
 | `NEAT_AI_DISCOVERY_SAMPLE_PROGRAM` | `sample` on macOS, none elsewhere | Path override for the `sample` binary used for thread-dump diagnostics. Off macOS no sampler is attempted unless this names one (Issue #1934). Diagnostics/tooling only — not a discovery-tuning knob. |
+
+## Set internally by the library
+
+The library writes these variables into its own process environment during GPU
+initialisation on Linux. They are not operator tuning knobs. Each one is written
+only when it is unset, so a value the host environment already sets wins.
+
+- `EGL_LOG_LEVEL`: set to `fatal` when `NEAT_AI_DISCOVERY_QUIET_GPU` is on.
+- `MESA_GLSL_CACHE_DISABLE`: set to `true` when `NEAT_AI_DISCOVERY_QUIET_GPU` is on.
+- `MESA_DEBUG`: set to `silent` when `NEAT_AI_DISCOVERY_QUIET_GPU` is on.
+- `XDG_RUNTIME_DIR`: when unset, set to a per-user directory,
+  `neat-ai-discovery-runtime-<uid>`, under the temp directory. The directory is
+  created with mode `0700`. This happens whether or not `NEAT_AI_DISCOVERY_QUIET_GPU`
+  is on. An existing path that is not a real directory (a symlink or a file), is
+  not owned by this user, or carries group or other permission bits is refused;
+  the library then logs a warning and leaves `XDG_RUNTIME_DIR` unset. The XDG_RUNTIME_DIR section of
+  [GPU_GUIDE.md](GPU_GUIDE.md) covers the same behaviour.
+
+The three Mesa variables are written only on Linux. The writes happen only while
+the process is single-threaded at GPU initialisation. Otherwise they are skipped
+with a warning, so a multi-threaded host should set these variables in its own
+environment before the process starts.
 
 ## Related guides
 
