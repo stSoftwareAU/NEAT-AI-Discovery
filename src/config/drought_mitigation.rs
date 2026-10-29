@@ -12,8 +12,10 @@
 /// Snapshot of every effective drought-mitigation lever (Issue #1422).
 ///
 /// Each field is the *resolved* value — env-var override applied, otherwise the
-/// compiled default. `from_env` reads the environment once so the snapshot is a
-/// faithful picture of what the running pipeline will use.
+/// compiled default. `from_env` reads each lever when it is called. Its only
+/// production caller is the one-off startup log, and the pipeline reads these
+/// levers live, so the snapshot can diverge from the values in use after
+/// startup.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct DroughtMitigationConfig {
     /// Consecutive empty passes before the one-shot escape hatch fires, or

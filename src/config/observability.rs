@@ -6,7 +6,8 @@ use super::helpers::parse_env;
 
 /// Check if phase timing output is enabled (cached).
 ///
-/// Set `NEAT_AI_DISCOVERY_TIMING=1` to enable.
+/// Presence-only: any set value enables it, `0` included. The output is
+/// `tracing::debug!` events, so it is hidden under the default `RUST_LOG=warn`.
 pub fn timing() -> bool {
     static VAL: OnceLock<bool> = OnceLock::new();
     *VAL.get_or_init(|| std::env::var("NEAT_AI_DISCOVERY_TIMING").is_ok())
@@ -18,13 +19,15 @@ pub enum ProfileMode {
     /// No profiling output.
     #[default]
     None,
-    /// Output structured profile as JSON to stderr.
+    /// Output structured profile as JSON, in a `tracing::info!` event.
     Json,
 }
 
 /// Get the profile output mode (cached).
 ///
-/// Set `NEAT_AI_DISCOVERY_PROFILE=json` to enable JSON profiling.
+/// Set `NEAT_AI_DISCOVERY_PROFILE=json` (case-insensitive) to enable JSON
+/// profiling; any other value disables it. The output is a `tracing::info!`
+/// event, so it is hidden under the default `RUST_LOG=warn`.
 pub fn profile_mode() -> ProfileMode {
     static VAL: OnceLock<ProfileMode> = OnceLock::new();
     *VAL.get_or_init(|| {
@@ -42,7 +45,8 @@ pub fn profile_mode() -> ProfileMode {
 
 /// Check if GPU metrics output is enabled (cached).
 ///
-/// Set `NEAT_AI_DISCOVERY_GPU_METRICS=1` to enable.
+/// Presence-only: any set value enables it, `0` included. The output is a
+/// `tracing::info!` event, so it is hidden under the default `RUST_LOG=warn`.
 pub fn gpu_metrics() -> bool {
     static VAL: OnceLock<bool> = OnceLock::new();
     *VAL.get_or_init(|| std::env::var("NEAT_AI_DISCOVERY_GPU_METRICS").is_ok())
@@ -57,8 +61,9 @@ pub fn gpu_metrics() -> bool {
 /// Either way the `unaccounted_drop` rejection-breakdown entry and the
 /// `tracing::warn!` are emitted, so a mismatch is never silent.
 ///
-/// Set `NEAT_AI_DISCOVERY_STRICT_CANDIDATE_RECONCILIATION=0` to force warn-only
-/// in a debug build, or `=1` to state the default explicitly.
+/// Set `NEAT_AI_DISCOVERY_STRICT_CANDIDATE_RECONCILIATION=0` (or `false`/`no`)
+/// to force warn-only, or `=1` (or `true`/`yes`) to force the check on. The
+/// default is on for debug builds and off for release builds.
 ///
 /// Deliberately **not** cached in a `OnceLock`: it is read twice per discovery
 /// pass, and caching would stop tests toggling it. Prefer

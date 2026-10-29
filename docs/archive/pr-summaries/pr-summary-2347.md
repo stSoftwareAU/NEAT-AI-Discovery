@@ -168,7 +168,7 @@ Every remaining hit on the head, with current line numbers:
 - **Tests modified:** the three unit tests in `src/analysis/detection/weight_coherence.rs` that called the removed `calculate_correlation` now call `correlation_from_maps(&build_activation_map(..), &build_activation_map(..), ..)`. Only the call site changed.
 - **Removed assertions:** none. Every existing assertion is kept unchanged.
 - **Branch merge:** the branch merges origin's default branch, which already landed #2351 and the #2348 / #2349 / #2358 deadline plumbing. The conflict in the `src/analysis/module_dispatch_specs/mod.rs` doc comment was resolved by keeping both sets of Issue lines.
-- **Version bump:** `Cargo.toml` version updated for this change (currently `0.74.292`). The merged commit records the final version.
+- **Version bump:** `Cargo.toml` version updated for this change (currently `0.74.294`). The merged commit records the final version.
 - **Results (run on the final head):**
   - `cargo test --test issue_2347_symmetric_cancellation_growth --test issue_2347_symmetric_cancellation_growth_test` → 2 passed and 8 passed.
   - Full `./quality.sh`: shellcheck, licence audit, lint, type check and `cargo test --lib --tests --all-features` all passed (0 failed).

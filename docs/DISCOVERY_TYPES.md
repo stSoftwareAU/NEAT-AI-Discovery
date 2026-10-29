@@ -1308,6 +1308,17 @@ provides a shorter gradient path.
 1. **Add skip synapse**: Connect the deep hidden neuron directly to an
    output, providing an unattenuated gradient path.
 
+**Cost and cancellation** (Issue #2368): The depth pass is a Kahn topological
+pass, O(V + E). A cyclic synapse graph returns no candidates, reported as
+`SkipConnectionStop::CycleDetected`, instead of looping. Each deep target scans
+shallow sources only until its first unconnected one (depth-0 sources before
+depth-1), so the pair search is bounded by the target's existing in-edges plus
+one per target. The analysis deadline and global cancellation are checked
+before the depth pass, once per neuron popped, and once per deep target. A stop
+in the depth pass yields no candidates, because the depths are incomplete. A
+stop in the target loop keeps the candidates gathered so far. The dispatch spec
+logs a warning with the reason.
+
 **Output**: Emitted as `coordinatedStructuralCandidates` with `addSynapse`
 operations.
 

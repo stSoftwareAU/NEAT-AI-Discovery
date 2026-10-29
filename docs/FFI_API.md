@@ -170,7 +170,10 @@ regardless of how recording and analysis budgets are split. The analysis
 deadline is clamped to `min(analysis_deadline, discovery_start + wall_clock_cap)`.
 
 - **Field**: `maxDiscoveryWallClockMinutes` (optional `u64`, minutes)
-- **Default**: no cap (backwards compatible)
+- **Default**: when the field is omitted, the cap comes from
+  `NEAT_AI_DISCOVERY_MAX_WALL_CLOCK_MINUTES` (clamped to 1–120, default 20
+  minutes). There is no "no cap" case. A value supplied in the FFI request is
+  used as given and is not clamped to 1–120 (#2460).
 - **Behaviour**: when set, `refreshAnalysisTimeout()` (TypeScript side) and
   the Rust analysis engine both respect the overall wall-clock limit,
   preventing total discovery time from exceeding the configured cap
