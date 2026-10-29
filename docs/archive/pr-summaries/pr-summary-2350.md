@@ -60,8 +60,8 @@ Docs sweep: grep `fanin_polarity_conflicts_to_coordinated_candidates`, "fan-in p
 - `src/analysis/module_dispatch_specs/mod.rs`: `fanin_polarity_spec_detects_conflicts_before_the_deadline`, `fanin_polarity_spec_honours_an_elapsed_deadline` (covers the `synapse_specs.rs` call site passing the deadline).
 - `benches/fanin_polarity_squash_lookup.rs`: Criterion benchmark of absolute cost.
 - Ran on the final head (after merging current `Develop`): `cargo test --test issue_2350_fanin_polarity_squash_lookup_growth` (2 passed), `cargo test --test detection issue_641` (11 passed), `cargo test --lib fanin_polarity` (3 passed), `cargo fmt --check` and `cargo clippy --all-targets --all-features -- -D warnings` clean.
-- `cargo audit` and `cargo deny check` pass after the advisory fix below; `./quality.sh` had previously stopped at `cargo deny` on the zstd advisories.
-- Dependency fix (Fixes #2432): `parquet` now uses `default-features = false` with every default feature except `zstd`, removing `zstd`, `zstd-safe`, `zstd-sys` (RUSTSEC-2026-0391, -0398, -0403, -0410) from `Cargo.lock`. The writer uses `WriterProperties::builder().build()` (uncompressed), so zstd was unused. `cargo check --all-targets` and `cargo test --lib parquet_format` (26 passed) pass.
+- `cargo audit` and `cargo deny check` are covered by CI on the merged head (the zstd advisories are resolved on the base branch).
+- Dependency fix (#2432): superseded by the base branch. `Develop` already carries the zstd-free `parquet`/`arrow` 60.0 manifest and lockfile, so this PR no longer changes `Cargo.toml` dependencies or `Cargo.lock` (only the new `[[bench]]` entry).
 
 Removed assertions: none (the earlier output-count test was folded into the growth test, which still asserts one candidate per conflict at N and 4N).
 
