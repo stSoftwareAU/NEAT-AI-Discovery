@@ -45,8 +45,9 @@ Security-fix evidence:
 - Existing `tests/recommendation/issue_570_skip_connection_discovery.rs` tests are unedited and exercise the unchanged wrapper.
 - `cargo test --lib skip_connection`: 7 passed. `cargo test --test issue_2368_skip_connection_pair_scan`: 3 passed. `cargo clippy --all-targets -- -D warnings`: clean (run by the executor).
 - No existing test expectation was edited; no assertion removed.
-- Not done: break-the-guard red checks per branch were not run individually; no full-suite run beyond `./quality.sh`.
+- `./quality.sh < /dev/null` on the final head: passed ("All quality checks passed!", exit 0; every `test result` line reports 0 failed).
+- Not done: break-the-guard red checks per branch were not run individually.
 
 ## Merge verification
 
-- `./quality.sh` result: see the final outcome recorded in the Test Plan line below.
+- `./quality.sh` result: passed on the final head (see Test Plan). CI and code review are pending.
