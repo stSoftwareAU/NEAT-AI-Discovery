@@ -1,6 +1,6 @@
 [package]
 name = "neat_ai_discovery"
-version = "0.74.292"
+version = "0.74.293"
 edition = "2024"
 # NEAT-AI family floor 1.99 (NEAT-AI-core#747). AtomicUsize::try_update
 # (src/cancellation.rs) needs >= 1.95 (Issue #2395). Keep equal to the
@@ -21,8 +21,8 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 anyhow = "1.0"
 thiserror = "2"  # Typed domain error enums (Issue #677)
-parquet = "60"  # Apache Parquet format (viewable with standard tools)
-arrow = { version = "60", default-features = false }  # Arrow arrays for Parquet
+parquet = { version = "60.0", default-features = false, features = ["arrow", "snap", "brotli", "flate2-zlib-rs", "lz4", "base64", "simdutf8"] }  # Apache Parquet format (viewable with standard tools). zstd omitted: files are written uncompressed and the zstd 0.13 chain carries RUSTSEC-2026-0391/0398/0403/0410
+arrow = { version = "60.0", default-features = false }  # Arrow arrays for Parquet
 wgpu = "30"
 pollster = "1.0"
 bytemuck = { version = "1.25", features = ["derive"] }
