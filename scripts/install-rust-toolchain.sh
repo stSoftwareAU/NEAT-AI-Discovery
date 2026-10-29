@@ -35,8 +35,10 @@ Arguments:
                or as one comma-separated argument, e.g. "rustfmt, clippy".
 
 Environment:
-  RUST_TOOLCHAIN_MAX_ATTEMPTS  Install attempts before failing (default: 3).
-  RUST_TOOLCHAIN_RETRY_DELAY   Seconds between attempts (default: 15).
+  RUST_TOOLCHAIN_MAX_ATTEMPTS  Install attempts before failing; a positive
+                               integer (default: 3).
+  RUST_TOOLCHAIN_RETRY_DELAY   Seconds between attempts; a non-negative
+                               integer (default: 15).
 
 Examples:
   scripts/install-rust-toolchain.sh
@@ -51,6 +53,18 @@ fi
 
 MAX_ATTEMPTS="${RUST_TOOLCHAIN_MAX_ATTEMPTS:-3}"
 RETRY_DELAY="${RUST_TOOLCHAIN_RETRY_DELAY:-15}"
+
+# Validate before any arithmetic or sleep (Issue #2277): `[[ -ge ]]` evaluates
+# its operands arithmetically, so an array subscript such as `HOME[$(cmd)]`
+# would run cmd. `=~` does no arithmetic evaluation, so it is safe to test with.
+if [[ ! "$MAX_ATTEMPTS" =~ ^[1-9][0-9]*$ ]]; then
+    echo "::error::install-rust-toolchain.sh: invalid RUST_TOOLCHAIN_MAX_ATTEMPTS value '$MAX_ATTEMPTS'" >&2
+    exit 2
+fi
+if [[ ! "$RETRY_DELAY" =~ ^[0-9]+$ ]]; then
+    echo "::error::install-rust-toolchain.sh: invalid RUST_TOOLCHAIN_RETRY_DELAY value '$RETRY_DELAY'" >&2
+    exit 2
+fi
 
 # Allowlist: rustup toolchain and component names are plain identifiers.
 # Anything else is caller error or an injection attempt — reject before use.

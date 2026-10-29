@@ -183,9 +183,9 @@ impl GpuMetrics {
         (busy / total) * 100.0
     }
 
-    /// Print GPU metrics to stderr.
-    ///
-    /// Output format: `[gpu] batches: N, samples: N, utilisation: N.N%`
+    /// Emit GPU metrics as one `tracing::info!` event (message `GPU metrics`),
+    /// carrying the `batches`, `samples`, `utilisation_percent` and related
+    /// fields. It is hidden under the default `RUST_LOG=warn`.
     pub fn report(&self) {
         let reductions = self.batch_size_reductions();
         let effective = self.effective_batch_size();
@@ -223,7 +223,10 @@ pub fn global_gpu_metrics() -> &'static GpuMetrics {
     GLOBAL_GPU_METRICS.get_or_init(GpuMetrics::new)
 }
 
-/// Report global GPU metrics if `NEAT_AI_DISCOVERY_GPU_METRICS=1` is set.
+/// Report global GPU metrics if `NEAT_AI_DISCOVERY_GPU_METRICS` is set.
+///
+/// Presence-only: any set value enables it, `0` included. The report is a
+/// `tracing` event, hidden under the default `RUST_LOG=warn`.
 ///
 /// Call this at the end of analysis to output GPU utilisation metrics.
 pub fn report_global_gpu_metrics() {

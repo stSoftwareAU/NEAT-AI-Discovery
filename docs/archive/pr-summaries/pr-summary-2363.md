@@ -10,7 +10,7 @@ Version bump: `Cargo.toml` `version` updated for this change; the merged commit 
 - Both matchers also accept wgpu-core's `"Not enough memory left."`.
 - `docs/GPU_GUIDE.md` documents the behaviour.
 
-This is a redo of the closed PR #2433, rebuilt on the current `Develop`. It carries that branch's source, tests and docs unchanged, and it deliberately drops that branch's `parquet`/`arrow` 59 → 60 bump (its reviewer flagged it as unrelated and undisclosed). `Cargo.toml` and `Cargo.lock` change only by the version.
+This is a redo of the closed PR #2433, rebuilt on the current `Develop`. It carries that branch's source, tests and docs unchanged, and it deliberately drops that branch's `parquet`/`arrow` 59 → 60 bump (its reviewer flagged it as unrelated and undisclosed). Relative to `Develop`, `Cargo.toml` and `Cargo.lock` change by the version and by a `parquet`/`arrow` 60.0 → 60.1 patch bump (the branch's bump-deps result, kept on merge); `Develop`'s zstd-free `parquet` feature list is preserved.
 
 ## Spec
 
@@ -23,7 +23,7 @@ This is a redo of the closed PR #2433, rebuilt on the current `Develop`. It carr
 - A failure while the flag is set always routes to recovery, because after loss wgpu-core keeps the device lost for good. Recovery builds a new analyser through the factory, which carries a fresh flag.
 - A captured scope error takes precedence over an `Ok` result, since a batch that hit a device error cannot be trusted.
 - Not done: the poll-path panic (`Device::poll`, wgpu `handle_error_fatal`) is not converted to an `Err`; it remains the #2361 panic-handling path. The error scopes cover errors wgpu raises on the evaluating thread (buffer-creation out-of-memory and the follow-on validation errors from the invalid buffer it returns).
-- The dependency advisories (zstd RUSTSEC) are not fixed here; they are tracked by #2432.
+- The zstd RUSTSEC advisories were removed on `Develop` (zstd-free `parquet` features); the merge keeps that feature list.
 
 ### Undiscoverable Facts
 

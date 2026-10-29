@@ -54,12 +54,18 @@ mod staleness;
 /// (Issue #1932) can be exercised from integration tests.
 pub mod submission;
 
+/// Empty-input short-circuits vs an all-zero GPU answer (Issue #2243).
+#[cfg(test)]
+mod empty_vs_zero_tests;
 /// Regression tests for the Issue #2363 device-lost flag routing.
 #[cfg(test)]
 mod device_lost_flag_test;
 /// Deterministic wedged-GPU test double (Issue #1935).
 #[cfg(test)]
 mod fake_evaluator;
+/// `RequestEvaluator` on an all-`None` `GpuAnalyzer` returns `Err` (Issue #2241).
+#[cfg(test)]
+mod none_field_tests;
 /// Regression tests for the Issue #2339 send-phase wedge bound.
 #[cfg(test)]
 mod send_phase_test;

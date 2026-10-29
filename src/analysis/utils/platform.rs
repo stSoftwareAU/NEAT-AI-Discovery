@@ -438,6 +438,42 @@ pub fn setup_gpu_environment() -> GpuEnvSetup {
 mod tests {
     use super::*;
 
+    #[cfg(unix)]
+    struct EnvGuard {
+        key: &'static str,
+        prior: Option<std::ffi::OsString>,
+    }
+
+    #[cfg(unix)]
+    impl EnvGuard {
+        fn set(key: &'static str, value: &std::ffi::OsStr) -> Self {
+            let prior = std::env::var_os(key);
+            // SAFETY: callers are serialised and no other thread accesses the environment.
+            unsafe { std::env::set_var(key, value) };
+            Self { key, prior }
+        }
+
+        fn unset(key: &'static str) -> Self {
+            let prior = std::env::var_os(key);
+            // SAFETY: callers are serialised and no other thread accesses the environment.
+            unsafe { std::env::remove_var(key) };
+            Self { key, prior }
+        }
+    }
+
+    #[cfg(unix)]
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            // SAFETY: callers are serialised and no other thread accesses the environment.
+            unsafe {
+                match &self.prior {
+                    Some(value) => std::env::set_var(self.key, value),
+                    None => std::env::remove_var(self.key),
+                }
+            }
+        }
+    }
+
     /// Collects formatted tracing output so a test can assert that a rejection
     /// was reported rather than swallowed.
     #[cfg(unix)]
@@ -542,7 +578,6 @@ mod tests {
     #[test]
     #[serial_test::serial]
     fn xdg_runtime_dir_rejects_preexisting_world_writable() {
-        use std::env;
         use std::os::unix::fs::PermissionsExt;
 
         let base = tempfile::tempdir().expect("temp dir should be created");
@@ -565,33 +600,15 @@ mod tests {
             "the rejection must be warned about, got: {logs}"
         );
 
-        let saved_runtime = env::var("XDG_RUNTIME_DIR").ok();
-        let saved_tmpdir = env::var("TMPDIR").ok();
-        // SAFETY: serialised via #[serial]; both variables are restored below.
-        unsafe {
-            env::remove_var("XDG_RUNTIME_DIR");
-            env::set_var("TMPDIR", &base_path);
-        }
+        let _runtime = EnvGuard::unset("XDG_RUNTIME_DIR");
+        let _tmpdir = EnvGuard::set("TMPDIR", base_path.as_os_str());
 
         // SAFETY: serialised via #[serial]; no other thread touches the env here.
         unsafe { apply_xdg_runtime_dir() };
 
-        let after = env::var("XDG_RUNTIME_DIR").ok();
-
-        // SAFETY: serialised via #[serial]; restore the pre-existing values.
-        unsafe {
-            match saved_runtime {
-                Some(v) => env::set_var("XDG_RUNTIME_DIR", v),
-                None => env::remove_var("XDG_RUNTIME_DIR"),
-            }
-            match saved_tmpdir {
-                Some(v) => env::set_var("TMPDIR", v),
-                None => env::remove_var("TMPDIR"),
-            }
-        }
-
         assert_eq!(
-            after, None,
+            std::env::var_os("XDG_RUNTIME_DIR"),
+            None,
             "XDG_RUNTIME_DIR must stay unset when only an untrusted directory is available"
         );
     }
@@ -613,6 +630,88 @@ mod tests {
         assert!(
             logs.contains("refusing pre-existing XDG_RUNTIME_DIR"),
             "the rejection must be warned about, got: {logs}"
+        );
+    }
+
+    /// A pre-existing runtime directory owned by another uid is refused with a
+    /// warning, even when it is otherwise owner-only (Issue #2270). A positive
+    /// control under the real euid shows the refusal comes from the uid check,
+    /// not from the mode or the stat.
+    #[cfg(unix)]
+    #[test]
+    fn runtime_dir_rejects_other_uid() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let owned = tempfile::tempdir().expect("temp dir should be created");
+        let dir = owned.path().join("runtime");
+        std::fs::create_dir(&dir).expect("runtime directory should be created");
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))
+            .expect("runtime directory should be made owner-only");
+
+        // SAFETY: `geteuid` takes no arguments, touches no caller-owned memory and
+        // cannot fail.
+        let real_uid = unsafe { libc::geteuid() };
+        let other_uid = real_uid.wrapping_add(1);
+
+        let (trusted, logs) = capture_logs(|| runtime_dir_is_trustworthy(&dir, other_uid));
+        assert!(
+            !trusted,
+            "a directory owned by another uid must never be adopted, logs: {logs}"
+        );
+        assert!(
+            logs.contains("refusing pre-existing XDG_RUNTIME_DIR: owned by another user"),
+            "the uid rejection must be warned about, got: {logs}"
+        );
+
+        let (control, control_logs) = capture_logs(|| runtime_dir_is_trustworthy(&dir, real_uid));
+        assert!(
+            control,
+            "positive control: the same owner-only directory must be trusted under the real euid, logs: {control_logs}"
+        );
+    }
+
+    /// A symlink planted at the runtime-directory path is refused end to end by
+    /// `apply_xdg_runtime_dir`: `XDG_RUNTIME_DIR` stays unset and the symlink is
+    /// left in place rather than replaced (Issue #2270). Serial because it
+    /// mutates the process environment.
+    #[cfg(unix)]
+    #[test]
+    #[serial_test::serial]
+    fn xdg_runtime_dir_apply_rejects_symlink() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let base = tempfile::tempdir().expect("temp dir should be created");
+        let base_path = base
+            .path()
+            .canonicalize()
+            .expect("temp dir should canonicalise");
+        let target = tempfile::tempdir().expect("symlink target should be created");
+        std::fs::set_permissions(target.path(), std::fs::Permissions::from_mode(0o700))
+            .expect("symlink target should be made owner-only");
+        let hostile = expected_runtime_dir(&base_path);
+        std::os::unix::fs::symlink(target.path(), &hostile).expect("symlink should be created");
+
+        let _runtime = EnvGuard::unset("XDG_RUNTIME_DIR");
+        let _tmpdir = EnvGuard::set("TMPDIR", base_path.as_os_str());
+
+        // SAFETY: serialised via #[serial]; no other thread touches the env here.
+        let ((), logs) = capture_logs(|| unsafe { apply_xdg_runtime_dir() });
+
+        assert!(
+            logs.contains("refusing pre-existing XDG_RUNTIME_DIR: not a directory"),
+            "the symlink must be refused by the not-a-directory rule, got: {logs}"
+        );
+        assert_eq!(
+            std::env::var_os("XDG_RUNTIME_DIR"),
+            None,
+            "XDG_RUNTIME_DIR must stay unset when the only candidate is a symlink"
+        );
+        assert!(
+            std::fs::symlink_metadata(&hostile)
+                .expect("the planted entry should still exist")
+                .file_type()
+                .is_symlink(),
+            "the planted symlink must be left in place, not replaced"
         );
     }
 

@@ -8,7 +8,7 @@
 use super::common::*;
 use crate::analysis::gpu::shaders::{
     ACTIVATION_REDUCE_SHADER, ACTIVATION_SHADER, HARMFUL_REDUCE_SHADER, HARMFUL_SHADER,
-    HELPFUL_REDUCE_SHADER, HELPFUL_SHADER, RELU_REDUCE_SHADER, RELU_SHADER,
+    HELPFUL_REDUCE_SHADER, HELPFUL_SHADER, RELU_SHADER,
 };
 
 const GUARD: &str = "is_finite_value";
@@ -21,7 +21,6 @@ const EMBEDDED_SHADERS: &[(&str, &str)] = &[
     ("activation", ACTIVATION_SHADER),
     ("helpful_reduce", HELPFUL_REDUCE_SHADER),
     ("harmful_reduce", HARMFUL_REDUCE_SHADER),
-    ("relu_reduce", RELU_REDUCE_SHADER),
     ("activation_reduce", ACTIVATION_REDUCE_SHADER),
 ];
 
