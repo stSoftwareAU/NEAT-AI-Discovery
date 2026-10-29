@@ -105,6 +105,14 @@ enum DepthPass {
     DeadlinePassed,
 }
 
+/// Work budget for the depth pass (Issue #2368): the analysis deadline and the step observer.
+struct DepthBudget<'a> {
+    /// Checked before the pass and once per neuron popped.
+    deadline: &'a Option<SystemTime>,
+    /// Called once per neuron popped and once per synapse relaxed.
+    on_step: &'a mut dyn FnMut(),
+}
+
 /// Scan result with no candidates and the given stop reason.
 fn empty_scan(stop: Option<SkipConnectionStop>) -> SkipConnectionScan {
     SkipConnectionScan {
@@ -133,13 +141,12 @@ fn intern_uuid<'a>(
 ///
 /// Nodes are every neuron UUID plus every synapse endpoint. The pass runs in O(V + E)
 /// (Issue #2368). If some node is never popped, the graph has a cycle and no depth is
-/// defined. `on_step` is called once per node popped and once per edge relaxed. The
-/// deadline is checked before the pass and once per node popped.
-fn compute_depths_from_inputs<F: FnMut()>(
-    creature: &CreatureJson,
-    deadline: &Option<SystemTime>,
-    on_step: &mut F,
-) -> DepthPass {
+/// defined. `budget.on_step` is called once per node popped and once per edge relaxed. The
+/// deadline in `budget` is checked before the pass and once per node popped.
+fn compute_depths_from_inputs(creature: &CreatureJson, budget: &mut DepthBudget) -> DepthPass {
+    let deadline = budget.deadline;
+    let on_step = &mut *budget.on_step;
+
     // Densely index every node: neuron UUIDs first, then any synapse endpoint.
     let mut index: HashMap<&str, usize> = HashMap::new();
     let mut names: Vec<&str> = Vec::new();
@@ -299,7 +306,11 @@ pub fn detect_skip_connection_candidates_observed(
     }
 
     // Compute topological depth from inputs (Issue #2368: Kahn pass, O(V + E)).
-    let depths = match compute_depths_from_inputs(creature, deadline, &mut on_step) {
+    let mut budget = DepthBudget {
+        deadline,
+        on_step: &mut on_step,
+    };
+    let depths = match compute_depths_from_inputs(creature, &mut budget) {
         DepthPass::Depths(depths) => depths,
         DepthPass::CycleDetected => return empty_scan(Some(SkipConnectionStop::CycleDetected)),
         DepthPass::DeadlinePassed => return empty_scan(Some(SkipConnectionStop::DeadlinePassed)),
@@ -494,5 +505,5 @@ pub fn skip_connections_to_coordinated_candidates(
 }
 
 #[cfg(test)]
-#[path = "skip_connection_deadline_tests.rs"]
+#[path = "../skip_connection_deadline_tests.rs"]
 mod skip_connection_deadline_tests;
