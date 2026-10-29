@@ -47,7 +47,7 @@ const SCOPE_DIRS: [&str; 2] = ["src/analysis/detection", "src/analysis/neuron"];
 
 /// Total files across both scope directories — also the row count in
 /// `## Files swept`.
-const EXPECTED_FILE_COUNT: usize = 53;
+const EXPECTED_FILE_COUNT: usize = 54;
 
 /// One `<!-- section: … -->` marker per audit sub-issue, in record order.
 const SECTION_NAMES: [&str; 6] = [

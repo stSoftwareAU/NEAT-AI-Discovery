@@ -25,6 +25,10 @@ const SWEPT: &[&str] = &[
     "src/analysis/detection/cross_detection_synthesis.rs",
 ];
 
+/// `#[cfg(test)]`-only companion added by #2367 after the audit HEAD. It has a
+/// `graph` row but no capacity or traversal rows, so it is not in `SWEPT`.
+const TEST_ONLY_ROWS: &[&str] = &["src/analysis/detection/compound_degradation_tests.rs"];
+
 /// One graph traversal or pair scan cited per file that has one, as
 /// `<basename>::<fn>` — not every swept file carries a traversal.
 const TRAVERSAL: &[&str] = &[
@@ -309,14 +313,18 @@ fn graph_section_holds_exactly_the_eight_swept_rows() {
         .filter_map(|row| row.first())
         .map(|first| first.trim_matches('`').to_string())
         .collect();
-    let expected: std::collections::BTreeSet<String> =
-        SWEPT.iter().map(ToString::to_string).collect();
+    let expected: std::collections::BTreeSet<String> = SWEPT
+        .iter()
+        .chain(TEST_ONLY_ROWS)
+        .map(|s| (*s).to_string())
+        .collect();
 
     assert_eq!(
         found.len(),
-        SWEPT.len(),
-        "the `graph` section must hold exactly {} rows (one per SWEPT file), found {}: {found:?}",
-        SWEPT.len(),
+        SWEPT.len() + TEST_ONLY_ROWS.len(),
+        "the `graph` section must hold exactly {} rows (one per SWEPT file plus the test-only \
+         companion), found {}: {found:?}",
+        SWEPT.len() + TEST_ONLY_ROWS.len(),
         found.len()
     );
 

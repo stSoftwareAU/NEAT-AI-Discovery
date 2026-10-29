@@ -37,7 +37,7 @@ const SCOPE_DIRS: [&str; 2] = ["src/analysis/detection", "src/analysis/neuron"];
 
 /// Total files across both scope directories — also the row count in
 /// `## Files swept`.
-const ROW_COUNT: usize = 53;
+const ROW_COUNT: usize = 54;
 
 /// One `###` section per audit sub-issue, in record order, with the files it
 /// owns. Owning issues: shared — none (scaffolding only); graph — #2217;
@@ -61,6 +61,8 @@ const SECTIONS: [(&str, &[&str]); 6] = [
             "src/analysis/detection/skip_connection.rs",
             "src/analysis/detection/dead_neuron.rs",
             "src/analysis/detection/compound_degradation.rs",
+            // `#[cfg(test)]`-only companion added by #2367.
+            "src/analysis/detection/compound_degradation_tests.rs",
             "src/analysis/detection/redundant_path.rs",
             "src/analysis/detection/bottleneck.rs",
             "src/analysis/detection/low_impact_neuron.rs",
