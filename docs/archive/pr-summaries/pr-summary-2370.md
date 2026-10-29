@@ -144,6 +144,21 @@ Security Fix Evidence
   `docs/discoveries/dead-neuron.md` and `docs/ANALYSIS_DEEP_DIVE.md` were read and
   have no reachability claims. The module docs in `dead_neuron.rs` were updated to
   match.
+- Coverage reconciliation: updated `docs/audits/security-sweep-chunk-08a-detection-neuron.md`
+  for the added deadline test module (54 files), the three current capacity
+  sites and the shared SCC traversal. Updated the three existing ledger contracts,
+  `tests/issue_2154_chunk_08a_finalisation.rs`,
+  `tests/issue_2280_chunk_08a_ledger_scaffold.rs` and
+  `tests/issue_2282_chunk_08a_graph_sweep.rs`, without changing their scanners.
+  The finalisation suite reproduced the CI failure (6 passed, 2 failed) before
+  the correction; all eight suites reading this record now pass (50 tests).
+  Reverting the file-count
+  update, removing the new graph inventory entry or ledger row, misnaming either
+  SCC capacity binding, restoring the deleted traversal expectation, and
+  misnaming the SCC traversal row each made the corresponding contract red.
+  Restoring the scaffold count to 53 or removing its new section entry each
+  made its corresponding contract red too. All three copies of the inventory
+  rule were updated together.
 - Twin-rule search: the deadline-aware scan pattern mirrors
   `detect_symmetric_neurons_*` and `detect_co_adapted_neurons_with_deadline`; no
   shared matcher was changed.
@@ -152,10 +167,12 @@ Security Fix Evidence
   RUSTSEC-2026-0391/0398/0403/0410 stay cleared by the base's `parquet` feature
   list that omits `zstd` (no zstd crates remain in `Cargo.lock`); the 60.1 bump
   is kept on top of it. Fixes #2432.
-- Results on the final head: `cargo test --lib --all-features` passed (1664
-  tests); `cargo fmt --check`, `cargo clippy --all-targets --all-features -- -D warnings`
-  and `cargo doc --no-deps` with `-D warnings` were clean; the targeted
-  integration runs listed above passed.
-- Not run to completion: the full `cargo test --tests --all-features` run and
-  `./quality.sh` ; CI runs them on the PR.
-<!-- vibe-quality-gate-skipped reason="full ./quality.sh and the full integration test run exceed this run's time cap; `cargo audit` and `cargo deny check` were run and pass; targeted checks listed in the Test Plan passed and CI runs the same checks" -->
+- Current CI-fix validation: `timeout 900 ./quality.sh < /dev/null` passed
+  shell syntax, ShellCheck, cargo-install pinning, PR-summary layout,
+  `cargo deny check`, the debug build, formatting, Clippy and type checks.
+  It exited 124 while compiling the full test suite, before executing it.
+  After the final scaffold update, targeted Clippy on all three edited test
+  targets passed with warnings denied, as did `cargo fmt --all -- --check`.
+  The documentation and release-build stages were not reached. Instrumented
+  coverage generation and upload were not run locally.
+<!-- vibe-quality-gate-skipped reason="full ./quality.sh reached its 900-second timeout during test compilation; targeted audit suites and red checks are recorded above" -->

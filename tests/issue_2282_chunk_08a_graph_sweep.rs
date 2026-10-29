@@ -1,10 +1,11 @@
 //! Contract tests for the whole `graph` section of the chunk 8a sweep record
 //! (Issues #2282 and #2283, part of #2217).
 //!
-//! `SWEPT` holds all eight files the `graph` section sweeps: `topology.rs`,
+//! `SWEPT` holds all nine files the `graph` section sweeps: `topology.rs`,
 //! `skip_connection.rs`, `dead_neuron.rs`, `compound_degradation.rs`,
 //! `redundant_path.rs`, `bottleneck.rs`, `low_impact_neuron.rs` and
-//! `cross_detection_synthesis.rs`. Finalisation (#2302, part of #2154)
+//! `cross_detection_synthesis.rs`, plus the post-finalisation test-only
+//! `dead_neuron_deadline_tests.rs` (#2370). Finalisation (#2302, part of #2154)
 //! promoted the record to the top level and retargeted `RECORD` below.
 
 use std::path::PathBuf;
@@ -13,11 +14,12 @@ use std::path::PathBuf;
 /// (#2302, part of #2154).
 const RECORD: &str = "docs/audits/security-sweep-chunk-08a-detection-neuron.md";
 
-/// The eight files the `graph` section sweeps.
+/// The nine files the `graph` section sweeps.
 const SWEPT: &[&str] = &[
     "src/analysis/detection/topology.rs",
     "src/analysis/detection/skip_connection.rs",
     "src/analysis/detection/dead_neuron.rs",
+    "src/analysis/detection/dead_neuron_deadline_tests.rs",
     "src/analysis/detection/compound_degradation.rs",
     "src/analysis/detection/redundant_path.rs",
     "src/analysis/detection/bottleneck.rs",
@@ -30,7 +32,7 @@ const SWEPT: &[&str] = &[
 const TRAVERSAL: &[&str] = &[
     "topology.rs::compute_shortest_paths_to_output",
     "skip_connection.rs::compute_depths_from_inputs",
-    "dead_neuron.rs::find_connected_outputs_cached",
+    "dead_neuron.rs::explore",
     "compound_degradation.rs::reachable_outputs",
     "redundant_path.rs::detect_redundant_paths",
 ];
@@ -300,7 +302,7 @@ fn each_swept_row_is_present_and_not_pending() {
 }
 
 #[test]
-fn graph_section_holds_exactly_the_eight_swept_rows() {
+fn graph_section_holds_exactly_the_nine_swept_rows() {
     let doc = read(RECORD);
     let rows = table_rows(graph_region(&doc));
 
@@ -344,10 +346,10 @@ fn every_capacity_site_in_a_swept_file_is_cited_by_symbol() {
     // one concrete site first so the loop below cannot pass vacuously.
     let dead_neuron_source = production_source("src/analysis/detection/dead_neuron.rs");
     assert!(
-        dead_neuron_source.contains("HashSet::with_capacity(neuron_count)")
-            && dead_neuron_source.contains("fn find_connected_outputs_cached"),
+        dead_neuron_source.contains("Vec::with_capacity(dead.len())")
+            && dead_neuron_source.contains("fn detect_dead_neurons_observed"),
         "precondition: src/analysis/detection/dead_neuron.rs must still carry a \
-         `with_capacity(` site inside `find_connected_outputs_cached`, otherwise this test \
+         `with_capacity(` site inside `detect_dead_neurons_observed`, otherwise this test \
          checks nothing"
     );
     let bottleneck_source = production_source("src/analysis/detection/bottleneck.rs");
