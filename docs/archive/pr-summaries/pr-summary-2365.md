@@ -60,7 +60,7 @@ Docs: `docs/GPU_GUIDE.md` (stale-skip paragraph, flowchart node, new "Budget-cap
 - No existing assertions were removed or edited.
 - Entry points checked: `execute_request` arms HelpfulBatch, HarmfulBatch, ReluEval, ActivationEval, ActivationBatchEval (all covered by `budget_capped_timeout_reclassified_in_every_arm`); the retry loop (`recovery_stops_when_budget_expires_between_attempts`).
 - `recovery_stops_when_budget_expires_between_attempts` spends about 1 s of real clock because `GpuTimeBudget` is `Instant`-based; it asserts `create_count == 1`, so it is vacuous if `NEAT_AI_DISCOVERY_GPU_RETRY_LIMIT` is set to 1 or less (default 3).
-- `./quality.sh` ran and stopped at `cargo deny` advisories for the locked `zstd-sys 2.1.0` (RUSTSEC, via `parquet`), which this branch does not touch and which fails on the base branch too. The test stage did not run in the gate; the targeted tests above did.
+- `./quality.sh` ran and stopped at `cargo deny` advisories for the locked `zstd-sys 2.1.0` (RUSTSEC, via `parquet`), which this branch does not touch. The merge with `Develop` now carries the base's fix (parquet without the `zstd` feature, `zstd` dropped from `Cargo.lock`), so that advisory no longer applies; CI runs the full gate on the merge. The test stage did not run in the gate; the targeted tests above did.
 
 <!-- vibe-quality-gate-skipped reason="./quality.sh fails at cargo deny advisories on locked zstd-sys 2.1.0 (pre-existing on base, no dependency change in this PR); targeted fmt, clippy and tests were run instead; CI runs the full gate" -->
 
