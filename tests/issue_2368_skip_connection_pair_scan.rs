@@ -1,5 +1,8 @@
 //! Integration tests for the skip-connection pair scan (Issue #2368).
 //!
+//! These use the new `_observed` / `_with_deadline` API, so they cannot compile against the
+//! base. The base-runnable regression tests are in `issue_2368_skip_connection_termination.rs`.
+//!
 //! Every assertion here is deterministic. Work is counted through the `on_step`
 //! observer of `detect_skip_connection_candidates_observed`, never by wall-clock
 //! time. The deadline seam (`DeadlineOverrideGuard`) is `#[cfg(test)]`-only inside
