@@ -24,7 +24,7 @@
 ### Undiscoverable Facts
 
 - `MIN_DISCOVERY_SAMPLE_COUNT` is 20 (`src/analysis/constants/sample_thresholds.rs`).
-- `./quality.sh` stops at `cargo deny` on RUSTSEC advisories for `zstd`/`zstd-safe`/`zstd-sys` pulled in through `parquet 59.3.0` (`zstd ^0.13`, so not fixable by a lockfile-only bump). These are independent of this diff.
+- Before the base merge, `./quality.sh` stopped at `cargo deny` on `zstd` RUSTSEC advisories via `parquet 59.3.0`. The base branch has since moved `parquet` to 60 with the `zstd` feature omitted, and the merge took that manifest and lockfile, so those advisories no longer apply to this PR.
 
 ## Evidence
 
@@ -45,6 +45,6 @@ No wall-clock or ratio assertion is used (CONTRIBUTING forbids timing in tests);
 - `cargo clippy --all-targets -- -D warnings` and `cargo fmt --check`: clean.
 - Red on base (base `topology.rs` and `structural_specs.rs` restored, test file unchanged): both integration tests failed in 3 of 3 runs; both pass on head. The deadline checks are proven by the two in-crate tests in `topology_deadline_tests.rs`, which need the `#[cfg(test)]` deadline seam and cannot run on base (the new symbol and module do not exist there).
 - Callers checked: `structural_specs.rs` dispatch (now passes `&deadline`); tests in `tests/recommendation/issue_422_topology_aware_discovery.rs`, `tests/infrastructure/issue_754_topology_cache.rs`, `tests/issue_2351_sibling_detectors_non_finite_gain_a.rs` use the unchanged wrapper.
-- Quality gate: `./quality.sh` run on the final head fails at `cargo deny` (advisories: RUSTSEC-2026-0410 and the other `zstd` advisories via `parquet`), before reaching fmt/clippy/tests; the same step fails on the base branch. The equivalent fmt, clippy and test commands above were run directly and pass.
+- Quality gate: `./quality.sh` was last run before the base merge and stopped at `cargo deny` on the `zstd` advisories (since removed by the base's parquet 60 change); it has not been re-run on the merged head. The equivalent fmt, clippy and test commands above were run directly and passed before the merge.
 
 Not done: full test suite, version bump (CI), dependency advisory fix (out of scope).

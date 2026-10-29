@@ -207,7 +207,9 @@ impl ProfileData {
         })
     }
 
-    /// Output the profile data to stderr as JSON.
+    /// Emit the profile data as a `tracing::info!` event (message `profile data`),
+    /// with the pretty-printed JSON in the `profile` field. Does nothing unless
+    /// `NEAT_AI_DISCOVERY_PROFILE=json`.
     pub fn report(&self) {
         if profile_mode() == ProfileMode::Json {
             let json = self.to_json();

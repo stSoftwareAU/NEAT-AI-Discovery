@@ -1,7 +1,7 @@
 //! User-facing configuration accessors.
 //!
 //! These functions expose runtime settings that users control via environment
-//! variables — GPU tuning, streaming, outlier analysis, watchdog, etc.
+//! variables — GPU tuning, streaming, focus ranking, watchdog, etc.
 
 use std::sync::OnceLock;
 use std::time::Duration;
@@ -14,7 +14,7 @@ use super::helpers::{parse_bool_env, parse_env, parse_optional_bool_env};
 
 /// Check if verbose logging is enabled (cached).
 ///
-/// Set `NEAT_AI_DISCOVERY_VERBOSE=1` to enable.
+/// Presence-only: any set value enables it, `0` included.
 pub fn verbose() -> bool {
     static VAL: OnceLock<bool> = OnceLock::new();
     *VAL.get_or_init(|| std::env::var("NEAT_AI_DISCOVERY_VERBOSE").is_ok())
@@ -22,7 +22,7 @@ pub fn verbose() -> bool {
 
 /// Check if GPU kernel timing collection is enabled (cached).
 ///
-/// Set `NEAT_AI_DISCOVERY_GPU_TIMING=1` to enable. Adds ~5% overhead.
+/// Presence-only: any set value enables it, `0` included. Adds ~5% overhead.
 pub fn gpu_timing() -> bool {
     static VAL: OnceLock<bool> = OnceLock::new();
     *VAL.get_or_init(|| std::env::var("NEAT_AI_DISCOVERY_GPU_TIMING").is_ok())
@@ -147,7 +147,9 @@ pub fn gpu_stall_window() -> Duration {
 /// Get the watchdog stall timeout.
 ///
 /// Set `NEAT_AI_DISCOVERY_WATCHDOG_STALL_SECS` to a positive number to enable.
-/// Returns `None` when disabled (unset or `0`).
+/// Any `u64` of 1 or more is accepted, with no upper bound (#2405). Returns
+/// `None` when disabled (unset or `0`). A value that does not parse also returns
+/// `None`, and nothing is logged (#2213, #2276).
 pub fn watchdog_stall_timeout() -> Option<Duration> {
     let secs = parse_env::<u64>("NEAT_AI_DISCOVERY_WATCHDOG_STALL_SECS").unwrap_or(0);
 
@@ -161,7 +163,8 @@ pub fn watchdog_stall_timeout() -> Option<Duration> {
 /// Get the watchdog abort delay.
 ///
 /// Set `NEAT_AI_DISCOVERY_WATCHDOG_ABORT_DELAY_SECS` to control delay between
-/// thread dump and process abort. Default: 2 seconds.
+/// thread dump and process abort. Default: 2 seconds. Any `u64` is accepted,
+/// with no upper bound (#2404); an unparsable value falls back to 2 seconds.
 pub fn watchdog_abort_delay() -> Duration {
     let secs = parse_env::<u64>("NEAT_AI_DISCOVERY_WATCHDOG_ABORT_DELAY_SECS").unwrap_or(2);
 
@@ -212,7 +215,7 @@ pub fn block_size() -> usize {
 
 /// Check if neuron targets should be restricted to output neurons only.
 ///
-/// Set `NEAT_AI_DISCOVERY_NEURON_TARGETS_OUTPUT_ONLY=1` to enable.
+/// Presence-only: any set value enables it, `0` included.
 pub fn neuron_targets_output_only() -> bool {
     std::env::var("NEAT_AI_DISCOVERY_NEURON_TARGETS_OUTPUT_ONLY").is_ok()
 }
@@ -471,7 +474,7 @@ pub fn zero_copy_override() -> Option<bool> {
 
 /// Check if Mesa/libEGL warning suppression is requested (Linux only).
 ///
-/// Set `NEAT_AI_DISCOVERY_QUIET_GPU=1` to enable.
+/// Presence-only: any set value enables it, `0` included.
 pub fn quiet_gpu() -> bool {
     std::env::var("NEAT_AI_DISCOVERY_QUIET_GPU").is_ok()
 }
@@ -605,10 +608,10 @@ pub fn batch_successful_enabled() -> bool {
 /// pre-load size used by [`crate::focus::rank_focus_neurons`] and
 /// [`crate::focus::rank_focus_neurons_with_history`]. When set, the projected
 /// in-memory size of the parquet file is compared against this budget and
-/// lazy mode is selected when the projection exceeds it (with a structured
-/// `info` log instead of a `WARN`). When unset, the existing
-/// `check_memory_for_parquet` heuristic is used (auto-detect plus `WARN` on
-/// fallback) to preserve behaviour on big hosts.
+/// lazy mode is selected when the projection exceeds it, with a structured
+/// `WARN` log. When unset, the auto-detect path compares the projection against
+/// OS-available memory minus `NEAT_AI_DISCOVERY_FOCUS_RANKING_MEMORY_MARGIN_MB`
+/// (see [`focus_ranking_memory_margin_mb`]).
 ///
 /// Returns `None` when the variable is unset, empty, non-numeric, or zero.
 pub fn focus_ranking_memory_budget_mb() -> Option<u64> {
@@ -967,10 +970,11 @@ pub fn analysis_reserve_ms() -> u64 {
 /// Fraction of the remaining discovery window reserved for analysis (Issue #1408).
 ///
 /// Override with `NEAT_AI_DISCOVERY_ANALYSIS_RESERVE_FRACTION`:
-/// - Unset / empty / non-finite / out of range: returns
+/// - Unset / empty / non-numeric / non-finite / zero / negative: returns
 ///   [`DEFAULT_ANALYSIS_RESERVE_FRACTION`].
-/// - Any finite value in `(0.0, ANALYSIS_RESERVE_FRACTION_MAX]`: clamped to that
-///   range.
+/// - Any finite value above zero: capped at `ANALYSIS_RESERVE_FRACTION_MAX`
+///   (0.9), so values in `(0.0, 0.9]` are honoured and larger values clamp to
+///   0.9 rather than falling back.
 pub fn analysis_reserve_fraction() -> f64 {
     let Ok(raw) = std::env::var("NEAT_AI_DISCOVERY_ANALYSIS_RESERVE_FRACTION") else {
         return DEFAULT_ANALYSIS_RESERVE_FRACTION;
@@ -1129,7 +1133,9 @@ pub const MAX_WALL_CLOCK_MINUTES: u64 = 120;
 /// total discovery from exceeding the configured limit regardless of how
 /// recording and analysis budgets are split.
 ///
-/// Default: 20 minutes. Clamped to 1–120.
+/// Default: 20 minutes. Clamped to 1–120. An FFI-supplied
+/// `max_discovery_wall_clock_minutes` takes precedence over this value and is
+/// not clamped here (#2460).
 pub fn max_wall_clock_minutes() -> u64 {
     parse_env::<u64>("NEAT_AI_DISCOVERY_MAX_WALL_CLOCK_MINUTES")
         .unwrap_or(DEFAULT_MAX_WALL_CLOCK_MINUTES)
@@ -1291,8 +1297,9 @@ pub fn resolve_remove_neuron_drought_factor(raw: Option<&str>, default: f32) -> 
 /// `[0.001, 1.0]` to override the default
 /// ([`crate::analysis::remove_neuron_drought::DEFAULT_REMOVE_NEURON_DROUGHT_FACTOR`],
 /// 0.1). Set it to `1.0` to disable the deprioritisation entirely.
-/// Out-of-range or unparsable values fall back to the default; the value is
-/// clamped so the factor can never zero a prediction or inflate it.
+/// Empty, unparsable and non-finite values fall back to the default. A finite
+/// value outside `[0.001, 1.0]` is clamped into that range, so the factor can
+/// never zero a prediction or inflate it.
 #[must_use]
 pub fn remove_neuron_drought_factor() -> f32 {
     resolve_remove_neuron_drought_factor(
