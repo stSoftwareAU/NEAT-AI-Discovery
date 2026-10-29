@@ -16,13 +16,9 @@
 //!
 //! ## Environment Variables
 //!
-//! | Variable | Values | Description |
-//! |----------|--------|-------------|
-//! | `RUST_LOG` | filter string | Control log level (e.g. `neat_ai_discovery=info`) |
-//! | `NEAT_AI_DISCOVERY_TIMING` | `1` | Print phase timing to stderr |
-//! | `NEAT_AI_DISCOVERY_PROFILE` | `json` | Output structured profile as JSON |
-//! | `NEAT_AI_DISCOVERY_GPU_METRICS` | `1` | Print GPU metrics to stderr |
-//! | `NEAT_AI_DISCOVERY_CALIBRATION_MISS_THRESHOLD` | f32 (>1) | Threshold (default 10) above which prediction-vs-actual mismatches are logged via `tracing::warn!` (Issue #1165) |
+//! The `NEAT_AI_DISCOVERY_*` variables that control this module (timing, profile,
+//! GPU metrics and calibration logging) and `RUST_LOG` are documented once, in
+//! [`docs/CONFIGURATION.md`](../../docs/CONFIGURATION.md). They are not repeated here.
 
 pub mod gain_floor_metrics;
 pub mod gpu_metrics;
@@ -77,14 +73,20 @@ pub fn init_tracing() {
 // Environment Variable Parsing
 // =============================================================================
 
-/// Check if phase timing is enabled via `NEAT_AI_DISCOVERY_TIMING=1`.
+/// Check if phase timing is enabled via `NEAT_AI_DISCOVERY_TIMING`.
+///
+/// Presence-only: any set value enables it, `0` included. The output is a
+/// `tracing` event, hidden under the default `RUST_LOG=warn`.
 ///
 /// Delegates to [`crate::config::timing()`].
 pub fn timing_enabled() -> bool {
     crate::config::timing()
 }
 
-/// Check if GPU metrics output is enabled via `NEAT_AI_DISCOVERY_GPU_METRICS=1`.
+/// Check if GPU metrics output is enabled via `NEAT_AI_DISCOVERY_GPU_METRICS`.
+///
+/// Presence-only: any set value enables it, `0` included. The output is a
+/// `tracing` event, hidden under the default `RUST_LOG=warn`.
 ///
 /// Delegates to [`crate::config::gpu_metrics()`].
 pub fn gpu_metrics_enabled() -> bool {

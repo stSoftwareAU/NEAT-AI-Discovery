@@ -162,8 +162,11 @@ pub struct AnalyzeParallelInput {
     ///
     /// When set, the total elapsed time from discovery start (recording +
     /// analysis) is capped to this value. The analysis deadline is clamped
-    /// to `min(analysis_deadline, discovery_start + wall_clock_cap)`.
-    /// When `None`, no overall cap is enforced (backwards compatible).
+    /// to `min(analysis_deadline, discovery_start + wall_clock_cap)`. A supplied
+    /// value is not clamped to 1–120 (#2460).
+    /// When `None`, the environment value `NEAT_AI_DISCOVERY_MAX_WALL_CLOCK_MINUTES`
+    /// applies (clamped to 1–120); if that is unset, the cap is 20 minutes. There
+    /// is no "no cap" case.
     #[serde(default)]
     pub max_discovery_wall_clock_minutes: Option<u64>,
     /// Per-creature failure cache feeding the prediction calibration
@@ -356,7 +359,8 @@ pub struct AnalyzeAllInput {
     pub max_analysis_memory_mb: Option<u64>,
     /// Overall wall-clock cap in minutes for total discovery time (Issue #1098).
     ///
-    /// See `AnalyzeParallelInput` for full documentation.
+    /// When `None`, the environment value applies, else 20 minutes; never "no
+    /// cap". See `AnalyzeParallelInput` for full documentation.
     #[serde(default)]
     pub max_discovery_wall_clock_minutes: Option<u64>,
     /// Per-creature failure cache feeding calibration correction (Issue #1131).
