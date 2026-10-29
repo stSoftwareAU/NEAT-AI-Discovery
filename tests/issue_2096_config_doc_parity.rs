@@ -10,7 +10,8 @@
 //!   a removed knob cannot linger as a documented lever that does nothing;
 //! * an allowlisted test-only name that has left `src/` or entered the document
 //!   fails test 3;
-//! * the four platform variables the library sets for itself sit under the
+//! * every platform variable the library sets for itself, read from the
+//!   `set_env_if_unset("...")` calls in `src/analysis/utils/platform.rs`, sits under the
 //!   `## Set internally by the library` heading (test 4);
 //! * `src/config/mod.rs` carries no second copy of the variable table (test 5).
 //!
@@ -44,14 +45,11 @@ const HOST_LOADER_VARS: &[&str] = &["NEAT_AI_DISCOVERY_LIB_PATH"];
 /// the library sets for itself.
 const INTERNAL_HEADING: &str = "## Set internally by the library";
 
-/// The platform variables the library sets for itself. Each must appear under
-/// `INTERNAL_HEADING`.
-const SET_INTERNALLY: [&str; 4] = [
-    "EGL_LOG_LEVEL",
-    "MESA_GLSL_CACHE_DISABLE",
-    "MESA_DEBUG",
-    "XDG_RUNTIME_DIR",
-];
+/// The source file that writes the platform variables the library sets for itself.
+const PLATFORM_RS: &str = "src/analysis/utils/platform.rs";
+
+/// The call whose first string argument names a variable the library writes.
+const SET_ENV_CALL: &str = "set_env_if_unset(\"";
 
 fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -253,6 +251,24 @@ fn module_doc_table_rows<'a>(lines: &[&'a str]) -> Vec<&'a str> {
         .collect()
 }
 
+/// The variable names passed as the first string argument of `set_env_if_unset("..."`
+/// in the non-test part of `text`, that is everything before the first `#[cfg(test)]`.
+/// The function's own definition and its doc links are not followed by `("`, so they
+/// name nothing.
+fn set_env_names(text: &str) -> BTreeSet<String> {
+    let production = text.split("#[cfg(test)]").next().unwrap_or(text);
+    production
+        .match_indices(SET_ENV_CALL)
+        .map(|(i, _)| {
+            let rest = &production[i + SET_ENV_CALL.len()..];
+            let end = rest
+                .find('"')
+                .unwrap_or_else(|| panic!("unterminated string after `{SET_ENV_CALL}`"));
+            rest[..end].to_string()
+        })
+        .collect()
+}
+
 fn doc_tokens() -> BTreeSet<String> {
     scan_text(&read_text(CONFIGURATION)).tokens
 }
@@ -305,9 +321,13 @@ fn platform_variables_set_internally_sit_under_their_heading() {
     let doc = read_text(CONFIGURATION);
     let body = section_body(&doc, INTERNAL_HEADING)
         .unwrap_or_else(|| panic!("{CONFIGURATION} must carry the heading `{INTERNAL_HEADING}`"));
-    let missing: Vec<&str> = SET_INTERNALLY
+    let written = set_env_names(&read_text(PLATFORM_RS));
+    assert!(
+        !written.is_empty(),
+        "{PLATFORM_RS} yielded no `{SET_ENV_CALL}...` calls, so the check would pass vacuously"
+    );
+    let missing: Vec<&String> = written
         .iter()
-        .copied()
         .filter(|var| !has_token(&body, var))
         .collect();
     assert!(
@@ -486,4 +506,37 @@ fn module_doc_table_detection_flags_pipe_rows_and_ignores_prose() {
 fn module_doc_is_the_leading_run_of_bang_slash_slash_lines() {
     let text = "\n//! one\n//! two\n\nfn main() {}\n//! not leading\n";
     assert_eq!(module_doc(text), vec!["//! one", "//! two"]);
+}
+
+#[test]
+fn set_env_names_reads_production_calls_only_and_follows_additions_and_renames() {
+    let text = "/// See [`set_env_if_unset`].\n\
+                unsafe fn set_env_if_unset(key: &str, value: &str) -> bool { true }\n\
+                set_env_if_unset(\"EGL_LOG_LEVEL\", \"fatal\");\n\
+                set_env_if_unset(\"MESA_NEW_SWITCH\", \"1\");\n\
+                #[cfg(test)]\n\
+                set_env_if_unset(\"NEAT_AI_DISCOVERY_TEST_ONLY_FIXTURE\", \"x\");\n";
+    let expected: BTreeSet<String> = ["EGL_LOG_LEVEL", "MESA_NEW_SWITCH"]
+        .iter()
+        .map(ToString::to_string)
+        .collect();
+    assert_eq!(set_env_names(text), expected);
+}
+
+#[test]
+fn platform_rs_writes_the_variables_the_doc_section_names() {
+    // Positive control: the scan reaches the real calls in `apply_mesa_suppression`
+    // and `apply_xdg_runtime_dir`, not an empty or partial set.
+    let written = set_env_names(&read_text(PLATFORM_RS));
+    for var in [
+        "EGL_LOG_LEVEL",
+        "MESA_GLSL_CACHE_DISABLE",
+        "MESA_DEBUG",
+        "XDG_RUNTIME_DIR",
+    ] {
+        assert!(
+            written.contains(var),
+            "scan of {PLATFORM_RS} missed `{var}`: {written:?}"
+        );
+    }
 }

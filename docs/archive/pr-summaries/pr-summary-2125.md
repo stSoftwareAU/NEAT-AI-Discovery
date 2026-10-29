@@ -36,7 +36,7 @@ flowchart LR
 Backend/documentation change; no UI surface. Commands run on the final head:
 
 - `cargo fmt --check`: clean. `cargo clippy --all-targets -- -D warnings`: no issues.
-- `cargo test --test issue_2096_config_doc_parity` (15 passed), `--test issue_1611_env_var_single_source` (8), `--test issue_2124_chunk_13d_ledger` (10), `--test issue_2211_chunk_13_ledger_scaffold` (12), plus the other config-doc contract tests that read `CONFIGURATION.md` or `src/config` (`issue_1684_doc_dedup`, `issue_1818_…`, `issue_1987_…`, `issue_2006_…`, `issue_2096_config_user_facing_a/b`, `issue_2096_env_readers_outside_config`, `issue_2177_…`, `issue_2272_…`, `issue_1988_…`, `issue_2463_…`): all passed.
+- `cargo test --test issue_2096_config_doc_parity` (17 passed), `--test issue_1611_env_var_single_source` (8), `--test issue_2124_chunk_13d_ledger` (10), `--test issue_2211_chunk_13_ledger_scaffold` (12), plus the other config-doc contract tests that read `CONFIGURATION.md` or `src/config` (`issue_1684_doc_dedup`, `issue_1818_…`, `issue_1987_…`, `issue_2006_…`, `issue_2096_config_user_facing_a/b`, `issue_2096_env_readers_outside_config`, `issue_2177_…`, `issue_2272_…`, `issue_1988_…`, `issue_2463_…`): all passed.
 - `cargo test --lib observability` (24 passed), `cargo test --lib config` (43 passed), `cargo test --test infrastructure observability` (23 passed).
 - markdownlint over `docs/CONFIGURATION.md` and the ledger: 0 issues.
 
@@ -63,9 +63,9 @@ Issue numbers cited as provenance were all looked up and appear in the issue's o
 
 ## Test Plan
 
-- Added `tests/issue_2096_config_doc_parity.rs` (15 tests): `every_src_variable_is_documented_or_allowlisted_as_test_only`, `every_documented_variable_is_named_in_src_or_is_a_host_loader_var`, `test_only_allowlist_is_not_stale`, `platform_variables_set_internally_sit_under_their_heading`, `config_module_doc_is_a_pointer_not_a_second_table`, plus unit tests of the scanner helpers.
+- Added `tests/issue_2096_config_doc_parity.rs` (17 tests at head): `every_src_variable_is_documented_or_allowlisted_as_test_only`, `every_documented_variable_is_named_in_src_or_is_a_host_loader_var`, `test_only_allowlist_is_not_stale`, `platform_variables_set_internally_sit_under_their_heading` (the expected names are read from the `set_env_if_unset("...")` calls in the non-test part of `src/analysis/utils/platform.rs`, not typed into the test), `config_module_doc_is_a_pointer_not_a_second_table`, plus unit tests of the scanner helpers, including `set_env_names_reads_production_calls_only_and_follows_additions_and_renames` and the positive control `platform_rs_writes_the_variables_the_doc_section_names`.
 - Edited `tests/issue_1611_env_var_single_source.rs`: `CANONICAL_VARS` gained 31 names; no assertion removed.
-- Red-checks (each against a temporary edit, restored afterwards): a `NEAT_AI_DISCOVERY_ZZZ_DOC_ONLY` literal added to `src/` → parity test 1 red; an allowlisted test-only name (`NEAT_AI_DISCOVERY_PARSE_ENV_HELPER_TEST`) added to the doc → `test_only_allowlist_is_not_stale` red; the `## Set internally by the library` heading renamed → `platform_variables_set_internally_sit_under_their_heading` red.
+- Red-checks (each against a temporary edit, restored afterwards): a `NEAT_AI_DISCOVERY_ZZZ_DOC_ONLY` literal added to `src/` → parity test 1 red; an allowlisted test-only name (`NEAT_AI_DISCOVERY_PARSE_ENV_HELPER_TEST`) added to the doc → `test_only_allowlist_is_not_stale` red; `MESA_DEBUG` renamed to `MESA_DEBUG_X` in `platform.rs` → `platform_variables_set_internally_sit_under_their_heading` red (PR #2471 review); the `## Set internally by the library` heading renamed → `platform_variables_set_internally_sit_under_their_heading` red.
 - Tests that read `CONFIGURATION.md`/`src/config` were re-run after the doc edits (list under Evidence); none needed fixture changes.
 - Twinned copies: the `src/config/mod.rs` and `src/observability/mod.rs` tables (now pointers) and the `CANONICAL_VARS` pin; the parity gate now ties the document to `src/`.
 
