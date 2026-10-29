@@ -672,12 +672,15 @@ Analyses topological depth and gradient attenuation to identify deep hidden
 neurons that would benefit from residual-style skip connections.
 
 **Algorithm**:
-1. Compute shortest path length from each hidden neuron to the nearest output
-   via reverse BFS.
-2. Estimate gradient attenuation along the path (product of activation
-   derivatives and weight magnitudes).
-3. For deep neurons with significant error and no existing shortcut, propose
-   an `addSynapse` skip connection directly to an output.
+1. Compute each neuron's topological depth from the inputs (longest path from
+   any input) with a Kahn topological pass. A cyclic synapse graph yields no
+   candidates (Issue #2368).
+2. Flag gradient attenuation: a deep neuron (depth at least 3) whose mean
+   absolute error is below half the mean error of the shallow neurons (depth
+   at most 2).
+3. For each flagged neuron, propose an `addSynapse` skip connection from an
+   input or depth-1 hidden neuron that is not already connected to it, with
+   the largest depth gap first.
 
 #### Symmetry Breaking Detection (Issue #569)
 
