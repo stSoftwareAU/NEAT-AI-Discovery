@@ -438,7 +438,7 @@ fn first_unconnected_input(
 }
 
 #[cfg(test)]
-#[path = "topology_deadline_tests.rs"]
+#[path = "../topology_deadline_tests.rs"]
 mod topology_deadline_tests;
 
 /// Convert topology candidates into coordinated structural candidates.
