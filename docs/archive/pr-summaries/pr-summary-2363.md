@@ -52,6 +52,6 @@ flowchart LR
 - Edited existing test `tests/issue_2245_gpu_device_lost_classification.rs::device_loss_reported_through_the_map_callback_is_not_classified`: the `core_oom` assertions flip from `!is_device_lost_error` / `!is_memory_exhaustion_error` to positive; they go red with `recovery.rs` restored to `Develop`. The `BufferAsyncError` assertions are unchanged.
 - `select_scoped_error` precedence: `out_of_memory_outranks_internal_and_validation`, `internal_outranks_validation` and `validation_alone_is_reported_and_none_is_none` in `src/analysis/gpu/queue/executor.rs`.
 - GPU-gated, in `src/analysis/gpu/queue/executor.rs`: `invalid_buffer_use_inside_scopes_returns_err_not_panic` and `real_analyzer_device_lost_flag_follows_the_device_lost_callback`. **Not run on a GPU**: this worker has no GPU, so both skip and pass vacuously; their GPU behaviour is unverified here.
-- `cargo clippy --all-targets --all-features -- -D warnings` and `cargo fmt --all --check`: clean at head.
+- `./quality.sh` (full gate, including clippy, fmt, tests, release build): passed at head (`✅ All quality checks passed!`, exit 0).
 - New test files: `tests/issue_2363_device_lost_classification.rs`, `src/analysis/gpu/queue/device_lost_flag_test.rs`; unit tests in `recovery.rs`, `execution.rs`, `executor.rs`.
 - Break-the-guard checks per individual flag-routing arm were not repeated in this redo (carried from #2433/#2456).
