@@ -6,7 +6,8 @@
 //! Extracted from `target_analysis.rs` as part of Issue #599.
 
 use crate::analysis::detection::redundant_path::{
-    ExistingPathContribution, detect_redundant_paths, redundant_paths_to_coordinated_candidates,
+    ExistingPathContribution, detect_redundant_paths_with_deadline,
+    redundant_paths_to_coordinated_candidates,
 };
 use crate::analysis::recommendation::epistatic::{
     ScanTruncation, SourceContribution, deduplicate_by_dominant_neuron,
@@ -137,7 +138,7 @@ fn report_truncation(target_uuid: &str, scan: &str, truncation: Option<ScanTrunc
 /// Detect redundant paths among existing synapse edges.
 ///
 /// Appends any discovered coordinated structural candidates to results.
-/// (Issue #164)
+/// (Issue #164) (Issue #2374) bounded by the analysis deadline, fan-in cap and candidate ceiling.
 pub(crate) fn detect_redundant_path_candidates(
     target_uuid: &str,
     existing_path_contributions: &[ExistingPathContribution],
@@ -154,8 +155,22 @@ pub(crate) fn detect_redundant_path_candidates(
         .is_some_and(|t| *t == "output");
     let target_impact = if target_is_output { 1.0 } else { 0.5 };
 
-    let redundant_paths =
-        detect_redundant_paths(target_uuid, existing_path_contributions, target_impact);
+    // Issue #2374: bounded by the analysis deadline, fan-in cap and candidate ceiling.
+    let scan = detect_redundant_paths_with_deadline(
+        target_uuid,
+        existing_path_contributions,
+        target_impact,
+        &ctx.deadline,
+    );
+    report_truncation(target_uuid, "redundant-path", scan.truncation);
+    if scan.paths_skipped > 0 {
+        tracing::warn!(
+            target_uuid = target_uuid,
+            paths_skipped = scan.paths_skipped,
+            "Redundant-path scan capped the target's fan-in; weakest paths were not compared."
+        );
+    }
+    let redundant_paths = scan.candidates;
 
     if !redundant_paths.is_empty() {
         let redundant_coordinated = redundant_paths_to_coordinated_candidates(&redundant_paths);
