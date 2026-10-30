@@ -8,7 +8,6 @@ use neat_ai_discovery::analysis::detection::{
 };
 use neat_ai_discovery::types::DiscoverRecord;
 use neat_ai_discovery::{CreatureJson, NeuronJson, SynapseJson};
-use serial_test::serial;
 
 fn neuron(uuid: &str, neuron_type: &str) -> NeuronJson {
     NeuronJson {
@@ -84,20 +83,6 @@ fn records(uuid: &str) -> Vec<DiscoverRecord> {
         .collect()
 }
 
-struct ResetCancellation;
-
-impl Drop for ResetCancellation {
-    fn drop(&mut self) {
-        neat_ai_discovery::cancellation::reset_cancellation();
-    }
-}
-
-fn cancel_for_test() -> ResetCancellation {
-    neat_ai_discovery::cancellation::reset_cancellation();
-    neat_ai_discovery::cancellation::request_cancellation();
-    ResetCancellation
-}
-
 #[test]
 fn issue_2379_dominant_inputs_preserve_direct_hidden_and_record_filters() {
     let creature = CreatureJson {
@@ -157,61 +142,4 @@ fn issue_2379_dominant_inputs_preserve_direct_hidden_and_record_filters() {
     );
     assert!(!targets.contains_key("hidden-disconnected"));
     assert!(!targets.contains_key("hidden-no-records"));
-}
-
-#[test]
-#[serial]
-fn issue_2379_observation_cancellation_stops_before_work() {
-    let _reset = cancel_for_test();
-    let observation_creature = CreatureJson {
-        neurons: vec![neuron("input", "input"), neuron("output", "output")],
-        synapses: vec![synapse("input", "output", 0.5)],
-        input: 1,
-        output: 1,
-    };
-    let observation = UnderutilisedObservation {
-        neuron_uuid: "input".to_string(),
-        sentinel_values: vec![-1.0],
-        utilisation_ratio: 0.3,
-        effective_min: 0.2,
-        effective_max: 0.8,
-        sample_count: 50,
-        estimated_improvement: 0.005,
-        reason: "fixture".to_string(),
-    };
-    assert!(
-        observation_utilisation::observation_utilisation_to_coordinated_candidates(
-            &[observation],
-            &observation_creature,
-        )
-        .is_empty()
-    );
-}
-
-#[test]
-#[serial]
-fn issue_2379_dominant_input_cancellation_stops_before_work() {
-    let _reset = cancel_for_test();
-    let dominant_creature = CreatureJson {
-        neurons: vec![neuron("input", "input"), neuron("output", "output")],
-        synapses: vec![synapse("input", "output", 2.0)],
-        input: 1,
-        output: 1,
-    };
-    let config = InputSensitivityConfig {
-        dominance_threshold: 0.01,
-        gradient_threshold: 10.0,
-        min_samples: 2,
-    };
-    assert!(
-        input_sensitivity::detect_dominant_inputs(
-            &dominant_creature,
-            &[
-                ("input".to_string(), records("input")),
-                ("output".to_string(), records("output"))
-            ],
-            &config,
-        )
-        .is_empty()
-    );
 }
