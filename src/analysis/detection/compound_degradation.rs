@@ -29,10 +29,13 @@
 //! sets are computed once per distinct neuron with a visited set (`O(V+E)`
 //! time each), not once per pair, and each is retained as an output bitset
 //! over a dense output index ([`OutputBitset`]). Each bitset's words are
-//! allocated once, to exactly its length of at most `O / 64 + 1` words for `O`
-//! outputs, so the retained memory is at most `512 × (O / 64 + 1) × 8` bytes,
-//! about `512 × O / 8` (about 64 MB at `validate_creature`'s 1,000,000 cap),
-//! rather than one hash set of output UUIDs per neuron. When either correction list is empty no pair can exist,
+//! allocated once, to exactly its length of at most `O / 64 + 1` words, so the
+//! retained memory is at most `512 × (O / 64 + 1) × 8` bytes, about 64 bytes
+//! per output neuron, rather than one hash set of output UUIDs per neuron.
+//! `O` is the number of `neuron_type == "output"` neurons in
+//! `creature.neurons`. `validate_creature_input_bounds` does not cap it (it
+//! bounds only the declared `creature.output` field), so the bound is linear in
+//! the deserialised neuron list, not a fixed ceiling. When either correction list is empty no pair can exist,
 //! so no reachable set is computed at all. Emitted candidates are capped at
 //! [`MAX_COMPOUND_DEGRADATION_CANDIDATES`]. The deadline-aware entry point
 //! [`detect_compound_bias_weight_degradations_with_deadline`] checks the shared
@@ -632,7 +635,7 @@ impl OutputBitset {
         // Allocate `words` once, to exactly the first-to-last set word range,
         // so the order `bits` arrive in cannot leave amortised spare capacity
         // behind (review 5711830474): the retained allocation is at most
-        // `O / 64 + 1` words, `O` being bounded by `validate_creature`.
+        // `O / 64 + 1` words, `O` the output-typed neurons in the input.
         let mut words = vec![0u64; max / 64 - offset + 1];
         for bit in bits {
             words[bit / 64 - offset] |= 1u64 << (bit % 64);
