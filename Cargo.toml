@@ -244,6 +244,10 @@ harness = false
 name = "cpu_pre_reject"
 harness = false
 
+[[bench]]
+name = "fanin_polarity_squash_lookup"
+harness = false
+
 # Build profiles (Issue #2017):
 #   - Dev compiles as fast as possible (line tables keep panic file:line).
 #   - Release is the most optimised artefact possible (compile time irrelevant).
