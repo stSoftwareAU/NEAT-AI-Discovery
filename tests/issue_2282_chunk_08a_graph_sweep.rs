@@ -27,10 +27,13 @@ const SWEPT: &[&str] = &[
     "src/analysis/detection/cross_detection_synthesis.rs",
 ];
 
-/// The `#[cfg(test)]`-only companion #2374 added to the `graph` section after
-/// the audit HEAD. It has a row but no capacity or traversal rows, so it is not
-/// in `SWEPT`.
-const TEST_ONLY_ROWS: &[&str] = &["src/analysis/detection/redundant_path_deadline_tests.rs"];
+/// The `#[cfg(test)]`-only companions added to the `graph` section after the
+/// audit HEAD, by #2367 and #2374. Each has a row but no capacity or traversal
+/// rows, so neither is in `SWEPT`.
+const TEST_ONLY_ROWS: &[&str] = &[
+    "src/analysis/detection/compound_degradation_tests.rs",
+    "src/analysis/detection/redundant_path_deadline_tests.rs",
+];
 
 /// One graph traversal or pair scan cited per file that has one, as
 /// `<basename>::<fn>` — not every swept file carries a traversal.
