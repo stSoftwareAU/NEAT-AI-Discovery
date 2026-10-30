@@ -253,6 +253,55 @@ pub fn create_wgpu_instance_safely() -> Option<wgpu::Instance> {
 // Buffer Management Functions
 // =============================================================================
 
+/// The GPU waits whose timeout is reported by [`wait_timeout_error`]
+/// (Issue #2365).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum GpuWaitKind {
+    /// `poll_device_until_idle`.
+    DevicePoll,
+    /// `wait_for_buffer_map`.
+    BufferMap,
+    /// `wait_for_buffer_maps_batch`.
+    BatchBufferMap,
+}
+
+impl GpuWaitKind {
+    /// Every wait kind, so a test can build each production message.
+    #[cfg(test)]
+    pub(crate) const ALL: [Self; 3] = [Self::DevicePoll, Self::BufferMap, Self::BatchBufferMap];
+
+    fn description(self) -> &'static str {
+        match self {
+            Self::DevicePoll => "device poll",
+            Self::BufferMap => "buffer mapping",
+            Self::BatchBufferMap => "batch buffer mapping",
+        }
+    }
+}
+
+/// Build the error a GPU wait returns when it times out (Issue #2365).
+///
+/// All three waits in this module report their timeout through this one
+/// function, so the text that `is_wait_timeout_error` (in
+/// `queue/recovery.rs`) matches has a single source, and the matcher tests
+/// build their errors here rather than typing the message in by hand.
+pub(crate) fn wait_timeout_error(
+    kind: GpuWaitKind,
+    timeout: Duration,
+    label: Option<&str>,
+) -> anyhow::Error {
+    let what = kind.description();
+    let secs = timeout.as_secs_f64();
+    match label {
+        Some(label) => anyhow!(
+            "GPU {what} timed out after {secs:.1}s ({label}). The GPU driver may be unresponsive."
+        ),
+        None => {
+            anyhow!("GPU {what} timed out after {secs:.1}s. The GPU driver may be unresponsive.")
+        }
+    }
+}
+
 /// Poll the GPU device until it has no work in flight, or a timeout is reached.
 ///
 /// This intentionally avoids `Maintain::Wait` because that can block forever on
@@ -273,9 +322,10 @@ pub fn poll_device_until_idle(device: &wgpu::Device, timeout: Duration, label: &
             Err(e) => return Err(anyhow!("GPU device poll error ({label}): {e}")),
         }
         if start.elapsed() > timeout {
-            return Err(anyhow!(
-                "GPU device poll timed out after {:.1}s ({label}). The GPU driver may be unresponsive.",
-                timeout.as_secs_f64()
+            return Err(wait_timeout_error(
+                GpuWaitKind::DevicePoll,
+                timeout,
+                Some(label),
             ));
         }
         // Short sleep to avoid busy-waiting.
@@ -339,10 +389,7 @@ pub fn wait_for_buffer_map(
         }
 
         if start.elapsed() > timeout {
-            return Err(anyhow!(
-                "GPU buffer mapping timed out after {:.1}s. The GPU driver may be unresponsive.",
-                timeout.as_secs_f64()
-            ));
+            return Err(wait_timeout_error(GpuWaitKind::BufferMap, timeout, None));
         }
         thread::sleep(Duration::from_millis(10));
     }
@@ -401,9 +448,10 @@ pub fn wait_for_buffer_maps_batch(
         let _ = device.poll(wgpu::PollType::Poll);
 
         if start.elapsed() > timeout {
-            return Err(anyhow!(
-                "GPU batch buffer mapping timed out after {:.1}s. The GPU driver may be unresponsive.",
-                timeout.as_secs_f64()
+            return Err(wait_timeout_error(
+                GpuWaitKind::BatchBufferMap,
+                timeout,
+                None,
             ));
         }
         thread::sleep(Duration::from_millis(10));

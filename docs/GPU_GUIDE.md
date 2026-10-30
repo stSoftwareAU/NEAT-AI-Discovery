@@ -339,8 +339,12 @@ moment, recomputed for each sub-batch, and the budget expires 5 seconds
 (`GPU_BUFFER_MAP_TIMEOUT_MARGIN_SECS`) before the caller's timeout does. So the
 worker always errors out first and returns that error through the response
 channel, instead of the caller giving up on a GPU thread still inside the
-driver. Requests submitted without a deadline fall back to the fixed
-`GPU_BUFFER_MAP_TIMEOUT_SECS` (295s) inner wait.
+driver. Every request the queue carries has a bounded budget: a request
+submitted without a deadline gets the maximum batch timeout
+(`calculate_gpu_batch_timeout(&None)` = `GPU_QUEUE_TIMEOUT_MAX_SECS`, 300s) and
+so a 295s budget. Only `GpuTimeBudget::unbounded()`, which no `submit_*` path
+builds (it is used by direct evaluator calls outside the queue), falls back to
+the fixed `GPU_BUFFER_MAP_TIMEOUT_SECS` (295s) inner wait.
 
 ```mermaid
 sequenceDiagram
@@ -361,8 +365,8 @@ liveness guard, so the GPU thread can tell — before it starts work — that no
 is left to receive the result. On dequeue the worker skips any request whose
 caller has gone (dropped silently) or whose own `GpuTimeBudget` expired while it
 queued (returned to the still-waiting caller as an error, rather than letting it
-sit out its full timeout). The device-lost retry loop re-checks liveness before
-every attempt, so an abandoned request never costs a `GpuAnalyzer`
+sit out its full timeout). The device-lost retry loop re-checks liveness and the
+budget before every attempt, so an abandoned request never costs a `GpuAnalyzer`
 re-initialisation or a back-off sleep. Skips are counted as `stale_skipped` in
 `global_gpu_metrics()` and printed by `NEAT_AI_DISCOVERY_GPU_METRICS=1`; a
 sustained rise alongside `GPU work queue full - send timed out` means the queue
@@ -382,10 +386,36 @@ flowchart LR
     S -- caller gone --> X[Drop silently<br/>count stale_skipped]
     S -- budget expired --> E[Send error to caller<br/>count stale_skipped]
     S -- no --> G[Evaluate on GPU]
-    G -- device lost --> R{Caller still live?}
+    G -- device lost --> R{Caller live and budget left?}
     R -- no --> A[Abandon recovery<br/>count stale_skipped]
     R -- yes --> T[Re-init + retry, up to the retry limit]
 ```
+
+**Budget-capped wait timeouts** (Issue #2365): a map wait or poll that times out
+because the request's budget ran out is answered as a budget error (`GPU time
+budget exhausted during evaluation …`) and does not trigger device
+re-initialisation. The crate's wait-timeout text ("… timed out after Xs. The GPU
+driver may be unresponsive.") also matches the device-lost patterns, so without
+this a healthy device would be re-initialised for a request with no time left.
+Recovery also stops once the budget expires between attempts, and the caller
+receives a budget error. Because every queue request carries a bounded budget
+(55–295s, see the per-request budget paragraph above), and every map wait is
+capped by what is left of it, a map-wait timeout on a queue request always
+leaves under 1 s and is **always** answered as a budget error. It never
+re-initialises the device, even when the device really is wedged, and the
+answer arrives inside the caller's timeout, so the caller's
+batch-submission-timeout breaker trip does not fire either. A map-wait wedge is
+therefore caught only by the stall-window breaker
+(`NEAT_AI_DISCOVERY_GPU_STALL_WINDOW_SECS`). With the window disabled (`0`), or
+set longer than the request's budget, a wedged device is neither
+re-initialised nor tripped: each later request waits out its whole budget and
+gets a budget error. The recovery path is still taken by a genuine
+device-lost error, and by any wait timeout that leaves 1 s or more of the
+budget. On a queue request that is in practice the post-batch device poll in
+the helpful and harmful paths, which is capped at 5 s
+(`budget.capped(Duration::from_secs(5))`), so a poll stall on a request with
+more than about 6 s left still re-initialises the device. A wait timeout on an
+unbounded budget, used only outside the queue, also takes it.
 
 **Process-wide circuit breaker** (Issue #1930): the library used to have no
 memory that the GPU had already wedged. Each analysis called
