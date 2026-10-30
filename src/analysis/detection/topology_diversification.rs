@@ -59,54 +59,81 @@ pub struct TopologyDiversificationCandidate {
     pub estimated_improvement: f32,
 }
 
-/// Compute input reachability and maximum hidden depth in validated evaluation
-/// order. Dangling synapse endpoints remain tolerated but cannot extend a path.
-fn input_reachable_hidden_depths(
+/// Compute the maximum number of hidden neurons on any path from any input to a
+/// specific output neuron, using DFS through the synapse graph.
+fn max_hidden_depth_to_output(
     creature: &CreatureJson,
+    output_uuid: &str,
     hidden_set: &HashSet<&str>,
-) -> Vec<usize> {
-    let index_by_uuid: HashMap<&str, usize> = creature
+) -> usize {
+    // Build reverse adjacency: to_uuid → [from_uuid, ...]
+    let mut reverse_adj: HashMap<&str, Vec<&str>> = HashMap::new();
+    for s in &creature.synapses {
+        reverse_adj
+            .entry(s.to_uuid.as_str())
+            .or_default()
+            .push(s.from_uuid.as_str());
+    }
+
+    let input_set: HashSet<&str> = creature
         .neurons
         .iter()
-        .enumerate()
-        .map(|(index, neuron)| (neuron.uuid.as_str(), index))
+        .filter(|n| n.neuron_type == "input")
+        .map(|n| n.uuid.as_str())
         .collect();
-    let mut reverse_adj = vec![Vec::new(); creature.neurons.len()];
 
-    for synapse in &creature.synapses {
-        let (Some(&from_index), Some(&to_index)) = (
-            index_by_uuid.get(synapse.from_uuid.as_str()),
-            index_by_uuid.get(synapse.to_uuid.as_str()),
-        ) else {
-            continue;
-        };
-        reverse_adj[to_index].push(from_index);
+    // DFS backwards from output using backtracking instead of cloning visited sets.
+    // Insert before recursing, remove after returning — O(n) memory instead of O(n²).
+    let mut visited = HashSet::new();
+    visited.insert(output_uuid);
+
+    dfs_max_hidden_depth(
+        output_uuid,
+        0,
+        &mut visited,
+        &reverse_adj,
+        &input_set,
+        hidden_set,
+    )
+}
+
+/// Recursive DFS with backtracking to find the maximum hidden depth.
+/// Uses insert-before-recurse / remove-after-return to avoid cloning the visited set.
+fn dfs_max_hidden_depth<'a>(
+    current: &'a str,
+    hidden_count: usize,
+    visited: &mut HashSet<&'a str>,
+    reverse_adj: &HashMap<&'a str, Vec<&'a str>>,
+    input_set: &HashSet<&'a str>,
+    hidden_set: &HashSet<&'a str>,
+) -> usize {
+    if input_set.contains(current) {
+        return hidden_count;
     }
 
-    let mut input_reachable = vec![false; creature.neurons.len()];
-    let mut depths = vec![0; creature.neurons.len()];
+    let mut max_depth: usize = 0;
 
-    for (index, neuron) in creature.neurons.iter().enumerate() {
-        if neuron.neuron_type == "input" {
-            input_reachable[index] = true;
-            continue;
-        }
-
-        let mut best_predecessor_depth = 0;
-        for &predecessor in &reverse_adj[index] {
-            if input_reachable[predecessor] {
-                best_predecessor_depth = best_predecessor_depth.max(depths[predecessor]);
-                input_reachable[index] = true;
+    if let Some(predecessors) = reverse_adj.get(current) {
+        for &pred in predecessors {
+            if visited.contains(pred) {
+                continue; // Avoid cycles
             }
+            visited.insert(pred);
+            let added_hidden = if hidden_set.contains(pred) { 1 } else { 0 };
+            let depth = dfs_max_hidden_depth(
+                pred,
+                hidden_count + added_hidden,
+                visited,
+                reverse_adj,
+                input_set,
+                hidden_set,
+            );
+            max_depth = max_depth.max(depth);
+            visited.remove(pred);
         }
-
-        if input_reachable[index] && hidden_set.contains(neuron.uuid.as_str()) {
-            best_predecessor_depth += 1;
-        }
-        depths[index] = best_predecessor_depth;
     }
 
-    depths
+    max_depth
 }
 
 /// Count direct (zero-hidden) paths from inputs to a specific output neuron.
@@ -264,12 +291,11 @@ pub fn detect_topology_diversification_candidates(
     creature: &CreatureJson,
     neuron_records: &[(String, impl AsRef<[DiscoverRecord]>)],
 ) -> Vec<TopologyDiversificationCandidate> {
-    let output_neurons: Vec<usize> = creature
+    let output_neurons: Vec<&str> = creature
         .neurons
         .iter()
-        .enumerate()
-        .filter(|(_, neuron)| neuron.neuron_type == "output")
-        .map(|(index, _)| index)
+        .filter(|n| n.neuron_type == "output")
+        .map(|n| n.uuid.as_str())
         .collect();
 
     if output_neurons.is_empty() {
@@ -282,14 +308,12 @@ pub fn detect_topology_diversification_candidates(
         .filter(|n| n.neuron_type == "hidden")
         .map(|n| n.uuid.as_str())
         .collect();
-    let hidden_depths = input_reachable_hidden_depths(creature, &hidden_set);
 
     let records_map = build_record_map(neuron_records);
 
     let mut candidates = Vec::with_capacity(output_neurons.len());
 
-    for &output_index in &output_neurons {
-        let output_uuid = creature.neurons[output_index].uuid.as_str();
+    for &output_uuid in &output_neurons {
         // Check sample count
         let output_records = match records_map.get(output_uuid) {
             Some(r) if r.len() >= MIN_DISCOVERY_SAMPLE_COUNT => *r,
@@ -313,7 +337,7 @@ pub fn detect_topology_diversification_candidates(
         }
 
         // Compute maximum hidden depth on any input→output path
-        let max_depth = hidden_depths[output_index];
+        let max_depth = max_hidden_depth_to_output(creature, output_uuid, &hidden_set);
 
         // Only flag if topology lacks non-linear depth
         if max_depth >= MIN_NONLINEAR_DEPTH {
