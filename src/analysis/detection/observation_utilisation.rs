@@ -25,8 +25,8 @@
 use std::collections::HashMap;
 use std::time::SystemTime;
 
-use crate::analysis::utils::deadline_passed;
 use crate::CreatureJson;
+use crate::analysis::utils::deadline_passed;
 use crate::types::DiscoverRecord;
 use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson};
 
@@ -182,13 +182,13 @@ fn observation_utilisation_to_coordinated_candidates_observed(
     let mut outgoing: HashMap<&str, Vec<(&str, f32)>> = HashMap::new();
     let mut first_weights: HashMap<(&str, &str), f32> = HashMap::new();
     for (index, synapse) in creature.synapses.iter().enumerate() {
-        on_synapse();
         if index % DEADLINE_CHECK_INTERVAL == 0 && deadline_passed(deadline) {
             return ObservationUtilisationScan {
                 candidates,
                 stop: Some(ObservationUtilisationStop::DeadlinePassed),
             };
         }
+        on_synapse();
         let from = synapse.from_uuid.as_str();
         let to = synapse.to_uuid.as_str();
         let weight = *first_weights.entry((from, to)).or_insert(synapse.weight);
@@ -205,6 +205,17 @@ fn observation_utilisation_to_coordinated_candidates_observed(
         let Some(downstream_targets) = outgoing.get(obs.neuron_uuid.as_str()) else {
             continue;
         };
+
+        // Mutation check: restore the original full filter and per-target find work.
+        for _ in creature.synapses.iter().filter(|synapse| synapse.from_uuid == obs.neuron_uuid) {
+            on_synapse();
+        }
+        for &(target_uuid, _) in downstream_targets {
+            let _ = creature.synapses.iter().find(|synapse| {
+                on_synapse();
+                synapse.from_uuid == obs.neuron_uuid && synapse.to_uuid == target_uuid
+            });
+        }
 
         // Compute a bias offset to centre the effective range
         let effective_centre = (obs.effective_min + obs.effective_max) / 2.0;
@@ -257,6 +268,7 @@ fn observation_utilisation_to_coordinated_candidates_observed(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::analysis::utils::deadline_override::DeadlineOverrideGuard;
     use crate::{NeuronJson, SynapseJson};
 
     fn make_creature() -> CreatureJson {
@@ -317,6 +329,92 @@ mod tests {
                 assert_eq!(neuron_uuid, "output-0");
             }
             other => panic!("Expected SetBias, got {other:?}"),
+        }
+    }
+
+    fn star_fixture(size: usize) -> (CreatureJson, Vec<UnderutilisedObservation>) {
+        let mut creature = make_creature();
+        creature.neurons.truncate(1);
+        creature.synapses = (0..size)
+            .map(|index| SynapseJson {
+                from_uuid: "input-0".to_string(),
+                to_uuid: format!("output-{index}"),
+                weight: 0.5,
+                synapse_type: None,
+            })
+            .collect();
+        creature.neurons.extend((0..size).map(|index| NeuronJson {
+            uuid: format!("output-{index}"),
+            neuron_type: "output".to_string(),
+            squash: "TANH".to_string(),
+            bias: 0.0,
+        }));
+        creature.output = size;
+        let observations = vec![UnderutilisedObservation {
+            neuron_uuid: "input-0".to_string(),
+            sentinel_values: vec![-1.0],
+            utilisation_ratio: 0.3,
+            effective_min: 0.2,
+            effective_max: 0.8,
+            sample_count: 50,
+            estimated_improvement: 0.005,
+            reason: "test".to_string(),
+        }];
+        (creature, observations)
+    }
+
+    #[test]
+    fn issue_2379_observation_topology_work_grows_linearly_and_scans_the_fan_out() {
+        let mut work = Vec::new();
+        for size in [32, 128] {
+            let (creature, observations) = star_fixture(size);
+            let mut visits = 0;
+            let scan = observation_utilisation_to_coordinated_candidates_observed(
+                &observations,
+                &creature,
+                &None,
+                || visits += 1,
+            );
+            assert_eq!(scan.stop, None);
+            assert_eq!(
+                scan.candidates.len(),
+                size,
+                "every fan-out target is reached"
+            );
+            work.push(visits);
+        }
+        assert_eq!(work, vec![32, 128]);
+        assert_eq!(work[1], work[0] * 4);
+    }
+
+    #[test]
+    fn issue_2379_observation_deadline_stops_before_work_and_during_fan_out() {
+        let (creature, observations) = star_fixture(130);
+        {
+            let _guard = DeadlineOverrideGuard::with_sequence(vec![true]);
+            let mut visits = 0;
+            let scan = observation_utilisation_to_coordinated_candidates_observed(
+                &observations,
+                &creature,
+                &None,
+                || visits += 1,
+            );
+            assert_eq!(scan.stop, Some(ObservationUtilisationStop::DeadlinePassed));
+            assert_eq!(visits, 0, "the pre-work cancellation check must run first");
+        }
+        {
+            // Preprocessing checks at indices 0, 64 and 128, followed by the
+            // observation check, then fan-out checks at targets 0 and 64.
+            let _guard = DeadlineOverrideGuard::with_sequence(vec![
+                false, false, false, false, false, false, true,
+            ]);
+            let scan = observation_utilisation_to_coordinated_candidates_with_deadline(
+                &observations,
+                &creature,
+                &None,
+            );
+            assert_eq!(scan.stop, Some(ObservationUtilisationStop::DeadlinePassed));
+            assert_eq!(scan.candidates.len(), 64, "completed targets are retained");
         }
     }
 }

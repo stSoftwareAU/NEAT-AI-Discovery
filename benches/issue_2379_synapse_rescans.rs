@@ -49,8 +49,16 @@ fn observation_fixture(size: usize) -> (CreatureJson, Vec<UnderutilisedObservati
     )
 }
 
-fn dominant_input_fixture(size: usize) -> (CreatureJson, Vec<(String, Vec<neat_ai_discovery::types::DiscoverRecord>)>) {
-    let mut neurons = vec![neuron("shared-hidden".to_string(), "hidden"), neuron("output-0".to_string(), "output")];
+fn dominant_input_fixture(
+    size: usize,
+) -> (
+    CreatureJson,
+    Vec<(String, Vec<neat_ai_discovery::types::DiscoverRecord>)>,
+) {
+    let mut neurons = vec![
+        neuron("shared-hidden".to_string(), "hidden"),
+        neuron("output-0".to_string(), "output"),
+    ];
     let mut synapses = Vec::with_capacity(size * 2);
     let mut records = Vec::with_capacity(size);
     for index in 0..size {
@@ -65,13 +73,15 @@ fn dominant_input_fixture(size: usize) -> (CreatureJson, Vec<(String, Vec<neat_a
         records.push((
             input_uuid.clone(),
             (0..20)
-                .map(|obs_index| neat_ai_discovery::types::DiscoverRecord::new(
-                    obs_index,
-                    input_uuid.clone(),
-                    None,
-                    obs_index as f32,
-                    vec![0.0],
-                ))
+                .map(|obs_index| {
+                    neat_ai_discovery::types::DiscoverRecord::new(
+                        obs_index,
+                        input_uuid.clone(),
+                        None,
+                        obs_index as f32,
+                        vec![0.0],
+                    )
+                })
                 .collect(),
         ));
     }
@@ -102,14 +112,29 @@ fn synapse_rescans(c: &mut Criterion) {
     group.measurement_time(std::time::Duration::from_secs(2));
     for size in [128, 512] {
         let (creature, observations) = observation_fixture(size);
-        group.bench_with_input(BenchmarkId::new("observation_utilisation", size), &size, |b, _| {
-            b.iter(|| black_box(observation_utilisation::observation_utilisation_to_coordinated_candidates(&observations, &creature)));
-        });
+        group.bench_with_input(
+            BenchmarkId::new("observation_utilisation", size),
+            &size,
+            |b, _| {
+                b.iter(|| {
+                    black_box(
+                        observation_utilisation::observation_utilisation_to_coordinated_candidates(
+                            &observations,
+                            &creature,
+                        ),
+                    )
+                });
+            },
+        );
 
         let (creature, records) = dominant_input_fixture(size);
         let config = InputSensitivityConfig::default();
         group.bench_with_input(BenchmarkId::new("dominant_inputs", size), &size, |b, _| {
-            b.iter(|| black_box(input_sensitivity::detect_dominant_inputs(&creature, &records, &config)));
+            b.iter(|| {
+                black_box(input_sensitivity::detect_dominant_inputs(
+                    &creature, &records, &config,
+                ))
+            });
         });
     }
     group.finish();

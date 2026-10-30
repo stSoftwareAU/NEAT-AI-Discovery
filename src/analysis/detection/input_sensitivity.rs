@@ -228,13 +228,13 @@ fn detect_dominant_inputs_observed(
     let mut synapse_map: HashMap<&str, Vec<(&str, f32)>> = HashMap::new();
     let mut output_connected_sources: HashSet<&str> = HashSet::new();
     for (index, syn) in creature.synapses.iter().enumerate() {
-        on_work();
         if index % DEADLINE_CHECK_INTERVAL == 0 && deadline_passed(deadline) {
             return DominantInputScan {
                 candidates,
                 stop: Some(DominantInputStop::DeadlinePassed),
             };
         }
+        on_work();
         synapse_map
             .entry(syn.from_uuid.as_str())
             .or_default()
@@ -579,6 +579,162 @@ pub fn detect_threshold_effects(
     candidates.sort_by(|a, b| b.estimated_improvement.total_cmp(&a.estimated_improvement));
 
     candidates
+}
+
+#[cfg(test)]
+mod issue_2379_tests {
+    use super::*;
+    use crate::analysis::utils::deadline_override::DeadlineOverrideGuard;
+    use crate::{NeuronJson, SynapseJson};
+
+    fn neuron(uuid: String, neuron_type: &str) -> NeuronJson {
+        NeuronJson {
+            uuid,
+            neuron_type: neuron_type.to_string(),
+            squash: "IDENTITY".to_string(),
+            bias: 0.0,
+        }
+    }
+
+    fn edge(from: &str, to: String) -> SynapseJson {
+        SynapseJson {
+            from_uuid: from.to_string(),
+            to_uuid: to,
+            weight: 0.5,
+            synapse_type: None,
+        }
+    }
+
+    fn records(uuid: &str) -> Vec<DiscoverRecord> {
+        (0..20)
+            .map(|obs_index| {
+                let value = obs_index as f32;
+                DiscoverRecord::new(obs_index, uuid.to_string(), None, value, vec![value])
+            })
+            .collect()
+    }
+
+    fn shared_hidden_fixture(size: usize) -> (CreatureJson, Vec<(String, Vec<DiscoverRecord>)>) {
+        let mut neurons = vec![
+            neuron("shared-hidden".to_string(), "hidden"),
+            neuron("output".to_string(), "output"),
+        ];
+        let mut synapses = Vec::with_capacity(size * 2);
+        let mut input_records = Vec::with_capacity(size);
+        for index in 0..size {
+            let input = format!("input-{index}");
+            neurons.push(neuron(input.clone(), "input"));
+            synapses.push(edge(&input, "shared-hidden".to_string()));
+            input_records.push((input.clone(), records(&input)));
+        }
+        for index in 0..size {
+            let target = format!("hidden-target-{index}");
+            neurons.push(neuron(target.clone(), "hidden"));
+            synapses.push(edge("shared-hidden", target));
+        }
+        (
+            CreatureJson {
+                neurons,
+                synapses,
+                input: size,
+                output: 1,
+            },
+            input_records,
+        )
+    }
+
+    #[test]
+    fn issue_2379_dominant_input_topology_work_grows_linearly_on_shared_hidden_fanout() {
+        let config = InputSensitivityConfig {
+            dominance_threshold: 0.01,
+            gradient_threshold: 10.0,
+            min_samples: 2,
+        };
+        let mut work = Vec::new();
+        for size in [32, 128] {
+            let (creature, records) = shared_hidden_fixture(size);
+            let mut visits = 0;
+            let scan = detect_dominant_inputs_observed(&creature, &records, &config, &None, || {
+                visits += 1;
+            });
+            assert_eq!(scan.stop, None);
+            assert!(
+                scan.candidates.is_empty(),
+                "the fixture has no hidden-to-output edge or records"
+            );
+            work.push(visits);
+        }
+        // 2N topology edges plus N input-to-hidden edges examined.
+        assert_eq!(work, vec![96, 384]);
+        assert_eq!(work[1], work[0] * 4);
+    }
+
+    #[test]
+    fn issue_2379_dominant_input_deadline_stops_before_work_and_during_topology() {
+        let (creature, records) = shared_hidden_fixture(64);
+        let config = InputSensitivityConfig::default();
+        {
+            let _guard = DeadlineOverrideGuard::with_sequence(vec![true]);
+            let mut visits = 0;
+            let scan = detect_dominant_inputs_observed(&creature, &records, &config, &None, || {
+                visits += 1;
+            });
+            assert_eq!(scan.stop, Some(DominantInputStop::DeadlinePassed));
+            assert_eq!(visits, 0, "the pre-work cancellation check must run first");
+        }
+        {
+            let _guard = DeadlineOverrideGuard::with_sequence(vec![false, false, true]);
+            let mut visits = 0;
+            let scan = detect_dominant_inputs_observed(&creature, &records, &config, &None, || {
+                visits += 1;
+            });
+            assert_eq!(scan.stop, Some(DominantInputStop::DeadlinePassed));
+            assert_eq!(
+                scan.candidates.len(),
+                0,
+                "an incomplete topology index is not used"
+            );
+            assert_eq!(visits, 64, "only edges before index 64 are indexed");
+        }
+    }
+
+    #[test]
+    fn issue_2379_dominant_input_deadline_keeps_completed_connection_candidates() {
+        let size = 130;
+        let mut neurons = vec![neuron("input".to_string(), "input")];
+        let mut synapses = Vec::with_capacity(size);
+        let input_records = records("input");
+        let mut neuron_records = vec![("input".to_string(), input_records.clone())];
+        for index in 0..size {
+            let output = format!("output-{index}");
+            neurons.push(neuron(output.clone(), "output"));
+            synapses.push(edge("input", output.clone()));
+            neuron_records.push((output.clone(), records(&output)));
+        }
+        let creature = CreatureJson {
+            neurons,
+            synapses,
+            input: 1,
+            output: size,
+        };
+        let config = InputSensitivityConfig {
+            dominance_threshold: 0.01,
+            gradient_threshold: 10.0,
+            min_samples: 2,
+        };
+        // Precheck, topology indices 0/64/128, input outer loop, then
+        // connection indices 0 and 64 where the scan stops.
+        let _guard = DeadlineOverrideGuard::with_sequence(vec![
+            false, false, false, false, false, false, true,
+        ]);
+        let scan = detect_dominant_inputs_with_deadline(&creature, &neuron_records, &config, &None);
+        assert_eq!(scan.stop, Some(DominantInputStop::DeadlinePassed));
+        assert_eq!(
+            scan.candidates.len(),
+            64,
+            "completed output connections remain available"
+        );
+    }
 }
 
 /// Convert dominant input candidates to coordinated structural candidates.
