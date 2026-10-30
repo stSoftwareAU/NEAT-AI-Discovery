@@ -9,7 +9,7 @@ analysis deadline once per candidate. The dispatch spec for
 The old public function delegates with `&None`, so its signature and output are
 unchanged. Closes #2350.
 
-Version bump: `Cargo.toml` updated for this change; the merged commit records the final version.
+Version bump: `Cargo.toml` and the crate's own `Cargo.lock` entry are at `0.74.305`, above Develop's `0.74.304` (from #2430). The CI auto-increment skips this branch (#2476), so the bump was made by hand; #2426 takes `0.74.306`.
 
 ## Spec
 
@@ -56,7 +56,7 @@ Docs sweep: grep `fanin_polarity_conflicts_to_coordinated_candidates`, "fan-in p
 
 - `tests/issue_2350_fanin_polarity_squash_lookup_growth.rs`: `squash_lookup_work_grows_linearly_with_candidates` (red/green above) and `conversion_keeps_gain_order_and_inserts_each_neuron_before_its_target` (passed).
 - `src/analysis/detection/fanin_polarity_conflict.rs` module `issue_2350_tests`: `squash_lookup_work_scales_linearly_at_n_and_4n` counts map builds and lookups at N and 4N (deterministic).
-- `src/analysis/detection/fanin_polarity_conflict.rs` module `issue_2350_tests`: `deadline_mid_conversion_returns_the_candidates_built_so_far` (`#[serial]`) scripts the deadline with `DeadlineOverrideGuard::with_sequence(vec![false, true])` over three conflicts and asserts exactly one candidate comes back, for the first conflict (`h0`). It pins the per-candidate check and the partial-result contract: hoisting the check out of the loop (3 candidates) and replacing `break` with `return Vec::new()` (0 candidates) each turned it red.
+- `src/analysis/detection/fanin_polarity_conflict.rs` module `issue_2350_tests`: `deadline_mid_conversion_returns_the_candidates_built_so_far` (`#[serial]`) scripts the deadline through `DeadlineOverrideGuard::with_sequence` and the sequence `[false, true]` over three conflicts and asserts exactly one candidate comes back, for the first conflict (`h0`). It pins the per-candidate check and the partial-result contract: hoisting the check out of the loop (3 candidates) and replacing `break` with `return Vec::new()` (0 candidates) each turned it red.
 - `tests/detection/issue_641_fanin_polarity_conflict.rs`: `test_missing_target_neuron_falls_back_to_tanh_squash`, `test_present_target_neuron_keeps_its_squash`, `test_duplicate_target_uuid_uses_first_neuron_squash`.
 - `src/analysis/module_dispatch_specs/mod.rs`: `fanin_polarity_spec_detects_conflicts_before_the_deadline`, `fanin_polarity_spec_honours_an_elapsed_deadline` (covers the `synapse_specs.rs` call site passing the deadline).
 - `benches/fanin_polarity_squash_lookup.rs`: Criterion benchmark of absolute cost.
