@@ -409,8 +409,13 @@ therefore caught only by the stall-window breaker
 (`NEAT_AI_DISCOVERY_GPU_STALL_WINDOW_SECS`). With the window disabled (`0`), or
 set longer than the request's budget, a wedged device is neither
 re-initialised nor tripped: each later request waits out its whole budget and
-gets a budget error. Only a genuine device-lost error (not wait-timeout text),
-or a wait timeout on an unbounded budget, takes the recovery path.
+gets a budget error. The recovery path is still taken by a genuine
+device-lost error, and by any wait timeout that leaves 1 s or more of the
+budget. On a queue request that is in practice the post-batch device poll in
+the helpful and harmful paths, which is capped at 5 s
+(`budget.capped(Duration::from_secs(5))`), so a poll stall on a request with
+more than about 6 s left still re-initialises the device. A wait timeout on an
+unbounded budget, used only outside the queue, also takes it.
 
 **Process-wide circuit breaker** (Issue #1930): the library used to have no
 memory that the GPU had already wedged. Each analysis called
