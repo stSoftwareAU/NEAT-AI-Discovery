@@ -167,7 +167,7 @@ Probe dispositions (Issue #2251):
 
 | Path | Lines | Outcome |
 | --- | --- | --- |
-| `src/watchdog.rs` | 364 | audited — no PID, process-spawn or filesystem surface (it only raises SIGUSR1 at its own process and aborts); the uncapped abort delay and the stall-timeout truncation are already tracked by open #2259 under #2122, so nothing new is filed |
+| `src/watchdog.rs` | 364 | audited — no PID, process-spawn or filesystem surface (it only raises SIGUSR1 at its own process and aborts); the abort delay was uncapped (fixed by #2404, cap 60 seconds, `MAX_WATCHDOG_ABORT_DELAY_SECS`) and the stall-timeout truncation is still tracked by open #2259 under #2122, so nothing new is filed |
 | `src/tracking_alloc.rs` | 234 | audited — the `GlobalAlloc` hooks cannot panic, allocate or recurse; the counter wraps only on a caller layout mismatch, which is undefined behaviour; neither consumer of `tracking_alloc.rs::TrackingAlloc::allocated` can spuriously cancel or return early |
 | `src/discovery_history.rs` | 626 | audited — no filesystem I/O, and its JSON arrives only as the `get_calibration_summary` FFI string; #1906 holds on that path; two findings filed: #2391 (`record_attempt` overflows `u32` at the ceiling, Rust API only) and #2392 (finite observations yield non-finite calibration metrics, returned as `null` under `success: true`) |
 
@@ -200,12 +200,14 @@ Probe dispositions (Issue #2252):
 - **Discarded `raise` result — hides nothing.** `let _ = raise(SIGUSR1)`
   drops a result that can only be an error for an invalid signal number, and
   SIGUSR1 is a constant.
-- **Abort delay — cross-referenced, not refiled.**
-  `config/user_facing.rs::watchdog_abort_delay` accepts any `u64` seconds, so
-  a huge `NEAT_AI_DISCOVERY_WATCHDOG_ABORT_DELAY_SECS` makes
+- **Abort delay — fixed by #2404.**
+  `config/user_facing.rs::watchdog_abort_delay` used to accept any `u64`
+  seconds, so a huge `NEAT_AI_DISCOVERY_WATCHDOG_ABORT_DELAY_SECS` made
   `watchdog_loop`'s `thread::sleep(config.abort_delay)` turn the abort into
-  the very hang the watchdog exists to end. This is #2122's finding, tracked
-  by open #2259 as its finding A.
+  the very hang the watchdog exists to end. This was #2122's finding, tracked
+  by #2259 as its finding A. #2404 fixed it in the accessor: the value is
+  clamped to `0..=MAX_WATCHDOG_ABORT_DELAY_SECS` (60) with a `WARN`, so
+  `watchdog.rs` is unchanged.
 - **Stall-timeout truncation — cross-referenced, not refiled.**
   `watchdog_loop` compares against `config.stall_timeout.as_millis() as u64`;
   a stall of `18446744073709552` seconds truncates to about 384 ms and fires

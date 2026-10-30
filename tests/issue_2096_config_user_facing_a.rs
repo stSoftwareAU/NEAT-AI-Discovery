@@ -133,8 +133,8 @@ fn watchdog_stall_timeout_rejects_negative_and_nan() {
 #[test]
 #[serial]
 fn watchdog_abort_delay_falls_back_to_two_seconds() {
-    // The huge value is left out on purpose: the abort-delay finding (#2259)
-    // owns it, and its fix will change the result.
+    // The huge value is left out on purpose: it is clamped to the cap and is
+    // covered by tests/issue_2404_watchdog_abort_delay_cap.rs.
     let default = Duration::from_secs(2);
     assert_table(
         "NEAT_AI_DISCOVERY_WATCHDOG_ABORT_DELAY_SECS",
