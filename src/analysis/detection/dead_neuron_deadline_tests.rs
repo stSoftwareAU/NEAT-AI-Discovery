@@ -329,8 +329,8 @@ fn merge_loop_deadline_check_stops_a_large_merge() {
     let (creature, records) = merge_scan_creature();
 
     let walk_iterations = 6_002 + 3_003;
-    // Built with an iterator, not `vec![false; n]`, which the chunk 8a ledger
-    // would count as a capacity site.
+    // Built with an iterator, not a `vec!` repeat expression, which the chunk
+    // 8a ledger would count as a capacity site.
     let sequence: Vec<bool> = std::iter::repeat_n(false, 3 + walk_iterations)
         .chain(std::iter::once(true))
         .collect();

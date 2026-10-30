@@ -217,9 +217,12 @@ Security Fix Evidence
 - Merge reconciliation: retained #2368's skip-connection remediation alongside
   #2370's dead-neuron remediation in the audit ledger, and the later Develop
   merge brought in #2374. At head the combined inventory is 55 files and 81
-  production capacity sites, and the ledger's capacity grep prints 83 (81
-  production plus the test-only hits). No source conflict required a behaviour
-  change.
+  production capacity sites. The ledger records a capacity figure of 83: its 81
+  production rows plus the two named test-only hits. That is the ledger's
+  arithmetic, with the Rust capacity scanner in
+  `tests/issue_2282_chunk_08a_graph_sweep.rs` as the binding contract, not the
+  output of the ledger's grep, whose ERE under-counts (#2480). No source
+  conflict required a behaviour change.
 - Merge validation: the existing graph ledger suite (5 tests) and scaffold suite
   (6 tests) passed, compiled directly with `rustc --test` and
   `CARGO_MANIFEST_DIR` set to the repository root. `cargo metadata` successfully
