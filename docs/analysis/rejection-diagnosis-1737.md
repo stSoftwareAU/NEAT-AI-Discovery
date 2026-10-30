@@ -141,7 +141,7 @@ sites that increment each counter, cross-referenced against the cache vocabulary
 | Rank | Rejection reason | Increment call site | Why it dominates on this creature |
 | --- | --- | --- | --- |
 | 1 | `below_expected_gain_floor` | `src/analysis/discovery_dispatch.rs:431` & `:797` (module `retain(gain >= COORDINATED_MIN_EXPECTED_GAIN)`) and `src/analysis/candidate_aggregation.rs:145` (final coordinated floor) | Estimated gains ~`1e-10` fall the length of the scale below the `1e-5` floor. |
-| 2 | `below_multi_op_floor` | `src/analysis/candidate_aggregation.rs:258` (below `MIN_COORDINATED_MULTI_OP_GAIN` = `1e-5`) | Coordinated `change-squash` chains (the observed multi-op vocabulary) with gain `4e-10`. |
+| 2 | `below_multi_op_floor` | `src/analysis/candidate_aggregation.rs:285` (below `MIN_COORDINATED_MULTI_OP_GAIN` = `1e-5`) | Coordinated `change-squash` chains (the observed multi-op vocabulary) with gain `4e-10`. |
 | 3 | `non_positive_gain` | `src/analysis/candidate_aggregation.rs:228` (`retain(gain > 0.0)`) | Every `remove-neuron` candidate reports `expectedCreatureScoreGain == 0`. |
 
 Reasons 1–3 are all facets of **one** failure: the expected-gain estimate has

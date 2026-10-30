@@ -4,7 +4,8 @@
 `upstream_weight * downstream_weight * 0.5` in `f32` and emitted an
 `AddSynapse` regardless of the result. Two finite weights whose product
 exceeds `f32::MAX` (e.g. `2e19 × 2e19`) gave a `±∞` weight under a finite gain,
-which neither gain gate (`reject_non_finite_gains`, #2167) inspects. The
+which neither gain gate (`reject_non_finite_gains`, #2167) inspected before
+this change, because both tested only the gain. The
 converter now skips any bypass whose weight is not finite. The shared gate
 `reject_non_finite_gains` also drops any coordinated candidate carrying a
 non-finite `AddSynapse` / `SetWeight` weight or `AddNeuron` / `SetBias` bias,
