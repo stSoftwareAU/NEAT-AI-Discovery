@@ -464,7 +464,10 @@ not new findings.
   `bottleneck.rs::bottleneck_neurons_to_coordinated_candidates` multiplies two
   finite `f32` weights into `bypass_weight`, so an overflow emits an
   `AddSynapse` with a `±∞` weight under a finite gain that no gain gate
-  catches. Filed by the `graph` sweep (Issue #2283).
+  catches. Filed by the `graph` sweep (Issue #2283). The bottleneck bypass is
+  fixed by Issue #2375: the converter now skips any bypass whose weight is not
+  finite. The `per-neuron-a` and `per-neuron-b` sibling sites listed below stay
+  open.
 - #2351 — also carries four `graph`-section sibling sites, added by #2283 as a
   comment (same root cause, not a new issue):
   `bottleneck.rs::detect_bottleneck_neurons` (`total_error` / `neuron_error`
