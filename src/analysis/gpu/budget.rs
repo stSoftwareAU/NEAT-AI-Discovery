@@ -105,6 +105,23 @@ impl GpuTimeBudget {
         self.is_bounded() && self.remaining().is_zero()
     }
 
+    /// Whether a budget-capped wait has used up the budget, evaluated at `now`
+    /// (Issue #2365).
+    ///
+    /// A budget-capped wait truncates to whole seconds, so any wait that timed
+    /// out on the budget leaves less than one second behind. Unbounded budgets
+    /// are never exhausted: their waits are fixed, not capped by a caller.
+    #[must_use]
+    pub fn is_exhausted_for_waits_at(&self, now: Instant) -> bool {
+        self.is_bounded() && self.remaining_at(now) < Duration::from_secs(1)
+    }
+
+    /// [`Self::is_exhausted_for_waits_at`] evaluated right now.
+    #[must_use]
+    pub fn is_exhausted_for_waits(&self) -> bool {
+        self.is_exhausted_for_waits_at(Instant::now())
+    }
+
     /// Fail loudly when the budget is exhausted, so the worker returns a real
     /// error through the response channel rather than blocking on another
     /// sub-batch the caller will never wait for.
@@ -223,6 +240,51 @@ mod tests {
             message.contains("sub-batch 3"),
             "error must name the stage it refused: {message}"
         );
+    }
+
+    /// Issue #2365: an unbounded budget is never exhausted for waits, whatever
+    /// the clock says.
+    #[test]
+    fn unbounded_budget_is_never_exhausted_for_waits() {
+        let budget = GpuTimeBudget::unbounded();
+        let start = Instant::now();
+        assert!(!budget.is_exhausted_for_waits_at(start));
+        assert!(!budget.is_exhausted_for_waits_at(start + Duration::from_secs(3600)));
+    }
+
+    /// Issue #2365: a bounded budget with five seconds left is not exhausted
+    /// for waits.
+    #[test]
+    fn bounded_budget_with_five_seconds_left_is_not_exhausted_for_waits() {
+        let start = Instant::now();
+        let budget = GpuTimeBudget::from_caller_timeout_at(
+            start,
+            Duration::from_secs(GPU_BUFFER_MAP_TIMEOUT_MARGIN_SECS + 5),
+        );
+        assert!(!budget.is_exhausted_for_waits_at(start));
+    }
+
+    /// Issue #2365: a bounded budget with half a second left is exhausted for
+    /// waits, because a budget-capped wait would have truncated to zero seconds.
+    #[test]
+    fn bounded_budget_with_half_a_second_left_is_exhausted_for_waits() {
+        let start = Instant::now();
+        let budget = GpuTimeBudget::from_caller_timeout_at(
+            start,
+            Duration::from_secs(GPU_BUFFER_MAP_TIMEOUT_MARGIN_SECS + 1),
+        );
+        assert!(budget.is_exhausted_for_waits_at(start + Duration::from_millis(500)));
+    }
+
+    /// Issue #2365: a bounded budget past its deadline is exhausted for waits.
+    #[test]
+    fn bounded_budget_past_deadline_is_exhausted_for_waits() {
+        let start = Instant::now();
+        let budget = GpuTimeBudget::from_caller_timeout_at(
+            start,
+            Duration::from_secs(GPU_BUFFER_MAP_TIMEOUT_MARGIN_SECS + 1),
+        );
+        assert!(budget.is_exhausted_for_waits_at(start + Duration::from_secs(2)));
     }
 
     /// Issue #1928: fixed waits are capped by whatever budget remains.
