@@ -169,23 +169,31 @@ fn mixed_outputs_diamond_and_disconnected_chains_keep_candidate_results() {
 
 #[test]
 fn dangling_endpoint_chains_do_not_extend_graph_traversal() {
-    let dangling_count = 50_000;
-    let mut synapses = Vec::with_capacity(dangling_count + 1);
-    for index in 0..dangling_count {
-        synapses.push(synapse(
-            format!("ghost-{index}"),
-            format!("ghost-{}", index + 1),
-        ));
-    }
-    synapses.push(synapse(format!("ghost-{dangling_count}"), "output"));
-    synapses.push(synapse("input", "output"));
-    let creature = creature(
-        vec![neuron("input", "input"), neuron("output", "output")],
-        synapses,
-    );
+    std::thread::Builder::new()
+        .stack_size(2 * 1024 * 1024)
+        .spawn(|| {
+            let dangling_count = 50_000;
+            let mut synapses = Vec::with_capacity(dangling_count + 1);
+            for index in 0..dangling_count {
+                synapses.push(synapse(
+                    format!("ghost-{index}"),
+                    format!("ghost-{}", index + 1),
+                ));
+            }
+            synapses.push(synapse(format!("ghost-{dangling_count}"), "output"));
+            synapses.push(synapse("input", "output"));
+            let creature = creature(
+                vec![neuron("input", "input"), neuron("output", "output")],
+                synapses,
+            );
 
-    let candidates = detect_topology_diversification_candidates(&creature, &records_for(&creature));
-    assert_eq!(candidates.len(), 1);
-    assert_eq!(candidates[0].output_neuron_uuid, "output");
-    assert_eq!(candidates[0].max_hidden_depth, 0);
+            let candidates =
+                detect_topology_diversification_candidates(&creature, &records_for(&creature));
+            assert_eq!(candidates.len(), 1);
+            assert_eq!(candidates[0].output_neuron_uuid, "output");
+            assert_eq!(candidates[0].max_hidden_depth, 0);
+        })
+        .expect("small-stack thread should spawn")
+        .join()
+        .expect("dangling references must not create a deep traversal");
 }
