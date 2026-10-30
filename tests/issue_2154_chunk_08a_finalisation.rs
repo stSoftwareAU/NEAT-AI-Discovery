@@ -14,10 +14,11 @@
 //!
 //! * the record is promoted out of `in-progress/` and the staged copy is gone;
 //! * no cell anywhere in the record still reads `pending`;
-//! * `## Files swept` carries exactly one row per in-scope file (55, including
+//! * `## Files swept` carries exactly one row per in-scope file (56, including
 //!   the `#[cfg(test)]`-only `symmetry_breaking_deadline_tests.rs`,
-//!   `redundant_path_deadline_tests.rs` and `dead_neuron_deadline_tests.rs`
-//!   added by #2349, #2374 and #2370), matching the
+//!   `redundant_path_deadline_tests.rs`, `dead_neuron_deadline_tests.rs` and
+//!   `compound_degradation_tests.rs` added by #2349, #2374, #2370 and
+//!   #2367), matching the
 //!   on-disk `.rs` files of `src/analysis/detection` and `src/analysis/neuron`;
 //! * the six `<!-- section: … -->` markers are present, in order;
 //! * every production capacity site the capacity regex sweep
@@ -48,7 +49,7 @@ const SCOPE_DIRS: [&str; 2] = ["src/analysis/detection", "src/analysis/neuron"];
 
 /// Total files across both scope directories — also the row count in
 /// `## Files swept`.
-const EXPECTED_FILE_COUNT: usize = 55;
+const EXPECTED_FILE_COUNT: usize = 56;
 
 /// One `<!-- section: … -->` marker per audit sub-issue, in record order.
 const SECTION_NAMES: [&str; 6] = [
