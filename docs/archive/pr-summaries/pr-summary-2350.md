@@ -24,7 +24,7 @@ Version bump: `Cargo.toml` updated for this change; the merged commit records th
 - A missing uuid still falls back to `"TANH"`.
 - The deadline is checked per candidate; on expiry the candidates built so far are returned (a partial result, not an error).
 - The `work_observer` closure on the private converter exists so a deterministic lookup count can be asserted; production passes a no-op.
-- The sibling pattern in `sentinel_gating` and `squash_weight_rescale` (issue comment) is not changed here; it is separate code with its own detectors.
+- The sibling per-candidate scans recorded on #2350 (`bottleneck`, `monotonicity`, `operating_point`, `restricted_range`, `output_range_compression`, `sentinel_gating`, `squash_weight_rescale`) are not changed here; each is separate code with its own detector. They are now tracked in #2479, so closing #2350 does not drop them.
 
 ### Undiscoverable Facts
 
