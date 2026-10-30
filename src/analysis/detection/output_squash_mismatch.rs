@@ -23,6 +23,7 @@
 //!    that best reduces error against the observed activation/error patterns.
 
 #![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
+use super::helpers::build_record_map;
 use crate::activations::apply_scalar_squash;
 use crate::analysis::constants::MIN_DISCOVERY_SAMPLE_COUNT as MIN_SAMPLES;
 use crate::analysis::cost_function_hint::CostFunctionHint;
@@ -311,12 +312,13 @@ pub fn detect_output_squash_mismatches_with_cost_hint(
     cost_hint: CostFunctionHint,
 ) -> Vec<OutputSquashMismatchCandidate> {
     let mut candidates = Vec::with_capacity(output_neurons.len());
+    let records_map = build_record_map(neuron_records);
 
     for (uuid, squash, _bias) in output_neurons {
-        let Some((_id, records)) = neuron_records.iter().find(|(u, _)| u == uuid) else {
+        // Issue #2377: O(1) lookup, not a per-neuron linear scan of neuron_records.
+        let Some(records) = records_map.get(uuid.as_str()).copied() else {
             continue;
         };
-        let records = records.as_ref();
 
         if records.len() < MIN_SAMPLES {
             continue;
