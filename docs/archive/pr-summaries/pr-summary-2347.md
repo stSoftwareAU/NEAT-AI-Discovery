@@ -122,6 +122,14 @@ the other bounds:
 - test `symmetric_cancellation_stops_at_the_candidate_ceiling_and_reports_it`
   pins the candidate ceiling.
 
+The elapsed-deadline tests above pass `UNIX_EPOCH`, so they reach the check
+only on the first target. The in-crate unit test
+`per_target_deadline_check_stops_a_scan_that_started_before_the_deadline` (in
+`src/analysis/detection/weight_coherence.rs`) shows the check runs before every
+target: it lets the first target through, then reports the deadline passed,
+and the scan stops after one pair. With the check moved above the `'outer` loop
+it goes red (`left: None`, `right: Some(DeadlinePassed)`).
+
 **The original trigger is closed, with no trivial bypass.** There is one pair
 loop. Every way into it passes the per-target deadline check and then the
 fan-in cap, which runs before any pair work or map build. So per-target pair
