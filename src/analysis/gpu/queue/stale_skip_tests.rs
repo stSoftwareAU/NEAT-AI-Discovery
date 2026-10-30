@@ -19,7 +19,9 @@ use super::recovery::is_device_lost_error;
 use super::staleness::{CallerGuard, CallerLiveness, caller_liveness_pair};
 use super::{GpuWorkQueue, GpuWorkRequest};
 use crate::analysis::gpu::budget::GpuTimeBudget;
-use crate::analysis::gpu::device::GPU_BUFFER_MAP_TIMEOUT_MARGIN_SECS;
+use crate::analysis::gpu::device::{
+    GPU_BUFFER_MAP_TIMEOUT_MARGIN_SECS, GpuWaitKind, wait_timeout_error,
+};
 use crate::analysis::gpu::heartbeat::GpuHeartbeat;
 use crate::analysis::samples::{
     HarmfulStats, HelpfulSample, HelpfulStats, ReluOrientation, ReluStats,
@@ -81,8 +83,12 @@ impl CountingEvaluator {
         match self.outcome {
             StubOutcome::Succeed => Ok(value),
             StubOutcome::DeviceLost => Err(anyhow!("Device is lost")),
-            StubOutcome::BudgetCappedTimeout => Err(anyhow!(
-                "GPU buffer mapping timed out after 0.0s. The GPU driver may be unresponsive."
+            // Issue #2365: built through the same helper the device.rs
+            // waits use, so the stub tracks the real message.
+            StubOutcome::BudgetCappedTimeout => Err(wait_timeout_error(
+                GpuWaitKind::BufferMap,
+                Duration::ZERO,
+                None,
             )),
         }
     }

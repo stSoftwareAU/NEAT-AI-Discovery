@@ -666,11 +666,19 @@ impl GpuEvaluator for GpuWorkQueue {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::analysis::gpu::device::GPU_BUFFER_MAP_TIMEOUT_MARGIN_SECS;
+    use crate::analysis::gpu::device::{
+        GPU_BUFFER_MAP_TIMEOUT_MARGIN_SECS, GpuWaitKind, wait_timeout_error,
+    };
     use crate::analysis::samples::{HarmfulStats, HelpfulStats};
     use crossbeam_channel::bounded;
 
     use super::super::staleness::caller_liveness_pair;
+
+    /// The error `wait_for_buffer_map` returns on timeout, built through the
+    /// same helper (Issue #2365).
+    fn buffer_map_timeout() -> anyhow::Error {
+        wait_timeout_error(GpuWaitKind::BufferMap, Duration::ZERO, None)
+    }
 
     /// A budget with just under one second left: live at dequeue, exhausted
     /// for budget-capped waits (Issue #2365).
@@ -686,9 +694,7 @@ mod tests {
     /// device-lost or memory-exhaustion patterns.
     #[test]
     fn reclassify_turns_exhausted_wait_timeout_into_budget_error() {
-        let timed_out: Result<()> = Err(anyhow::anyhow!(
-            "GPU buffer mapping timed out after 0.0s. The GPU driver may be unresponsive."
-        ));
+        let timed_out: Result<()> = Err(buffer_map_timeout());
         let err = reclassify_budget_timeout(timed_out, &nearly_exhausted_budget())
             .expect_err("an exhausted wait timeout must stay an error");
 
@@ -708,9 +714,7 @@ mod tests {
     /// still takes the device-recovery path.
     #[test]
     fn reclassify_leaves_unbounded_wait_timeout_for_recovery() {
-        let timed_out: Result<()> = Err(anyhow::anyhow!(
-            "GPU buffer mapping timed out after 0.0s. The GPU driver may be unresponsive."
-        ));
+        let timed_out: Result<()> = Err(buffer_map_timeout());
         let err = reclassify_budget_timeout(timed_out, &GpuTimeBudget::unbounded())
             .expect_err("error must pass through");
         assert!(is_device_lost_error(&err));
@@ -721,9 +725,7 @@ mod tests {
     fn reclassify_leaves_wait_timeout_with_time_left_for_recovery() {
         let start = Instant::now();
         let budget = GpuTimeBudget::from_caller_timeout_at(start, Duration::from_secs(300));
-        let timed_out: Result<()> = Err(anyhow::anyhow!(
-            "GPU buffer mapping timed out after 0.0s. The GPU driver may be unresponsive."
-        ));
+        let timed_out: Result<()> = Err(buffer_map_timeout());
         let err =
             reclassify_budget_timeout(timed_out, &budget).expect_err("error must pass through");
         assert!(is_device_lost_error(&err));

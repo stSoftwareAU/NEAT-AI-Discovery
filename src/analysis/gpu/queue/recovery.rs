@@ -260,20 +260,24 @@ mod tests {
         assert!(is_memory_exhaustion_error(&err));
     }
 
-    /// Issue #2365: the three wait-timeout messages `device.rs` produces.
+    /// Issue #2365: the wait-timeout errors `device.rs` produces, built through
+    /// the same `wait_timeout_error` its three waits call, so rewording the
+    /// message at its source turns this test red.
     #[test]
     fn test_is_wait_timeout_error_matches_crate_wait_messages() {
-        let cases = [
-            "GPU device poll timed out after 3.0s (warm-up). The GPU driver may be unresponsive.",
-            "GPU buffer mapping timed out after 0.0s. The GPU driver may be unresponsive.",
-            "GPU batch buffer mapping timed out after 12.5s. The GPU driver may be unresponsive.",
-        ];
-        for msg in cases {
-            let err = anyhow::anyhow!("{msg}");
-            assert!(
-                is_wait_timeout_error(&err),
-                "Expected wait-timeout match for: {msg}"
-            );
+        use crate::analysis::gpu::device::{GpuWaitKind, wait_timeout_error};
+        use std::time::Duration;
+
+        for kind in GpuWaitKind::ALL {
+            for label in [None, Some("warm-up")] {
+                for timeout in [Duration::ZERO, Duration::from_millis(12_500)] {
+                    let err = wait_timeout_error(kind, timeout, label);
+                    assert!(
+                        is_wait_timeout_error(&err),
+                        "Expected wait-timeout match for: {err:#}"
+                    );
+                }
+            }
         }
     }
 
