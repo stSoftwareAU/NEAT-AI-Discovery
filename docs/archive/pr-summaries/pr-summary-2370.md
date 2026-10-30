@@ -13,11 +13,11 @@ adds no direct outputs and has a single closed successor shares that successor's
 set without copying it, so a long live chain above a wide fan-out costs no
 per-component copy. The discovery spec uses the deadline-aware variant and logs a
 warning when a scan stops early. Version bump: `Cargo.toml` and the crate's own
-`Cargo.lock` entry are at `0.74.298`, above Develop's `0.74.295`. The Develop
+`Cargo.lock` entry are at `0.74.298`, above Develop's `0.74.297`. The Develop
 merge had left the branch level with Develop, and CI's auto-increment skips a
 branch that already has an auto-increment commit (#2476), so the bump was made
-by hand. `0.74.296` and `0.74.297` are left to #2426 and #2429, which needed the
-same fix, so the three do not collide. Closes #2370.
+by hand. `0.74.296` and `0.74.297` were taken on Develop by #2426 and #2429, so
+the three do not collide. Closes #2370.
 
 ## Spec
 
