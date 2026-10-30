@@ -165,3 +165,76 @@ fn reachability_deadline_check_stops_mid_scan() {
         "exactly one edge is examined before the second walk check aborts"
     );
 }
+
+/// `a -> out-a` and `b -> out-b`: two separate, identically shaped dead roots,
+/// so the walk does the same work whichever root the hidden-neuron set yields
+/// first.
+fn two_dead_roots_creature() -> (CreatureJson, Vec<(String, Vec<DiscoverRecord>)>) {
+    let neuron = |uuid: &str, neuron_type: &str| NeuronJson {
+        uuid: uuid.to_string(),
+        neuron_type: neuron_type.to_string(),
+        squash: "LOGISTIC".to_string(),
+        bias: 0.0,
+    };
+    let synapse = |from: &str, to: &str| SynapseJson {
+        from_uuid: from.to_string(),
+        to_uuid: to.to_string(),
+        weight: 0.5,
+        synapse_type: None,
+    };
+
+    let creature = CreatureJson {
+        neurons: vec![
+            neuron("input-0", "input"),
+            neuron("a", "hidden"),
+            neuron("b", "hidden"),
+            neuron("out-a", "output"),
+            neuron("out-b", "output"),
+        ],
+        synapses: vec![
+            synapse("input-0", "a"),
+            synapse("input-0", "b"),
+            synapse("a", "out-a"),
+            synapse("b", "out-b"),
+        ],
+        input: 1,
+        output: 2,
+    };
+    (creature, vec![records_for("a"), records_for("b")])
+}
+
+/// A deadline stop during the reachability pass keeps the candidate whose
+/// outputs completed before it, as the `DeadNeuronScan::truncation` docs say.
+#[test]
+#[serial]
+fn reachability_deadline_stop_keeps_the_completed_candidate() {
+    let (creature, records) = two_dead_roots_creature();
+
+    // Phase 1: one check per hidden neuron (2, both false). Phase 2, first
+    // root: examine its edge, close its output, close the root (3, all false).
+    // The second root's first walk check then reports the deadline passed.
+    let _guard =
+        DeadlineOverrideGuard::with_sequence(vec![false, false, false, false, false, true]);
+
+    let scan = detect_dead_neurons_observed(
+        &creature,
+        &records,
+        None,
+        &unused_live_deadline(),
+        usize::MAX,
+        || {},
+    );
+
+    assert_eq!(scan.truncation, Some(ScanTruncation::DeadlinePassed));
+    assert_eq!(
+        scan.candidates.len(),
+        1,
+        "the first root completed before the deadline, so it must be kept"
+    );
+    let kept = &scan.candidates[0];
+    assert_eq!(
+        kept.connected_outputs,
+        [format!("out-{}", kept.neuron_uuid)],
+        "the kept candidate carries its own single output"
+    );
+}

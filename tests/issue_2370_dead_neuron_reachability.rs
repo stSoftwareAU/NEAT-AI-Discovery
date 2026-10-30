@@ -501,3 +501,96 @@ fn merge_ceiling_stops_the_scan_and_reports_candidate_ceiling() {
         summary(&unbounded.candidates)
     );
 }
+
+/// One dead neuron `d` feeds 200 live hidden nodes (L0). Every L0 node feeds
+/// all 200 live hidden nodes of L1, and every L1 node feeds all 200 outputs
+/// (400 live hidden neurons, 200 outputs, 80,200 synapses).
+fn dense_two_layer_fan_out() -> (CreatureJson, Records, Vec<String>) {
+    const WIDTH: usize = 200;
+    let l0: Vec<String> = (0..WIDTH).map(|i| format!("l0-{i:03}")).collect();
+    let l1: Vec<String> = (0..WIDTH).map(|i| format!("l1-{i:03}")).collect();
+    let outputs: Vec<String> = (0..WIDTH).map(|i| format!("out-{i:03}")).collect();
+
+    let mut hidden: Vec<&str> = vec!["d"];
+    hidden.extend(l0.iter().map(String::as_str));
+    hidden.extend(l1.iter().map(String::as_str));
+    let output_refs: Vec<&str> = outputs.iter().map(String::as_str).collect();
+
+    let mut edges: Vec<(&str, &str)> = vec![("input-0", "d")];
+    edges.extend(l0.iter().map(|a| ("d", a.as_str())));
+    for a in &l0 {
+        edges.extend(l1.iter().map(|b| (a.as_str(), b.as_str())));
+    }
+    for b in &l1 {
+        edges.extend(output_refs.iter().map(|&o| (b.as_str(), o)));
+    }
+
+    let creature = build_creature(&hidden, &output_refs, &edges);
+    // Only `d` has records, so only `d` is a dead candidate.
+    (creature, vec![records_of("d", 0.0)], outputs)
+}
+
+/// Each L0 node merges 200 successor sets that all hold the same 200 outputs.
+/// The merge ceiling must charge the 200 distinct ids it keeps, not the 40,000
+/// it scans; otherwise the 200th L0 close crosses `MAX_REACHABILITY_MERGE_WORK`
+/// and the production scan drops `d`, which a per-neuron DFS reported cheaply.
+#[test]
+fn dense_fan_out_with_duplicate_successor_sets_stays_under_the_merge_ceiling() {
+    let (creature, records, outputs) = dense_two_layer_fan_out();
+
+    let scan = detect_dead_neurons_with_deadline(&creature, &records, None, &far_future_deadline());
+
+    assert_eq!(
+        scan.truncation, None,
+        "duplicate output ids across successors must not be charged to the merge ceiling"
+    );
+    assert_eq!(scan.candidates.len(), 1, "only d is a dead candidate");
+    assert_eq!(scan.candidates[0].neuron_uuid, "d");
+    assert_eq!(
+        scan.candidates[0].connected_outputs, outputs,
+        "d reaches all 200 outputs"
+    );
+}
+
+/// Two separate, identically shaped dead roots: `a -> out-a` and `b -> out-b`.
+/// Whichever root the hidden-neuron set yields first, the walk does the same
+/// work, so a stop between the roots is deterministic.
+fn two_separate_dead_roots() -> (CreatureJson, Records) {
+    let edges = [
+        ("input-0", "a"),
+        ("input-0", "b"),
+        ("a", "out-a"),
+        ("b", "out-b"),
+    ];
+    let creature = build_creature(&["a", "b"], &["out-a", "out-b"], &edges);
+    (creature, vec![records_of("a", 0.0), records_of("b", 0.0)])
+}
+
+/// A merge-ceiling stop keeps the candidate that completed before it. With a
+/// ceiling of 1, the first root keeps its one output id and the second root's
+/// merge is refused.
+#[test]
+fn merge_ceiling_stop_keeps_the_candidate_completed_before_it() {
+    let (creature, records) = two_separate_dead_roots();
+
+    let scan = detect_dead_neurons_observed(&creature, &records, None, &None, 1, || {});
+
+    assert_eq!(scan.truncation, Some(ScanTruncation::CandidateCeiling));
+    assert_eq!(
+        scan.candidates.len(),
+        1,
+        "the root completed before the ceiling must be kept"
+    );
+    let kept = &scan.candidates[0];
+    assert_eq!(
+        kept.connected_outputs,
+        [format!("out-{}", kept.neuron_uuid)],
+        "the kept candidate carries its own single output"
+    );
+
+    // Positive control: with no ceiling both roots complete.
+    let unbounded =
+        detect_dead_neurons_observed(&creature, &records, None, &None, usize::MAX, || {});
+    assert_eq!(unbounded.truncation, None);
+    assert_eq!(unbounded.candidates.len(), 2);
+}

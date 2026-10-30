@@ -6,8 +6,9 @@
 hidden neuron. Connected outputs for all dead neurons now come from one shared,
 iterative Tarjan strongly-connected-component pass. Its cost is O(V + E) plus the
 size of the output sets it merges, with two bounds: the analysis deadline and
-global cancellation are checked on every walk iteration, and total merged work is
-capped at `MAX_REACHABILITY_MERGE_WORK` (8,000,000 elements). A component that
+global cancellation are checked on every walk iteration (and every 4,096 merged
+elements), and the distinct output ids kept across merges are capped at
+`MAX_REACHABILITY_MERGE_WORK` (8,000,000). A component that
 adds no direct outputs and has a single closed successor shares that successor's
 set without copying it, so a long live chain above a wide fan-out costs no
 per-component copy. The discovery spec uses the deadline-aware variant and logs a
@@ -38,8 +39,13 @@ updated for this change; the merged commit records the final version. Closes
   cannot be computed for a partial scan, so fail closed). Stop during the
   reachability pass keeps only candidates whose outputs completed.
 - Hitting the merged-work ceiling reports `ScanTruncation::CandidateCeiling`
-  (the existing "work ceiling reached" variant; no new variant added). The
-  ceiling is checked against an upper bound before any copy, so it bounds memory.
+  (the existing "work ceiling reached" variant; no new variant added). Merges
+  remove duplicates as they go (a per-node stamp marks ids the component already
+  kept), and the ceiling is charged once per id kept, so it bounds the memo's
+  memory exactly. Successors that all reach the same outputs cost the output
+  count, not out-degree × outputs (review 5689671957). The time spent scanning
+  duplicate ids is bounded by a deadline check every
+  `MERGE_DEADLINE_CHECK_INTERVAL` (4,096) merged elements.
   A ladder-shaped graph (each node feeds its own output and the next node) needs
   quadratic distinct sets and stops at the ceiling instead of exhausting memory.
 - `detect_dead_neurons_observed` takes the ceiling and a step observer so tests
@@ -51,9 +57,9 @@ updated for this change; the merged commit records the final version. Closes
 ### Undiscoverable Facts
 
 - `hidden_uuids` is a `HashSet`, so root order (and the order of equal-confidence
-  candidates) is arbitrary; tests compare candidates sorted by UUID, and a test
-  of "an earlier root completes, a later one hits the ceiling" cannot be made
-  deterministic.
+  candidates) is arbitrary; tests compare candidates sorted by UUID. A stop
+  between roots is still tested deterministically, on two separate, identically
+  shaped dead roots, which take the same walk whichever comes first.
 - The crate installs its own `#[global_allocator]`, so a test binary cannot add a
   counting allocator; an allocation-bytes guard that also compiles on the base
   branch was not possible.
@@ -99,7 +105,7 @@ Security Fix Evidence
 
 ## Test Plan
 
-- Added `tests/issue_2370_dead_neuron_reachability.rs` (9 tests, all pass):
+- Added `tests/issue_2370_dead_neuron_reachability.rs` (11 tests, all pass):
   `reachability_grows_linearly_with_dead_count`,
   `live_chain_above_wide_fan_out_does_not_copy_sets_per_component`,
   `merge_ceiling_stops_the_scan_and_reports_candidate_ceiling`,
@@ -108,10 +114,19 @@ Security Fix Evidence
   `matches_a_reference_traversal_on_a_branching_graph`,
   `elapsed_deadline_stops_the_scan_and_reports_truncation`,
   `far_future_deadline_does_not_truncate`,
-  `without_a_cache_and_with_a_cache_agree`.
-- Added `src/analysis/detection/dead_neuron_deadline_tests.rs` (2 in-crate tests):
-  `phase_one_deadline_check_truncates_and_returns_no_candidates` and
-  `reachability_deadline_check_stops_mid_scan`. Their sequence-scripted deadline
+  `without_a_cache_and_with_a_cache_agree`,
+  `dense_fan_out_with_duplicate_successor_sets_stays_under_the_merge_ceiling`
+  (one dead `d` → 200 live L0 → 200 live L1 → 200 outputs, 80,200 synapses, on
+  the production path: `d` keeps all 200 outputs with no truncation),
+  `merge_ceiling_stop_keeps_the_candidate_completed_before_it` (two separate
+  dead roots, ceiling 1: one candidate with its own output, plus
+  `CandidateCeiling`).
+- Added `src/analysis/detection/dead_neuron_deadline_tests.rs` (3 in-crate tests):
+  `phase_one_deadline_check_truncates_and_returns_no_candidates`,
+  `reachability_deadline_check_stops_mid_scan` and
+  `reachability_deadline_stop_keeps_the_completed_candidate` (two roots,
+  sequence `[false; 5]` then `true`: one completed candidate plus
+  `DeadlinePassed`). Their sequence-scripted deadline
   seam makes each check the one that stops the scan.
 - Red checks run: resetting the memo per root turned
   `reachability_grows_linearly_with_dead_count` red. Disabling the set-sharing
@@ -123,6 +138,16 @@ Security Fix Evidence
   The ceiling test uses a ceiling of 1 against `usize::MAX` and the production
   ceiling on the same graph, so only the ceiling distinguishes the outcomes; I did
   not separately break the ceiling comparison.
+- Red checks for review 5689671957: charging the ceiling for every scanned
+  element instead of every kept id (the old upper-bound behaviour) turned
+  `dense_fan_out_with_duplicate_successor_sets_stays_under_the_merge_ceiling`
+  red. Clearing the completed candidates on a reachability stop turned
+  `merge_ceiling_stop_keeps_the_candidate_completed_before_it` and
+  `reachability_deadline_stop_keeps_the_completed_candidate` red. After the fix:
+  `--test issue_2370_dead_neuron_reachability` 11 passed, `--lib dead_neuron`
+  3 passed, `--test detection dead` 19, `--test analysis dead` 16,
+  `--test infrastructure topology` 6, the eight chunk-08a record suites all
+  pass, and `cargo clippy --lib --tests --all-features -- -D warnings` is clean.
 - Removed from the first attempt: the wall-clock test
   `scan_time_grows_linearly_with_dead_count` (CONTRIBUTING.md forbids timing
   assertions in tests); the step-count tests above replace it.
@@ -136,8 +161,7 @@ Security Fix Evidence
   (`tests/detection/issue_571_co_adaptation_detection.rs`,
   `src/analysis/module_dispatch_specs/mod.rs`); none runs a spec with an elapsed
   deadline, so the `detect:` block is `exempt (untestable)`: no existing harness
-  can stage an elapsed deadline through the dispatch. A ceiling stop that keeps an
-  earlier completed candidate is not asserted either (root order is random).
+  can stage an elapsed deadline through the dispatch.
 - Docs: `docs/DISCOVERY_TYPES.md` "Dead Neuron Detection" has a
   `Scan bounds (Issue #2370)` paragraph describing the shared pass, the set
   sharing, the merged-work cap and both truncation reasons;

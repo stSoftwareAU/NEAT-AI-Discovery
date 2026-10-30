@@ -345,9 +345,12 @@ strongly-connected-components decomposition, so it is cycle-safe and cannot
 recurse without bound. Its cost is O(V+E) plus the size of the output sets it
 merges: each component's reachable-output set is built once, and a component
 that adds no direct outputs and has a single successor shares that successor's
-set without copying it. Total merged work is capped at 8,000,000 elements
-(`MAX_REACHABILITY_MERGE_WORK` in `src/analysis/detection/dead_neuron.rs`). When
-the cap is hit, the scan stops with `ScanTruncation::CandidateCeiling` and keeps
+set without copying it. Merges remove duplicates as they go, so only the
+distinct output ids a component keeps are charged, and the total kept across
+all merges is capped at 8,000,000 ids (`MAX_REACHABILITY_MERGE_WORK` in
+`src/analysis/detection/dead_neuron.rs`). The time a merge spends scanning
+successor sets, duplicates included, is bounded by a deadline check every 4,096
+elements. When the cap is hit, the scan stops with `ScanTruncation::CandidateCeiling` and keeps
 the candidates whose outputs were already complete.
 `detect_dead_neurons_with_deadline` also takes the analysis deadline and checks
 it and the global cancellation flag; a stop for either reason reports

@@ -30,9 +30,12 @@
 //! O(V + E) plus the sizes of the output sets that have to be merged: a component
 //! with a single closed successor and no direct output edge shares that
 //! successor's set without copying, so a long chain above a wide fan-out does not
-//! copy the fan-out set per chain node. The elements merged are totalled and
-//! capped by a ceiling (`MAX_REACHABILITY_MERGE_WORK` on the production path),
-//! which bounds the memo's memory (CWE-400).
+//! copy the fan-out set per chain node. Merges remove duplicates as they go, so
+//! only the distinct output ids a component keeps are charged against a ceiling
+//! (`MAX_REACHABILITY_MERGE_WORK` on the production path), which bounds the
+//! memo's memory (CWE-400). The time spent scanning successor sets, duplicates
+//! included, is bounded by a deadline check every
+//! `MERGE_DEADLINE_CHECK_INTERVAL` elements.
 //!
 //! The pass checks the discovery deadline and global cancellation once per step,
 //! and every stop is reported via [`DeadNeuronScan::truncation`]: a stop during
@@ -69,6 +72,11 @@ const DEAD_ACTIVATION_THRESHOLD: f32 = 1e-6;
 /// `ScanTruncation::CandidateCeiling`, keeping the candidates already completed
 /// (CWE-400 memory bound).
 const MAX_REACHABILITY_MERGE_WORK: usize = 8_000_000;
+
+/// Successor-set elements a merge scans between deadline checks (Issue #2370).
+/// A dense node can scan many duplicate ids that it never keeps, so its scan
+/// time is bounded by the deadline rather than by the merge ceiling.
+const MERGE_DEADLINE_CHECK_INTERVAL: usize = 4096;
 
 /// Maximum activation standard deviation for a dead neuron.
 /// If output varies significantly, the neuron is not truly dead.
@@ -336,7 +344,11 @@ struct OutputReachability<'a> {
     counter: usize,
     /// Output-node ids reachable from each closed component (sorted, deduplicated).
     comp_sets: Vec<Rc<Vec<usize>>>,
-    /// Upper bound of the elements merged so far (the memo's retained size).
+    /// Scratch mark per node id: the component that last kept that id in a
+    /// merge, so a merge keeps (and charges) each output id once.
+    stamp: Vec<usize>,
+    /// Distinct output ids kept by merged components so far (the memo's
+    /// retained size).
     merge_work: usize,
     /// Cap on `merge_work`; a merge that would exceed it is refused.
     merge_ceiling: usize,
@@ -354,6 +366,7 @@ impl<'a> OutputReachability<'a> {
             stack: Vec::new(),
             counter: 0,
             comp_sets: Vec::new(),
+            stamp: Vec::new(),
             merge_work: 0,
             merge_ceiling,
         }
@@ -370,6 +383,7 @@ impl<'a> OutputReachability<'a> {
         self.index.push(UNSET);
         self.low.push(UNSET);
         self.comp.push(UNSET);
+        self.stamp.push(UNSET);
         id
     }
 
@@ -436,7 +450,7 @@ impl<'a> OutputReachability<'a> {
             } else {
                 call.pop();
                 if self.low[v] == self.index[v] {
-                    self.close(v, on_step)?;
+                    self.close(v, deadline, on_step)?;
                 }
                 if let Some(parent) = call.last() {
                     let p = parent.node;
@@ -450,9 +464,16 @@ impl<'a> OutputReachability<'a> {
 
     /// Close the component whose root is `v`, computing its output set once.
     ///
-    /// Returns `Err(CandidateCeiling)`, before copying anything, if merging would
-    /// push the total merge work past the ceiling.
-    fn close(&mut self, v: usize, on_step: &mut impl FnMut()) -> Result<(), ScanTruncation> {
+    /// Returns `Err(CandidateCeiling)` if keeping one more distinct output id
+    /// would push the total merge work past the ceiling, and
+    /// `Err(DeadlinePassed)` if the deadline passes while a large merge is
+    /// scanning successor sets.
+    fn close(
+        &mut self,
+        v: usize,
+        deadline: &Option<SystemTime>,
+        on_step: &mut impl FnMut(),
+    ) -> Result<(), ScanTruncation> {
         let c = self.comp_sets.len();
 
         // Assign every member before computing the set, so an edge inside the
@@ -502,23 +523,46 @@ impl<'a> OutputReachability<'a> {
             }
         }
 
-        // Charge the upper bound before copying, so the ceiling bounds memory.
-        let bound = direct.len() + succ.iter().map(|&s| self.comp_sets[s].len()).sum::<usize>();
-        if self.merge_work.saturating_add(bound) > self.merge_ceiling {
-            return Err(ScanTruncation::CandidateCeiling);
+        // Merge, removing duplicates as we go: `stamp[o] == c` marks an id this
+        // component already kept. Only kept ids are charged, so successors that
+        // all reach the same outputs cost the output count, not out-degree x
+        // outputs, and the ceiling still bounds the memo's memory.
+        let mut set: Vec<usize> = Vec::new();
+        for &o in &direct {
+            self.keep(o, c, &mut set)?;
         }
-        self.merge_work += bound;
-
-        let mut set = direct;
+        let mut since_check = 0_usize;
         for &sc in &succ {
-            for &o in self.comp_sets[sc].iter() {
+            let source = Rc::clone(&self.comp_sets[sc]);
+            for &o in source.iter() {
                 on_step();
-                set.push(o);
+                since_check += 1;
+                if since_check == MERGE_DEADLINE_CHECK_INTERVAL {
+                    since_check = 0;
+                    if deadline_passed(deadline) {
+                        return Err(ScanTruncation::DeadlinePassed);
+                    }
+                }
+                self.keep(o, c, &mut set)?;
             }
         }
         set.sort_unstable();
-        set.dedup();
         self.comp_sets.push(Rc::new(set));
+        Ok(())
+    }
+
+    /// Keep output id `o` in component `c`'s set unless it is already there,
+    /// charging it against the merge ceiling.
+    fn keep(&mut self, o: usize, c: usize, set: &mut Vec<usize>) -> Result<(), ScanTruncation> {
+        if self.stamp[o] == c {
+            return Ok(());
+        }
+        if self.merge_work >= self.merge_ceiling {
+            return Err(ScanTruncation::CandidateCeiling);
+        }
+        self.stamp[o] = c;
+        self.merge_work += 1;
+        set.push(o);
         Ok(())
     }
 
