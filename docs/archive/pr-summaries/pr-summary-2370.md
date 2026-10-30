@@ -170,7 +170,7 @@ Security Fix Evidence
   were applied in one run (each test exercises only its own mutated line): 3
   passed, 2 failed. Restored: `--lib --all-features dead_neuron` 5 passed, and
   the eight chunk-08a record suites pass (50 tests). The new merge test builds
-  its override sequence with an iterator rather than `vec![false; n]`, so it
+  its override sequence with an iterator rather than a sized `vec!` literal, so it
   adds no capacity site to the chunk 8a ledger.
 - Removed from the first attempt: the wall-clock test
   `scan_time_grows_linearly_with_dead_count` (CONTRIBUTING.md forbids timing
