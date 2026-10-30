@@ -1606,6 +1606,13 @@ both must be restored together.
 - **SetWeight**: Correct the synapse's contribution.
 - Both applied atomically as a `coordinatedStructural` candidate.
 
+**Scan bounds (Issue #2367)**: Only the strongest 256 bias corrections and 256
+weight corrections (by estimated improvement) enter the pairing step, bounding it
+to 65,536 pairs. Each neuron's reachable outputs (within three hops) are computed
+once with a visited set, not once per pair, and at most 256 candidates are
+emitted (strongest first). The pairing step checks the analysis deadline and
+global cancellation once per bias row and returns the candidates found so far.
+
 **Expected improvement**: Addresses cases where individual `setBias` or
 `setWeight` candidates fail because only part of the degradation is corrected.
 
