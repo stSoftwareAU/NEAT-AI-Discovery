@@ -292,3 +292,7 @@ pub(crate) fn append_neuron_specs(
         convert: |detected| bimodal_neuron::bimodal_neurons_to_coordinated_candidates(&detected, &creature),
     );
 }
+
+#[cfg(test)]
+#[path = "neuron_specs_issue_2370_tests.rs"]
+mod neuron_specs_issue_2370_tests;

@@ -12,9 +12,12 @@ elements), and the distinct output ids kept across merges are capped at
 adds no direct outputs and has a single closed successor shares that successor's
 set without copying it, so a long live chain above a wide fan-out costs no
 per-component copy. The discovery spec uses the deadline-aware variant and logs a
-warning when a scan stops early. Version bump: `Cargo.toml` and `Cargo.lock`
-updated for this change; the merged commit records the final version. Closes
-#2370.
+warning when a scan stops early. Version bump: `Cargo.toml` and the crate's own
+`Cargo.lock` entry are at `0.74.298`, above Develop's `0.74.295`. The Develop
+merge had left the branch level with Develop, and CI's auto-increment skips a
+branch that already has an auto-increment commit (#2476), so the bump was made
+by hand. `0.74.296` and `0.74.297` are left to #2426 and #2429, which needed the
+same fix, so the three do not collide. Closes #2370.
 
 ## Spec
 
@@ -121,13 +124,25 @@ Security Fix Evidence
   `merge_ceiling_stop_keeps_the_candidate_completed_before_it` (two separate
   dead roots, ceiling 1: one candidate with its own output, plus
   `CandidateCeiling`).
-- Added `src/analysis/detection/dead_neuron_deadline_tests.rs` (3 in-crate tests):
+- Added `src/analysis/detection/dead_neuron_deadline_tests.rs` (4 in-crate tests):
   `phase_one_deadline_check_truncates_and_returns_no_candidates`,
-  `reachability_deadline_check_stops_mid_scan` and
+  `reachability_deadline_check_stops_mid_scan`,
   `reachability_deadline_stop_keeps_the_completed_candidate` (two roots,
   sequence `[false; 5]` then `true`: one completed candidate plus
-  `DeadlinePassed`). Their sequence-scripted deadline
-  seam makes each check the one that stops the scan.
+  `DeadlinePassed`) and `merge_loop_deadline_check_stops_a_large_merge` (dead
+  `d` → live `x`, `y`, each feeding the same 3,000 outputs; `false` for the 3
+  hidden-neuron checks and the 9,005 walk iterations, 6,002 edges plus 3,003
+  node pops, then `true` on the first merge-loop check at element 4,096 of
+  `d`'s 6,000-element merge: `DeadlinePassed` and no candidates). Their
+  sequence-scripted deadline seam makes each check the one that stops the scan.
+- Added `src/analysis/module_dispatch_specs/neuron_specs_issue_2370_tests.rs`
+  (wired from `neuron_specs.rs` with `#[cfg(test)] #[path = ...]`, like
+  `structural_specs_issue_2346_tests.rs`):
+  `dead_neuron_spec_stops_at_elapsed_deadline` builds the specs with
+  `append_neuron_specs`, picks `dead_neuron_detection` and calls
+  `(spec.detect_fn)()` directly, bypassing the dispatch pre-check. With no
+  deadline it returns `Some` with `detected_count >= 1`; with
+  `Some(SystemTime::UNIX_EPOCH)` it returns `None`.
 - Red checks run: resetting the memo per root turned
   `reachability_grows_linearly_with_dead_count` red. Disabling the set-sharing
   branch in `close()` turned `live_chain_above_wide_fan_out_does_not_copy_sets_per_component`
@@ -148,6 +163,15 @@ Security Fix Evidence
   3 passed, `--test detection dead` 19, `--test analysis dead` 16,
   `--test infrastructure topology` 6, the eight chunk-08a record suites all
   pass, and `cargo clippy --lib --tests --all-features -- -D warnings` is clean.
+- Red checks for review 5710280443: deleting the merge-loop deadline check in
+  `close()` turned `merge_loop_deadline_check_stops_a_large_merge` red, and
+  passing `&None` instead of `&deadline` in the `neuron_specs.rs` dead-neuron
+  spec turned `dead_neuron_spec_stops_at_elapsed_deadline` red. Both mutations
+  were applied in one run (each test exercises only its own mutated line): 3
+  passed, 2 failed. Restored: `--lib --all-features dead_neuron` 5 passed, and
+  the eight chunk-08a record suites pass (50 tests). The new merge test builds
+  its override sequence with an iterator rather than `vec![false; n]`, so it
+  adds no capacity site to the chunk 8a ledger.
 - Removed from the first attempt: the wall-clock test
   `scan_time_grows_linearly_with_dead_count` (CONTRIBUTING.md forbids timing
   assertions in tests); the step-count tests above replace it.
@@ -156,12 +180,8 @@ Security Fix Evidence
   `issue_481_*` (`--test analysis dead`, 16 passed),
   `tests/infrastructure/issue_754_topology_cache.rs` (`--test infrastructure
   topology`, 6 passed).
-- Not covered by a test: the discovery spec in `neuron_specs.rs` passing
-  `&deadline`. I searched the tests that reach spec construction
-  (`tests/detection/issue_571_co_adaptation_detection.rs`,
-  `src/analysis/module_dispatch_specs/mod.rs`); none runs a spec with an elapsed
-  deadline, so the `detect:` block is `exempt (untestable)`: no existing harness
-  can stage an elapsed deadline through the dispatch.
+- The discovery spec in `neuron_specs.rs` passing `&deadline` is covered by
+  `dead_neuron_spec_stops_at_elapsed_deadline` (see above).
 - Docs: `docs/DISCOVERY_TYPES.md` "Dead Neuron Detection" has a
   `Scan bounds (Issue #2370)` paragraph describing the shared pass, the set
   sharing, the merged-work cap and both truncation reasons;
@@ -169,7 +189,8 @@ Security Fix Evidence
   have no reachability claims. The module docs in `dead_neuron.rs` were updated to
   match.
 - Coverage reconciliation: updated `docs/audits/security-sweep-chunk-08a-detection-neuron.md`
-  for the added deadline test module (54 files), the three current capacity
+  for the added deadline test module (55 files at head, after the Develop
+  merge brought in #2374's test module), the three current capacity
   sites and the shared SCC traversal. Updated the three existing ledger contracts,
   `tests/issue_2154_chunk_08a_finalisation.rs`,
   `tests/issue_2280_chunk_08a_ledger_scaffold.rs` and
@@ -180,7 +201,9 @@ Security Fix Evidence
   update, removing the new graph inventory entry or ledger row, misnaming either
   SCC capacity binding, restoring the deleted traversal expectation, and
   misnaming the SCC traversal row each made the corresponding contract red.
-  Restoring the scaffold count to 53 or removing its new section entry each
+  Restoring the scaffold count to 54 (Develop's count, before this PR's deadline
+  test module; re-run on this head after review 5710280443: 4 passed, 2 failed)
+  or removing its new section entry each
   made its corresponding contract red too. All three copies of the inventory
   rule were updated together.
 - Twin-rule search: the deadline-aware scan pattern mirrors
@@ -192,9 +215,11 @@ Security Fix Evidence
   Cargo regenerated the lockfile from the base's resolved graph and the merged
   manifest, retaining its dependency versions and updating only the crate version.
 - Merge reconciliation: retained #2368's skip-connection remediation alongside
-  #2370's dead-neuron remediation in the audit ledger. The combined inventory is
-  54 files and 81 production capacity sites (78 minus one for #2370, plus four
-  for #2368). No source conflict required a behaviour change.
+  #2370's dead-neuron remediation in the audit ledger, and the later Develop
+  merge brought in #2374. At head the combined inventory is 55 files and 81
+  production capacity sites, and the ledger's capacity grep prints 83 (81
+  production plus the test-only hits). No source conflict required a behaviour
+  change.
 - Merge validation: the existing graph ledger suite (5 tests) and scaffold suite
   (6 tests) passed, compiled directly with `rustc --test` and
   `CARGO_MANIFEST_DIR` set to the repository root. `cargo metadata` successfully

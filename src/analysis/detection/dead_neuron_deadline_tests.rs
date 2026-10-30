@@ -238,3 +238,120 @@ fn reachability_deadline_stop_keeps_the_completed_candidate() {
         "the kept candidate carries its own single output"
     );
 }
+
+/// Number of outputs `x` and `y` each feed in [`merge_scan_creature`]. Chosen
+/// so `d`'s merge scans `2 * MERGE_FAN_OUTPUTS` = 6,000 successor elements,
+/// past the first in-merge deadline check at element 4,096.
+const MERGE_FAN_OUTPUTS: usize = 3_000;
+
+/// Dead `d` -> live `x`, `y`; `x` and `y` each feed the same
+/// [`MERGE_FAN_OUTPUTS`] outputs. Only `d`'s close merges non-empty successor
+/// sets (`x`'s and `y`'s, 3,000 ids each), so the merge loop's periodic
+/// deadline check is reached only there.
+fn merge_scan_creature() -> (CreatureJson, Vec<(String, Vec<DiscoverRecord>)>) {
+    let neuron = |uuid: &str, neuron_type: &str| NeuronJson {
+        uuid: uuid.to_string(),
+        neuron_type: neuron_type.to_string(),
+        squash: "LOGISTIC".to_string(),
+        bias: 0.0,
+    };
+    let synapse = |from: &str, to: &str| SynapseJson {
+        from_uuid: from.to_string(),
+        to_uuid: to.to_string(),
+        weight: 0.5,
+        synapse_type: None,
+    };
+    // A live neuron: alternating 0 / 1 activations, far above every
+    // dead-neuron threshold.
+    let live_records = |uuid: &str| -> (String, Vec<DiscoverRecord>) {
+        let recs = (0..SAMPLES)
+            .map(|idx| DiscoverRecord {
+                obs_index: idx,
+                neuron_uuid: uuid.to_string(),
+                value: Some(0.0),
+                activation: if idx % 2 == 0 { 0.0 } else { 1.0 },
+                errors: vec![0.0],
+            })
+            .collect();
+        (uuid.to_string(), recs)
+    };
+
+    let outputs: Vec<String> = (0..MERGE_FAN_OUTPUTS).map(|i| format!("out-{i}")).collect();
+    let mut neurons = vec![
+        neuron("input-0", "input"),
+        neuron("d", "hidden"),
+        neuron("x", "hidden"),
+        neuron("y", "hidden"),
+    ];
+    neurons.extend(outputs.iter().map(|o| neuron(o, "output")));
+
+    let mut synapses = vec![
+        synapse("input-0", "d"),
+        synapse("d", "x"),
+        synapse("d", "y"),
+    ];
+    for o in &outputs {
+        synapses.push(synapse("x", o));
+        synapses.push(synapse("y", o));
+    }
+
+    let creature = CreatureJson {
+        neurons,
+        synapses,
+        input: 1,
+        output: MERGE_FAN_OUTPUTS,
+    };
+    (
+        creature,
+        vec![records_for("d"), live_records("x"), live_records("y")],
+    )
+}
+
+/// The deadline check inside the successor merge loop (every
+/// `MERGE_DEADLINE_CHECK_INTERVAL` scanned elements) stops a large merge.
+///
+/// Call order of `deadline_passed`:
+/// - Phase 1: one check per hidden neuron (`d`, `x`, `y`): 3.
+/// - Phase 2, the walk from `d`: one check per main-loop iteration. That is
+///   one per examined edge (2 from `d`, 3,000 from `x`, 3,000 from `y`: 6,002)
+///   plus one per node pop (`d`, `x`, `y` and the 3,000 outputs: 3,003), so
+///   9,005 in all, every one `false`. `x` merges only the outputs' empty sets,
+///   so its close scans no successor element.
+/// - `d`'s close, run inside its own pop iteration, then scans `x`'s 3,000
+///   ids and `y`'s 3,000. Its first merge-loop check falls at element 4,096,
+///   and that is the call scripted `true`.
+///
+/// Without the merge-loop check the scan would finish and return `d` with no
+/// truncation.
+#[test]
+#[serial]
+fn merge_loop_deadline_check_stops_a_large_merge() {
+    let (creature, records) = merge_scan_creature();
+
+    let walk_iterations = 6_002 + 3_003;
+    // Built with an iterator, not `vec![false; n]`, which the chunk 8a ledger
+    // would count as a capacity site.
+    let sequence: Vec<bool> = std::iter::repeat_n(false, 3 + walk_iterations)
+        .chain(std::iter::once(true))
+        .collect();
+    let _guard = DeadlineOverrideGuard::with_sequence(sequence);
+
+    let scan = detect_dead_neurons_observed(
+        &creature,
+        &records,
+        None,
+        &unused_live_deadline(),
+        usize::MAX,
+        || {},
+    );
+
+    assert_eq!(
+        scan.truncation,
+        Some(ScanTruncation::DeadlinePassed),
+        "the merge-loop deadline check must stop d's 6,000-element merge"
+    );
+    assert!(
+        scan.candidates.is_empty(),
+        "d's merge did not finish, so it must not be returned as a candidate"
+    );
+}
