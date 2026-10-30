@@ -48,4 +48,8 @@ flowchart LR
 - Audit-record pinning tests re-run on the final head after the ledger edit: `issue_2154_chunk_08a_finalisation`, `issue_2280_chunk_08a_ledger_scaffold`, `issue_2281_chunk_08a_shared_sweep`, `issue_2282_chunk_08a_graph_sweep`, `issue_2284_chunk_08a_per_neuron_a_sweep`, `issue_2294_chunk_08a_pairwise_sweep`, `issue_2298_chunk_08a_per_neuron_b_sweep`, `issue_2300_chunk_08a_neuron_sweep`.
 - No existing test assertion was removed or edited.
 - Docs: `docs/audits/security-sweep-chunk-08a-detection-neuron.md` rows for the four detectors now record the lookup as fixed by #2377 (row structure and cancellation cells unchanged).
-- Checks not run: `cargo clippy` through the normal proxy (the worker toolchain's `cargo-clippy` is not applicable); clippy was run on the new test through `clippy-driver` and passed. See the quality-gate note below for the full gate.
+- Checks not run: none; the full gate passed (see Quality gate below).
+
+## Quality gate
+
+`./quality.sh < /dev/null` was run on the final head and finished with "All quality checks passed!" (exit 0).
