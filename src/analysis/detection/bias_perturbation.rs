@@ -30,6 +30,7 @@
 //!   for a full regime change.
 
 #![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
+use super::helpers::build_record_map;
 use crate::analysis::constants::MIN_DISCOVERY_SAMPLE_COUNT as MIN_SAMPLES;
 use crate::types::DiscoverRecord;
 use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson};
@@ -145,12 +146,13 @@ pub fn detect_bias_perturbation_candidates(
     neuron_records: &[(String, impl AsRef<[DiscoverRecord]>)],
 ) -> Vec<BiasPerturbationCandidate> {
     let mut candidates = Vec::with_capacity(hidden_neurons.len());
+    let records_map = build_record_map(neuron_records);
 
     for (uuid, squash, bias) in hidden_neurons {
-        let Some((_id, records)) = neuron_records.iter().find(|(u, _)| u == uuid) else {
+        // Issue #2377: O(1) lookup, not a per-neuron linear scan of neuron_records.
+        let Some(records) = records_map.get(uuid.as_str()).copied() else {
             continue;
         };
-        let records = records.as_ref();
 
         if records.len() < MIN_SAMPLES {
             continue;
