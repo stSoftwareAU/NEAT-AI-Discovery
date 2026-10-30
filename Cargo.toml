@@ -73,6 +73,10 @@ name = "synapse_counts"
 harness = false
 
 [[bench]]
+name = "issue_2379_synapse_rescans"
+harness = false
+
+[[bench]]
 name = "neuron_interning"
 harness = false
 

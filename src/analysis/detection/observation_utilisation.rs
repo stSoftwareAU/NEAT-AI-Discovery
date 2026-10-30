@@ -22,6 +22,10 @@
 //! input and its downstream targets. The gating neuron uses a step-like
 //! activation to pass through the effective range and block sentinel values.
 
+use std::collections::HashMap;
+use std::time::SystemTime;
+
+use crate::analysis::utils::deadline_passed;
 use crate::CreatureJson;
 use crate::types::DiscoverRecord;
 use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson};
@@ -112,37 +116,108 @@ pub fn detect_underutilised_observations(
 ///
 /// For each underutilised input, recommends a bias adjustment on downstream
 /// synapses to centre the effective range around zero, improving gradient flow.
+/// Each target keeps the first matching synapse weight, including when duplicate
+/// source-target synapses are present.
 pub fn observation_utilisation_to_coordinated_candidates(
     observations: &[UnderutilisedObservation],
     creature: &CreatureJson,
 ) -> Vec<CoordinatedStructuralCandidateJson> {
+    observation_utilisation_to_coordinated_candidates_with_deadline(observations, creature, &None)
+        .candidates
+}
+
+/// Why observation candidate conversion stopped early.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ObservationUtilisationStop {
+    /// The analysis deadline elapsed or cancellation was requested.
+    DeadlinePassed,
+}
+
+/// Candidates produced by a deadline-aware observation conversion.
+#[derive(Debug, Clone)]
+pub struct ObservationUtilisationScan {
+    /// Candidates completed before the scan stopped.
+    pub candidates: Vec<CoordinatedStructuralCandidateJson>,
+    /// Set when the deadline or cancellation stopped the scan.
+    pub stop: Option<ObservationUtilisationStop>,
+}
+
+/// Deadline-aware conversion used by the discovery dispatcher.
+///
+/// Topology construction is linear in the synapse count. Deadline checks run
+/// before preprocessing, periodically while indexing synapses, per observation,
+/// and periodically while processing high-fan-out inputs. Candidates completed
+/// before a stop remain in the result.
+pub fn observation_utilisation_to_coordinated_candidates_with_deadline(
+    observations: &[UnderutilisedObservation],
+    creature: &CreatureJson,
+    deadline: &Option<SystemTime>,
+) -> ObservationUtilisationScan {
+    observation_utilisation_to_coordinated_candidates_observed(
+        observations,
+        creature,
+        deadline,
+        || {},
+    )
+}
+
+const DEADLINE_CHECK_INTERVAL: usize = 64;
+
+fn observation_utilisation_to_coordinated_candidates_observed(
+    observations: &[UnderutilisedObservation],
+    creature: &CreatureJson,
+    deadline: &Option<SystemTime>,
+    mut on_synapse: impl FnMut(),
+) -> ObservationUtilisationScan {
     let mut candidates = Vec::new();
+    if deadline_passed(deadline) {
+        return ObservationUtilisationScan {
+            candidates,
+            stop: Some(ObservationUtilisationStop::DeadlinePassed),
+        };
+    }
+
+    // Keep an ordered edge list for output ordering and a first-weight index to
+    // preserve the previous duplicate-synapse behaviour.
+    let mut outgoing: HashMap<&str, Vec<(&str, f32)>> = HashMap::new();
+    let mut first_weights: HashMap<(&str, &str), f32> = HashMap::new();
+    for (index, synapse) in creature.synapses.iter().enumerate() {
+        on_synapse();
+        if index % DEADLINE_CHECK_INTERVAL == 0 && deadline_passed(deadline) {
+            return ObservationUtilisationScan {
+                candidates,
+                stop: Some(ObservationUtilisationStop::DeadlinePassed),
+            };
+        }
+        let from = synapse.from_uuid.as_str();
+        let to = synapse.to_uuid.as_str();
+        let weight = *first_weights.entry((from, to)).or_insert(synapse.weight);
+        outgoing.entry(from).or_default().push((to, weight));
+    }
 
     for obs in observations {
-        // Find downstream targets of this input neuron
-        let downstream_targets: Vec<&str> = creature
-            .synapses
-            .iter()
-            .filter(|s| s.from_uuid == obs.neuron_uuid)
-            .map(|s| s.to_uuid.as_str())
-            .collect();
-
-        if downstream_targets.is_empty() {
-            continue;
+        if deadline_passed(deadline) {
+            return ObservationUtilisationScan {
+                candidates,
+                stop: Some(ObservationUtilisationStop::DeadlinePassed),
+            };
         }
+        let Some(downstream_targets) = outgoing.get(obs.neuron_uuid.as_str()) else {
+            continue;
+        };
 
         // Compute a bias offset to centre the effective range
         let effective_centre = (obs.effective_min + obs.effective_max) / 2.0;
 
         // For each downstream target, recommend adjusting the synapse weight
         // to compensate for the sentinel-induced offset
-        for &target_uuid in &downstream_targets {
-            // Find the current synapse weight
-            let current_weight = creature
-                .synapses
-                .iter()
-                .find(|s| s.from_uuid == obs.neuron_uuid && s.to_uuid == target_uuid)
-                .map_or(0.0, |s| s.weight);
+        for (index, &(target_uuid, current_weight)) in downstream_targets.iter().enumerate() {
+            if index % DEADLINE_CHECK_INTERVAL == 0 && deadline_passed(deadline) {
+                return ObservationUtilisationScan {
+                    candidates,
+                    stop: Some(ObservationUtilisationStop::DeadlinePassed),
+                };
+            }
 
             if current_weight.abs() < 1e-8 {
                 continue;
@@ -173,7 +248,10 @@ pub fn observation_utilisation_to_coordinated_candidates(
         }
     }
 
-    candidates
+    ObservationUtilisationScan {
+        candidates,
+        stop: None,
+    }
 }
 
 #[cfg(test)]

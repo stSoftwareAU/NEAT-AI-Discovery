@@ -78,7 +78,7 @@ pub(crate) fn append_scoring_specs(
         records: cache.load_records_for_neuron_types(&creature, &["input"]),
         guard_records,
         detect: |records| observation_utilisation::detect_underutilised_observations(&creature, &records),
-        convert: |detected| observation_utilisation::observation_utilisation_to_coordinated_candidates(&detected, &creature),
+        convert: |detected| observation_utilisation::observation_utilisation_to_coordinated_candidates_with_deadline(&detected, &creature, &deadline).candidates,
     );
 
     // Issue #435: Input sensitivity analysis for dominant inputs
@@ -88,7 +88,7 @@ pub(crate) fn append_scoring_specs(
         guard_records,
         detect: |records| {
             let config = input_sensitivity::InputSensitivityConfig::default();
-            input_sensitivity::detect_dominant_inputs(&creature, &records, &config)
+            input_sensitivity::detect_dominant_inputs_with_deadline(&creature, &records, &config, &deadline).candidates
         },
         convert: |detected| input_sensitivity::dominant_inputs_to_coordinated_candidates(&detected),
     );

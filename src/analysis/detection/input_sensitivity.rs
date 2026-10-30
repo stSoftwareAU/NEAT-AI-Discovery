@@ -28,7 +28,9 @@
 
 #![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use std::collections::{HashMap, HashSet};
+use std::time::SystemTime;
 
+use crate::analysis::utils::deadline_passed;
 use crate::types::DiscoverRecord;
 use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson, CreatureJson};
 
@@ -153,6 +155,56 @@ pub fn detect_dominant_inputs(
     neuron_records: &[(String, impl AsRef<[DiscoverRecord]>)],
     config: &InputSensitivityConfig,
 ) -> Vec<DominantInputCandidate> {
+    detect_dominant_inputs_with_deadline(creature, neuron_records, config, &None).candidates
+}
+
+/// Why dominant-input detection stopped early.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DominantInputStop {
+    /// The analysis deadline elapsed or cancellation was requested.
+    DeadlinePassed,
+}
+
+/// Candidates completed by a deadline-aware dominant-input scan.
+#[derive(Debug, Clone)]
+pub struct DominantInputScan {
+    /// Candidates found before the scan stopped, in production sort order.
+    pub candidates: Vec<DominantInputCandidate>,
+    /// Set when the deadline or cancellation stopped the scan.
+    pub stop: Option<DominantInputStop>,
+}
+
+/// Run dominant-input detection with analysis deadline and cancellation checks.
+///
+/// Output-connected sources are indexed during the synapse-map pass, so each
+/// hidden target is checked by set membership rather than rescanning its fan-out.
+/// A topology stop returns no candidates because the index is incomplete; a stop
+/// during input processing keeps candidates already completed.
+pub fn detect_dominant_inputs_with_deadline(
+    creature: &CreatureJson,
+    neuron_records: &[(String, impl AsRef<[DiscoverRecord]>)],
+    config: &InputSensitivityConfig,
+    deadline: &Option<SystemTime>,
+) -> DominantInputScan {
+    detect_dominant_inputs_observed(creature, neuron_records, config, deadline, || {})
+}
+
+const DEADLINE_CHECK_INTERVAL: usize = 64;
+
+fn detect_dominant_inputs_observed(
+    creature: &CreatureJson,
+    neuron_records: &[(String, impl AsRef<[DiscoverRecord]>)],
+    config: &InputSensitivityConfig,
+    deadline: &Option<SystemTime>,
+    mut on_work: impl FnMut(),
+) -> DominantInputScan {
+    let mut candidates = Vec::new();
+    if deadline_passed(deadline) {
+        return DominantInputScan {
+            candidates,
+            stop: Some(DominantInputStop::DeadlinePassed),
+        };
+    }
     // Build records lookup
     let records_map = build_record_map(neuron_records);
 
@@ -174,17 +226,34 @@ pub fn detect_dominant_inputs(
 
     // Build synapse lookup: from_uuid -> [(to_uuid, weight)]
     let mut synapse_map: HashMap<&str, Vec<(&str, f32)>> = HashMap::new();
-    for syn in &creature.synapses {
+    let mut output_connected_sources: HashSet<&str> = HashSet::new();
+    for (index, syn) in creature.synapses.iter().enumerate() {
+        on_work();
+        if index % DEADLINE_CHECK_INTERVAL == 0 && deadline_passed(deadline) {
+            return DominantInputScan {
+                candidates,
+                stop: Some(DominantInputStop::DeadlinePassed),
+            };
+        }
         synapse_map
             .entry(syn.from_uuid.as_str())
             .or_default()
             .push((syn.to_uuid.as_str(), syn.weight));
+        if output_uuids.contains(syn.to_uuid.as_str()) {
+            output_connected_sources.insert(syn.from_uuid.as_str());
+        }
     }
 
-    let mut candidates = Vec::with_capacity(input_uuids.len());
+    candidates.reserve(input_uuids.len());
 
     // For each input neuron, analyse its sensitivity to each connected output
     for input_uuid in &input_uuids {
+        if deadline_passed(deadline) {
+            return DominantInputScan {
+                candidates,
+                stop: Some(DominantInputStop::DeadlinePassed),
+            };
+        }
         let Some(input_records) = records_map.get(*input_uuid) else {
             continue;
         };
@@ -207,20 +276,18 @@ pub fn detect_dominant_inputs(
             continue;
         };
 
-        for &(target_uuid, weight) in connections {
+        for (index, &(target_uuid, weight)) in connections.iter().enumerate() {
+            on_work();
+            if index % DEADLINE_CHECK_INTERVAL == 0 && deadline_passed(deadline) {
+                return DominantInputScan {
+                    candidates,
+                    stop: Some(DominantInputStop::DeadlinePassed),
+                };
+            }
             // Focus on connections to outputs or high-impact hidden neurons
             let is_output = output_uuids.contains(target_uuid);
-            if !is_output {
-                // For hidden neurons, check if they connect to outputs
-                let Some(hidden_connections) = synapse_map.get(target_uuid) else {
-                    continue;
-                };
-                if !hidden_connections
-                    .iter()
-                    .any(|(to, _)| output_uuids.contains(to))
-                {
-                    continue;
-                }
+            if !is_output && !output_connected_sources.contains(target_uuid) {
+                continue;
             }
 
             // Get target records
@@ -309,7 +376,10 @@ pub fn detect_dominant_inputs(
     // Sort by estimated improvement (best first)
     candidates.sort_by(|a, b| b.estimated_improvement.total_cmp(&a.estimated_improvement));
 
-    candidates
+    DominantInputScan {
+        candidates,
+        stop: None,
+    }
 }
 
 /// Detect threshold effects where small input changes cause large output changes.
