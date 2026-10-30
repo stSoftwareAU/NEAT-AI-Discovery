@@ -241,7 +241,11 @@ range must encode all upstream information.
 1. **Add parallel neuron**: Create a new hidden neuron sharing a subset of inputs/outputs
    to increase capacity at the bottleneck
 2. **Add bypass synapse**: Add a direct connection from an upstream neuron to a downstream
-   neuron, reducing dependency on the bottleneck
+   neuron, reducing dependency on the bottleneck. The bypass weight is
+   `upstream_weight × downstream_weight × 0.5` (the strongest upstream synapse into the
+   bottleneck times the bottleneck's synapse to that downstream neuron), and a bypass whose
+   weight is not finite (two finite but huge weights whose product overflows `f32`) is
+   skipped rather than emitted as an `addSynapse` with a ±∞ weight (Issue #2375).
 
 **Output**: Bottleneck candidates appear in `coordinatedStructuralCandidates` with
 `addNeuron` and/or `addSynapse` operations.

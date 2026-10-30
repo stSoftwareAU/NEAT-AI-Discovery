@@ -225,7 +225,8 @@ fn bottleneck_parallel_neuron_uuid(bottleneck_uuid: &str, index: usize, salt: u3
 /// 1. **Add parallel neuron**: A new hidden neuron sharing a subset of inputs and outputs
 ///    to widen the bottleneck.
 /// 2. **Add bypass synapse**: A direct connection from an upstream neuron to a downstream
-///    neuron, reducing dependency on the bottleneck.
+///    neuron, reducing dependency on the bottleneck. A bypass whose weight
+///    (`upstream * downstream * 0.5`) is not finite is skipped (Issue #2375).
 ///
 /// # Arguments
 /// * `candidates` - Detected bottleneck neurons.
@@ -361,6 +362,10 @@ pub fn bottleneck_neurons_to_coordinated_candidates(
                         .synapse_weight(&c.neuron_uuid, downstream_uuid)
                         .unwrap_or(0.1);
                     let bypass_weight = upstream_weight * downstream_weight * 0.5;
+                    // Issue #2375: finite weights whose product overflows f32 must not emit a ±inf AddSynapse; the gain gates test only the gain.
+                    if !bypass_weight.is_finite() {
+                        continue;
+                    }
 
                     results.push(CoordinatedStructuralCandidateJson {
                         remove_neuron_compensation: None,
