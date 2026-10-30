@@ -1179,14 +1179,26 @@ weight.
 
 **How it works**:
 
-1. For each target neuron, collect all existing synapse sources with recorded
-   activation samples.
-2. For each pair of existing sources, compute the Pearson activation
+1. For each target neuron, collect the existing synapse sources with at least
+   30 recorded activation samples, keeping only the 64 with the largest
+   absolute weight (see Scan bounds).
+2. For each pair of those sources, compute the Pearson activation
    correlation.
 3. If correlation ≥ 0.85, the weaker synapse (by absolute weight) is a prune
    candidate.
 4. The survivor's weight is renormalised to `keep_weight + prune_weight` (sum
    of both weights).
+
+**Scan bounds (Issue #2374)**: the pair scan is capped per target at the 64
+existing incoming paths with the largest |weight| (at most 2,016 pairs per
+target); the weaker paths beyond those 64 are skipped and a warning is logged.
+The scan stops once 256 redundant-path candidates have been emitted. The
+analysis deadline and the global cancellation flag are checked before every
+pair; if either is hit the scan returns its partial results and logs a warning
+naming the stop reason (`DeadlinePassed` for the deadline, `CandidateCeiling`
+for the candidate cap). See
+[docs/discoveries/redundant-path.md](discoveries/redundant-path.md#scan-bounds)
+for details.
 
 **Example scenario**:
 ```mermaid
