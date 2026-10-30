@@ -90,16 +90,19 @@ Security Fix Evidence
 - Regression test:
   `tests/issue_2370_dead_neuron_reachability.rs::reachability_grows_linearly_with_dead_count`
   runs the same dead chain at N=64 and N=256 and counts reachability steps through
-  the `detect_dead_neurons_observed` observer: 128 and 512 steps (exactly 4x).
+  the `detect_dead_neurons_observed` observer: 192 and 768 steps (exactly 4x;
+  3N, with one step per output name handed to a candidate since b982e7c, re-measured
+  with a printing observer).
   Resetting the memo per dead neuron (the old per-neuron work profile) gives a
   roughly 16x growth and turns the test red. Against the base branch the test file
   does not compile, because `detect_dead_neurons_observed` does not exist there;
   that is the base-branch failure, not a runtime red.
 - Memory regression test:
   `tests/issue_2370_dead_neuron_reachability.rs::live_chain_above_wide_fan_out_does_not_copy_sets_per_component`
-  (one dead root, a live chain, then 64 outputs: 256 steps at N=64, 640 at N=256;
-  disabling the sharing branch gave 17,024 steps and turned it red against its
-  `N × outputs` bound of 16,384).
+  (one dead root, a live chain, then 64 outputs: 320 steps at N=64, 704 at N=256,
+  that is 2(N+64)+64 including `d`'s 64 output names; disabling the sharing
+  branch gave 17,088 steps at N=256, re-measured at b982e7c, and turned it red
+  against its `N × outputs` bound of 16,384).
 - The original trigger is closed with no equivalent bypass: the per-neuron DFS
   and its per-call allocations are removed, so reachability work no longer
   multiplies by the dead count; cycles are handled by the SCC pass (tested), the
@@ -134,7 +137,9 @@ Security Fix Evidence
   `candidate_output_names_are_charged_to_the_ceiling` (a dead chain of 4 above
   3 outputs, ceiling 8: the memo keeps 3 ids, so the names, 3 per candidate,
   stop the scan after two candidates with `CandidateCeiling`; unbounded, all 4
-  complete and the observer counts every name).
+  complete and the observer sees exactly 24 steps: 6 examined edges, 6 close
+  scans and 12 names; with name counting removed it sees 12 and the test
+  fails).
 - Added `src/analysis/detection/dead_neuron_deadline_tests.rs` (5 in-crate tests):
   `phase_one_deadline_check_truncates_and_returns_no_candidates`,
   `reachability_deadline_check_stops_mid_scan`,
@@ -162,7 +167,8 @@ Security Fix Evidence
 - Red checks run: resetting the memo per root turned
   `reachability_grows_linearly_with_dead_count` red. Disabling the set-sharing
   branch in `close()` turned `live_chain_above_wide_fan_out_does_not_copy_sets_per_component`
-  red (17,024 steps against 16,384); its `4n < 6n` assertion did not fail, the
+  red (17,088 steps against 16,384 at b982e7c; 17,024 before names were
+  counted); its `4n < 6n` assertion did not fail, the
   `N × outputs` bound is the discriminating one. Disabling the hidden-neuron
   deadline check turned both deadline unit tests red; disabling the walk's
   deadline check turned `reachability_deadline_check_stops_mid_scan` red.

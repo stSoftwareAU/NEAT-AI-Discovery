@@ -634,7 +634,10 @@ fn candidate_output_names_are_charged_to_the_ceiling() {
     assert!(capped.candidates.iter().all(|c| c.connected_outputs == all));
 
     // Positive control: with no ceiling every chain neuron completes, and the
-    // observer sees each of the 4 x 3 names handed out.
+    // observer sees each of the 4 x 3 names handed out. Whichever root comes
+    // first, the walk examines each of the 6 edges once and the closes scan
+    // them once more (6 + 6); the 12 names make 24. Without name counting the
+    // total would be 12.
     let mut steps = 0_usize;
     let unbounded =
         detect_dead_neurons_observed(&creature, &records, None, &None, usize::MAX, || {
@@ -648,8 +651,9 @@ fn candidate_output_names_are_charged_to_the_ceiling() {
             .iter()
             .all(|c| c.connected_outputs == all)
     );
-    assert!(
-        steps >= 4 * all.len(),
-        "the observer must count every output name handed to a candidate, saw {steps} steps"
+    assert_eq!(
+        steps,
+        6 + 6 + 4 * all.len(),
+        "the observer must count every output name handed to a candidate"
     );
 }
