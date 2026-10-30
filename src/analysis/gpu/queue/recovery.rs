@@ -81,6 +81,19 @@ pub fn is_memory_exhaustion_error(error: &anyhow::Error) -> bool {
     msg.contains("out of memory") || msg.contains("allocation failed")
 }
 
+/// Check whether an error is one of the crate's own GPU wait-timeout messages
+/// (Issue #2365).
+///
+/// The buffer-map and poll waits in `device.rs` report "… timed out after Xs.
+/// The GPU driver may be unresponsive." That text also matches
+/// [`is_device_lost_error`], so a wait that ran out of a request's time budget
+/// must be told apart from a genuine wedge before the device-lost path sees it.
+pub(crate) fn is_wait_timeout_error(error: &anyhow::Error) -> bool {
+    format!("{error:#}")
+        .to_lowercase()
+        .contains("timed out after")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -245,5 +258,39 @@ mod tests {
     fn test_is_memory_exhaustion_error_case_insensitive() {
         let err = anyhow::anyhow!("OUT OF MEMORY");
         assert!(is_memory_exhaustion_error(&err));
+    }
+
+    /// Issue #2365: the wait-timeout errors `device.rs` produces, built through
+    /// the same `wait_timeout_error` its three waits call, so rewording the
+    /// message at its source turns this test red.
+    #[test]
+    fn test_is_wait_timeout_error_matches_crate_wait_messages() {
+        use crate::analysis::gpu::device::{GpuWaitKind, wait_timeout_error};
+        use std::time::Duration;
+
+        for kind in GpuWaitKind::ALL {
+            for label in [None, Some("warm-up")] {
+                for timeout in [Duration::ZERO, Duration::from_millis(12_500)] {
+                    let err = wait_timeout_error(kind, timeout, label);
+                    assert!(
+                        is_wait_timeout_error(&err),
+                        "Expected wait-timeout match for: {err:#}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// Issue #2365: genuine device loss is not a wait timeout, so it keeps
+    /// routing to device recovery.
+    #[test]
+    fn test_is_wait_timeout_error_ignores_device_loss() {
+        for msg in ["Device is lost", "device lost after timeout"] {
+            let err = anyhow::anyhow!("{msg}");
+            assert!(
+                !is_wait_timeout_error(&err),
+                "Should not detect a wait timeout for: {msg}"
+            );
+        }
     }
 }
