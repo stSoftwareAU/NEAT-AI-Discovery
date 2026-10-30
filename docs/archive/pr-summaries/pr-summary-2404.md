@@ -23,9 +23,10 @@ Version bump: `Cargo.toml` updated for this change; the merged commit records th
 
 Backend-only change; no UI. Tests: `tests/issue_2404_watchdog_abort_delay_cap.rs` (7 tests, `#[serial]`).
 
-- Bug-path input from the issue: `u64::MAX` and `2000000000` both return exactly the cap.
-- Boundary: `60` passes through, `61` clamps to 60.
-- Warn: `clamping_logs_a_warning_naming_variable_value_and_cap` asserts one WARN with the variable name, the value and the cap; `in_range_unset_and_unparsable_values_do_not_warn` asserts none for 0, 5, 60, `abc` and unset.
+- Bug-path input from the issue: `tests/issue_2404_watchdog_abort_delay_cap.rs::huge_values_are_clamped_to_the_cap` — `u64::MAX` and `2000000000` both return exactly the cap.
+- Boundary: `tests/issue_2404_watchdog_abort_delay_cap.rs::cap_boundary_is_accepted_and_one_above_clamps` — `60` passes through, `61` clamps to 60.
+- Warn: `tests/issue_2404_watchdog_abort_delay_cap.rs::clamping_logs_a_warning_naming_variable_value_and_cap` asserts one WARN with the variable name, the value and the cap; `tests/issue_2404_watchdog_abort_delay_cap.rs::in_range_unset_and_unparsable_values_do_not_warn` asserts none for 0, 5, 60, `abc` and unset.
+- Pass-through and defaults: `tests/issue_2404_watchdog_abort_delay_cap.rs::in_range_values_pass_through`, `tests/issue_2404_watchdog_abort_delay_cap.rs::unset_and_unparsable_default_to_two_seconds`, `tests/issue_2404_watchdog_abort_delay_cap.rs::cap_is_sixty_seconds`.
 
 ```mermaid
 flowchart LR
