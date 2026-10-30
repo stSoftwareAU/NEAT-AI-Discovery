@@ -5,7 +5,7 @@ performance regressions using Criterion.
 
 ## 🔍 Overview
 
-The project includes 45 Criterion benchmark suites in `benches/`. The
+The project includes 44 Criterion benchmark suites in `benches/`. The
 `benchmark_compare.sh` script automates baseline saving and regression
 detection by leveraging Criterion's built-in comparison features.
 
