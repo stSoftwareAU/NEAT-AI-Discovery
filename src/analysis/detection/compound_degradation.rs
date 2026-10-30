@@ -28,10 +28,11 @@
 //! improvement) are kept, bounding pairs to 256·256 = 65,536. Reachable-output
 //! sets are computed once per distinct neuron with a visited set (`O(V+E)`
 //! time each), not once per pair, and each is retained as an output bitset
-//! over a dense output index ([`OutputBitset`]), so the retained memory is at
-//! most `512 × O / 8` bytes for `O` outputs (about 64 MB at
-//! `validate_creature`'s 1,000,000 cap) rather than one hash set of output
-//! UUIDs per neuron. When either correction list is empty no pair can exist,
+//! over a dense output index ([`OutputBitset`]). Each bitset's words are
+//! allocated once, to exactly its length of at most `O / 64 + 1` words for `O`
+//! outputs, so the retained memory is at most `512 × (O / 64 + 1) × 8` bytes,
+//! about `512 × O / 8` (about 64 MB at `validate_creature`'s 1,000,000 cap),
+//! rather than one hash set of output UUIDs per neuron. When either correction list is empty no pair can exist,
 //! so no reachable set is computed at all. Emitted candidates are capped at
 //! [`MAX_COMPOUND_DEGRADATION_CANDIDATES`]. The deadline-aware entry point
 //! [`detect_compound_bias_weight_degradations_with_deadline`] checks the shared
@@ -282,7 +283,10 @@ fn detect_compound_bias_weight_degradations_observed(
         }
         on_walk();
         let reached = reachable_outputs(uuid, &downstream_of, &output_uuids, 3);
-        reachable.insert(uuid, OutputBitset::from_outputs(&reached, &output_index));
+        reachable.insert(
+            uuid,
+            OutputBitset::from_outputs(reached.iter().copied(), &output_index),
+        );
     }
 
     // Phase 3b: Combine related corrections
@@ -602,6 +606,7 @@ fn are_on_connected_path(
 /// Only the words from the first to the last non-zero word are stored, with
 /// `offset` giving the index of the first stored word, so a set never holds
 /// more than `O / 64 + 1` words for `O` outputs and an empty set holds none.
+/// The word vector is sized once and its capacity equals its length.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 struct OutputBitset {
     offset: usize,
@@ -610,24 +615,27 @@ struct OutputBitset {
 
 impl OutputBitset {
     /// Pack `reached` using `output_index`. Every UUID in `reached` is an
-    /// output and so has an index; one without is ignored.
-    fn from_outputs(reached: &HashSet<&str>, output_index: &HashMap<&str, usize>) -> Self {
+    /// output and so has an index; one without is ignored. The result does not
+    /// depend on the order `reached` yields its UUIDs in.
+    fn from_outputs<'s>(
+        reached: impl IntoIterator<Item = &'s str>,
+        output_index: &HashMap<&str, usize>,
+    ) -> Self {
         let bits: Vec<usize> = reached
-            .iter()
+            .into_iter()
             .filter_map(|uuid| output_index.get(uuid).copied())
             .collect();
-        let Some(&min) = bits.iter().min() else {
+        let (Some(&min), Some(&max)) = (bits.iter().min(), bits.iter().max()) else {
             return Self::default();
         };
         let offset = min / 64;
-        // Grows only to the highest set word, so at most `O / 64 + 1` words.
-        let mut words: Vec<u64> = Vec::new();
+        // Allocate `words` once, to exactly the first-to-last set word range,
+        // so the order `bits` arrive in cannot leave amortised spare capacity
+        // behind (review 5711830474): the retained allocation is at most
+        // `O / 64 + 1` words, `O` being bounded by `validate_creature`.
+        let mut words = vec![0u64; max / 64 - offset + 1];
         for bit in bits {
-            let word = bit / 64 - offset;
-            if words.len() <= word {
-                words.resize(word + 1, 0);
-            }
-            words[word] |= 1u64 << (bit % 64);
+            words[bit / 64 - offset] |= 1u64 << (bit % 64);
         }
         Self { offset, words }
     }

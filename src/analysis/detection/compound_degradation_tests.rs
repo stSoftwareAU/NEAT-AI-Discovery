@@ -663,11 +663,40 @@ fn output_bitset_intersects_matches_hash_set_intersection() {
 
     let packed: Vec<OutputBitset> = sets
         .iter()
-        .map(|s| OutputBitset::from_outputs(s, &index))
+        .map(|s| OutputBitset::from_outputs(s.iter().copied(), &index))
         .collect();
     for p in &packed {
         assert!(p.words.len() <= OUTPUTS / 64 + 1);
+        // The retained allocation, not just the length, must keep to the
+        // bound (review 5711830474).
+        assert!(
+            p.words.capacity() <= OUTPUTS / 64 + 1,
+            "bitset capacity {} exceeds {} words",
+            p.words.capacity(),
+            OUTPUTS / 64 + 1
+        );
     }
+    // Review 5711830474: bits 64k, 64(k + 1) and 0 (k = 3), packed in that
+    // order, made a word-by-word `resize` reserve 4 words, then double to 8 for
+    // a 5-word set. Packing must reserve exactly the length whatever the order.
+    let high_first = OutputBitset::from_outputs(
+        [names[192].as_str(), names[256].as_str(), names[0].as_str()],
+        &index,
+    );
+    assert_eq!(high_first.words.len(), 5);
+    assert_eq!(
+        high_first.words.capacity(),
+        high_first.words.len(),
+        "packing high bits first must not leave amortised spare capacity"
+    );
+    assert_eq!(
+        high_first,
+        OutputBitset::from_outputs(
+            [names[0].as_str(), names[192].as_str(), names[256].as_str()],
+            &index,
+        ),
+        "the packed set must not depend on the input order"
+    );
     for (a, pa) in sets.iter().zip(&packed) {
         for (b, pb) in sets.iter().zip(&packed) {
             assert_eq!(
