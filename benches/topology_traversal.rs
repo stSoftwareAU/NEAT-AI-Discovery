@@ -1,10 +1,10 @@
 //! Benchmarks for Issues #979 and #2383: topology traversal cost.
 //!
 //! Measures the cost of `detect_topology_diversification_candidates` which
-//! traverses paths from outputs back to inputs, counting hidden neuron depth.
+//! computes input-reachable hidden depth across the synapse graph.
 //!
-//! Width-2 ladders expose path-count growth, while multiple outputs expose
-//! repeated graph setup in a single detector call.
+//! Width-2 ladders expose path-count growth, while multiple outputs exercise
+//! graph setup reuse in a single detector call.
 
 #![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
@@ -140,7 +140,7 @@ fn create_records(creature: &CreatureJson) -> Vec<(String, Vec<DiscoverRecord>)>
 }
 
 fn bench_topology_traversal(c: &mut Criterion) {
-    // (depth, width) combinations — total hidden neurons = depth × width
+    // (depth, width, output count) combinations.
     let configs: &[(usize, usize, usize)] = &[
         (3, 4, 2),
         (5, 4, 2),
