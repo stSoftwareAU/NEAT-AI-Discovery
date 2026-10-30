@@ -38,9 +38,14 @@
 //! `MERGE_DEADLINE_CHECK_INTERVAL` elements.
 //!
 //! The pass checks the discovery deadline and global cancellation once per step,
-//! and every stop is reported via [`DeadNeuronScan::truncation`]: a stop during
-//! the hidden-neuron scan returns no candidates, while a stop during the
-//! reachability pass (deadline, cancellation or the merge ceiling, which reports
+//! including once for every dead neuron whose component is already memoised.
+//! Each distinct output set's sorted name list is built once and shared by the
+//! dead neurons that reach it; the names handed to candidates are charged
+//! against the same ceiling (a separate count), so a dead chain above a wide
+//! fan-out cannot build an unbounded number of output names. Every stop is
+//! reported via [`DeadNeuronScan::truncation`]: a stop during the hidden-neuron
+//! scan returns no candidates, while a stop during the reachability pass
+//! (deadline, cancellation or the ceiling, which reports
 //! `ScanTruncation::CandidateCeiling`) keeps only the candidates whose outputs
 //! were already complete.
 
@@ -117,7 +122,8 @@ pub struct DeadNeuronScan {
     pub candidates: Vec<DeadNeuronCandidate>,
     /// `Some` when the scan stopped before finishing every dead neuron:
     /// `DeadlinePassed` for the deadline or cancellation, `CandidateCeiling` when
-    /// the reachability merge work reached its ceiling. Candidates completed
+    /// the reachability merge work or the output names handed to candidates
+    /// reached the ceiling. Candidates completed
     /// before the stop are kept, except that a stop during the hidden-neuron scan
     /// returns none.
     pub truncation: Option<ScanTruncation>,
@@ -174,14 +180,15 @@ pub fn detect_dead_neurons_with_deadline(
 }
 
 /// [`detect_dead_neurons_with_deadline`] with `on_reachability_step` called once
-/// per edge examined and once per element merged by the shared reachability
-/// pass, so a test can assert on how the work grows without timing it
-/// (Issue #2370).
+/// per edge examined, once per element merged by the shared reachability pass
+/// and once per output name handed to a candidate, so a test can assert on how
+/// the work grows without timing it (Issue #2370).
 ///
-/// The reachability cost is O(V + E) plus the sizes of the merged output sets.
-/// `merge_ceiling` caps the total elements merged: once a merge would exceed it,
-/// the scan stops with `ScanTruncation::CandidateCeiling` and keeps the
-/// candidates completed so far.
+/// The reachability cost is O(V + E) plus the sizes of the merged output sets
+/// plus the candidates' output lists. `merge_ceiling` caps the distinct output
+/// ids the memo keeps and, separately, the total output names handed to
+/// candidates: once either would exceed it, the scan stops with
+/// `ScanTruncation::CandidateCeiling` and keeps the candidates completed so far.
 pub fn detect_dead_neurons_observed(
     creature: &CreatureJson,
     neuron_records: &[(String, impl AsRef<[DiscoverRecord]>)],
@@ -278,6 +285,15 @@ pub fn detect_dead_neurons_observed(
             break;
         }
 
+        let connected_outputs =
+            match reachability.connected_outputs(draft.uuid, &mut on_reachability_step) {
+                Ok(outputs) => outputs,
+                Err(t) => {
+                    truncation = Some(t);
+                    break;
+                }
+            };
+
         // Estimated improvement: removing a dead neuron saves computation.
         // The improvement is small but positive (reduced overhead).
         let estimated_improvement = draft.removal_confidence * 0.001;
@@ -287,7 +303,7 @@ pub fn detect_dead_neurons_observed(
             mean_abs_activation: draft.mean_abs_activation,
             activation_std_dev: draft.activation_std_dev,
             sample_count: draft.sample_count,
-            connected_outputs: reachability.connected_outputs(draft.uuid),
+            connected_outputs,
             removal_confidence: draft.removal_confidence,
             estimated_improvement,
         });
@@ -350,8 +366,16 @@ struct OutputReachability<'a> {
     /// Distinct output ids kept by merged components so far (the memo's
     /// retained size).
     merge_work: usize,
-    /// Cap on `merge_work`; a merge that would exceed it is refused.
+    /// Cap on `merge_work`; a merge that would exceed it is refused. Also caps
+    /// `output_names_handed_out`.
     merge_ceiling: usize,
+    /// Sorted output names per distinct output set, keyed by the set's `Rc`
+    /// address, so components that share one set (a dead chain above a wide
+    /// fan-out) build and sort its name list once. Every keyed set is held by
+    /// `comp_sets`, so an address is never reused while the memo lives.
+    name_lists: HashMap<*const Vec<usize>, Rc<Vec<String>>>,
+    /// Output names handed to candidates so far, capped at `merge_ceiling`.
+    output_names_handed_out: usize,
 }
 
 impl<'a> OutputReachability<'a> {
@@ -369,6 +393,8 @@ impl<'a> OutputReachability<'a> {
             stamp: Vec::new(),
             merge_work: 0,
             merge_ceiling,
+            name_lists: HashMap::new(),
+            output_names_handed_out: 0,
         }
     }
 
@@ -401,7 +427,9 @@ impl<'a> OutputReachability<'a> {
     /// requested before the walk finished, or `Err(CandidateCeiling)` if a merge
     /// would exceed the merge ceiling. After an `Err` the memo is left mid-walk
     /// (open nodes on the Tarjan stack) and must not be reused.
-    /// `deadline_passed` is checked once per main-loop iteration.
+    /// `deadline_passed` is checked once per main-loop iteration, and once
+    /// when `root` is already in a closed component, so every dead neuron of
+    /// the reachability pass gets at least one check.
     fn explore(
         &mut self,
         root: &'a str,
@@ -410,6 +438,11 @@ impl<'a> OutputReachability<'a> {
     ) -> Result<(), ScanTruncation> {
         let root_id = self.intern(root);
         if self.comp[root_id] != UNSET {
+            // Memo hit: no walk runs, so check here, or a long run of memo hits
+            // (with their output lists) would never see the deadline.
+            if deadline_passed(deadline) {
+                return Err(ScanTruncation::DeadlinePassed);
+            }
             return Ok(());
         }
 
@@ -568,22 +601,42 @@ impl<'a> OutputReachability<'a> {
 
     /// Output names reachable from `root`, sorted ascending.
     ///
-    /// Only meaningful after `explore(root)` has returned `Ok`.
-    fn connected_outputs(&self, root: &str) -> Vec<String> {
+    /// Only meaningful after `explore(root)` has returned `Ok`. The sorted name
+    /// list is built once per distinct output set and cloned for each caller;
+    /// each name handed out is one observer step and is charged against the
+    /// ceiling, returning `Err(CandidateCeiling)` once the total would exceed it.
+    fn connected_outputs(
+        &mut self,
+        root: &str,
+        on_step: &mut impl FnMut(),
+    ) -> Result<Vec<String>, ScanTruncation> {
         let Some(&id) = self.ids.get(root) else {
-            return Vec::new();
+            return Ok(Vec::new());
         };
         let c = self.comp[id];
         if c == UNSET {
-            return Vec::new();
+            return Ok(Vec::new());
         }
-        let mut outputs: Vec<String> = self.comp_sets[c]
-            .iter()
-            .map(|&o| self.names[o].to_string())
-            .collect();
-        outputs.sort_unstable();
-        outputs.dedup();
-        outputs
+        let set = &self.comp_sets[c];
+        if set.len()
+            > self
+                .merge_ceiling
+                .saturating_sub(self.output_names_handed_out)
+        {
+            return Err(ScanTruncation::CandidateCeiling);
+        }
+        self.output_names_handed_out += set.len();
+
+        let names = &self.names;
+        let list = self.name_lists.entry(Rc::as_ptr(set)).or_insert_with(|| {
+            let mut outputs: Vec<String> = set.iter().map(|&o| names[o].to_string()).collect();
+            outputs.sort_unstable();
+            Rc::new(outputs)
+        });
+        for _ in 0..list.len() {
+            on_step();
+        }
+        Ok(list.as_ref().clone())
     }
 }
 

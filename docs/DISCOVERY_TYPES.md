@@ -350,10 +350,16 @@ distinct output ids a component keeps are charged, and the total kept across
 all merges is capped at 8,000,000 ids (`MAX_REACHABILITY_MERGE_WORK` in
 `src/analysis/detection/dead_neuron.rs`). The time a merge spends scanning
 successor sets, duplicates included, is bounded by a deadline check every 4,096
-elements. When the cap is hit, the scan stops with `ScanTruncation::CandidateCeiling` and keeps
-the candidates whose outputs were already complete.
+elements. Each distinct output set's sorted name list is built once and shared
+by the dead neurons that reach it, and the output names handed to candidates
+are capped by the same 8,000,000 figure (counted separately), so a dead chain
+above a wide fan-out cannot build dead-count × output-count names without
+bound. When either cap is hit, the scan stops with
+`ScanTruncation::CandidateCeiling` and keeps the candidates whose outputs were
+already complete.
 `detect_dead_neurons_with_deadline` also takes the analysis deadline and checks
-it and the global cancellation flag; a stop for either reason reports
+it and the global cancellation flag on every walk iteration and once for each
+dead neuron whose component is already memoised; a stop for either reason reports
 `ScanTruncation::DeadlinePassed` on the returned `DeadNeuronScan`, and keeps the
 candidates completed so far. A stop during the hidden-neuron (dead-criteria)
 scan returns no candidates, because their output reachability cannot be

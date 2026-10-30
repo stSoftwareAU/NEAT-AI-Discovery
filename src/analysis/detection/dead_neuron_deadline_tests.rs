@@ -355,3 +355,96 @@ fn merge_loop_deadline_check_stops_a_large_merge() {
         "d's merge did not finish, so it must not be returned as a candidate"
     );
 }
+
+/// Dead `a` and `b` in a two-node cycle (`a <-> b`), each also feeding `out-0`
+/// and `out-1`. Both share one strongly connected component, so whichever root
+/// the hidden-neuron set yields first, its walk closes both, and the second
+/// root is a memo hit that runs no walk.
+fn dead_cycle_above_two_outputs() -> (CreatureJson, Vec<(String, Vec<DiscoverRecord>)>) {
+    let neuron = |uuid: &str, neuron_type: &str| NeuronJson {
+        uuid: uuid.to_string(),
+        neuron_type: neuron_type.to_string(),
+        squash: "LOGISTIC".to_string(),
+        bias: 0.0,
+    };
+    let synapse = |from: &str, to: &str| SynapseJson {
+        from_uuid: from.to_string(),
+        to_uuid: to.to_string(),
+        weight: 0.5,
+        synapse_type: None,
+    };
+
+    let creature = CreatureJson {
+        neurons: vec![
+            neuron("input-0", "input"),
+            neuron("a", "hidden"),
+            neuron("b", "hidden"),
+            neuron("out-0", "output"),
+            neuron("out-1", "output"),
+        ],
+        synapses: vec![
+            synapse("input-0", "a"),
+            synapse("a", "b"),
+            synapse("a", "out-0"),
+            synapse("a", "out-1"),
+            synapse("b", "a"),
+            synapse("b", "out-0"),
+            synapse("b", "out-1"),
+        ],
+        input: 1,
+        output: 2,
+    };
+    (creature, vec![records_for("a"), records_for("b")])
+}
+
+/// A dead neuron whose component is already memoised still gets a deadline
+/// check before its output list is built (review 5711590564). Without it, a
+/// long run of memo hits (a dead chain above a wide fan-out) would build every
+/// output list past the deadline and report no truncation.
+///
+/// Call order of `deadline_passed`:
+/// - Phase 1: one check per hidden neuron (`a`, `b`): 2.
+/// - Phase 2, the first root's walk (the fixture is symmetric, so either root
+///   does the same): 6 examined edges plus 4 node pops (both outputs, the
+///   other root, then this root, which closes `{a, b}`): 10, all `false`.
+/// - The second root is a memo hit; its check is the one scripted `true`.
+#[test]
+#[serial]
+fn memo_hit_root_deadline_check_stops_the_scan() {
+    let (creature, records) = dead_cycle_above_two_outputs();
+
+    let sequence: Vec<bool> = std::iter::repeat_n(false, 2 + 10)
+        .chain(std::iter::once(true))
+        .collect();
+    let _guard = DeadlineOverrideGuard::with_sequence(sequence);
+
+    let mut steps = 0;
+    let scan = detect_dead_neurons_observed(
+        &creature,
+        &records,
+        None,
+        &unused_live_deadline(),
+        usize::MAX,
+        || {
+            steps += 1;
+        },
+    );
+
+    assert_eq!(
+        scan.truncation,
+        Some(ScanTruncation::DeadlinePassed),
+        "the memo-hit root's deadline check must stop the scan"
+    );
+    assert_eq!(
+        scan.candidates.len(),
+        1,
+        "the first root completed before the deadline, so it must be kept"
+    );
+    assert_eq!(scan.candidates[0].connected_outputs, ["out-0", "out-1"]);
+    // Walk: 6 examined edges. Closing `{a, b}`: 6 member edges scanned. The
+    // kept candidate's output list: 2 names. The second root adds none.
+    assert_eq!(
+        steps, 14,
+        "the observer must count the walk, the close and the output names handed out"
+    );
+}

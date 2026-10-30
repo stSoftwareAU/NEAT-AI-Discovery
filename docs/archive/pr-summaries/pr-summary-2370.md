@@ -7,8 +7,11 @@ hidden neuron. Connected outputs for all dead neurons now come from one shared,
 iterative Tarjan strongly-connected-component pass. Its cost is O(V + E) plus the
 size of the output sets it merges, with two bounds: the analysis deadline and
 global cancellation are checked on every walk iteration (and every 4,096 merged
-elements), and the distinct output ids kept across merges are capped at
-`MAX_REACHABILITY_MERGE_WORK` (8,000,000). A component that
+elements, and once for each dead neuron whose component is already memoised),
+and the distinct output ids kept across merges are capped at
+`MAX_REACHABILITY_MERGE_WORK` (8,000,000). Each distinct output set's sorted
+name list is built once and shared, and the output names handed to candidates
+are capped by the same figure (counted separately). A component that
 adds no direct outputs and has a single closed successor shares that successor's
 set without copying it, so a long live chain above a wide fan-out costs no
 per-component copy. The discovery spec uses the deadline-aware variant and logs a
@@ -101,14 +104,18 @@ Security Fix Evidence
   and its per-call allocations are removed, so reachability work no longer
   multiplies by the dead count; cycles are handled by the SCC pass (tested), the
   walk uses an explicit stack (a 20,000-deep chain is tested), the deadline and
-  cancellation are checked once per walk iteration and once per hidden neuron,
-  and merged output-set work is capped, so a hostile fan-out stops at
-  `CandidateCeiling` rather than exhausting memory. Remaining retained memory is
-  bounded by the 8,000,000-element ceiling plus the candidates' own output lists.
+  cancellation are checked once per walk iteration, once per hidden neuron and
+  once per memo-hit dead neuron (review 5711590564: a dead chain above a wide
+  fan-out was otherwise a run of unchecked memo hits, each building its own
+  output-name list), and merged output-set work is capped, so a hostile
+  fan-out stops at `CandidateCeiling` rather than exhausting memory. Each
+  distinct output set's name list is built and sorted once, and the names
+  handed to candidates are capped at the same 8,000,000 (counted separately),
+  so retained memory is bounded by about twice that ceiling.
 
 ## Test Plan
 
-- Added `tests/issue_2370_dead_neuron_reachability.rs` (11 tests, all pass):
+- Added `tests/issue_2370_dead_neuron_reachability.rs` (12 tests, all pass):
   `reachability_grows_linearly_with_dead_count`,
   `live_chain_above_wide_fan_out_does_not_copy_sets_per_component`,
   `merge_ceiling_stops_the_scan_and_reports_candidate_ceiling`,
@@ -123,8 +130,12 @@ Security Fix Evidence
   the production path: `d` keeps all 200 outputs with no truncation),
   `merge_ceiling_stop_keeps_the_candidate_completed_before_it` (two separate
   dead roots, ceiling 1: one candidate with its own output, plus
-  `CandidateCeiling`).
-- Added `src/analysis/detection/dead_neuron_deadline_tests.rs` (4 in-crate tests):
+  `CandidateCeiling`),
+  `candidate_output_names_are_charged_to_the_ceiling` (a dead chain of 4 above
+  3 outputs, ceiling 8: the memo keeps 3 ids, so the names, 3 per candidate,
+  stop the scan after two candidates with `CandidateCeiling`; unbounded, all 4
+  complete and the observer counts every name).
+- Added `src/analysis/detection/dead_neuron_deadline_tests.rs` (5 in-crate tests):
   `phase_one_deadline_check_truncates_and_returns_no_candidates`,
   `reachability_deadline_check_stops_mid_scan`,
   `reachability_deadline_stop_keeps_the_completed_candidate` (two roots,
@@ -133,7 +144,12 @@ Security Fix Evidence
   `d` → live `x`, `y`, each feeding the same 3,000 outputs; `false` for the 3
   hidden-neuron checks and the 9,005 walk iterations, 6,002 edges plus 3,003
   node pops, then `true` on the first merge-loop check at element 4,096 of
-  `d`'s 6,000-element merge: `DeadlinePassed` and no candidates). Their
+  `d`'s 6,000-element merge: `DeadlinePassed` and no candidates) and
+  `memo_hit_root_deadline_check_stops_the_scan` (dead `a <-> b` cycle above two
+  outputs, so the second root is always a memo hit; `false` for the 2
+  hidden-neuron checks and the first root's 10 walk iterations, then `true` on
+  the memo-hit check: one completed candidate, `DeadlinePassed`, and 14
+  observer steps including the 2 output names handed out). Their
   sequence-scripted deadline seam makes each check the one that stops the scan.
 - Added `src/analysis/module_dispatch_specs/neuron_specs_issue_2370_tests.rs`
   (wired from `neuron_specs.rs` with `#[cfg(test)] #[path = ...]`, like
@@ -172,6 +188,22 @@ Security Fix Evidence
   the eight chunk-08a record suites pass (50 tests). The new merge test builds
   its override sequence with an iterator rather than a sized `vec!` literal, so it
   adds no capacity site to the chunk 8a ledger.
+- Red checks for review 5711590564: removing the memo-hit deadline check in
+  `explore` turned `memo_hit_root_deadline_check_stops_the_scan` red (the scan
+  completed both roots with no truncation), and removing the output-name
+  ceiling refusal in `connected_outputs` turned
+  `candidate_output_names_are_charged_to_the_ceiling` red. Restored:
+  `--lib --all-features dead_neuron` 6 passed,
+  `--test issue_2370_dead_neuron_reachability` 12 passed, `--test detection
+  dead` 19, `--test analysis dead` 16, `--test infrastructure topology` 6, the
+  chunk 8a record suites (issue_2088, 2154, 2280, 2281, 2282, 2284, 2294,
+  2298, 2300) all pass, `cargo fmt --check` and `cargo clippy --lib --tests
+  --all-features -- -D warnings` are clean. The new tests and the name-list
+  memo add no capacity hint, so the ledger's capacity rows are unchanged; the
+  ledger's #2400 checkpoint now reads 79 hits (78 + 1), the Outcome section
+  labels 81 capacity sites as post-finalisation (76 at the audit HEAD), and the
+  Quadratic blowup bullet lists `dead_neuron.rs` as the seventh file with a
+  deadline check.
 - Removed from the first attempt: the wall-clock test
   `scan_time_grows_linearly_with_dead_count` (CONTRIBUTING.md forbids timing
   assertions in tests); the step-count tests above replace it.

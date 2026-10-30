@@ -594,3 +594,62 @@ fn merge_ceiling_stop_keeps_the_candidate_completed_before_it() {
     assert_eq!(unbounded.truncation, None);
     assert_eq!(unbounded.candidates.len(), 2);
 }
+
+/// `input-0 -> h0 -> h1 -> h2 -> h3`, every hidden neuron dead, with `h3`
+/// feeding `out-0`, `out-1` and `out-2`. Only `h3`'s close keeps output ids
+/// (3); every other chain node shares that set, whichever root comes first.
+fn dead_chain_above_three_outputs() -> (CreatureJson, Records) {
+    let hidden = ["h0", "h1", "h2", "h3"];
+    let edges = [
+        ("input-0", "h0"),
+        ("h0", "h1"),
+        ("h1", "h2"),
+        ("h2", "h3"),
+        ("h3", "out-0"),
+        ("h3", "out-1"),
+        ("h3", "out-2"),
+    ];
+    let creature = build_creature(&hidden, &["out-0", "out-1", "out-2"], &edges);
+    let records = hidden.iter().map(|h| records_of(h, 0.0)).collect();
+    (creature, records)
+}
+
+/// The output names handed to candidates are charged against the ceiling, so
+/// a dead chain above a wide fan-out cannot build dead-count x output-count
+/// names without bound (review 5711590564). The memo keeps only 3 ids, so a
+/// ceiling of 8 never refuses a merge; it is the names (3 per candidate) that
+/// stop the scan after two candidates.
+#[test]
+fn candidate_output_names_are_charged_to_the_ceiling() {
+    let (creature, records) = dead_chain_above_three_outputs();
+    let all = ["out-0", "out-1", "out-2"];
+
+    let capped = detect_dead_neurons_observed(&creature, &records, None, &None, 8, || {});
+    assert_eq!(capped.truncation, Some(ScanTruncation::CandidateCeiling));
+    assert_eq!(
+        capped.candidates.len(),
+        2,
+        "two candidates use 6 of the 8 names; a third would need 9"
+    );
+    assert!(capped.candidates.iter().all(|c| c.connected_outputs == all));
+
+    // Positive control: with no ceiling every chain neuron completes, and the
+    // observer sees each of the 4 x 3 names handed out.
+    let mut steps = 0_usize;
+    let unbounded =
+        detect_dead_neurons_observed(&creature, &records, None, &None, usize::MAX, || {
+            steps += 1;
+        });
+    assert_eq!(unbounded.truncation, None);
+    assert_eq!(unbounded.candidates.len(), 4);
+    assert!(
+        unbounded
+            .candidates
+            .iter()
+            .all(|c| c.connected_outputs == all)
+    );
+    assert!(
+        steps >= 4 * all.len(),
+        "the observer must count every output name handed to a candidate, saw {steps} steps"
+    );
+}
