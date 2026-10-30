@@ -2,6 +2,7 @@
 
 #![allow(clippy::cast_precision_loss)]
 
+use std::collections::HashMap;
 use std::hint::black_box;
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
@@ -24,6 +25,29 @@ fn edge(from: String, to: String) -> SynapseJson {
         to_uuid: to,
         weight: 0.5,
         synapse_type: None,
+    }
+}
+
+fn assert_forward_only(creature: &CreatureJson) {
+    let indices: HashMap<_, _> = creature
+        .neurons
+        .iter()
+        .enumerate()
+        .map(|(index, neuron)| (neuron.uuid.as_str(), index))
+        .collect();
+    for synapse in &creature.synapses {
+        assert!(
+            matches!(
+                (
+                    indices.get(synapse.from_uuid.as_str()),
+                    indices.get(synapse.to_uuid.as_str())
+                ),
+                (Some(from), Some(to)) if from < to
+            ),
+            "benchmark edge {} -> {} must follow neuron evaluation order",
+            synapse.from_uuid,
+            synapse.to_uuid
+        );
     }
 }
 
@@ -155,6 +179,7 @@ fn bench_topology_scan(c: &mut Criterion) {
         (1024, true),
     ] {
         let (creature, records) = long_path(size, dense);
+        assert_forward_only(&creature);
         let edge_count = creature.synapses.len();
         group.bench_with_input(
             BenchmarkId::new(
@@ -175,6 +200,7 @@ fn bench_topology_scan(c: &mut Criterion) {
 
         let input_count = if dense { (size / 4).max(3) } else { size };
         let (creature, records) = starved(size, input_count, dense);
+        assert_forward_only(&creature);
         let edge_count = creature.synapses.len();
         group.bench_with_input(
             BenchmarkId::new(

@@ -155,6 +155,27 @@ fn output_collection_checks_cancellation_after_partial_collection() {
 
 #[test]
 #[serial]
+fn reverse_bfs_checks_cancellation_after_graph_preparation() {
+    let creature = CreatureJson {
+        neurons: vec![
+            neuron("h0", "hidden"),
+            neuron("h1", "hidden"),
+            neuron("out", "output"),
+        ],
+        synapses: vec![edge("h0", "h1"), edge("h1", "out")],
+        input: 0,
+        output: 1,
+    };
+    // Two edges are indexed, three neurons are classified, and the output is
+    // seeded before cancellation on the first reverse-BFS queue entry.
+    let _guard =
+        DeadlineOverrideGuard::with_sequence(vec![false, false, false, false, false, false, true]);
+
+    assert!(compute_shortest_paths_to_output(&creature, &None).is_none());
+}
+
+#[test]
+#[serial]
 fn error_element_traversal_checks_cancellation_inside_a_record() {
     let records = [DiscoverRecord::new(
         0,
