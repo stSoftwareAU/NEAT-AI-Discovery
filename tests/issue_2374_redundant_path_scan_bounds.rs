@@ -129,6 +129,42 @@ fn fan_in_cap_bounds_pair_evaluations() {
 }
 
 #[test]
+fn fan_in_cap_ranks_by_absolute_weight() {
+    // The strongest correlated pair by |weight| is NEGATIVE (-0.9, -0.8) while
+    // every weaker path is positive (0.02). A sort on the signed weight would
+    // rank the negative pair last and drop it; the cap must rank by |weight|.
+    let mut paths = uncorrelated_paths(200, 0.02);
+    paths.push(ExistingPathContribution {
+        source_uuid: "neg-keep".to_string(),
+        existing_weight: -0.9,
+        samples: ramp_samples(),
+    });
+    paths.push(ExistingPathContribution {
+        source_uuid: "neg-prune".to_string(),
+        existing_weight: -0.8,
+        samples: ramp_samples(),
+    });
+
+    let scan = detect_redundant_paths_with_deadline("target-0", &paths, 1.0, &None);
+
+    assert_eq!(
+        scan.paths_skipped, 138,
+        "202 valid paths minus the 64 kept must be reported as skipped"
+    );
+    assert!(
+        scan.candidates.iter().any(|c| {
+            let pair = [c.keep_source_uuid.as_str(), c.prune_source_uuid.as_str()];
+            pair.contains(&"neg-keep") && pair.contains(&"neg-prune")
+        }),
+        "the strongest-|weight| pair must survive the fan-in cap even when negative (Issue #2374); got {:?}",
+        scan.candidates
+            .iter()
+            .map(|c| (&c.keep_source_uuid, &c.prune_source_uuid))
+            .collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn fan_in_cap_keeps_the_strongest_weights() {
     // 200 uncorrelated low-weight paths, then two identical-sample paths with
     // the strongest weights placed at the END. A cap that simply took the first

@@ -49,10 +49,16 @@ Regression test: `tests/issue_2374_redundant_path_pair_scan.rs::pair_scan_grows_
 Added (all pass at the head):
 
 - `tests/issue_2374_redundant_path_pair_scan.rs::pair_scan_grows_linearly_with_fan_in`: candidates at 4P paths are at most 4× those at P, with a positive control that P=16 yields candidates.
-- `tests/issue_2374_redundant_path_scan_bounds.rs` (7 tests): `candidate_ceiling_stops_the_scan`, `fan_in_cap_bounds_pair_evaluations`, `fan_in_cap_keeps_the_strongest_weights`, its positive control, `under_the_cap_nothing_is_skipped`, `far_future_deadline_matches_no_deadline`, `elapsed_deadline_returns_deadline_passed`.
+- `tests/issue_2374_redundant_path_scan_bounds.rs` (8 tests at head): `candidate_ceiling_stops_the_scan`, `fan_in_cap_bounds_pair_evaluations`, `fan_in_cap_keeps_the_strongest_weights`, its positive control, `fan_in_cap_ranks_by_absolute_weight` (strongest pair is -0.9/-0.8 among 200 positive 0.02 paths, `paths_skipped == 138`), `under_the_cap_nothing_is_skipped`, `far_future_deadline_matches_no_deadline`, `elapsed_deadline_returns_deadline_passed`.
 - `src/analysis/detection/redundant_path_deadline_tests.rs` (2 `#[serial]` tests): `pair_loop_deadline_check_stops_a_scan_that_started_before_the_deadline`, `no_deadline_override_leaves_full_scan_untouched`.
 
-No existing test assertion was edited or removed. The 11 existing `redundant_path` unit tests pass unchanged.
+Existing tests edited (all because this PR adds the `#[cfg(test)]`-only `src/analysis/detection/redundant_path_deadline_tests.rs`, one more in-scope file; no assertion is loosened):
+
+- `tests/issue_2154_chunk_08a_finalisation.rs`: `EXPECTED_FILE_COUNT` 53 → 54; the module doc names `redundant_path_deadline_tests.rs`. The exact ledger-row-to-disk-file match is kept.
+- `tests/issue_2280_chunk_08a_ledger_scaffold.rs`: `ROW_COUNT` 53 → 54, the new file added to the graph `SECTIONS` list, and the test renamed `files_swept_has_exactly_53_rows` → `files_swept_has_exactly_54_rows`. The exact row and section membership checks now also require the new row.
+- `tests/issue_2282_chunk_08a_graph_sweep.rs`: adds `TEST_ONLY_ROWS`; `graph_section_holds_exactly_the_eight_swept_rows` now expects `SWEPT` plus that one row (9 rows) as an exact set and count. The capacity-site and traversal checks still iterate `SWEPT` only, so nothing they checked is dropped. The test name still says "eight" (cosmetic).
+
+The 11 existing `redundant_path` unit tests pass unchanged.
 
 Red checks (one guard broken at a time, then restored):
 
@@ -60,16 +66,17 @@ Red checks (one guard broken at a time, then restored):
 - Deadline block deleted: `pair_loop_deadline_check_stops_a_scan_that_started_before_the_deadline` and `elapsed_deadline_returns_deadline_passed` red.
 - Candidate-ceiling block deleted: `candidate_ceiling_stops_the_scan` (2016 vs 256) and `pair_scan_grows_linearly_with_fan_in` red.
 - Weight sort removed (cap keeps first 64 by position): `fan_in_cap_keeps_the_strongest_weights` red.
+- `.abs()` dropped from the sort (signed `b.existing_weight.total_cmp(&a.existing_weight)`): `fan_in_cap_ranks_by_absolute_weight` red (`the strongest-|weight| pair must survive the fan-in cap even when negative (Issue #2374); got []`); the other 7 tests stay green, which is why this case was added.
 - Fan-in cap disabled: `fan_in_cap_bounds_pair_evaluations` (19900 vs 2016) and `fan_in_cap_keeps_the_strongest_weights` red.
 - Ceiling check moved before the deadline check: no test goes red. The order matters only when both fire at the same pair; this is pinned by no test.
 
-Commands run on the final head: `cargo test --lib redundant_path` (13 passed), `cargo test --test issue_2374_redundant_path_pair_scan --test issue_2374_redundant_path_scan_bounds` (1 and 7 passed), `cargo fmt --check` (clean), `cargo clippy --all-targets --all-features -- -D warnings` (clean), `RUSTDOCFLAGS='-D warnings' cargo doc --no-deps --all-features` (clean).
+Commands run on the final head: `cargo test --test issue_2374_redundant_path_scan_bounds` (8 passed) and the chunk-08a ledger tests `issue_2154_chunk_08a_finalisation`, `issue_2280_chunk_08a_ledger_scaffold`, `issue_2282_chunk_08a_graph_sweep`, `issue_2294_chunk_08a_pairwise_sweep`, `issue_2298_chunk_08a_per_neuron_b_sweep`, `issue_2300_chunk_08a_neuron_sweep` (all passed). Earlier in the PR (before the Develop merges, production code unchanged since): `cargo test --lib redundant_path` (13 passed), `cargo test --test issue_2374_redundant_path_pair_scan` (1 passed), `cargo fmt --check`, `cargo clippy --all-targets --all-features -- -D warnings` and `RUSTDOCFLAGS='-D warnings' cargo doc --no-deps --all-features` (clean).
 
 Entry points: `candidate_selection.rs::detect_redundant_path_candidates` now passes `&ctx.deadline`. `candidate_selection.rs:detect_redundant_path_candidates` `&ctx.deadline` argument is `exempt (untestable)`: `TargetAnalysisContext` is built only in `src/analysis/synapse/orchestration.rs`, and a grep of `src` and `tests` for `TargetAnalysisContext` finds no test that constructs it, so no existing harness can drive the function with an elapsed deadline. The deadline behaviour itself is tested at `detect_redundant_paths_observed`.
 
 Callers of the changed function: `detect_redundant_paths` (unchanged signature, unit and integration tests exercise it) and `detect_redundant_path_candidates` (switched to the deadline variant).
 
-Docs updated: `docs/DISCOVERY_TYPES.md` (Redundant Path Pruning), `docs/ANALYSIS_DEEP_DIVE.md` (Redundant Path Pruning with Renormalisation), `docs/discoveries/redundant-path.md` (new "Scan Bounds" section). Existing sentences saying the scan covered "all" incoming sources were reworded.
+Docs updated: `docs/audits/security-sweep-chunk-08a-detection-neuron.md` (redundant-path capacity, traversal and pair-loop rows now carry the #2374 post-finalisation note and `yes — deadline_passed before every pair`; the live-grep reconciliation paragraph says 80 hits, 78 production plus one in each of the two test-only modules), `docs/DISCOVERY_TYPES.md` (Redundant Path Pruning), `docs/ANALYSIS_DEEP_DIVE.md` (Redundant Path Pruning with Renormalisation), `docs/discoveries/redundant-path.md` (new "Scan Bounds" section). Existing sentences saying the scan covered "all" incoming sources were reworded.
 
 <!-- vibe-quality-gate-skipped reason="the full ./quality.sh takes about 15 minutes, longer than the 10-minute cap on a single foreground command in this run; the targeted checks above were run instead, and CI runs the full gate" -->
 
