@@ -153,7 +153,6 @@ rows added by the section sub-issues.
 | `correlated_error.rs::cluster_correlated_outputs` (`assigned`) | capacity | `vec![false; n]`, `n = output_uuids.len()` | linear in `n_outputs` — one `bool` per entry of the live `output_neurons_with_errors` slice; the quadratic term is the `correlation_matrix` row (#2346) | n/a — sized once |
 | `weight_coherence.rs::detect_incoherent_weight_ratios` (`candidates`) | capacity | `Vec::with_capacity(creature.neurons.len())` | no numeric cap — the hidden-neuron count is uncapped; the bound is the already-deserialised `creature.neurons` `Vec`, with at most one push per hidden neuron | n/a — one linear pass over `topo.hidden_uuids` |
 | `weight_coherence.rs::detect_near_constant_paths` (`candidates`) | capacity | `Vec::with_capacity(creature.neurons.len())` | no numeric cap — the hidden-neuron count is uncapped; the bound is the already-deserialised `creature.neurons` `Vec`, with at most one push per hidden neuron | n/a — one linear pass over `creature.neurons` |
-| `weight_coherence.rs::detect_symmetric_cancellation` (`candidates`) | capacity | `Vec::with_capacity(creature.synapses.len())` | no numeric cap — the synapse count is uncapped; the bound is the already-deserialised `creature.synapses` `Vec`. The reservation is linear, but pushes can grow the `Vec` to Σ k²/2 pairs, which is part of #2347 | no (module-level only) |
 | `co_adaptation.rs::detect_co_adapted_neurons` (`candidates`) | capacity | `Vec::with_capacity(eligible.len())` | no numeric cap — bounded by the live `eligible` `Vec` (hidden neurons with ≥ 20 records); pushes can grow it to E(E−1)/2, which is part of #2348 | no (module-level only) |
 | `co_adaptation.rs::co_adapted_pairs_to_coordinated_candidates` (`results`) | capacity | `Vec::with_capacity(candidates.len() * 2)` | bounded — twice the live `candidates` slice, at most two pushes per candidate, and the product cannot wrap; the slice's E(E−1)/2 length is #2348 | n/a — one pass over candidates |
 | `symmetry_breaking.rs::detect_symmetric_neurons` (`vectors`) | capacity | `Vec::with_capacity(eligible_neurons.len())` | bounded since #2349 (#2400) — one dense weight vector per eligible neuron, built once; `eligible_neurons` is capped and the build loop re-checks the deadline before every vector. Added after the audit HEAD | yes — `deadline_passed` before every vector |
@@ -165,7 +164,7 @@ rows added by the section sub-issues.
 | `correlated_error.rs::detect_correlated_error_patterns` (group mean-correlation pair loop) | pairwise loop | i<j over each group's `group_indices` | O(g²) per group; Σ g² ≤ n_outputs² over disjoint groups, so it is dominated by the correlation pair loop (#2346) | no (module-level only) |
 | `correlated_error.rs::cluster_correlated_outputs` (i<j complete-linkage loop) | pairwise loop | `for i in 0..n { for j in (i + 1)..n }`, with an `all` over the current group's members | O(n_outputs²) in total — a kept group's members are skipped afterwards, and a rejected singleton costs O(n); dominated by the correlation pair loop (#2346) | no (module-level only) |
 | `correlated_error.rs::find_predictive_inputs` (inputs × shared samples, per group) | pairwise loop | per group: a `shared_obs × group_uuids` average, then one `stats.rs::pearson_correlation_hashmaps` per `"input"`-typed neuron with records | O(groups × inputs × S), with groups ≤ n_outputs / 2 and the `"input"`-typed neuron count uncapped — part of #2346 | no (module-level only) |
-| `weight_coherence.rs::detect_symmetric_cancellation` (per-`topo.fan_in`-target i<j loop over `incoming_synapses`) | pairwise loop | fan-in `k` per target; `calculate_correlation` rebuilds two `HashMap`s per surviving pair | unbounded — O(Σ k² · S), with `k` up to `creature.input` (`1_000_000`) for an output fed by every input — finding #2347 | no (module-level only) |
+| `weight_coherence.rs::detect_symmetric_cancellation` (per-`topo.fan_in`-target i<j loop over `incoming_synapses`) | pairwise loop | fan-in `k` per target; `calculate_correlation` rebuilds two `HashMap`s per surviving pair | unbounded at the audit HEAD — O(Σ k² · S), with `k` up to `creature.input` (`1_000_000`) for an output fed by every input — finding #2347. **Post-finalisation note** — #2347 skips any target whose weighted fan-in exceeds `MAX_FANIN_FOR_CANCELLATION_SCAN` (256), stops at `MAX_SYMMETRIC_CANCELLATION_CANDIDATES` (1024) candidates, builds each source's activation map once per scan instead of per pair, and dropped the `candidates` `Vec::with_capacity(creature.synapses.len())` site | yes — `deadline_passed` before each target (#2347, added after the audit HEAD) |
 | `co_adaptation.rs::detect_co_adapted_neurons` (i<j loop over `eligible`) | pairwise loop | `eligible` hidden neurons with ≥ 20 records; per pair a `shared` `Vec`, an unzip and a Pearson | unbounded at the audit HEAD — O(E² · S), finding #2348. `EXPENSIVE_MODULES` skips it above 1000 hidden only on non-escalation passes. **Post-finalisation note** — the #2348 fix (#2398) then capped E and the emitted pairs and checks the deadline once per outer row | yes — `deadline_passed` once per outer row (#2398, added after the audit HEAD) |
 | `symmetry_breaking.rs::detect_symmetric_neurons` (`hidden_neurons.iter().any` per synapse) | pairwise loop | a linear scan of `hidden_neurons` for every synapse | unbounded at the audit HEAD — O(synapses × hidden), finding #2349. **Post-finalisation note** — #2400 replaced the `.any` with a `HashSet` membership test, so this scan is now O(synapses) and the loop itself still has no check (the deadline is checked before it) | no (module-level only) |
 | `symmetry_breaking.rs::detect_symmetric_neurons` (i<j loop over `eligible_neurons`) | pairwise loop | `eligible_neurons` hidden neurons with ≥ 20 records; the squash and bias filters are attacker-controlled | unbounded at the audit HEAD — O(E²) pairs, finding #2349. **Post-finalisation note** — #2400 capped E at `MAX_SYMMETRY_ELIGIBLE_NEURONS` and the emitted pairs, and checks the deadline once per outer row | yes — `deadline_passed` once per outer row (#2400, added after the audit HEAD) |
@@ -292,6 +291,13 @@ against HEAD `6e3ca6f`:
   (`candidates`, `results`) plus those four. The test module `skip_connection_deadline_tests.rs`
   sits at `src/analysis/skip_connection_deadline_tests.rs`, outside `src/analysis/detection`,
   so it is not in this grep and has no row, and the file count stays 53.
+
+  **Post-finalisation reconciliation (#2347).** #2347 removed the
+  `weight_coherence.rs::detect_symmetric_cancellation` `candidates` site
+  (`Vec::with_capacity(creature.synapses.len())`) and deleted its row, so the
+  production capacity rows now total 81 and `weight_coherence.rs` carries two
+  sites. Its new tests live under `tests/`, outside this grep, so the file
+  count is unchanged.
 - **Traversal** — `grep -rnE 'fn .*\(.*\) .*\{' src/analysis/detection/ src/analysis/neuron/ | grep -E 'depth|visited|frontier|queue'`
   returns one hit, `skip_connection.rs::compute_depths_from_inputs`, which is
   the `traversal` row above. The other 16 `traversal` rows were found by
@@ -335,7 +341,7 @@ swept by its own sub-issue: `shared` (#2281), `graph` (#2282, #2283),
 (#2298, #2299) and `neuron` (#2300, #2301). Every file row carries an outcome
 and its reason. Per class:
 
-- **Unbounded allocation** — 82 capacity sites, all in the table above. One is
+- **Unbounded allocation** — 81 capacity sites (after #2347), all in the table above. One is
   unbounded: the dense `n_outputs × n_outputs` `correlation_matrix` in
   `correlated_error.rs::detect_correlated_error_patterns` (#2346). The rest
   are sized from a live `Vec` or from `creature.input` / `creature.output`,
@@ -740,7 +746,7 @@ files, and the sweep read every change:
 - `src/analysis/detection/operating_point.rs` (#2316, `638ec0a`) changed only
   a doc comment.
 
-The `p[e]nding` count must print `0`, the capacity grep `83` (82 production
-sites plus one test-only hit, after #2368; it printed `76` at finalisation, before #2400), and the
+The `p[e]nding` count must print `0`, the capacity grep `82` (81 production
+sites plus one test-only hit, after #2368 and #2347; it printed `76` at finalisation, before #2400), and the
 traversal grep only `compute_depths_from_inputs`. Any further diff under these
 paths means the chunk needs re-sweeping, whatever the index says.
