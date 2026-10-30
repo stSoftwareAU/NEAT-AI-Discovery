@@ -188,25 +188,28 @@ fn existing_output_connection_is_not_proposed_as_a_long_path() {
 fn absent_inputs_or_outputs_do_not_create_invalid_sources_or_targets() {
     let creature = CreatureJson {
         neurons: vec![
-            neuron("i0", "input"),
-            neuron("i1", "input"),
+            neuron("seed", "hidden"),
             neuron("a", "hidden"),
             neuron("b", "hidden"),
             neuron("c", "hidden"),
             neuron("d", "hidden"),
         ],
         synapses: vec![
-            edge("i0", "a"),
-            edge("i0", "b"),
-            edge("i0", "c"),
+            edge("seed", "a"),
+            edge("seed", "b"),
+            edge("seed", "c"),
+            edge("seed", "d"),
             edge("a", "d"),
             edge("b", "d"),
             edge("c", "d"),
         ],
-        input: 2,
+        input: 0,
         output: 0,
     };
-    let records = records_for(&creature);
+    let records: Vec<_> = records_for(&creature)
+        .into_iter()
+        .filter(|(uuid, _)| uuid != "seed")
+        .collect();
     let candidates = detect_topology_issues(&creature, &records, None);
     assert!(
         candidates
@@ -218,7 +221,7 @@ fn absent_inputs_or_outputs_do_not_create_invalid_sources_or_targets() {
         candidates
             .iter()
             .filter(|c| c.issue_type == "connectivity_imbalance")
-            .all(|c| c.add_source_uuid.as_deref() == Some("i1"))
+            .all(|c| c.add_source_uuid.is_none())
     );
 }
 
