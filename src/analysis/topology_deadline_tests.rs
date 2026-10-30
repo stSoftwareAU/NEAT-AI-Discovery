@@ -227,8 +227,10 @@ fn imbalance_loop_deadline_keeps_candidates_found_before_interruption() {
     let (creature, records) = imbalanced_fixture();
     let topology = CreatureTopologyCache::new(&creature);
     // Preparation, output collection, record/error traversal, input copying,
-    // long-path and fan-in checks, and one imbalance candidate complete first.
-    let mut checks = vec![false; 196];
+    // long-path and fan-in checks, and two imbalance-loop elements complete
+    // first. At most one of those two is `rich` (skipped via `continue`), so
+    // the candidate count is 1 or 2 depending on the random hidden_uuids order.
+    let mut checks = vec![false; 197];
     checks.push(true);
     let _guard = DeadlineOverrideGuard::with_sequence(checks);
 
@@ -241,9 +243,11 @@ fn imbalance_loop_deadline_keeps_candidates_found_before_interruption() {
             .iter()
             .all(|candidate| candidate.issue_type == "connectivity_imbalance")
     );
-    assert_eq!(
-        scan.candidates.len(),
-        1,
-        "cancellation during the imbalance scan preserves its completed candidate"
+    assert!(
+        (1..=2).contains(&scan.candidates.len()),
+        "cancellation during the imbalance scan preserves its completed candidates; \
+         the count is 1 or 2 because topo.hidden_uuids iteration order is random and \
+         the skipped `rich` neuron may occupy one of the two processed slots, got {}",
+        scan.candidates.len()
     );
 }
