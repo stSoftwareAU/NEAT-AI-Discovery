@@ -867,4 +867,117 @@ mod tests {
             "Should return None for insufficient samples"
         );
     }
+
+    /// Review 5715761259 on PR #2426 (Issue #2347): the only elapsed-deadline
+    /// tests pass `UNIX_EPOCH`, which trips the per-target check on the very
+    /// first target and so proves nothing the module-level dispatch gate does
+    /// not already do. This test scripts `deadline_passed` through the
+    /// `#[cfg(test)]`-only override seam (so it cannot live under `tests/`):
+    /// `false` for the first target, then `true` for the second. Only a check
+    /// made inside the `'outer` loop, before each target, can stop the scan
+    /// after the first target's pair work and before the second's.
+    ///
+    /// `#[serial]` keeps it from interleaving with any other test that
+    /// installs a deadline override or flips the global cancellation flag.
+    #[test]
+    #[serial_test::serial]
+    fn per_target_deadline_check_stops_a_scan_that_started_before_the_deadline() {
+        use crate::analysis::utils::deadline_override::DeadlineOverrideGuard;
+        use crate::{NeuronJson, SynapseJson};
+
+        fn neuron(uuid: &str, neuron_type: &str) -> NeuronJson {
+            NeuronJson {
+                uuid: uuid.to_string(),
+                neuron_type: neuron_type.to_string(),
+                squash: "IDENTITY".to_string(),
+                bias: 0.0,
+            }
+        }
+
+        // Two targets, each fed by one opposite-sign, equal-magnitude pair of
+        // sources with identical (so perfectly correlated) activations. The
+        // second target's synapses are listed first, so only the scan's sorted
+        // UUID order makes `target-a` the first target visited.
+        let pairs = [
+            ("target-b", "source-b1", "source-b2"),
+            ("target-a", "source-a1", "source-a2"),
+        ];
+        let mut neurons = Vec::new();
+        let mut synapses = Vec::new();
+        let mut records: Vec<(String, Vec<DiscoverRecord>)> = Vec::new();
+        for (target, plus, minus) in pairs {
+            neurons.push(neuron(target, "output"));
+            for (source, weight) in [(plus, 5.0_f32), (minus, -5.0)] {
+                neurons.push(neuron(source, "input"));
+                synapses.push(SynapseJson {
+                    from_uuid: source.to_string(),
+                    to_uuid: target.to_string(),
+                    weight,
+                    synapse_type: None,
+                });
+                let source_records = (0..30_u32)
+                    .map(|idx| {
+                        let activation = (idx as f32 * 0.1).sin();
+                        DiscoverRecord {
+                            obs_index: idx,
+                            neuron_uuid: source.to_string(),
+                            value: Some(activation),
+                            activation,
+                            errors: vec![0.1],
+                        }
+                    })
+                    .collect();
+                records.push((source.to_string(), source_records));
+            }
+        }
+        let creature = CreatureJson {
+            neurons,
+            synapses,
+            input: 4,
+            output: 2,
+        };
+        let config = WeightCoherenceConfig::default();
+
+        // Control: with no override, both targets are scanned and each yields
+        // its one candidate, so the fixture itself can reach the second target.
+        let full =
+            detect_symmetric_cancellation_with_deadline(&creature, &records, &config, None, &None);
+        assert_eq!(full.truncation, None);
+        assert_eq!(full.pairs_correlated, 2);
+        assert_eq!(full.candidates.len(), 2);
+
+        // [false /* before target-a: scan it */, true /* before target-b: stop */]
+        let _guard = DeadlineOverrideGuard::with_sequence(vec![false, true]);
+        // The real deadline is far in the future; only the override can stop it.
+        let live_deadline = Some(SystemTime::now() + std::time::Duration::from_secs(86_400));
+        let scan = detect_symmetric_cancellation_with_deadline(
+            &creature,
+            &records,
+            &config,
+            None,
+            &live_deadline,
+        );
+
+        assert_eq!(
+            scan.truncation,
+            Some(ScanTruncation::DeadlinePassed),
+            "the per-target deadline check must stop the scan before the second target"
+        );
+        // target-a has exactly one opposite-sign pair.
+        assert!(scan.pairs_correlated > 0);
+        assert_eq!(
+            scan.pairs_correlated, 1,
+            "only the first target's pair may be correlated before the deadline stops the scan"
+        );
+        assert_eq!(scan.activation_maps_built, 2);
+        assert_eq!(scan.candidates.len(), 1);
+        let only = &scan.candidates[0];
+        assert_eq!(only.target_neuron_uuid, "target-a");
+        let mut sources = [
+            only.source1_neuron_uuid.as_str(),
+            only.source2_neuron_uuid.as_str(),
+        ];
+        sources.sort_unstable();
+        assert_eq!(sources, ["source-a1", "source-a2"]);
+    }
 }

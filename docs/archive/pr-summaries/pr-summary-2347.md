@@ -144,13 +144,21 @@ flowchart TD
     C -- no --> T
 ```
 
-**Docs sweep** — grep: `detect_symmetric_cancellation`, `MAX_FANIN_FOR_CANCELLATION_SCAN`, `MAX_SYMMETRIC_CANCELLATION_CANDIDATES`, `calculate_correlation`, `SymmetricCancellationScan`; section: `docs/discoveries/weight-coherence.md#-3-symmetric-cancellation`, `docs/DISCOVERY_TYPES.md` (Detection criteria — Symmetric cancellation), `docs/ANALYSIS_DEEP_DIVE.md` (Symmetric cancellation); updated: `docs/discoveries/weight-coherence.md`, `docs/DISCOVERY_TYPES.md`, `docs/ANALYSIS_DEEP_DIVE.md`
+**Docs sweep** — grep: `detect_symmetric_cancellation`, `MAX_FANIN_FOR_CANCELLATION_SCAN`, `MAX_SYMMETRIC_CANCELLATION_CANDIDATES`, `calculate_correlation`, `SymmetricCancellationScan`; section: `docs/discoveries/weight-coherence.md#-3-symmetric-cancellation`, `docs/DISCOVERY_TYPES.md` (Detection criteria — Symmetric cancellation), `docs/ANALYSIS_DEEP_DIVE.md` (Symmetric cancellation); updated: `docs/discoveries/weight-coherence.md`, `docs/DISCOVERY_TYPES.md`, `docs/ANALYSIS_DEEP_DIVE.md`, `docs/audits/security-sweep-chunk-08a-detection-neuron.md`
 
-Every remaining hit on the head, with current line numbers:
+Every remaining hit on the final head, with current line numbers. The grep was
+re-run on the merged tree after review 5715761259, over `*.rs` and `*.md` and
+excluding this summary file:
 
-- `docs/DISCOVERY_TYPES.md:990`, `:992` — still true because this diff wrote these lines to describe the fan-in cap, the candidate ceiling and the deadline.
-- `docs/ANALYSIS_DEEP_DIVE.md:610`, `:611` — still true because this diff wrote these lines to describe the bounded scan.
+- `docs/DISCOVERY_TYPES.md:1019`, `:1021` — still true because this diff wrote these lines to describe the fan-in cap, the candidate ceiling and the deadline (they moved from `:990` / `:992` when #2442 added lines above them).
+- `docs/ANALYSIS_DEEP_DIVE.md:612`, `:613` — still true because this diff wrote these lines to describe the bounded scan.
 - `docs/discoveries/weight-coherence.md:60`, `:62` — still true because this diff wrote these lines to describe the bounds and the skip count.
+- `docs/audits/security-sweep-chunk-08a-detection-neuron.md:71` — the `weight_coherence.rs` file row. Its body is the audit-HEAD verdict (per-pair map rebuild in `calculate_correlation`, no deadline check, three `with_capacity` sites), which the ledger keeps as history. Because it read as current, this PR appends a **Post-finalisation note** to the row saying what #2347 changed and that the text above it describes the audited code. That follows the convention the `symmetry_breaking.rs` file row uses for #2400 (append a note, do not rewrite the audited text), so the row is now true as written.
+- `docs/audits/security-sweep-chunk-08a-detection-neuron.md:170` — the pair-loop row. Its "unbounded at the audit HEAD" verdict is audit-HEAD history, followed by this diff's **Post-finalisation note** and the `yes — deadline_passed before each target` cell that `tests/issue_2294_chunk_08a_pairwise_sweep.rs` pins.
+- `docs/audits/security-sweep-chunk-08a-detection-neuron.md:312` — this diff's **Post-finalisation reconciliation (#2347)** note for the removed `candidates` capacity row (merged count 80).
+- `docs/audits/security-sweep-chunk-08a-detection-neuron.md:419` — the findings index row for issue #2347; still true, the issue was filed against that function.
+- `docs/audits/security-sweep-chunk-08a-detection-neuron.md:526`, `:528` — the "issues filed" list, which records what #2347 reported at filing time; history of the filed issue, kept by the ledger convention (no other fixed issue in that list is rewritten).
+- `docs/archive/pr-summaries/pr-summary-2294.md:10`, `pr-summary-767.md:25`, `pr-summary-770.md:5`, `pr-summary-776.md:7` — archived summaries of earlier PRs, which describe those PRs at the time; archive history, not edited.
 - `src/analysis/detection/weight_coherence.rs:27`, `:31`, `:33` — the new module doc for the scan bounds.
 - `src/analysis/detection/weight_coherence.rs:74`, `:78` — the two constants.
 - `src/analysis/detection/weight_coherence.rs:178`, `:185` — the new result struct and its `skipped_high_fanin_targets` doc.
@@ -158,18 +166,21 @@ Every remaining hit on the head, with current line numbers:
 - `src/analysis/detection/weight_coherence.rs:439`, `:451`, `:453`, `:459`, `:460` — the bounded function's doc, signature and result/scan initialisation.
 - `src/analysis/detection/weight_coherence.rs:512`, `:582` — the fan-in cap and candidate ceiling checks.
 - `src/analysis/detection/weight_coherence.rs:734` — the `correlation_from_maps` doc, which states as history that the removed `calculate_correlation` rebuilt both maps on every call.
-- `src/analysis/module_dispatch_specs/synapse_specs.rs:31`, `:49`, `:54`, `:167`, `:291`, `:292` — the production call into the bounded scan, the partial-scan helper's doc and signature, and the test doc and fixture for it.
-- `tests/detection/issue_437_weight_coherence_validation.rs:289`, `:365` — still true because they call the legacy wrapper, which keeps its signature and results.
-- `tests/detection/issue_770_weight_coherence_topology_cache.rs:158` (and `:184`, `:185`) — still true because the comment names the legacy wrapper, which is kept and returns the same results with and without the cache.
-- `tests/infrastructure/issue_776_hashset_hashmap_iteration.rs:98` (and `:125`, `:163`) — still true because the comment names the legacy wrapper, which is kept and still produces correct results.
-- `tests/issue_2347_symmetric_cancellation_growth.rs` — module doc and calls to the legacy wrapper (the two base-compilable tests).
-- `tests/issue_2347_symmetric_cancellation_growth_test.rs` — module doc, imports and calls to the bounded scan; added by this diff.
+- `src/analysis/detection/weight_coherence.rs:944`, `:953` — calls to the bounded scan in the new in-crate test `per_target_deadline_check_stops_a_scan_that_started_before_the_deadline`.
+- `src/analysis/module_dispatch_specs/synapse_specs.rs:31`, `:49`, `:54`, `:167`, `:293`, `:294` — the production call into the bounded scan, the partial-scan helper's doc and signature, and the test doc and fixture for it.
+- `tests/detection/issue_437_weight_coherence_validation.rs:22`, `:289`, `:365` — still true because they import and call the legacy wrapper, which keeps its signature and results.
+- `tests/detection/issue_770_weight_coherence_topology_cache.rs:11`, `:158`, `:184`, `:185` — still true because they import and name the legacy wrapper, which is kept and returns the same results with and without the cache.
+- `tests/infrastructure/issue_776_hashset_hashmap_iteration.rs:9`, `:98`, `:125`, `:163` — still true because they import and name the legacy wrapper, which is kept and still produces correct results.
+- `tests/issue_2294_chunk_08a_pairwise_sweep.rs:108` — the `CHECKED_SINCE_AUDIT` key for the pair-loop row; still true, the row exists under that symbol and now reads `yes — deadline_passed …`.
+- `tests/issue_2347_symmetric_cancellation_growth.rs:5`, `:22`, `:78`, `:84`, `:95`, `:118` — module doc, import and calls to the legacy wrapper (the two base-compilable tests).
+- `tests/issue_2347_symmetric_cancellation_growth_test.rs:2`, `:14`, `:15`, `:77`, `:78`, `:94`, `:95`, `:123`, `:148`, `:161`, `:172`, `:194`, `:197`, `:200`, `:209`, `:212`, `:225`, `:227` — module doc, imports and calls to the bounded scan; added by this diff.
 
 ## Test Plan
 
 - **Tests added:**
   - `tests/issue_2347_symmetric_cancellation_growth.rs`, with 2 tests. These compile at base (see Evidence).
   - `tests/issue_2347_symmetric_cancellation_growth_test.rs`, with 8 tests. These need the new API.
+  - One in-crate `#[serial]` unit test in the `tests` module of `src/analysis/detection/weight_coherence.rs`, `per_target_deadline_check_stops_a_scan_that_started_before_the_deadline` (review 5715761259). It scripts `deadline_passed` through `DeadlineOverrideGuard::with_sequence(vec![false, true])` over two targets, each fed by one opposite-sign, correlated pair, and asserts `DeadlinePassed`, `pairs_correlated == 1` and that the one candidate comes from `target-a`, the first target in sorted UUID order. A no-override control run in the same test shows the fixture reaches both targets (2 pairs, 2 candidates). The `UNIX_EPOCH` tests only reach the check on the first target, which the module-level dispatch gate already covered; this one shows the check stops a scan that has already started.
   - Six unit tests in the `tests` module of `src/analysis/module_dispatch_specs/synapse_specs.rs`:
     - `symmetric_cancellation_spec_returns_none_when_deadline_already_elapsed`
     - `symmetric_cancellation_spec_returns_candidates_without_deadline`
@@ -178,14 +189,15 @@ Every remaining hit on the head, with current line numbers:
     - `scan_is_partial_when_candidate_ceiling_hit`
     - `scan_is_partial_when_high_fanin_targets_skipped`
 - **Tests modified:** the three unit tests in `src/analysis/detection/weight_coherence.rs` that called the removed `calculate_correlation` now call `correlation_from_maps(&build_activation_map(..), &build_activation_map(..), ..)`. Only the call site changed.
-  `tests/issue_2294_chunk_08a_pairwise_sweep.rs` now lists `weight_coherence.rs` in `CANCELLATION_FIXED_FILES` and its pair-loop row in `CHECKED_SINCE_AUDIT`, because the scan now calls `deadline_passed` itself. The contract still requires that row to exist and to read `yes — deadline_passed …`, so nothing is loosened. Alongside it, `docs/audits/security-sweep-chunk-08a-detection-neuron.md` drops the removed `detect_symmetric_cancellation` `candidates` capacity row (82 → 81 production rows), adds a #2347 post-finalisation note to the pair-loop row, and updates the counts. This fixed the CI `Coverage` failure in `issue_2154_chunk_08a_finalisation::every_production_capacity_site_is_cited_in_the_capacity_table`. All eight suites that read the record pass (50 tests).
+  `tests/issue_2294_chunk_08a_pairwise_sweep.rs` now lists `weight_coherence.rs` in `CANCELLATION_FIXED_FILES` and its pair-loop row in `CHECKED_SINCE_AUDIT`, because the scan now calls `deadline_passed` itself. The contract still requires that row to exist and to read `yes — deadline_passed …`, so nothing is loosened. Alongside it, `docs/audits/security-sweep-chunk-08a-detection-neuron.md` drops the removed `detect_symmetric_cancellation` `candidates` capacity row (after merging #2442, Develop's 81 production rows become 80, and the recorded capacity figure 83 becomes 82), adds #2347 post-finalisation notes to the pair-loop row and to the `weight_coherence.rs` file row, and updates the counts. This fixed the CI `Coverage` failure in `issue_2154_chunk_08a_finalisation::every_production_capacity_site_is_cited_in_the_capacity_table`. All nine suites that read the record pass on the final head (59 tests).
 - **Removed assertions:** none. Every existing assertion is kept unchanged.
-- **Branch merge:** the branch merges origin's default branch, which already landed #2351 and the #2348 / #2349 / #2358 deadline plumbing. The conflict in the `src/analysis/module_dispatch_specs/mod.rs` doc comment was resolved by keeping both sets of Issue lines.
-- **Version bump:** `Cargo.toml` and the crate's own `Cargo.lock` entry are at `0.74.300`, above Develop's `0.74.298` (from #2377). The earlier `0.74.296` fell below Develop when #2429 merged, and the CI auto-increment skips this branch (#2476), so the bump was made by hand; `0.74.299`, `0.74.301` and `0.74.302` are held by #2430, #2428 and #2442.
+- **Branch merge:** the branch merges origin's default branch, which already landed #2351, the #2348 / #2349 / #2358 deadline plumbing and #2442 (#2370). The earlier conflict in the `src/analysis/module_dispatch_specs/mod.rs` doc comment was resolved by keeping both sets of Issue lines. The #2442 merge conflicted in `Cargo.toml`, `Cargo.lock` and the chunk 8a ledger; the ledger was reconciled by deltas (Develop's counts plus this PR's removal of one capacity row), and the Rust scanner tests are the binding check.
+- **Version bump:** `Cargo.toml` and the crate's own `Cargo.lock` entry (set with `cargo update -p neat_ai_discovery`) are at `0.74.303`, above Develop's `0.74.302` (from #2442). The CI auto-increment skips this branch (#2476), so the bump was made by hand; `0.74.304` and `0.74.305` are held by #2430 and #2428.
 - **Results (run on the final head):**
   - `cargo test --test issue_2347_symmetric_cancellation_growth --test issue_2347_symmetric_cancellation_growth_test` → 2 passed and 8 passed.
-  - Full `./quality.sh`: shellcheck, licence audit, lint, type check and `cargo test --lib --tests --all-features` all passed (0 failed).
-  - `cargo doc --no-deps` with `-D warnings` and `cargo build --release --lib` passed when run separately, because the wrapper's 900 s timeout expired on a cold build cache.
+  - `cargo test --lib --all-features weight_coherence` → 6 passed, and `--lib symmetr` passed; the nine chunk 8a ledger suites (`issue_2088`, `2154`, `2280`, `2281`, `2282`, `2284`, `2294`, `2298`, `2300`) → 59 passed.
+  - `cargo fmt --check` and `cargo clippy --lib --tests --all-features -- -D warnings` are clean.
+  - The full `./quality.sh` run and the separate `cargo doc` / release build were done on an earlier head (before the #2442 merge) and were not re-run on this one; CI runs them.
   - Red at base: the primary test, as recorded in Evidence.
 
 ## Not done / risk
@@ -194,10 +206,11 @@ Every remaining hit on the head, with current line numbers:
 - Wide fan-in targets (above 256) are skipped, not truncated. This is by design, so such targets contribute no candidates.
 - The fan-in and candidate caps (`MAX_FANIN_FOR_CANCELLATION_SCAN`, `MAX_SYMMETRIC_CANCELLATION_CANDIDATES`) are fixed constants, not env-configurable.
 - Red at base was observed only for the primary test. The other tests need the new API, so no red-at-base result exists for them.
-- The mutation red-checks listed under Branch outcomes were done in the earlier session. The two marked *re-run after review 5675960755* were re-run on the current head.
+- The mutation red-checks listed under Branch outcomes were done in the earlier session. The two marked *re-run after review 5675960755* were re-run on a later head, and the one marked *run after review 5715761259* was run on the final head.
 
 **Branch outcomes:**
 - `src/analysis/detection/weight_coherence.rs:494` — deadline elapsed (stop, `DeadlinePassed`) — test `elapsed_deadline_stops_the_scan_before_any_pair_work` (in `tests/issue_2347_symmetric_cancellation_growth_test.rs`) — flipped to never stop, test went red
+- `src/analysis/detection/weight_coherence.rs:494` — deadline passes after the scan has started (stop before the second target) — unit test `per_target_deadline_check_stops_a_scan_that_started_before_the_deadline` (in `src/analysis/detection/weight_coherence.rs`) — moved the check above the `'outer` loop so it runs once, test went red (`left: None`, `right: Some(DeadlinePassed)`); restored, test green (*run after review 5715761259*)
 - `src/analysis/detection/weight_coherence.rs:494` — no deadline, or deadline not reached (scan continues, no truncation) — tests `no_deadline_does_not_truncate_and_finds_candidates` and `far_future_deadline_behaves_like_no_deadline` (both in `tests/issue_2347_symmetric_cancellation_growth_test.rs`) — flipped to always stop, both tests went red
 - `src/analysis/detection/weight_coherence.rs:512` — fan-in over the cap (target skipped and counted) — test `fanin_at_the_cap_is_scanned_fanin_over_the_cap_is_skipped` (in `tests/issue_2347_symmetric_cancellation_growth_test.rs`) and test `symmetric_cancellation_work_grows_no_faster_than_the_cap_allows` (in `tests/issue_2347_symmetric_cancellation_growth.rs`) — flipped to never skip, both tests went red (*re-run after review 5675960755*: the growth test now fails on its exact-zero assertion, since without the skip the ceiling alone gives 1024 at both fan-ins)
 - `src/analysis/detection/weight_coherence.rs:512` — fan-in exactly at the cap (target scanned) — test `fanin_at_the_cap_is_scanned_fanin_over_the_cap_is_skipped` (in `tests/issue_2347_symmetric_cancellation_growth_test.rs`) — flipped `>` to `>=`, test went red
