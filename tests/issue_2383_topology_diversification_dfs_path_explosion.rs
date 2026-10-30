@@ -2,8 +2,7 @@
 
 #![allow(clippy::cast_precision_loss)]
 
-use neat_ai_discovery::analysis::detection::topology_diversification::
-    detect_topology_diversification_candidates;
+use neat_ai_discovery::analysis::detection::topology_diversification::detect_topology_diversification_candidates;
 use neat_ai_discovery::types::DiscoverRecord;
 use neat_ai_discovery::{CreatureJson, NeuronJson, SynapseJson};
 
@@ -119,13 +118,19 @@ fn width_two_shared_path_ladder_keeps_deep_outputs_unflagged() {
     }
     neurons.push(neuron("output", "output"));
     for width_index in 0..2 {
-        synapses.push(synapse(format!("hidden-{}-{width_index}", depth - 1), "output"));
+        synapses.push(synapse(
+            format!("hidden-{}-{width_index}", depth - 1),
+            "output",
+        ));
     }
     synapses.push(synapse("input", "output"));
 
     let creature = creature(neurons, synapses);
     let candidates = detect_topology_diversification_candidates(&creature, &records_for(&creature));
-    assert!(candidates.is_empty(), "deep input paths must suppress diversification");
+    assert!(
+        candidates.is_empty(),
+        "deep input paths must suppress diversification"
+    );
 }
 
 #[test]
@@ -167,7 +172,10 @@ fn dangling_endpoint_chains_do_not_extend_graph_traversal() {
     let dangling_count = 50_000;
     let mut synapses = Vec::with_capacity(dangling_count + 1);
     for index in 0..dangling_count {
-        synapses.push(synapse(format!("ghost-{index}"), format!("ghost-{}", index + 1)));
+        synapses.push(synapse(
+            format!("ghost-{index}"),
+            format!("ghost-{}", index + 1),
+        ));
     }
     synapses.push(synapse(format!("ghost-{dangling_count}"), "output"));
     synapses.push(synapse("input", "output"));

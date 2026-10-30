@@ -14,8 +14,8 @@ use neat_ai_discovery::{CreatureJson, NeuronJson, SynapseJson};
 use std::hint::black_box;
 
 /// Create a creature with layered topology: inputs → layer1 → layer2 → ... → outputs.
-/// Each layer has `width` neurons with fan-out of 2 to the next layer, creating
-/// moderate path sharing without exponential blowup.
+/// Each neuron connects to two neurons in the next layer; width-2 cases create
+/// a fully connected ladder with exponentially many simple paths.
 fn create_layered_creature(depth: usize, width: usize, output_count: usize) -> CreatureJson {
     let input_count = 3;
 
