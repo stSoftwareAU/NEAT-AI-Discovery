@@ -8,6 +8,9 @@ use neat_ai_discovery::types::DiscoverRecord;
 use neat_ai_discovery::{CreatureJson, NeuronJson, SynapseJson};
 use serial_test::serial;
 
+// Every test is `#[serial]`: one test sets the process-global cancellation flag,
+// which would otherwise make the other detector calls return empty.
+
 fn neuron(uuid: &str, kind: &str) -> NeuronJson {
     NeuronJson {
         uuid: uuid.to_string(),
@@ -76,6 +79,7 @@ fn both_branches_creature() -> CreatureJson {
 }
 
 #[test]
+#[serial]
 fn local_and_cached_topology_preserve_long_path_and_imbalance_candidates() {
     let creature = both_branches_creature();
     let records = records_for(&creature);
@@ -154,6 +158,7 @@ fn local_and_cached_topology_preserve_long_path_and_imbalance_candidates() {
 }
 
 #[test]
+#[serial]
 fn existing_output_connection_is_not_proposed_as_a_long_path() {
     let creature = CreatureJson {
         neurons: vec![
@@ -185,6 +190,7 @@ fn existing_output_connection_is_not_proposed_as_a_long_path() {
 }
 
 #[test]
+#[serial]
 fn absent_inputs_or_outputs_do_not_create_invalid_sources_or_targets() {
     let creature = CreatureJson {
         neurons: vec![
