@@ -484,8 +484,10 @@ not new findings.
   `AddSynapse` with a `±∞` weight under a finite gain that no gain gate
   catches. Filed by the `graph` sweep (Issue #2283). The bottleneck bypass is
   fixed by Issue #2375: the converter now skips any bypass whose weight is not
-  finite. The `per-neuron-a` and `per-neuron-b` sibling sites listed below stay
-  open.
+  finite. The nine `per-neuron-a` and `per-neuron-b` sibling sites listed below
+  are fixed by the same issue through the shared gate `reject_non_finite_gains`,
+  which now also drops any coordinated candidate carrying a non-finite
+  `AddSynapse` / `SetWeight` weight or `AddNeuron` / `SetBias` bias.
 - #2351 — also carries four `graph`-section sibling sites, added by #2283 as a
   comment (same root cause, not a new issue):
   `bottleneck.rs::detect_bottleneck_neurons` (`total_error` / `neuron_error`
@@ -590,8 +592,9 @@ not new findings.
   non-finite `value` skips the coherence gate → non-finite bias and gain) and
   `dormant_synapse.rs::detect_dormant_synapses` (a `NaN` contribution fails
   both gates → `NaN` gain).
-- #2375 — also carries three `per-neuron-a` sibling sites (a `±∞` bias under a
-  finite gain), added by #2284 as a comment:
+- #2375 — also carried three `per-neuron-a` sibling sites (a `±∞` bias under a
+  finite gain), added by #2284 as a comment and fixed by Issue #2375's shared
+  `reject_non_finite_gains` operation-parameter gate:
   `bias_perturbation.rs::compute_regime_shift_bias`,
   `bounded_range.rs::bounded_range_to_coordinated_candidates` and
   `error_plateau.rs::compute_bias_adjustment`.
@@ -631,9 +634,10 @@ not new findings.
   lookup plus the two `creature.synapses` filter passes in
   `monotonicity.rs::non_monotonic_neurons_to_coordinated_candidates`
   (O(C·(N+S))) as a sibling site, added by #2285 as a comment.
-- #2375 — also carries `observation_utilisation.rs`'s `bias_compensation`
+- #2375 — also carried `observation_utilisation.rs`'s `bias_compensation`
   (`-effective_centre * current_weight`) as a sibling site (a `±∞` bias under
-  a finite gain), added by #2285 as a comment.
+  a finite gain), added by #2285 as a comment and fixed by Issue #2375's shared
+  `reject_non_finite_gains` operation-parameter gate.
 - #2272 — cross-referenced from the `observation_range.rs` row: it documents
   the env-configurable `CANDIDATE_SENTINELS` values consumed by
   `sentinel_cluster.rs::assess_sentinel_cluster`, not a finding filed by this
@@ -664,8 +668,9 @@ not new findings.
   issue): an unfiltered `NaN` activation fails the
   `MIN_MEAN_ABS_ACTIVATION` skip open, and an overflowing absolute sum gives
   a `+∞` `mean_abs_activation`, so `estimated_improvement` is `NaN` or `+∞`.
-- #2375 — also carries three `per-neuron-b` sibling sites (a `±∞` bias or
-  weight under a finite gain), added by #2298 as a comment:
+- #2375 — also carried three `per-neuron-b` sibling sites (a `±∞` bias or
+  weight under a finite gain), added by #2298 as a comment and fixed by Issue
+  #2375's shared `reject_non_finite_gains` operation-parameter gate:
   `operating_point.rs::operating_point_to_coordinated_candidates`,
   `output_range_compression.rs::output_range_compression_to_coordinated_candidates`
   and `restricted_range.rs::restricted_range_to_coordinated_candidates`.
@@ -695,8 +700,9 @@ not new findings.
   per-candidate `creature.synapses` filter for `downstream_targets` (O(C·S))
   and `squash_weight_rescale.rs::feeds_downstream_aggregate`'s per-neuron
   `creature.neurons` scan (O(fan_out·N)).
-- #2375 — also carries two `per-neuron-b` sibling sites (a `±∞` bias or weight
-  under a finite gain), added by #2299 as a comment:
+- #2375 — also carried two `per-neuron-b` sibling sites (a `±∞` bias or weight
+  under a finite gain), added by #2299 as a comment and fixed by Issue #2375's
+  shared `reject_non_finite_gains` operation-parameter gate:
   `sentinel_gating.rs::sentinel_gating_to_coordinated_candidates`'s
   `gate_bias` (an overflowing sum of `sentinel_cluster.rs`-derived extrema)
   and `squash_weight_rescale.rs::detect_squash_weight_rescale_candidates`'s

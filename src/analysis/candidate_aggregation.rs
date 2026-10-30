@@ -140,8 +140,24 @@ pub fn apply_coordinated_gain_floor_with_multiplier(
     drops
 }
 
+/// `true` when every numeric parameter an operation carries — an `AddSynapse` /
+/// `SetWeight` weight or an `AddNeuron` / `SetBias` bias — is finite
+/// (Issue #2375).
+fn operation_parameters_are_finite(op: &CoordinatedStructuralOpJson) -> bool {
+    match op {
+        CoordinatedStructuralOpJson::AddSynapse { weight, .. }
+        | CoordinatedStructuralOpJson::SetWeight { weight, .. } => weight.is_finite(),
+        CoordinatedStructuralOpJson::AddNeuron { bias, .. }
+        | CoordinatedStructuralOpJson::SetBias { bias, .. } => bias.is_finite(),
+        CoordinatedStructuralOpJson::RemoveSynapse { .. }
+        | CoordinatedStructuralOpJson::RemoveNeuron { .. }
+        | CoordinatedStructuralOpJson::ChangeSquash { .. } => true,
+    }
+}
+
 /// Remove coordinated-structural candidates whose `expected_creature_score_gain`
-/// is not finite (`NaN` or `±∞`) (Issue #1367).
+/// is not finite (`NaN` or `±∞`) (Issue #1367), or that carry an operation with
+/// a non-finite weight or bias (Issue #2375).
 ///
 /// Ranking sorts by `expected_creature_score_gain` via `total_cmp`, which
 /// orders a positive `NaN` **above** `+∞` — so a non-finite gain would sort to
@@ -150,11 +166,21 @@ pub fn apply_coordinated_gain_floor_with_multiplier(
 /// valid positive improvement, so it is dropped here before any reranking or
 /// final selection. The relative order of the finite survivors is preserved.
 ///
+/// The gain test alone is not enough: a detector can overflow an `f32` weight
+/// or bias to `±∞` (for example `2e19 * 2e19` or a midpoint of two large
+/// finite activations) while its gain stays finite, and `serde_json` would
+/// serialise that parameter as `null`. Every detector's candidates pass this
+/// gate, so the check here covers all of them rather than each converter
+/// repeating it.
+///
 /// Returns the number of candidates removed so callers can record the drop in
 /// the structured rejection breakdown.
 pub fn reject_non_finite_gains(candidates: &mut Vec<CoordinatedStructuralCandidateJson>) -> u32 {
     let before = candidates.len();
-    candidates.retain(|c| c.expected_creature_score_gain.is_finite());
+    candidates.retain(|c| {
+        c.expected_creature_score_gain.is_finite()
+            && c.operations.iter().all(operation_parameters_are_finite)
+    });
     u32::try_from(before.saturating_sub(candidates.len())).unwrap_or(u32::MAX)
 }
 
