@@ -83,6 +83,15 @@ fn symmetric_cancellation_work_grows_no_faster_than_the_cap_allows() {
     let candidates_4n =
         detect_symmetric_cancellation(&creature_4n, &records_4n, &config, None).len();
 
+    // The over-cap target is skipped outright, so it yields nothing. This is
+    // what pins the fan-in cap itself: without the skip, the candidate ceiling
+    // alone would still hold the bounds below (1,024 at both fan-ins).
+    assert_eq!(
+        candidates_4n, 0,
+        "a target with fan-in {four_n}, over the fan-in cap of 256, must be skipped: \
+         got {candidates_4n} candidates (fan-in {n} gave {candidates_n})"
+    );
+
     // Mirrors MAX_SYMMETRIC_CANCELLATION_CANDIDATES (1,024): the output for a
     // single target is capped regardless of how many sources it has.
     assert!(

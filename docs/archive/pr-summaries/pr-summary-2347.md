@@ -73,8 +73,11 @@ This is a backend-only change, with no visual surface and so no screenshots.
 It uses only the legacy `detect_symmetric_cancellation` wrapper and literal
 numbers, so it compiles at base. The fixture is one target fed by 128, then 512,
 alternating `+5.0` / `-5.0` sources with identical activations. The test asserts
-that candidates at fan-in 512 are at most 1024 and at most 4× the candidates at
-fan-in 128.
+that the over-cap target at fan-in 512 yields exactly 0 candidates (it is
+skipped), and that candidates at fan-in 512 are at most 1024 and at most 4× the
+candidates at fan-in 128. The exact-zero assertion is what pins the fan-in cap
+itself: with the skip removed, the candidate ceiling alone would hold both
+fan-ins at 1024 and keep the two bounds green.
 
 - Red at base, observed in a detached worktree of `origin/HEAD`:
   `output must stay within the candidate ceiling of 1024 at fan-in 512: got 65536 candidates (fan-in 128 gave 4096)`
@@ -91,8 +94,10 @@ observation.
 The production entry point is covered too:
 
 - unit test `symmetric_cancellation_spec_returns_none_when_deadline_already_elapsed`
-  in `src/analysis/module_dispatch_specs/synapse_specs.rs` proves that dispatch
-  forwards the discovery deadline.
+  in `src/analysis/module_dispatch_specs/synapse_specs.rs` builds the specs
+  through `build_discovery_module_specs` (the production composition) and
+  proves that the discovery deadline is forwarded from there, through
+  `append_synapse_specs`, into the scan.
 - unit test `scan_is_partial_when_high_fanin_targets_skipped` in
   `src/analysis/module_dispatch_specs/synapse_specs.rs`, together with its
   siblings, proves that a partial scan is reported and not shown as complete.
@@ -182,12 +187,12 @@ Every remaining hit on the head, with current line numbers:
 - Wide fan-in targets (above 256) are skipped, not truncated. This is by design, so such targets contribute no candidates.
 - The fan-in and candidate caps (`MAX_FANIN_FOR_CANCELLATION_SCAN`, `MAX_SYMMETRIC_CANCELLATION_CANDIDATES`) are fixed constants, not env-configurable.
 - Red at base was observed only for the primary test. The other tests need the new API, so no red-at-base result exists for them.
-- The mutation red-checks listed under Branch outcomes were done in the earlier session and were not re-run for this pass.
+- The mutation red-checks listed under Branch outcomes were done in the earlier session. The two marked *re-run after review 5675960755* were re-run on the current head.
 
 **Branch outcomes:**
 - `src/analysis/detection/weight_coherence.rs:494` — deadline elapsed (stop, `DeadlinePassed`) — test `elapsed_deadline_stops_the_scan_before_any_pair_work` (in `tests/issue_2347_symmetric_cancellation_growth_test.rs`) — flipped to never stop, test went red
 - `src/analysis/detection/weight_coherence.rs:494` — no deadline, or deadline not reached (scan continues, no truncation) — tests `no_deadline_does_not_truncate_and_finds_candidates` and `far_future_deadline_behaves_like_no_deadline` (both in `tests/issue_2347_symmetric_cancellation_growth_test.rs`) — flipped to always stop, both tests went red
-- `src/analysis/detection/weight_coherence.rs:512` — fan-in over the cap (target skipped and counted) — test `fanin_at_the_cap_is_scanned_fanin_over_the_cap_is_skipped` (in `tests/issue_2347_symmetric_cancellation_growth_test.rs`) and test `symmetric_cancellation_work_grows_no_faster_than_the_cap_allows` (in `tests/issue_2347_symmetric_cancellation_growth.rs`) — flipped to never skip, both tests went red
+- `src/analysis/detection/weight_coherence.rs:512` — fan-in over the cap (target skipped and counted) — test `fanin_at_the_cap_is_scanned_fanin_over_the_cap_is_skipped` (in `tests/issue_2347_symmetric_cancellation_growth_test.rs`) and test `symmetric_cancellation_work_grows_no_faster_than_the_cap_allows` (in `tests/issue_2347_symmetric_cancellation_growth.rs`) — flipped to never skip, both tests went red (*re-run after review 5675960755*: the growth test now fails on its exact-zero assertion, since without the skip the ceiling alone gives 1024 at both fan-ins)
 - `src/analysis/detection/weight_coherence.rs:512` — fan-in exactly at the cap (target scanned) — test `fanin_at_the_cap_is_scanned_fanin_over_the_cap_is_skipped` (in `tests/issue_2347_symmetric_cancellation_growth_test.rs`) — flipped `>` to `>=`, test went red
 - `src/analysis/detection/weight_coherence.rs:546` — source map not yet cached (build it once and count it) vs. already cached (reuse it) — test `activation_maps_are_cached_across_pairs_not_rebuilt_per_pair` (in `tests/issue_2347_symmetric_cancellation_growth_test.rs`) — flipped to rebuild on every pair, test went red
 - `src/analysis/detection/weight_coherence.rs:582` — candidate ceiling reached (stop, `CandidateCeiling`) — test `symmetric_cancellation_stops_at_the_candidate_ceiling_and_reports_it` (in `tests/issue_2347_symmetric_cancellation_growth_test.rs`) — flipped to never stop, test went red
@@ -195,5 +200,6 @@ Every remaining hit on the head, with current line numbers:
 - `src/analysis/module_dispatch_specs/synapse_specs.rs:38` / `:56` — partial scan (truncated or skipped targets, so `warn!` is logged) — unit tests `scan_is_partial_when_deadline_passed`, `scan_is_partial_when_candidate_ceiling_hit` and `scan_is_partial_when_high_fanin_targets_skipped` (all in `src/analysis/module_dispatch_specs/synapse_specs.rs`) — forced `symmetric_cancellation_scan_is_partial` to always return false, all three tests went red
 - `src/analysis/module_dispatch_specs/synapse_specs.rs:38` / `:56` — complete scan (no log) — unit test `scan_is_not_partial_when_complete` (in `src/analysis/module_dispatch_specs/synapse_specs.rs`) — forced it to always return true, test went red
 - `src/analysis/module_dispatch_specs/synapse_specs.rs:118` — production dispatch forwards the discovery deadline — unit test `symmetric_cancellation_spec_returns_none_when_deadline_already_elapsed` (paired with unit test `symmetric_cancellation_spec_returns_candidates_without_deadline`, both in `src/analysis/module_dispatch_specs/synapse_specs.rs`) — reverted `&deadline` to `&None`, the elapsed-deadline test went red
+- `src/analysis/module_dispatch_specs/mod.rs:80` — `build_discovery_module_specs` hands `deadline` to `append_synapse_specs` — the same two spec unit tests, which now build the specs through `build_discovery_module_specs` — passed `None` there instead of `deadline`, the elapsed-deadline test went red (*re-run after review 5675960755*)
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)

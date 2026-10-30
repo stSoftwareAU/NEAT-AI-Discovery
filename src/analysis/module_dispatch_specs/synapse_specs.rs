@@ -234,28 +234,39 @@ mod tests {
         )
     }
 
-    /// Issue #2347: the "symmetric cancellation detection" spec must stop
-    /// before finding any candidate when the deadline has already elapsed —
-    /// proving `deadline` (not `&None`) is actually forwarded into the scan.
-    #[test]
-    fn symmetric_cancellation_spec_returns_none_when_deadline_already_elapsed() {
+    /// Builds every discovery spec through the production entry point,
+    /// `build_discovery_module_specs`, and returns the symmetric-cancellation
+    /// one. Going through the full composition (not `append_synapse_specs`
+    /// directly) means the hand-off of `deadline` from
+    /// `build_discovery_module_specs` to the synapse specs is covered too.
+    fn symmetric_cancellation_spec(
+        deadline: Option<SystemTime>,
+    ) -> crate::analysis::discovery_dispatch::DiscoveryModuleSpec {
         let (creature, topo) = cancellation_fixture();
         let hidden: Arc<Vec<(String, String, f32)>> = Arc::new(vec![]);
         let shared_cache = Arc::new(cancellation_cache());
 
-        let mut modules = Vec::new();
-        append_synapse_specs(
-            &mut modules,
+        super::super::build_discovery_module_specs(
             &creature,
             &hidden,
             &shared_cache,
             &topo,
-            Some(SystemTime::UNIX_EPOCH),
-        );
-        let spec = modules
-            .into_iter()
-            .find(|s| s.module_name == "symmetric cancellation detection")
-            .expect("symmetric cancellation detection spec must be present");
+            crate::analysis::cost_function_hint::CostFunctionHint::Unknown,
+            crate::analysis::task_descriptor::TaskDescriptor::neutral(),
+            deadline,
+        )
+        .into_iter()
+        .find(|s| s.module_name == "symmetric cancellation detection")
+        .expect("symmetric cancellation detection spec must be registered")
+    }
+
+    /// Issue #2347: the "symmetric cancellation detection" spec must stop
+    /// before finding any candidate when the deadline has already elapsed —
+    /// proving `deadline` (not `None` / `&None`) is forwarded from
+    /// `build_discovery_module_specs` through `append_synapse_specs` into the scan.
+    #[test]
+    fn symmetric_cancellation_spec_returns_none_when_deadline_already_elapsed() {
+        let spec = symmetric_cancellation_spec(Some(SystemTime::UNIX_EPOCH));
         let result = (spec.detect_fn)();
         assert!(
             result.is_none(),
@@ -269,16 +280,7 @@ mod tests {
     /// assertion above can actually fail when the deadline is dropped.
     #[test]
     fn symmetric_cancellation_spec_returns_candidates_without_deadline() {
-        let (creature, topo) = cancellation_fixture();
-        let hidden: Arc<Vec<(String, String, f32)>> = Arc::new(vec![]);
-        let shared_cache = Arc::new(cancellation_cache());
-
-        let mut modules = Vec::new();
-        append_synapse_specs(&mut modules, &creature, &hidden, &shared_cache, &topo, None);
-        let spec = modules
-            .into_iter()
-            .find(|s| s.module_name == "symmetric cancellation detection")
-            .expect("symmetric cancellation detection spec must be present");
+        let spec = symmetric_cancellation_spec(None);
         let result = (spec.detect_fn)();
         assert!(
             result.is_some(),
