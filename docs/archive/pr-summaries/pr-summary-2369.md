@@ -57,8 +57,7 @@ Not run: a break-the-guard check of each individual deadline check by deleting i
 - Audit record meta-tests (`issue_2154`, `2280`, `2281`, `2282`, `2284`, `2294`, `2298`, `2300`): passed (8 and 42 tests) after the six capacity rows were added.
 - Docs: `docs/DISCOVERY_TYPES.md` (topology scan bounds paragraph) and `docs/audits/security-sweep-chunk-08a-detection-neuron.md` updated.
 - Merged `origin/Develop` (including #2374) into the branch; the targeted tests above and `cargo test --lib topology` (14 passed) were re-run after the merge.
-- Full gate: `./quality.sh` was started on the merged head; its result is recorded by CI on the PR.
-<!-- vibe-quality-gate-skipped reason="full gate exceeded the foreground time budget on a cold build; CI runs the same checks" -->
+- Full gate, run on the final head: `./quality.sh` stages (deny, build, fmt, clippy, check) completed clean up to its test stage; because the test stage exceeds a single foreground call, the remaining stages were run separately: `cargo test --lib --all-features` (1696 passed, 0 failed, 3 ignored), `cargo test --test '*' --all-features` (273 test binaries, all `ok`), `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps` (clean) and `cargo build --release --lib` (clean).
 
 ## Merge verification
 
