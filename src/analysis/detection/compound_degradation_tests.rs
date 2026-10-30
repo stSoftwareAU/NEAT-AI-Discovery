@@ -582,3 +582,99 @@ fn weight_correction_cap_keeps_the_strongest_and_reports_candidate_ceiling() {
         "no candidate may use a weight correction weaker than the strongest 256"
     );
 }
+
+/// Reachable-output walks made by the full scan over `creature`.
+fn scan_walks(creature: &CreatureJson, records: &[(String, Vec<DiscoverRecord>)]) -> usize {
+    let mut walks = 0usize;
+    detect_compound_bias_weight_degradations_observed(creature, records, &None, &mut || {
+        walks += 1;
+    });
+    walks
+}
+
+/// Issue #2367: with no weight corrections no (bias, weight) pair exists, so the
+/// scan must not walk the graph for any bias neuron. The control (`fixture`
+/// with its `out-0` records) walks once per distinct precomputed neuron: the
+/// four hidden bias neurons plus the shared weight target `out-0`.
+#[test]
+#[serial]
+fn scan_with_no_weight_corrections_does_no_reachable_walk() {
+    let (creature, mut records) = fixture(4);
+    assert_eq!(scan_walks(&creature, &records), 5);
+
+    // Without `out-0` records no synapse has target records, so no weight
+    // correction can be detected; the hidden bias corrections remain.
+    records.retain(|(uuid, _)| uuid != "out-0");
+    let records_map = build_record_map(&records);
+    assert!(detect_weight_corrections(&creature, &records_map).is_empty());
+    let neuron_squash: HashMap<&str, &str> = creature
+        .neurons
+        .iter()
+        .map(|n| (n.uuid.as_str(), n.squash.as_str()))
+        .collect();
+    let neuron_bias: HashMap<&str, f32> = creature
+        .neurons
+        .iter()
+        .map(|n| (n.uuid.as_str(), n.bias))
+        .collect();
+    assert_eq!(
+        detect_bias_corrections(&creature, &records_map, &neuron_squash, &neuron_bias).len(),
+        4,
+        "the bias corrections must remain so the zero-walk check is non-vacuous"
+    );
+
+    assert_eq!(scan_walks(&creature, &records), 0);
+    let scan = detect_compound_bias_weight_degradations_with_deadline(&creature, &records, &None);
+    assert!(scan.candidates.is_empty());
+    assert_eq!(scan.truncation, None);
+}
+
+/// Issue #2367: the packed reachable-output bitset must agree with hash-set
+/// intersection and store no more than `O / 64 + 1` words for `O` outputs.
+#[test]
+fn output_bitset_intersects_matches_hash_set_intersection() {
+    const OUTPUTS: usize = 300;
+    let names: Vec<String> = (0..OUTPUTS).map(|i| format!("o{i}")).collect();
+    let index: HashMap<&str, usize> = names
+        .iter()
+        .enumerate()
+        .map(|(i, n)| (n.as_str(), i))
+        .collect();
+    // Deterministic subsets: multiples of a stride from a start, plus empty.
+    let mut sets: Vec<HashSet<&str>> = vec![HashSet::new()];
+    for (start, stride) in [
+        (0, 1),
+        (5, 7),
+        (63, 64),
+        (64, 64),
+        (299, 1),
+        (130, 50),
+        (1, 2),
+    ] {
+        sets.push(
+            (start..OUTPUTS)
+                .step_by(stride)
+                .map(|i| names[i].as_str())
+                .collect(),
+        );
+    }
+    sets.push(HashSet::from([names[10].as_str()]));
+    sets.push(HashSet::from([names[200].as_str()]));
+
+    let packed: Vec<OutputBitset> = sets
+        .iter()
+        .map(|s| OutputBitset::from_outputs(s, &index))
+        .collect();
+    for p in &packed {
+        assert!(p.words.len() <= OUTPUTS / 64 + 1);
+    }
+    for (a, pa) in sets.iter().zip(&packed) {
+        for (b, pb) in sets.iter().zip(&packed) {
+            assert_eq!(
+                pa.intersects(pb),
+                a.intersection(b).next().is_some(),
+                "bitset and hash-set intersection disagree for {a:?} and {b:?}"
+            );
+        }
+    }
+}

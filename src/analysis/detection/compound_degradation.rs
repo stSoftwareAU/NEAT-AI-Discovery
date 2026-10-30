@@ -27,7 +27,12 @@
 //! [`MAX_COMPOUND_WEIGHT_CORRECTIONS`] weight corrections (by estimated
 //! improvement) are kept, bounding pairs to 256·256 = 65,536. Reachable-output
 //! sets are computed once per distinct neuron with a visited set (`O(V+E)`
-//! each), not once per pair. Emitted candidates are capped at
+//! time each), not once per pair, and each is retained as an output bitset
+//! over a dense output index ([`OutputBitset`]), so the retained memory is at
+//! most `512 × O / 8` bytes for `O` outputs (about 64 MB at
+//! `validate_creature`'s 1,000,000 cap) rather than one hash set of output
+//! UUIDs per neuron. When either correction list is empty no pair can exist,
+//! so no reachable set is computed at all. Emitted candidates are capped at
 //! [`MAX_COMPOUND_DEGRADATION_CANDIDATES`]. The deadline-aware entry point
 //! [`detect_compound_bias_weight_degradations_with_deadline`] checks the shared
 //! analysis deadline and global cancellation once per precomputed neuron and
@@ -167,6 +172,23 @@ pub fn detect_compound_bias_weight_degradations_with_deadline(
     neuron_records: &[(String, impl AsRef<[DiscoverRecord]>)],
     deadline: &Option<SystemTime>,
 ) -> CompoundDegradationScan {
+    detect_compound_bias_weight_degradations_observed(
+        creature,
+        neuron_records,
+        deadline,
+        &mut || {},
+    )
+}
+
+/// [`detect_compound_bias_weight_degradations_with_deadline`] with `on_walk`
+/// called once per reachable-output walk in the precompute phase, so tests can
+/// count the walks deterministically (Issue #2367). Production passes a no-op.
+fn detect_compound_bias_weight_degradations_observed(
+    creature: &CreatureJson,
+    neuron_records: &[(String, impl AsRef<[DiscoverRecord]>)],
+    deadline: &Option<SystemTime>,
+    on_walk: &mut impl FnMut(),
+) -> CompoundDegradationScan {
     let records_map = build_record_map(neuron_records);
 
     // Build neuron lookup maps
@@ -214,6 +236,15 @@ pub fn detect_compound_bias_weight_degradations_with_deadline(
         corrections_capped = true;
     }
 
+    // Issue #2367: with no bias or no weight corrections there is no pair to
+    // evaluate, so skip the reachable-set precompute entirely.
+    if bias_corrections.is_empty() || weight_corrections.is_empty() {
+        return CompoundDegradationScan {
+            candidates: Vec::new(),
+            truncation: corrections_capped.then_some(ScanTruncation::CandidateCeiling),
+        };
+    }
+
     // Build a set of output neuron UUIDs for path validation
     let output_uuids: HashSet<&str> = creature
         .neurons
@@ -222,9 +253,19 @@ pub fn detect_compound_bias_weight_degradations_with_deadline(
         .map(|n| n.uuid.as_str())
         .collect();
 
+    // Issue #2367: give each distinct output a dense index once, so each
+    // retained reachable set is a bitset of at most `O` bits.
+    let output_index: HashMap<&str, usize> = output_uuids
+        .iter()
+        .enumerate()
+        .map(|(index, &uuid)| (uuid, index))
+        .collect();
+
     // Phase 3a: memoise each distinct neuron's reachable-output set once,
     // rather than walking the graph for every (bias, weight) pair (Issue #2367).
-    let mut reachable: HashMap<&str, HashSet<&str>> = HashMap::new();
+    // Each walk's transient hash set is dropped as soon as it is packed into a
+    // bitset, so only the bitsets stay alive through the pair loop.
+    let mut reachable: HashMap<&str, OutputBitset> = HashMap::new();
     let precompute_targets = bias_corrections
         .iter()
         .map(|c| c.neuron_uuid.as_str())
@@ -239,10 +280,9 @@ pub fn detect_compound_bias_weight_degradations_with_deadline(
                 truncation: Some(ScanTruncation::DeadlinePassed),
             };
         }
-        reachable.insert(
-            uuid,
-            reachable_outputs(uuid, &downstream_of, &output_uuids, 3),
-        );
+        on_walk();
+        let reached = reachable_outputs(uuid, &downstream_of, &output_uuids, 3);
+        reachable.insert(uuid, OutputBitset::from_outputs(&reached, &output_index));
     }
 
     // Phase 3b: Combine related corrections
@@ -442,7 +482,7 @@ fn combine_corrections(
     bias_corrections: &[BiasCorrection],
     weight_corrections: &[WeightCorrection],
     downstream_of: &HashMap<&str, HashSet<&str>>,
-    reachable: &HashMap<&str, HashSet<&str>>,
+    reachable: &HashMap<&str, OutputBitset>,
     deadline: &Option<SystemTime>,
 ) -> CompoundDegradationScan {
     let mut candidates = Vec::new();
@@ -528,7 +568,7 @@ fn are_on_connected_path(
     weight_from: &str,
     weight_to: &str,
     downstream_of: &HashMap<&str, HashSet<&str>>,
-    reachable: &HashMap<&str, HashSet<&str>>,
+    reachable: &HashMap<&str, OutputBitset>,
 ) -> bool {
     // Direct connection: bias neuron feeds into weight target
     if let Some(downs) = downstream_of.get(bias_neuron)
@@ -553,7 +593,51 @@ fn are_on_connected_path(
     };
 
     // If both reach the same output, they're on connected paths
-    bias_reaches.intersection(weight_reaches).next().is_some()
+    bias_reaches.intersects(weight_reaches)
+}
+
+/// A neuron's reachable-output set packed as a bitset over the dense output
+/// index (Issue #2367).
+///
+/// Only the words from the first to the last non-zero word are stored, with
+/// `offset` giving the index of the first stored word, so a set never holds
+/// more than `O / 64 + 1` words for `O` outputs and an empty set holds none.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct OutputBitset {
+    offset: usize,
+    words: Vec<u64>,
+}
+
+impl OutputBitset {
+    /// Pack `reached` using `output_index`. Every UUID in `reached` is an
+    /// output and so has an index; one without is ignored.
+    fn from_outputs(reached: &HashSet<&str>, output_index: &HashMap<&str, usize>) -> Self {
+        let bits: Vec<usize> = reached
+            .iter()
+            .filter_map(|uuid| output_index.get(uuid).copied())
+            .collect();
+        let Some(&min) = bits.iter().min() else {
+            return Self::default();
+        };
+        let offset = min / 64;
+        // Grows only to the highest set word, so at most `O / 64 + 1` words.
+        let mut words: Vec<u64> = Vec::new();
+        for bit in bits {
+            let word = bit / 64 - offset;
+            if words.len() <= word {
+                words.resize(word + 1, 0);
+            }
+            words[word] |= 1u64 << (bit % 64);
+        }
+        Self { offset, words }
+    }
+
+    /// Whether the two sets share at least one output.
+    fn intersects(&self, other: &Self) -> bool {
+        let start = self.offset.max(other.offset);
+        let end = (self.offset + self.words.len()).min(other.offset + other.words.len());
+        (start..end).any(|w| self.words[w - self.offset] & other.words[w - other.offset] != 0)
+    }
 }
 
 /// Find output neurons reachable within `max_depth` hops from a starting neuron.
