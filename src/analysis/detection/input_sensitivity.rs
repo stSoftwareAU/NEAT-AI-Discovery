@@ -198,10 +198,9 @@ fn detect_dominant_inputs_observed(
     deadline: &Option<SystemTime>,
     mut on_work: impl FnMut(),
 ) -> DominantInputScan {
-    let mut candidates = Vec::new();
     if deadline_passed(deadline) {
         return DominantInputScan {
-            candidates,
+            candidates: Vec::new(),
             stop: Some(DominantInputStop::DeadlinePassed),
         };
     }
@@ -215,6 +214,7 @@ fn detect_dominant_inputs_observed(
         .filter(|n| n.neuron_type == "input")
         .map(|n| n.uuid.as_str())
         .collect();
+    let mut candidates = Vec::with_capacity(input_uuids.len());
 
     // Identify output neurons
     let output_uuids: HashSet<&str> = creature
@@ -243,8 +243,6 @@ fn detect_dominant_inputs_observed(
             output_connected_sources.insert(syn.from_uuid.as_str());
         }
     }
-
-    candidates.reserve(input_uuids.len());
 
     // For each input neuron, analyse its sensitivity to each connected output
     for input_uuid in &input_uuids {
