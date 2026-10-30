@@ -56,10 +56,12 @@ Docs sweep: grep `fanin_polarity_conflicts_to_coordinated_candidates`, "fan-in p
 
 - `tests/issue_2350_fanin_polarity_squash_lookup_growth.rs`: `squash_lookup_work_grows_linearly_with_candidates` (red/green above) and `conversion_keeps_gain_order_and_inserts_each_neuron_before_its_target` (passed).
 - `src/analysis/detection/fanin_polarity_conflict.rs` module `issue_2350_tests`: `squash_lookup_work_scales_linearly_at_n_and_4n` counts map builds and lookups at N and 4N (deterministic).
+- `src/analysis/detection/fanin_polarity_conflict.rs` module `issue_2350_tests`: `deadline_mid_conversion_returns_the_candidates_built_so_far` (`#[serial]`) scripts the deadline with `DeadlineOverrideGuard::with_sequence(vec![false, true])` over three conflicts and asserts exactly one candidate comes back, for the first conflict (`h0`). It pins the per-candidate check and the partial-result contract: hoisting the check out of the loop (3 candidates) and replacing `break` with `return Vec::new()` (0 candidates) each turned it red.
 - `tests/detection/issue_641_fanin_polarity_conflict.rs`: `test_missing_target_neuron_falls_back_to_tanh_squash`, `test_present_target_neuron_keeps_its_squash`, `test_duplicate_target_uuid_uses_first_neuron_squash`.
 - `src/analysis/module_dispatch_specs/mod.rs`: `fanin_polarity_spec_detects_conflicts_before_the_deadline`, `fanin_polarity_spec_honours_an_elapsed_deadline` (covers the `synapse_specs.rs` call site passing the deadline).
 - `benches/fanin_polarity_squash_lookup.rs`: Criterion benchmark of absolute cost.
-- Ran on the final head (after merging current `Develop`): `cargo test --test issue_2350_fanin_polarity_squash_lookup_growth` (2 passed), `cargo test --test detection issue_641` (11 passed), `cargo test --lib fanin_polarity` (3 passed), `cargo fmt --check` and `cargo clippy --all-targets --all-features -- -D warnings` clean.
+- After adding the deadline test: `cargo test --lib --all-features fanin_polarity` (4 passed) and `cargo clippy --lib --tests --all-features -- -D warnings`.
+- Ran before the deadline test was added (after merging current `Develop`): `cargo test --test issue_2350_fanin_polarity_squash_lookup_growth` (2 passed), `cargo test --test detection issue_641` (11 passed), `cargo test --lib fanin_polarity` (3 passed), `cargo fmt --check` and `cargo clippy --all-targets --all-features -- -D warnings` clean.
 - `cargo audit` and `cargo deny check` are covered by CI on the merged head (the zstd advisories are resolved on the base branch).
 - Dependency fix (#2432): superseded by the base branch. `Develop` already carries the zstd-free `parquet`/`arrow` 60.0 manifest and lockfile, so this PR no longer changes `Cargo.toml` dependencies or `Cargo.lock` (only the new `[[bench]]` entry).
 

@@ -456,4 +456,123 @@ mod issue_2350_tests {
         assert_eq!(large_work, (N * 4 + 3) + N * 4);
         assert_eq!(large_work - 3, (small_work - 3) * 4);
     }
+
+    /// Three hidden neurons, each fed by one +2.0 and one -2.0 input, so each is a
+    /// conflict that converts to exactly one coordinated candidate.
+    fn three_conflict_fixture() -> (CreatureJson, Vec<FaninPolarityConflictCandidate>) {
+        let mut neurons = vec![
+            crate::NeuronJson {
+                uuid: "positive".to_string(),
+                neuron_type: "input".to_string(),
+                squash: "IDENTITY".to_string(),
+                bias: 0.0,
+            },
+            crate::NeuronJson {
+                uuid: "negative".to_string(),
+                neuron_type: "input".to_string(),
+                squash: "IDENTITY".to_string(),
+                bias: 0.0,
+            },
+        ];
+        let mut synapses = Vec::new();
+        let mut candidates = Vec::new();
+        for i in 0..3 {
+            let uuid = format!("h{i}");
+            neurons.push(crate::NeuronJson {
+                uuid: uuid.clone(),
+                neuron_type: "hidden".to_string(),
+                squash: "RELU".to_string(),
+                bias: 0.0,
+            });
+            for (from, weight) in [("positive", 2.0), ("negative", -2.0)] {
+                synapses.push(crate::SynapseJson {
+                    from_uuid: from.to_string(),
+                    to_uuid: uuid.clone(),
+                    weight,
+                    synapse_type: None,
+                });
+            }
+            candidates.push(FaninPolarityConflictCandidate {
+                neuron_uuid: uuid,
+                positive_weight_sum: 2.0,
+                negative_weight_sum: 2.0,
+                positive_count: 1,
+                negative_count: 1,
+                conflict_score: 1.0,
+                sample_count: 30,
+                estimated_improvement: 0.01,
+            });
+        }
+        neurons.push(crate::NeuronJson {
+            uuid: "output".to_string(),
+            neuron_type: "output".to_string(),
+            squash: "IDENTITY".to_string(),
+            bias: 0.0,
+        });
+        for i in 0..3 {
+            synapses.push(crate::SynapseJson {
+                from_uuid: format!("h{i}"),
+                to_uuid: "output".to_string(),
+                weight: 1.0,
+                synapse_type: None,
+            });
+        }
+        let creature = CreatureJson {
+            neurons,
+            synapses,
+            input: 2,
+            output: 1,
+        };
+        (creature, candidates)
+    }
+
+    /// The deadline is checked once per candidate, and on expiry the candidates
+    /// already built are returned rather than discarded. The scripted sequence lets
+    /// the first candidate through and stops at the second, so hoisting the check
+    /// out of the loop (all three built) or replacing `break` with an empty return
+    /// (none built) both fail this test.
+    #[test]
+    #[serial_test::serial]
+    fn deadline_mid_conversion_returns_the_candidates_built_so_far() {
+        use crate::analysis::utils::deadline_override::DeadlineOverrideGuard;
+
+        let (creature, candidates) = three_conflict_fixture();
+
+        // Positive control: with no override every conflict converts.
+        let control = fanin_polarity_conflicts_to_coordinated_candidates_with_deadline(
+            &candidates,
+            &creature,
+            &None,
+        );
+        assert_eq!(
+            control.len(),
+            3,
+            "fixture must yield one candidate per conflict"
+        );
+
+        let _guard = DeadlineOverrideGuard::with_sequence(vec![false, true]);
+        let partial = fanin_polarity_conflicts_to_coordinated_candidates_with_deadline(
+            &candidates,
+            &creature,
+            &None,
+        );
+
+        assert_eq!(
+            partial.len(),
+            1,
+            "the deadline must stop the conversion at the second candidate and keep the first"
+        );
+        let split_target = partial[0].operations.iter().find_map(|op| match op {
+            CoordinatedStructuralOpJson::AddNeuron {
+                insert_before_neuron_uuid,
+                ..
+            } => insert_before_neuron_uuid.clone(),
+            _ => None,
+        });
+        assert_eq!(
+            split_target.as_deref(),
+            Some("h0"),
+            "the kept candidate must be the first conflict's"
+        );
+    }
 }
