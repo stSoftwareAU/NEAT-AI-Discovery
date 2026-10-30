@@ -570,6 +570,19 @@ fn reachable_outputs<'a>(
     output_uuids: &HashSet<&str>,
     max_depth: usize,
 ) -> HashSet<&'a str> {
+    reachable_outputs_observed(start, downstream_of, output_uuids, max_depth, &mut || {})
+}
+
+/// [`reachable_outputs`] with `on_push` called once per neuron pushed into the
+/// next frontier, so tests can count the walk's work deterministically
+/// (Issue #2367). Production passes a no-op.
+fn reachable_outputs_observed<'a>(
+    start: &str,
+    downstream_of: &HashMap<&str, HashSet<&'a str>>,
+    output_uuids: &HashSet<&str>,
+    max_depth: usize,
+    on_push: &mut impl FnMut(),
+) -> HashSet<&'a str> {
     let mut reached = HashSet::new();
     // Neurons already queued for expansion; prevents re-expansion of fan-in nodes.
     let mut visited = HashSet::new();
@@ -584,6 +597,7 @@ fn reachable_outputs<'a>(
                         reached.insert(down);
                     }
                     if visited.insert(down) {
+                        on_push();
                         next_frontier.push(down);
                     }
                 }

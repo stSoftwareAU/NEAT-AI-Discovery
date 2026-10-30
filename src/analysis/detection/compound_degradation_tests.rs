@@ -333,3 +333,252 @@ fn assert_close(a: f32, b: f32) {
         "values differ beyond tolerance: {a} vs {b}"
     );
 }
+
+/// Frontier pushes made by `reachable_outputs` from `L0-0` over a 4-layer
+/// `layered_dag` of the given width, at the production depth of 3.
+fn walk_pushes(width: usize) -> usize {
+    let (owned_edges, owned_outputs) = layered_dag(width, 4);
+    let down: HashMap<&str, HashSet<&str>> = owned_edges
+        .iter()
+        .map(|(k, v)| (k.as_str(), v.iter().map(String::as_str).collect()))
+        .collect();
+    let outputs: HashSet<&str> = owned_outputs.iter().map(String::as_str).collect();
+    let mut pushes = 0_usize;
+    reachable_outputs_observed("L0-0", &down, &outputs, 3, &mut || pushes += 1);
+    pushes
+}
+
+/// Issue #2367: the visited set is what removes the F³ factor. With it, each
+/// neuron is pushed at most once, so pushes grow linearly with fan-out
+/// (3N + 1 here). Without it, every walk is pushed, about N + N² + N³.
+#[test]
+fn reachable_outputs_pushes_grow_linearly_with_fan_out() {
+    let n = 4;
+    let pushes_n = walk_pushes(n);
+    let pushes_4n = walk_pushes(4 * n);
+
+    assert!(pushes_n > 0, "the walk must push something at fan-out {n}");
+    assert!(
+        pushes_4n <= 4 * pushes_n,
+        "frontier pushes must grow at most linearly with fan-out: {pushes_n} at fan-out {n}, \
+         {pushes_4n} at fan-out {} (a walk without a visited set grows as fan-out cubed)",
+        4 * n
+    );
+}
+
+/// Issue #2367: the 256-candidate ceiling keeps the strongest candidates. The
+/// reference is every (bias, weight) pair's combined improvement from the same
+/// detectors (every pair in `fixture` is connected), so the weakest kept
+/// candidate must be at least as strong as the strongest dropped one.
+#[test]
+#[serial]
+fn candidate_ceiling_keeps_the_strongest_candidates() {
+    let (creature, records) = fixture(24);
+    let scan = detect_compound_bias_weight_degradations_with_deadline(&creature, &records, &None);
+    assert_eq!(scan.candidates.len(), MAX_COMPOUND_DEGRADATION_CANDIDATES);
+
+    let records_map = build_record_map(&records);
+    let squash: HashMap<&str, &str> = creature
+        .neurons
+        .iter()
+        .map(|n| (n.uuid.as_str(), n.squash.as_str()))
+        .collect();
+    let bias: HashMap<&str, f32> = creature
+        .neurons
+        .iter()
+        .map(|n| (n.uuid.as_str(), n.bias))
+        .collect();
+    let bias_corrections = detect_bias_corrections(&creature, &records_map, &squash, &bias);
+    let weight_corrections = detect_weight_corrections(&creature, &records_map);
+    let mut all: Vec<f32> = bias_corrections
+        .iter()
+        .flat_map(|b| {
+            weight_corrections
+                .iter()
+                .map(move |w| b.estimated_improvement + w.estimated_improvement * 0.7)
+        })
+        .collect();
+    assert_eq!(
+        all.len(),
+        576,
+        "fixture(24) must give 24 x 24 connected pairs"
+    );
+    all.sort_by(|a, b| b.total_cmp(a));
+
+    let strongest_dropped = all[MAX_COMPOUND_DEGRADATION_CANDIDATES];
+    let weakest_kept = scan
+        .candidates
+        .last()
+        .expect("the capped scan keeps candidates")
+        .estimated_improvement;
+    assert!(
+        weakest_kept >= strongest_dropped - 1e-5,
+        "the ceiling must keep the strongest candidates: weakest kept {weakest_kept}, \
+         strongest dropped {strongest_dropped}"
+    );
+}
+
+/// `SAMPLES` records for a hidden neuron with a constant error `error` and the
+/// `fixture` activation pattern.
+fn hidden_records(uuid: &str, error: f32) -> (String, Vec<DiscoverRecord>) {
+    let recs = (0..SAMPLES)
+        .map(|o| DiscoverRecord {
+            obs_index: o,
+            neuron_uuid: uuid.to_string(),
+            value: Some(0.0),
+            activation: 1.0 + 0.5 * (o as f32 * 0.7).sin(),
+            errors: vec![error],
+        })
+        .collect();
+    (uuid.to_string(), recs)
+}
+
+/// The continuous `out-0` error shared with `fixture`.
+fn out_error(o: u32) -> f32 {
+    0.2 + 0.1 * (o as f32 * 0.9 + 0.5).sin()
+}
+
+fn out_records() -> (String, Vec<DiscoverRecord>) {
+    let recs = (0..SAMPLES)
+        .map(|o| DiscoverRecord {
+            obs_index: o,
+            neuron_uuid: "out-0".to_string(),
+            value: None,
+            activation: 0.0,
+            errors: vec![out_error(o)],
+        })
+        .collect();
+    ("out-0".to_string(), recs)
+}
+
+fn test_neuron(uuid: &str, neuron_type: &str) -> NeuronJson {
+    NeuronJson {
+        uuid: uuid.to_string(),
+        neuron_type: neuron_type.to_string(),
+        squash: "IDENTITY".to_string(),
+        bias: 0.0,
+    }
+}
+
+fn test_synapse(from: &str, to: &str) -> SynapseJson {
+    SynapseJson {
+        from_uuid: from.to_string(),
+        to_uuid: to.to_string(),
+        weight: 0.5,
+        synapse_type: None,
+    }
+}
+
+/// Issue #2367: more than `MAX_COMPOUND_BIAS_CORRECTIONS` bias corrections are
+/// capped to the strongest before the pair loop. 300 hidden neurons each yield a
+/// bias correction (error rising with the index), but only the weakest (`h0`)
+/// and the strongest (`h299`) feed `out-0`, so only they pair with the two
+/// weight corrections. The cap drops `h0`, which leaves 2 candidates (under the
+/// 256-candidate ceiling), so only the correction cap can report
+/// `CandidateCeiling` or exclude `h0`.
+#[test]
+#[serial]
+fn bias_correction_cap_keeps_the_strongest_and_reports_candidate_ceiling() {
+    const HIDDEN: usize = 300;
+    let mut neurons = Vec::new();
+    let mut records = Vec::new();
+    for h in 0..HIDDEN {
+        let uuid = format!("h{h}");
+        neurons.push(test_neuron(&uuid, "hidden"));
+        records.push(hidden_records(&uuid, 0.1 + 0.01 * h as f32));
+    }
+    neurons.push(test_neuron("out-0", "output"));
+    records.push(out_records());
+    let creature = CreatureJson {
+        neurons,
+        synapses: vec![test_synapse("h0", "out-0"), test_synapse("h299", "out-0")],
+        input: 0,
+        output: 1,
+    };
+
+    let scan = detect_compound_bias_weight_degradations_with_deadline(&creature, &records, &None);
+
+    assert_eq!(scan.truncation, Some(ScanTruncation::CandidateCeiling));
+    assert_eq!(
+        scan.candidates.len(),
+        2,
+        "only h299's bias correction survives the cap and pairs with both weight corrections"
+    );
+    assert!(
+        scan.candidates.iter().all(|c| c.bias_neuron_uuid == "h299"),
+        "no candidate may use a bias correction weaker than the strongest 256, got {:?}",
+        scan.candidates
+            .iter()
+            .map(|c| c.bias_neuron_uuid.as_str())
+            .collect::<Vec<_>>()
+    );
+}
+
+/// Issue #2367: more than `MAX_COMPOUND_WEIGHT_CORRECTIONS` weight corrections
+/// are capped to the strongest before the pair loop. `w0..w299 -> out-0` each
+/// yield a weight correction, and the fit to `out-0`'s error worsens with the
+/// index. The single bias neuron `b` feeds only `w0` (strong) and `w299` (weak),
+/// so it pairs with just those two. The cap drops `w299`, which leaves 1
+/// candidate, so only the correction cap can report `CandidateCeiling` or
+/// exclude `w299`.
+#[test]
+#[serial]
+fn weight_correction_cap_keeps_the_strongest_and_reports_candidate_ceiling() {
+    const SOURCES: usize = 300;
+    let mut neurons = vec![test_neuron("b", "hidden")];
+    let mut records = vec![hidden_records("b", 0.3)];
+    let mut synapses = vec![test_synapse("b", "w0"), test_synapse("b", "w299")];
+    for i in 0..SOURCES {
+        let uuid = format!("w{i}");
+        neurons.push(test_neuron(&uuid, "hidden"));
+        let noise_scale = i as f32 / 100.0;
+        let recs = (0..SAMPLES)
+            .map(|o| DiscoverRecord {
+                obs_index: o,
+                neuron_uuid: uuid.clone(),
+                value: Some(0.0),
+                activation: out_error(o) + noise_scale * 0.2 * (o as f32 * 1.7 + 0.3).cos(),
+                // Zero error: no bias correction for the weight sources.
+                errors: vec![0.0],
+            })
+            .collect();
+        records.push((uuid.clone(), recs));
+        synapses.push(test_synapse(&uuid, "out-0"));
+    }
+    neurons.push(test_neuron("out-0", "output"));
+    records.push(out_records());
+    let creature = CreatureJson {
+        neurons,
+        synapses,
+        input: 0,
+        output: 1,
+    };
+
+    // Preconditions: 300 weight corrections, with w0 inside the strongest 256
+    // and w299 outside it.
+    let records_map = build_record_map(&records);
+    let mut weight_corrections = detect_weight_corrections(&creature, &records_map);
+    assert_eq!(weight_corrections.len(), SOURCES);
+    weight_corrections.sort_by(|a, b| b.estimated_improvement.total_cmp(&a.estimated_improvement));
+    let rank = |from: &str| {
+        weight_corrections
+            .iter()
+            .position(|w| w.from_neuron_uuid == from)
+            .expect("every source yields a weight correction")
+    };
+    assert!(rank("w0") < MAX_COMPOUND_WEIGHT_CORRECTIONS);
+    assert!(rank("w299") >= MAX_COMPOUND_WEIGHT_CORRECTIONS);
+
+    let scan = detect_compound_bias_weight_degradations_with_deadline(&creature, &records, &None);
+
+    assert_eq!(scan.truncation, Some(ScanTruncation::CandidateCeiling));
+    assert_eq!(
+        scan.candidates.len(),
+        1,
+        "only b x (w0 -> out-0) survives the weight-correction cap"
+    );
+    assert_eq!(
+        scan.candidates[0].weight_from_uuid, "w0",
+        "no candidate may use a weight correction weaker than the strongest 256"
+    );
+}

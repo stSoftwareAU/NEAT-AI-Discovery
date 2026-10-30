@@ -193,3 +193,7 @@ mod structural_specs_issue_2346_tests;
 #[cfg(test)]
 #[path = "structural_specs_issue_2368_tests.rs"]
 mod structural_specs_issue_2368_tests;
+
+#[cfg(test)]
+#[path = "structural_specs_issue_2367_tests.rs"]
+mod structural_specs_issue_2367_tests;
