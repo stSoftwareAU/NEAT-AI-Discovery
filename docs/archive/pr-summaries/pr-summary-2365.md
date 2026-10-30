@@ -38,7 +38,7 @@ Security-fix evidence (CWE-754, improper check for unusual conditions).
   - `src/analysis/gpu/queue/stale_skip_tests.rs::budget_capped_map_timeout_is_not_device_loss`
   - `src/analysis/gpu/queue/stale_skip_tests.rs::recovery_stops_when_budget_expires_between_attempts`
 - **Red at base:** with the base `execution.rs` restored and the new tests kept, the first fails with `left: 3, right: 0` (three `factory.create` re-initialisations) and the second with `left: 3, right: 1`. At head both pass.
-- **Original trigger closed, no trivial bypass:** the trigger was a map wait or poll timing out on the budget, matching the device-lost text. All five `execute_request` arms now pass the result through `reclassify_budget_timeout` before the `is_device_lost_error` check, so that text no longer reaches recovery when the budget is spent. A wait capped by the budget always leaves under 1 s, so the check cannot be missed by truncation. If a retry gets that far anyway, the new per-attempt `stale_reason` check ends recovery. Controls (`unbounded_map_timeout_still_recovers_as_wedge`, `bounded_budget_with_time_left_map_timeout_still_recovers`) show real wedges still recover. Residual: a recovery re-initialisation already in progress when the budget expires finishes that one attempt.
+- **Original trigger closed, no trivial bypass:** the trigger was a map wait or poll timing out on the budget, matching the device-lost text. All five `execute_request` arms now pass the result through `reclassify_budget_timeout` before the `is_device_lost_error` check, so that text no longer reaches recovery when the budget is spent. A wait capped by the budget always leaves under 1 s, so the check cannot be missed by truncation. If a retry gets that far anyway, the new per-attempt `stale_reason` check ends recovery. Controls (`unbounded_map_timeout_still_recovers_as_wedge`, `bounded_budget_with_time_left_map_timeout_still_recovers`) show that a wait timeout on an unbounded or time-rich budget still reaches recovery. No queue request has an unbounded budget, so for queue requests a map-wait wedge is left to the stall-window breaker (see the trade-off under Undiscoverable Facts). Residual: a recovery re-initialisation already in progress when the budget expires finishes that one attempt.
 
 ```mermaid
 flowchart TD
@@ -53,7 +53,7 @@ flowchart TD
     D -- no --> I[error to caller]
 ```
 
-Docs: `docs/GPU_GUIDE.md` (stale-skip paragraph, flowchart node, new "Budget-capped wait timeouts" paragraph).
+Docs: `docs/GPU_GUIDE.md` (per-request budget paragraph, stale-skip paragraph, flowchart node, new "Budget-capped wait timeouts" paragraph).
 
 ## Test Plan
 
