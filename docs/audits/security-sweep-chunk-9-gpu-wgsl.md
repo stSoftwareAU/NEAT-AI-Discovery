@@ -105,6 +105,12 @@ and goes to **queue-core**, beside the `scheduling.rs` it exercises. It carries
 no baseline text, so its Lines cell is the count at the time it was ledgered.
 The on-disk inventory is therefore 28 Rust files and 7 WGSL shaders.
 
+A sixth file, `src/analysis/gpu/queue/device_lost_flag_test.rs` (385 lines, the
+source-routed device-lost regression test for #2363), was added after that and
+goes to **queue-core**, beside the `execution.rs` it exercises. It carries no
+baseline text, so its Lines cell is the count at the time it was ledgered.
+The on-disk inventory is therefore 29 Rust files and 7 WGSL shaders.
+
 ### shaders
 
 | Path | Lines | Outcome |
@@ -156,6 +162,7 @@ The on-disk inventory is therefore 28 Rust files and 7 WGSL shaders.
 | `src/analysis/gpu/queue/empty_vs_zero_tests.rs` | 439 | audited, test-only — declared under `#[cfg(test)]` (`queue/mod.rs:58`–`:59` at `3f103b9`); drives the production `run_work_loop` with `FakeGpuEvaluator`; its `Box::leak` of one `GpuCircuitBreaker` per harness (L66, as in `wedge_tests.rs:93`) and every `.expect` are test-only, and `stop` (L85–L93) joins the worker thread; the evidence for #2243 check 1; read at `3f103b9` |
 | `src/analysis/gpu/queue/send_phase_test.rs` | 407 | audited, test-only — declared under `#[cfg(test)]` (`queue/mod.rs:67`–`:68`, added after the baseline); every breaker and heartbeat is test-owned, never the process-wide singleton, bar one `Box::leak` (L370) that `GpuFuture::breaker`'s `&'static` bound forces, mirroring `wedge_tests.rs:93`; the evidence for the #2339 send-phase shared-deadline fix |
 | `src/analysis/gpu/queue/worker_panic_test.rs` | 230 | audited, test-only — declared under `#[cfg(test)]` (`queue/mod.rs:74`–`:76`, added with the #2361 panic-guard fix, after the baseline); drives the production `run_guarded_gpu_thread` against a `FakeGpuEvaluator` that panics on its first request; its `Box::leak` of one test-owned `GpuCircuitBreaker` (as in `wedge_tests.rs:93`) and every `.expect` are test-only; the evidence for the #2361 verdict on `scheduling.rs` |
+| `src/analysis/gpu/queue/device_lost_flag_test.rs` | 385 | audited, test-only — declared under `#[cfg(test)]` (`queue/mod.rs:58`–`:59`, added with the #2363 source-routed device-lost fix, after the baseline); drives the production `run_work_loop` against a `FakeGpuEvaluator`; no `Box::leak`, `Mutex` or `.lock()`, and every `.expect` (L33, L170, L205, L244, L277, L310, L343, L378) is a test assertion; the evidence for the #2363 verdict on `recovery.rs` |
 
 ### queue-lifecycle
 
@@ -1779,6 +1786,7 @@ that region; pinned by `tests/issue_2249_chunk9_ledger_complete.rs`.
 - [x] `src/analysis/gpu/queue/empty_vs_zero_tests.rs` — queue-core — audited, test-only (gap, #2249)
 - [x] `src/analysis/gpu/queue/send_phase_test.rs` — queue-core — audited, test-only
 - [x] `src/analysis/gpu/queue/worker_panic_test.rs` — queue-core — audited, test-only (gap, #2249)
+- [x] `src/analysis/gpu/queue/device_lost_flag_test.rs` — queue-core — audited, test-only (gap, #2249)
 - [x] `src/analysis/gpu/queue/recovery.rs` — queue-lifecycle — finding filed — #2363, #2364, #2365
 - [x] `src/analysis/gpu/queue/staleness.rs` — queue-lifecycle — audited, no finding
 - [x] `src/analysis/gpu/heartbeat.rs` — queue-lifecycle — audited, no finding
@@ -1792,6 +1800,8 @@ and `src/analysis/gpu/queue/empty_vs_zero_tests.rs` — and were audited here at
 `3f103b9` with no finding.
 `src/analysis/gpu/queue/worker_panic_test.rs`, added with the #2361 fix, was
 likewise unledgered and is now ledgered as test-only.
+`src/analysis/gpu/queue/device_lost_flag_test.rs`, added with the #2363 fix, was
+unledgered in the same way and is now ledgered as test-only.
 
 ## Outcome
 

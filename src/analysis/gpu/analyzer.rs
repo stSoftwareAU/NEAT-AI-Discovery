@@ -7,6 +7,8 @@
 
 #![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use anyhow::Result;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use crate::analysis::gpu::breaker::{GpuCircuitBreaker, global_gpu_breaker};
@@ -60,6 +62,11 @@ pub struct GpuAnalyzer {
     /// Optimised GPU batch size based on detected hardware.
     /// Higher values improve GPU utilisation on high-performance hardware.
     pub(super) batch_size: usize,
+    /// Set by the device-lost callback registered in [`GpuAnalyzer::new`]
+    /// (Issue #2363). wgpu 30 reports a lost device through this callback rather
+    /// than a stable error string, so recovery reads this flag as well as the
+    /// error text.
+    pub(super) device_lost: Arc<AtomicBool>,
 }
 
 /// Trait for GPU-based evaluation operations.
@@ -454,6 +461,19 @@ impl GpuAnalyzer {
                 }
             };
 
+        // Issue #2363: record a lost device as a flag. The callback fires for every
+        // loss reason; wgpu 30 defines only `Unknown` and `Destroyed` today.
+        let device_lost = Arc::new(AtomicBool::new(false));
+        let device_lost_flag = Arc::clone(&device_lost);
+        device.set_device_lost_callback(move |reason, message| {
+            device_lost_flag.store(true, Ordering::SeqCst);
+            tracing::warn!(
+                reason = ?reason,
+                message = %message,
+                "GPU device lost (Issue #2363); flagging for recovery"
+            );
+        });
+
         let (helpful_layout, helpful_pipeline) =
             Self::build_helpful_pipeline(&device, "helpful-synapse-pipeline");
         let (harmful_layout, harmful_pipeline) =
@@ -499,6 +519,7 @@ impl GpuAnalyzer {
             activation_reduce_layout: Some(activation_reduce_layout),
             activation_reduce_pipeline: Some(activation_reduce_pipeline),
             batch_size,
+            device_lost,
         })
     }
 
