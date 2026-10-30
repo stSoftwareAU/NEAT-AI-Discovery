@@ -160,18 +160,18 @@ pub fn detect_dominant_inputs(
 
 /// Why dominant-input detection stopped early.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DominantInputStop {
+pub(crate) enum DominantInputStop {
     /// The analysis deadline elapsed or cancellation was requested.
     DeadlinePassed,
 }
 
 /// Candidates completed by a deadline-aware dominant-input scan.
 #[derive(Debug, Clone)]
-pub struct DominantInputScan {
+pub(crate) struct DominantInputScan {
     /// Candidates found before the scan stopped, in production sort order.
-    pub candidates: Vec<DominantInputCandidate>,
+    pub(crate) candidates: Vec<DominantInputCandidate>,
     /// Set when the deadline or cancellation stopped the scan.
-    pub stop: Option<DominantInputStop>,
+    pub(crate) stop: Option<DominantInputStop>,
 }
 
 /// Run dominant-input detection with analysis deadline and cancellation checks.
@@ -180,7 +180,7 @@ pub struct DominantInputScan {
 /// hidden target is checked by set membership rather than rescanning its fan-out.
 /// A topology stop returns no candidates because the index is incomplete; a stop
 /// during input processing keeps candidates already completed.
-pub fn detect_dominant_inputs_with_deadline(
+pub(crate) fn detect_dominant_inputs_with_deadline(
     creature: &CreatureJson,
     neuron_records: &[(String, impl AsRef<[DiscoverRecord]>)],
     config: &InputSensitivityConfig,

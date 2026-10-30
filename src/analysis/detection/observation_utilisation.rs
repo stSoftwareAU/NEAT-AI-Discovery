@@ -128,18 +128,18 @@ pub fn observation_utilisation_to_coordinated_candidates(
 
 /// Why observation candidate conversion stopped early.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ObservationUtilisationStop {
+pub(crate) enum ObservationUtilisationStop {
     /// The analysis deadline elapsed or cancellation was requested.
     DeadlinePassed,
 }
 
 /// Candidates produced by a deadline-aware observation conversion.
 #[derive(Debug, Clone)]
-pub struct ObservationUtilisationScan {
+pub(crate) struct ObservationUtilisationScan {
     /// Candidates completed before the scan stopped.
-    pub candidates: Vec<CoordinatedStructuralCandidateJson>,
+    pub(crate) candidates: Vec<CoordinatedStructuralCandidateJson>,
     /// Set when the deadline or cancellation stopped the scan.
-    pub stop: Option<ObservationUtilisationStop>,
+    pub(crate) stop: Option<ObservationUtilisationStop>,
 }
 
 /// Deadline-aware conversion used by the discovery dispatcher.
@@ -148,7 +148,7 @@ pub struct ObservationUtilisationScan {
 /// before preprocessing, periodically while indexing synapses, per observation,
 /// and periodically while processing high-fan-out inputs. Candidates completed
 /// before a stop remain in the result.
-pub fn observation_utilisation_to_coordinated_candidates_with_deadline(
+pub(crate) fn observation_utilisation_to_coordinated_candidates_with_deadline(
     observations: &[UnderutilisedObservation],
     creature: &CreatureJson,
     deadline: &Option<SystemTime>,
