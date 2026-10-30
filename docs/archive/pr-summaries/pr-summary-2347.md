@@ -79,9 +79,16 @@ candidates at fan-in 128. The exact-zero assertion is what pins the fan-in cap
 itself: with the skip removed, the candidate ceiling alone would hold both
 fan-ins at 1024 and keep the two bounds green.
 
-- Red at base, observed in a detached worktree of `origin/HEAD`:
-  `output must stay within the candidate ceiling of 1024 at fan-in 512: got 65536 candidates (fan-in 128 gave 4096)`
-- Green at head.
+- Red at base, re-run after review 5709752767 with the current version of
+  the test: this PR's `tests/issue_2347_symmetric_cancellation_growth.rs`
+  copied into a detached worktree of `Develop` at `9581f5b7`, run with
+  `cargo test --test issue_2347_symmetric_cancellation_growth`. It fails on the
+  exact-zero assertion (line 89):
+  `a target with fan-in 512, over the fan-in cap of 256, must be skipped: got 65536 candidates (fan-in 128 gave 4096)`
+  (`left: 65536`, `right: 0`). An earlier version of this summary quoted the
+  candidate-ceiling message instead. That came from the previous version of
+  the test, which did not yet have the exact-zero assertion.
+- Green at head `0cf33003`: both tests in the file pass (2 passed, 0 failed).
 - The control test `tests/issue_2347_symmetric_cancellation_growth.rs::fanin_under_the_cap_still_yields_candidates`
   passes at both base and head. It guards against the skip returning nothing
   everywhere.
