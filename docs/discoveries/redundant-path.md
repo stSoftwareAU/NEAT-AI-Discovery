@@ -125,6 +125,20 @@ graph LR
 
 ---
 
+## Scan Bounds
+
+The pair scan is bounded per target so a creature with many incoming synapses
+cannot make it run away (Issue #2374; the previous scan was O(P²·S) with no
+cancellation):
+
+| Bound | Limit | Behaviour when hit |
+|-------|-------|--------------------|
+| Sources compared per target | Strongest 64 incoming paths by \|weight\| (`MAX_REDUNDANT_PATH_FAN_IN`), paths with at least 30 samples only | At most 2,016 pairs per target; the weaker paths are skipped and a warning is logged |
+| Candidates emitted | 256 (`MAX_REDUNDANT_PATH_CANDIDATES`) | The scan stops once reached, reported as `CandidateCeiling` |
+| Scan duration | Analysis deadline and global cancellation, checked before every pair | The scan returns its partial results and logs a warning naming the stop reason (`DeadlinePassed` when the deadline is hit) |
+
+---
+
 ## 📚 References
 
 - **Feature redundancy** —

@@ -25,6 +25,10 @@ use crate::analysis::synapse::post_processing::apply_min_expected_gain_floor_for
 use crate::observability::global_gain_floor_metrics;
 use serial_test::serial;
 
+// Every test here that reads the floor is `#[serial]`: the env-override tests
+// below mutate `NEAT_AI_DISCOVERY_MIN_EXPECTED_GAIN` process-wide, so an unserialised
+// reader could observe the transient override (CI flake on PR #2443).
+
 fn neuron_candidate(gain: f32) -> CandidateNeuronJson {
     CandidateNeuronJson {
         source_neuron_uuid: format!("source-{gain}"),
@@ -72,6 +76,7 @@ fn synapse_candidate(gain: f32) -> CandidateSynapseJson {
 }
 
 #[test]
+#[serial]
 fn neuron_floor_drops_only_below_threshold_candidates() {
     // Mixed gain magnitudes on the calibrated scale: some well below the
     // effective floor (3e-8), some at it, some comfortably above.
@@ -99,6 +104,7 @@ fn neuron_floor_drops_only_below_threshold_candidates() {
 }
 
 #[test]
+#[serial]
 fn synapse_floor_drops_only_below_threshold_candidates() {
     let floor = min_expected_gain_floor_for_synapses();
     let mut candidates = vec![
@@ -118,6 +124,7 @@ fn synapse_floor_drops_only_below_threshold_candidates() {
 }
 
 #[test]
+#[serial]
 fn neuron_floor_keeps_pool_intact_when_all_above_floor() {
     let mut candidates = vec![
         neuron_candidate(0.5),
@@ -142,6 +149,7 @@ fn neuron_floor_empty_input_is_safe() {
 }
 
 #[test]
+#[serial]
 fn counter_increments_on_floor_drops() {
     let metrics = global_gain_floor_metrics();
     let start = metrics.candidates_below_gain_floor_total();
