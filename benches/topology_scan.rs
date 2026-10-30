@@ -92,30 +92,37 @@ fn starved(
     for i in 0..input_count {
         neurons.push(neuron(format!("i-{i}"), "input"));
     }
+    let hub_index = hidden_count.saturating_sub(1);
     for i in 0..hidden_count {
         neurons.push(neuron(format!("h-{i}"), "hidden"));
     }
     neurons.push(neuron("o-0".to_string(), "output"));
 
-    let starved_input_edges = if dense { (input_count / 3).max(1) } else { 1 };
-    for i in 0..hidden_count {
-        let source_count = if i == 0 {
-            input_count
-        } else {
-            starved_input_edges
-        };
-        for source in 0..source_count {
+    let connected_inputs = if dense {
+        input_count.saturating_sub(1)
+    } else {
+        1
+    };
+    for i in 0..hub_index {
+        for source in 0..connected_inputs {
             synapses.push(edge(format!("i-{source}"), format!("h-{i}")));
         }
-        if i == 0 {
-            for source in 0..hidden_count {
-                if source != i {
-                    synapses.push(edge(format!("h-{source}"), format!("h-{i}")));
-                }
-            }
+        // Each starved target rejects every connected input before finding its
+        // one missing input, exposing aggregate edge-search work.
+        if !dense && input_count > 1 {
+            synapses.push(edge(format!("i-{}", input_count - 1), format!("h-{i}")));
+        }
+        if !dense {
+            continue;
         }
     }
-    synapses.push(edge(format!("h-{}", hidden_count - 1), "o-0".to_string()));
+    for source in 0..input_count {
+        synapses.push(edge(format!("i-{source}"), format!("h-{hub_index}")));
+    }
+    for source in 0..hub_index {
+        synapses.push(edge(format!("h-{source}"), format!("h-{hub_index}")));
+    }
+    synapses.push(edge(format!("h-{hub_index}"), "o-0".to_string()));
 
     let records = neurons
         .iter()
@@ -140,7 +147,13 @@ fn starved(
 
 fn bench_topology_scan(c: &mut Criterion) {
     let mut group = c.benchmark_group("topology_scan");
-    for &(size, dense) in &[(64, false), (256, false), (64, true), (256, true)] {
+    for &(size, dense) in &[
+        (64, false),
+        (256, false),
+        (64, true),
+        (256, true),
+        (1024, true),
+    ] {
         let (creature, records) = long_path(size, dense);
         let edge_count = creature.synapses.len();
         group.bench_with_input(
@@ -160,7 +173,7 @@ fn bench_topology_scan(c: &mut Criterion) {
             },
         );
 
-        let input_count = size;
+        let input_count = if dense { (size / 4).max(3) } else { size };
         let (creature, records) = starved(size, input_count, dense);
         let edge_count = creature.synapses.len();
         group.bench_with_input(

@@ -140,8 +140,8 @@ fn local_and_cached_topology_preserve_long_path_and_imbalance_candidates() {
     assert!(
         cached
             .iter()
-            .filter(|c| c.issue_type == "connectivity_imbalance")
-            .all(|c| { c.add_source_uuid.as_deref() != Some("i0") })
+            .filter(|c| c.neuron_uuid == "h0" && c.issue_type == "connectivity_imbalance")
+            .all(|c| c.add_source_uuid.as_deref() != Some("i0"))
     );
 
     let converted =
@@ -188,20 +188,22 @@ fn existing_output_connection_is_not_proposed_as_a_long_path() {
 fn absent_inputs_or_outputs_do_not_create_invalid_sources_or_targets() {
     let creature = CreatureJson {
         neurons: vec![
+            neuron("i0", "input"),
+            neuron("i1", "input"),
             neuron("a", "hidden"),
             neuron("b", "hidden"),
             neuron("c", "hidden"),
             neuron("d", "hidden"),
         ],
         synapses: vec![
-            edge("a", "b"),
-            edge("b", "c"),
-            edge("c", "a"),
+            edge("i0", "a"),
+            edge("i0", "b"),
+            edge("i0", "c"),
             edge("a", "d"),
             edge("b", "d"),
             edge("c", "d"),
         ],
-        input: 0,
+        input: 2,
         output: 0,
     };
     let records = records_for(&creature);
@@ -216,7 +218,7 @@ fn absent_inputs_or_outputs_do_not_create_invalid_sources_or_targets() {
         candidates
             .iter()
             .filter(|c| c.issue_type == "connectivity_imbalance")
-            .all(|c| c.add_source_uuid.is_none())
+            .all(|c| c.add_source_uuid.as_deref() == Some("i1"))
     );
 }
 

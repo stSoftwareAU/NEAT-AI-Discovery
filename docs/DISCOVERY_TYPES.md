@@ -1247,15 +1247,27 @@ operations.
 **Expected improvement**: 10–15% success rate for topology-based suggestions,
 complementing existing activation-based discovery.
 
-**Scan bounds**: After topology-cache setup, the detector selects one output UUID for long-path candidates
-because every output has reverse-BFS distance zero and a hidden neuron more
-than three hops away cannot already connect directly to an output. It copies
-the cached input UUID set into a compact vector once, then stops at the first
-input without an existing edge for each starved neuron. Deadline and global
-cancellation checks run before and after cache setup and throughout detector
-preparation, path traversal, and both detection loops; interrupted scans
-return valid candidates found before the check and log that the result is
-partial.
+**Scan bounds and cancellation**: The detector selects one output UUID for
+long-path candidates because every output has reverse-BFS distance zero and a
+hidden neuron more than three hops away cannot already connect directly to an
+output. It copies the cached input UUID set once, then stops at the first
+unconnected input for each starved neuron. If `H` is the hidden-neuron count,
+`I` the input count, and `E_s` the existing input edges examined during those
+searches, this selection work is `O(H + I + E_s)`, with `E_s ≤ E` (the
+creature's edge count): every rejected input is an existing edge to a
+different target. Copying the input UUIDs alone does not remove the possible
+`O(H·I)` upper bound when the graph itself contains those edges. Preparation
+and reverse BFS are `O(M + R + V + E)`, where `M` is the record-row count, `R`
+the total error-element count, and `V` the neuron count. Candidate ordering
+adds an uninterruptible `O(C log C)` sort for `C` candidates.
+
+Deadline and global-cancellation checks run during record and error-element
+processing, hidden-neuron qualification, output collection, reverse BFS,
+input copying, and the long-path, fan-in, and imbalance scans. A local topology
+cache is built without checks when the caller does not provide one, and the
+candidate sort cannot be interrupted; cancellation is reported after the sort
+if then observed. `BoundedScan` retains completed candidates in gain order and
+reports `DeadlinePassed` when an interruptible scan stops.
 
 ---
 
@@ -1310,6 +1322,17 @@ provides a shorter gradient path.
 
 1. **Add skip synapse**: Connect the deep hidden neuron directly to an
    output, providing an unattenuated gradient path.
+
+**Cost and cancellation** (Issue #2368): The depth pass is a Kahn topological
+pass, O(V + E). A cyclic synapse graph returns no candidates, reported as
+`SkipConnectionStop::CycleDetected`, instead of looping. Each deep target scans
+shallow sources only until its first unconnected one (depth-0 sources before
+depth-1), so the pair search is bounded by the target's existing in-edges plus
+one per target. The analysis deadline and global cancellation are checked
+before the depth pass, once per neuron popped, and once per deep target. A stop
+in the depth pass yields no candidates, because the depths are incomplete. A
+stop in the target loop keeps the candidates gathered so far. The dispatch spec
+logs a warning with the reason.
 
 **Output**: Emitted as `coordinatedStructuralCandidates` with `addSynapse`
 operations.

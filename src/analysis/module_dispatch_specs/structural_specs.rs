@@ -18,8 +18,8 @@ use super::super::{cache, discovery_dispatch};
 ///
 /// `deadline` is forwarded into the multi-hop and fan-in scans (Issue #2183),
 /// the correlated-error scan (Issue #2346), topology analysis (Issue #2369),
-/// and the output-conflict conversion (Issue #2358) so they stop at the
-/// discovery deadline or on global cancellation.
+/// the skip-connection scan (Issue #2368), and the output-conflict conversion
+/// (Issue #2358) so they stop at the discovery deadline or on global cancellation.
 pub(crate) fn append_structural_specs(
     modules: &mut Vec<discovery_dispatch::DiscoveryModuleSpec>,
     creature: &Arc<crate::CreatureJson>,
@@ -107,13 +107,33 @@ pub(crate) fn append_structural_specs(
         convert: |detected| topology_diversification::topology_diversification_to_coordinated_candidates(&detected, &creature),
     );
 
-    // Issue #570: Skip-connection discovery for beneficial residual connections
+    // Issue #570: Skip-connection discovery for beneficial residual connections (custom: deadline-bounded scan, Issue #2368)
     discovery_spec!(modules, "skip connection discovery", "skip_connection_discovery",
         cache = shared_cache, hidden = hidden_neurons, creature = creature =>
-        guard: hidden,
-        records: cache.load_records_for_all_neurons(&creature),
-        detect: |records| skip_connection::detect_skip_connection_candidates(&creature, &records),
-        convert: |detected| skip_connection::skip_connections_to_coordinated_candidates(&detected, &creature),
+        custom: move || {
+            if hidden.is_empty() {
+                return None;
+            }
+            let records = cache.load_records_for_all_neurons(&creature);
+            let scan = skip_connection::detect_skip_connection_candidates_with_deadline(
+                &creature, &records, &deadline,
+            );
+            // Issue #2368: report (and return) partial results rather than failing silently.
+            if let Some(reason) = scan.stop {
+                tracing::warn!(reason = ?reason, returned = scan.candidates.len(), "Skip-connection scan stopped early; returning partial candidates.");
+            }
+            let detected = scan.candidates;
+            if detected.is_empty() {
+                return None;
+            }
+            let candidates = skip_connection::skip_connections_to_coordinated_candidates(
+                &detected, &creature,
+            );
+            Some(discovery_dispatch::DiscoveryDetectionResult {
+                detected_count: detected.len(),
+                candidates,
+            })
+        },
     );
 
     // Issue #639: Per-output error disaggregation for hidden neurons (custom: output count check)
@@ -179,6 +199,9 @@ pub(crate) fn append_structural_specs(
 #[path = "structural_specs_issue_2346_tests.rs"]
 mod structural_specs_issue_2346_tests;
 
+#[cfg(test)]
+#[path = "structural_specs_issue_2368_tests.rs"]
+mod structural_specs_issue_2368_tests;
 #[cfg(test)]
 #[path = "structural_specs_issue_2369_tests.rs"]
 mod structural_specs_issue_2369_tests;

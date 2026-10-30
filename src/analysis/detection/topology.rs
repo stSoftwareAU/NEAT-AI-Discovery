@@ -89,12 +89,15 @@ fn compute_shortest_paths_to_output(
             .push(s.from_uuid.as_str());
     }
 
-    let output_uuids: HashSet<&str> = creature
-        .neurons
-        .iter()
-        .filter(|n| n.neuron_type == "output")
-        .map(|n| n.uuid.as_str())
-        .collect();
+    let mut output_uuids = HashSet::new();
+    for neuron in &creature.neurons {
+        if deadline_passed(deadline) {
+            return None;
+        }
+        if neuron.neuron_type == "output" {
+            output_uuids.insert(neuron.uuid.as_str());
+        }
+    }
 
     let mut distances: HashMap<String, usize> = HashMap::new();
     let mut queue: VecDeque<(&str, usize)> = VecDeque::new();
@@ -243,24 +246,14 @@ pub fn detect_topology_issues_with_deadline(
         let Some(records) = records_map.get(uuid) else {
             continue;
         };
-        let mut total_err = 0.0_f32;
-        let mut count = 0_usize;
-        for record in *records {
-            if deadline_passed(deadline) {
+        let mean_error = match mean_absolute_error(records, deadline) {
+            Ok(mean_error) => mean_error,
+            Err(reason) => {
                 return BoundedScan {
                     candidates: Vec::new(),
-                    truncation: Some(ScanTruncation::DeadlinePassed),
+                    truncation: Some(reason),
                 };
             }
-            for error in &record.errors {
-                total_err += error.abs();
-                count += 1;
-            }
-        }
-        let mean_error = if count > 0 {
-            total_err / count as f32
-        } else {
-            0.0
         };
         mean_errors.insert(uuid, mean_error);
     }
@@ -334,6 +327,10 @@ pub fn detect_topology_issues_with_deadline(
 
     if truncation.is_some() {
         candidates.sort_by(|a, b| b.estimated_improvement.total_cmp(&a.estimated_improvement));
+        // Sorting is not interruptible, but report cancellation observed after it.
+        if deadline_passed(deadline) {
+            truncation = Some(ScanTruncation::DeadlinePassed);
+        }
         return BoundedScan {
             candidates,
             truncation,
@@ -343,22 +340,20 @@ pub fn detect_topology_issues_with_deadline(
     // --- Detection 2: Connectivity imbalance ---
     // Compute fan-in stats across all qualified hidden neurons
     let mut fan_ins = Vec::with_capacity(qualified_hidden.len());
+    let mut max_fan_in = 0;
+    let mut min_fan_in = usize::MAX;
     for &uuid in &qualified_hidden {
         if deadline_passed(deadline) {
             truncation = Some(ScanTruncation::DeadlinePassed);
             break;
         }
-        fan_ins.push((uuid, topo.fan_in_for(uuid).len()));
+        let fan_in = topo.fan_in_for(uuid).len();
+        max_fan_in = max_fan_in.max(fan_in);
+        min_fan_in = min_fan_in.min(fan_in);
+        fan_ins.push((uuid, fan_in));
     }
 
     if truncation.is_none() && fan_ins.len() >= 2 {
-        let max_fan_in = fan_ins.iter().map(|(_, fi)| *fi).max().unwrap_or(0);
-        let min_fan_in = fan_ins
-            .iter()
-            .map(|(_, fi)| *fi)
-            .max()
-            .map_or(0, |_| fan_ins.iter().map(|(_, fi)| *fi).min().unwrap_or(0));
-
         // Only flag imbalance if there's a significant ratio difference
         if min_fan_in > 0 && max_fan_in as f32 / min_fan_in as f32 >= MIN_IMBALANCE_RATIO {
             // Find the starved neurons (those with min fan-in)
@@ -413,11 +408,40 @@ pub fn detect_topology_issues_with_deadline(
 
     // Sort by estimated improvement (best first), including valid partial results.
     candidates.sort_by(|a, b| b.estimated_improvement.total_cmp(&a.estimated_improvement));
+    // Sorting is not interruptible, but report cancellation observed after it.
+    if deadline_passed(deadline) {
+        truncation = Some(ScanTruncation::DeadlinePassed);
+    }
 
     BoundedScan {
         candidates,
         truncation,
     }
+}
+
+fn mean_absolute_error(
+    records: &[DiscoverRecord],
+    deadline: &Option<SystemTime>,
+) -> Result<f32, ScanTruncation> {
+    let mut total_error = 0.0_f32;
+    let mut count = 0_usize;
+    for record in records {
+        if deadline_passed(deadline) {
+            return Err(ScanTruncation::DeadlinePassed);
+        }
+        for error in &record.errors {
+            if deadline_passed(deadline) {
+                return Err(ScanTruncation::DeadlinePassed);
+            }
+            total_error += error.abs();
+            count += 1;
+        }
+    }
+    Ok(if count > 0 {
+        total_error / count as f32
+    } else {
+        0.0
+    })
 }
 
 fn first_unconnected_input(

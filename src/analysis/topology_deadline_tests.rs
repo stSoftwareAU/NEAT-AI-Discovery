@@ -4,7 +4,10 @@ use std::time::SystemTime;
 
 use serial_test::serial;
 
-use super::{detect_topology_issues_with_deadline, first_unconnected_input};
+use super::{
+    compute_shortest_paths_to_output, detect_topology_issues_with_deadline,
+    first_unconnected_input, mean_absolute_error,
+};
 use crate::analysis::detection::topology_cache::CreatureTopologyCache;
 use crate::analysis::recommendation::epistatic::ScanTruncation;
 use crate::analysis::utils::deadline_override::DeadlineOverrideGuard;
@@ -67,15 +70,17 @@ fn long_path_fixture() -> (CreatureJson, Vec<(String, Vec<DiscoverRecord>)>) {
 fn imbalanced_fixture() -> (CreatureJson, Vec<(String, Vec<DiscoverRecord>)>) {
     let creature = CreatureJson {
         neurons: vec![
+            neuron("seed", "hidden"),
             neuron("a", "hidden"),
             neuron("b", "hidden"),
             neuron("c", "hidden"),
             neuron("rich", "hidden"),
         ],
         synapses: vec![
-            edge("a", "b"),
-            edge("b", "c"),
-            edge("c", "a"),
+            edge("seed", "a"),
+            edge("seed", "b"),
+            edge("seed", "c"),
+            edge("seed", "rich"),
             edge("a", "rich"),
             edge("b", "rich"),
             edge("c", "rich"),
@@ -91,10 +96,9 @@ fn imbalanced_fixture() -> (CreatureJson, Vec<(String, Vec<DiscoverRecord>)>) {
 fn long_path_loop_deadline_keeps_candidates_found_before_interruption() {
     let (creature, records) = long_path_fixture();
     let topology = CreatureTopologyCache::new(&creature);
-    // One check before/after cache, two record rows, five hidden UUIDs, five
-    // reverse edges, one output seed, six queue entries, five predecessor
-    // edges, and forty error records precede the second long-path iteration.
-    let mut checks = vec![false; 69];
+    // Preparation, output collection, BFS, and 80 record/error checks precede
+    // the second long-path iteration.
+    let mut checks = vec![false; 115];
     checks.push(true);
     let _guard = DeadlineOverrideGuard::with_sequence(checks);
 
@@ -133,6 +137,42 @@ fn input_scan_checks_cancellation_between_existing_edges() {
 
 #[test]
 #[serial]
+fn output_collection_checks_cancellation_after_partial_collection() {
+    let creature = CreatureJson {
+        neurons: vec![
+            neuron("h0", "hidden"),
+            neuron("h1", "hidden"),
+            neuron("h2", "hidden"),
+        ],
+        synapses: Vec::new(),
+        input: 0,
+        output: 0,
+    };
+    let _guard = DeadlineOverrideGuard::with_sequence(vec![false, false, true]);
+
+    assert!(compute_shortest_paths_to_output(&creature, &None).is_none());
+}
+
+#[test]
+#[serial]
+fn error_element_traversal_checks_cancellation_inside_a_record() {
+    let records = [DiscoverRecord::new(
+        0,
+        "h".to_string(),
+        Some(0.5),
+        0.5,
+        vec![0.2, 0.4],
+    )];
+    let _guard = DeadlineOverrideGuard::with_sequence(vec![false, false, true]);
+
+    assert_eq!(
+        mean_absolute_error(&records, &None),
+        Err(ScanTruncation::DeadlinePassed)
+    );
+}
+
+#[test]
+#[serial]
 fn elapsed_deadline_is_reported_before_preparation() {
     let (creature, records) = long_path_fixture();
     let topology = CreatureTopologyCache::new(&creature);
@@ -165,9 +205,9 @@ fn preparation_deadline_is_reported_during_record_lookup() {
 fn imbalance_loop_deadline_keeps_candidates_found_before_interruption() {
     let (creature, records) = imbalanced_fixture();
     let topology = CreatureTopologyCache::new(&creature);
-    // All preparation, four long-path checks, four fan-in checks, and the
-    // first two imbalance rows complete before cancellation on row three.
-    let mut checks = vec![false; 110];
+    // Preparation, output collection, record/error traversal, input copying,
+    // long-path and fan-in checks, and one imbalance candidate complete first.
+    let mut checks = vec![false; 196];
     checks.push(true);
     let _guard = DeadlineOverrideGuard::with_sequence(checks);
 
@@ -179,5 +219,10 @@ fn imbalance_loop_deadline_keeps_candidates_found_before_interruption() {
         scan.candidates
             .iter()
             .all(|candidate| candidate.issue_type == "connectivity_imbalance")
+    );
+    assert_eq!(
+        scan.candidates.len(),
+        1,
+        "cancellation during the imbalance scan preserves its completed candidate"
     );
 }
