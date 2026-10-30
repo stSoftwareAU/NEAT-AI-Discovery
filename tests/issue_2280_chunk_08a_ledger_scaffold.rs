@@ -37,7 +37,7 @@ const SCOPE_DIRS: [&str; 2] = ["src/analysis/detection", "src/analysis/neuron"];
 
 /// Total files across both scope directories — also the row count in
 /// `## Files swept`.
-const ROW_COUNT: usize = 55;
+const ROW_COUNT: usize = 56;
 
 /// One `###` section per audit sub-issue, in record order, with the files it
 /// owns. Owning issues: shared — none (scaffolding only); graph — #2217;
@@ -60,6 +60,8 @@ const SECTIONS: [(&str, &[&str]); 6] = [
             "src/analysis/detection/topology.rs",
             "src/analysis/detection/skip_connection.rs",
             "src/analysis/detection/dead_neuron.rs",
+            // `#[cfg(test)]`-only companion added by #2370.
+            "src/analysis/detection/dead_neuron_deadline_tests.rs",
             "src/analysis/detection/compound_degradation.rs",
             // `#[cfg(test)]`-only companion added by #2367.
             "src/analysis/detection/compound_degradation_tests.rs",
@@ -255,7 +257,7 @@ fn files_swept_carries_exactly_six_section_markers_in_order() {
 }
 
 #[test]
-fn files_swept_has_exactly_55_rows() {
+fn files_swept_has_exactly_56_rows() {
     let doc = read(RECORD);
     let files_swept = section(&doc, "## Files swept");
     assert_eq!(
