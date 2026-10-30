@@ -581,7 +581,118 @@ pub fn detect_threshold_effects(
     candidates
 }
 
+/// Convert dominant input candidates to coordinated structural candidates.
+///
+/// Each dominant input produces a `SetWeight` coordinated candidate to reduce
+/// the input's excessive leverage.
+pub fn dominant_inputs_to_coordinated_candidates(
+    candidates: &[DominantInputCandidate],
+) -> Vec<CoordinatedStructuralCandidateJson> {
+    let mut results = Vec::with_capacity(candidates.len());
+
+    for c in candidates {
+        results.push(CoordinatedStructuralCandidateJson {
+            remove_neuron_compensation: None,
+        constant_neuron_bias_fold: None,
+            operations: vec![CoordinatedStructuralOpJson::SetWeight {
+                from_neuron_uuid: c.input_neuron_uuid.clone(),
+                to_neuron_uuid: c.target_neuron_uuid.clone(),
+                weight: c.recommended_weight,
+            }],
+            expected_creature_score_gain: c.estimated_improvement,
+            comment: Some(format!(
+                "Dominant input {} → {}: sensitivity {:.2}, leverage {:.2}, weight {:.3} → {:.3} to reduce brittleness ({} samples)",
+                c.input_neuron_uuid, c.target_neuron_uuid, c.sensitivity_score, c.leverage_ratio,
+                c.current_weight, c.recommended_weight, c.sample_count
+            )),
+        });
+    }
+
+    // Sort by expected improvement (best first)
+    results.sort_by(|a, b| {
+        b.expected_creature_score_gain
+            .total_cmp(&a.expected_creature_score_gain)
+    });
+
+    results
+}
+
+/// Convert threshold effect candidates to coordinated structural candidates.
+///
+/// Each threshold effect produces an `AddNeuron`, `SetBias`, or `SetWeight`
+/// coordinated candidate depending on the recommended action.
+pub fn threshold_effects_to_coordinated_candidates(
+    candidates: &[ThresholdEffectCandidate],
+) -> Vec<CoordinatedStructuralCandidateJson> {
+    let mut results = Vec::with_capacity(candidates.len());
+
+    for c in candidates {
+        let operations = match c.recommended_action.as_str() {
+            "addNeuron" => {
+                // Add a dampening neuron between input and the steep neuron
+                let new_uuid =
+                    format!("dampening-{}-{}", c.input_neuron_uuid, c.target_neuron_uuid);
+                vec![CoordinatedStructuralOpJson::AddNeuron {
+                    neuron_uuid: new_uuid.clone(),
+                    neuron_type: "hidden".to_string(),
+                    squash: "IDENTITY".to_string(), // IDENTITY for linear dampening
+                    bias: 0.0,
+                    insert_before_neuron_uuid: c.intermediate_neuron_uuid.clone(),
+                }]
+            }
+            "setBias" => {
+                // Shift bias to move operating point away from threshold
+                let bias_shift = if c.threshold_proximity > 0.5 {
+                    0.5
+                } else {
+                    -0.5
+                };
+                vec![CoordinatedStructuralOpJson::SetBias {
+                    neuron_uuid: c
+                        .intermediate_neuron_uuid
+                        .clone()
+                        .unwrap_or_else(|| c.target_neuron_uuid.clone()),
+                    bias: bias_shift,
+                }]
+            }
+            _ => {
+                // Default: setWeight to reduce gradient
+                vec![CoordinatedStructuralOpJson::SetWeight {
+                    from_neuron_uuid: c.input_neuron_uuid.clone(),
+                    to_neuron_uuid: c
+                        .intermediate_neuron_uuid
+                        .clone()
+                        .unwrap_or_else(|| c.target_neuron_uuid.clone()),
+                    weight: c.gradient_magnitude * WEIGHT_REDUCTION_FACTOR,
+                }]
+            }
+        };
+
+        results.push(CoordinatedStructuralCandidateJson {
+            remove_neuron_compensation: None,
+        constant_neuron_bias_fold: None,
+            operations,
+            expected_creature_score_gain: c.estimated_improvement,
+            comment: Some(format!(
+                "Threshold effect {} → {}: gradient {:.2}, threshold proximity {:.2} → {} to reduce brittleness ({} samples)",
+                c.input_neuron_uuid,
+                c.intermediate_neuron_uuid.as_deref().unwrap_or(&c.target_neuron_uuid),
+                c.gradient_magnitude, c.threshold_proximity, c.recommended_action, c.sample_count
+            )),
+        });
+    }
+
+    // Sort by expected improvement (best first)
+    results.sort_by(|a, b| {
+        b.expected_creature_score_gain
+            .total_cmp(&a.expected_creature_score_gain)
+    });
+
+    results
+}
+
 #[cfg(test)]
+#[allow(clippy::cast_precision_loss)]
 mod issue_2379_tests {
     use super::*;
     use crate::analysis::utils::deadline_override::DeadlineOverrideGuard;
@@ -703,8 +814,7 @@ mod issue_2379_tests {
         let size = 130;
         let mut neurons = vec![neuron("input".to_string(), "input")];
         let mut synapses = Vec::with_capacity(size);
-        let input_records = records("input");
-        let mut neuron_records = vec![("input".to_string(), input_records.clone())];
+        let mut neuron_records = vec![("input".to_string(), records("input"))];
         for index in 0..size {
             let output = format!("output-{index}");
             neurons.push(neuron(output.clone(), "output"));
@@ -735,114 +845,4 @@ mod issue_2379_tests {
             "completed output connections remain available"
         );
     }
-}
-
-/// Convert dominant input candidates to coordinated structural candidates.
-///
-/// Each dominant input produces a `SetWeight` coordinated candidate to reduce
-/// the input's excessive leverage.
-pub fn dominant_inputs_to_coordinated_candidates(
-    candidates: &[DominantInputCandidate],
-) -> Vec<CoordinatedStructuralCandidateJson> {
-    let mut results = Vec::with_capacity(candidates.len());
-
-    for c in candidates {
-        results.push(CoordinatedStructuralCandidateJson {
-            remove_neuron_compensation: None,
-        constant_neuron_bias_fold: None,
-            operations: vec![CoordinatedStructuralOpJson::SetWeight {
-                from_neuron_uuid: c.input_neuron_uuid.clone(),
-                to_neuron_uuid: c.target_neuron_uuid.clone(),
-                weight: c.recommended_weight,
-            }],
-            expected_creature_score_gain: c.estimated_improvement,
-            comment: Some(format!(
-                "Dominant input {} → {}: sensitivity {:.2}, leverage {:.2}, weight {:.3} → {:.3} to reduce brittleness ({} samples)",
-                c.input_neuron_uuid, c.target_neuron_uuid, c.sensitivity_score, c.leverage_ratio,
-                c.current_weight, c.recommended_weight, c.sample_count
-            )),
-        });
-    }
-
-    // Sort by expected improvement (best first)
-    results.sort_by(|a, b| {
-        b.expected_creature_score_gain
-            .total_cmp(&a.expected_creature_score_gain)
-    });
-
-    results
-}
-
-/// Convert threshold effect candidates to coordinated structural candidates.
-///
-/// Each threshold effect produces an `AddNeuron`, `SetBias`, or `SetWeight`
-/// coordinated candidate depending on the recommended action.
-pub fn threshold_effects_to_coordinated_candidates(
-    candidates: &[ThresholdEffectCandidate],
-) -> Vec<CoordinatedStructuralCandidateJson> {
-    let mut results = Vec::with_capacity(candidates.len());
-
-    for c in candidates {
-        let operations = match c.recommended_action.as_str() {
-            "addNeuron" => {
-                // Add a dampening neuron between input and the steep neuron
-                let new_uuid =
-                    format!("dampening-{}-{}", c.input_neuron_uuid, c.target_neuron_uuid);
-                vec![CoordinatedStructuralOpJson::AddNeuron {
-                    neuron_uuid: new_uuid.clone(),
-                    neuron_type: "hidden".to_string(),
-                    squash: "IDENTITY".to_string(), // IDENTITY for linear dampening
-                    bias: 0.0,
-                    insert_before_neuron_uuid: c.intermediate_neuron_uuid.clone(),
-                }]
-            }
-            "setBias" => {
-                // Shift bias to move operating point away from threshold
-                let bias_shift = if c.threshold_proximity > 0.5 {
-                    0.5
-                } else {
-                    -0.5
-                };
-                vec![CoordinatedStructuralOpJson::SetBias {
-                    neuron_uuid: c
-                        .intermediate_neuron_uuid
-                        .clone()
-                        .unwrap_or_else(|| c.target_neuron_uuid.clone()),
-                    bias: bias_shift,
-                }]
-            }
-            _ => {
-                // Default: setWeight to reduce gradient
-                vec![CoordinatedStructuralOpJson::SetWeight {
-                    from_neuron_uuid: c.input_neuron_uuid.clone(),
-                    to_neuron_uuid: c
-                        .intermediate_neuron_uuid
-                        .clone()
-                        .unwrap_or_else(|| c.target_neuron_uuid.clone()),
-                    weight: c.gradient_magnitude * WEIGHT_REDUCTION_FACTOR,
-                }]
-            }
-        };
-
-        results.push(CoordinatedStructuralCandidateJson {
-            remove_neuron_compensation: None,
-        constant_neuron_bias_fold: None,
-            operations,
-            expected_creature_score_gain: c.estimated_improvement,
-            comment: Some(format!(
-                "Threshold effect {} → {}: gradient {:.2}, threshold proximity {:.2} → {} to reduce brittleness ({} samples)",
-                c.input_neuron_uuid,
-                c.intermediate_neuron_uuid.as_deref().unwrap_or(&c.target_neuron_uuid),
-                c.gradient_magnitude, c.threshold_proximity, c.recommended_action, c.sample_count
-            )),
-        });
-    }
-
-    // Sort by expected improvement (best first)
-    results.sort_by(|a, b| {
-        b.expected_creature_score_gain
-            .total_cmp(&a.expected_creature_score_gain)
-    });
-
-    results
 }

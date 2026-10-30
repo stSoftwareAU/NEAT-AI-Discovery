@@ -206,17 +206,6 @@ fn observation_utilisation_to_coordinated_candidates_observed(
             continue;
         };
 
-        // Mutation check: restore the original full filter and per-target find work.
-        for _ in creature.synapses.iter().filter(|synapse| synapse.from_uuid == obs.neuron_uuid) {
-            on_synapse();
-        }
-        for &(target_uuid, _) in downstream_targets {
-            let _ = creature.synapses.iter().find(|synapse| {
-                on_synapse();
-                synapse.from_uuid == obs.neuron_uuid && synapse.to_uuid == target_uuid
-            });
-        }
-
         // Compute a bias offset to centre the effective range
         let effective_centre = (obs.effective_min + obs.effective_max) / 2.0;
 

@@ -1,3 +1,5 @@
+#![allow(clippy::cast_precision_loss)] // Benchmark activations use small integer sample indices.
+
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use neat_ai_discovery::analysis::detection::{
     input_sensitivity::{self, InputSensitivityConfig},

@@ -291,6 +291,7 @@ pub(crate) fn append_scoring_specs(
 }
 
 #[cfg(test)]
+#[allow(clippy::cast_precision_loss)]
 mod issue_2379_tests {
     use super::*;
     use crate::types::DiscoverRecord;
