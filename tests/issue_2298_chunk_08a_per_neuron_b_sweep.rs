@@ -26,12 +26,11 @@ const SWEPT: &[&str] = &[
     "src/analysis/detection/weight_polarity_flip.rs",
 ];
 
-/// The traversal cited by `topology_diversification.rs`: `has_unhealthy_intermediates`
-/// walks the graph via `dfs_max_hidden_depth`, so both symbols are pinned here
-/// to catch a rename before the ledger row goes stale.
+/// The two independent traversals cited by `topology_diversification.rs` are
+/// pinned here to catch a rename before either ledger row goes stale.
 const TRAVERSAL: &[&str] = &[
     "topology_diversification.rs::has_unhealthy_intermediates",
-    "topology_diversification.rs::dfs_max_hidden_depth",
+    "topology_diversification.rs::input_reachable_hidden_depths",
 ];
 
 fn read(rel: &str) -> String {
@@ -419,28 +418,28 @@ fn every_capacity_site_in_a_swept_file_is_cited_by_symbol() {
          must fail this too"
     );
     assert_eq!(
-        capacity_rows_for_swept_files, 17,
-        "the per-neuron-b capacity table must hold exactly 17 rows (8 from Issue #2298 + 9 from \
-         Issue #2299)"
+        capacity_rows_for_swept_files, 20,
+        "the per-neuron-b capacity table must hold exactly 20 rows (8 from Issue #2298 + 9 from \
+         Issue #2299 + 3 iterative traversal buffers from Issue #2383)"
     );
     assert_eq!(
         all_sites.len(),
-        17,
-        "the per-neuron-b capacity table must hold exactly 17 rows (8 from Issue #2298 + 9 from \
-         Issue #2299) — the production source must also carry exactly 17 capacity sites"
+        20,
+        "the per-neuron-b capacity table must hold exactly 20 rows (8 from Issue #2298 + 9 from \
+         Issue #2299 + 3 iterative traversal buffers from Issue #2383) — the production source \
+         must also carry exactly 20 capacity sites"
     );
 }
 
 #[test]
 fn every_traversal_symbol_has_a_bounded_and_cancellation_checked_row() {
-    // Issue #1799: pin the symbol this test actually depends on, so a rename
-    // of `dfs_max_hidden_depth` cannot let the row below go stale unnoticed.
+    // Issue #1799: pin the iterative depth helper so its ledger row cannot go stale unnoticed.
     let topology_diversification_source =
         production_source("src/analysis/detection/topology_diversification.rs");
     assert!(
-        topology_diversification_source.contains("fn dfs_max_hidden_depth"),
+        topology_diversification_source.contains("fn input_reachable_hidden_depths"),
         "precondition: src/analysis/detection/topology_diversification.rs must still declare \
-         `fn dfs_max_hidden_depth`, otherwise this test checks nothing"
+         `fn input_reachable_hidden_depths`, otherwise this test checks nothing"
     );
 
     let doc = read(RECORD);
@@ -533,6 +532,51 @@ fn every_issue_linked_from_a_swept_row_appears_under_issues_filed() {
             "issue {needle} is referenced from a swept `per-neuron-b` row, so it must also \
              appear under `## Issues filed` — an unlinked finding is invisible to the \
              finalisation sub-issue that reconciles this record"
+        );
+    }
+}
+
+#[test]
+fn topology_finding_preserves_filed_history_and_fix() {
+    let doc = read(RECORD);
+    let file_row = doc
+        .lines()
+        .find(|line| line.starts_with("| `src/analysis/detection/topology_diversification.rs` |"))
+        .expect("topology diversification file row must exist");
+    assert!(file_row.contains("Filed by the `per-neuron-b` sweep (Issue #2299)"));
+
+    let entry = doc
+        .split("- `#2383` (")
+        .nth(1)
+        .expect("#2383 finding log entry must exist")
+        .split("\n- ")
+        .next()
+        .unwrap();
+    assert!(entry.contains("topology_diversification.rs::dfs_max_hidden_depth"));
+    assert!(entry.contains("Filed by the `per-neuron-b`\n  sweep (Issue #2299)"));
+    assert!(entry.contains("Fixed by Issue #2383 (PR #2488)."));
+
+    let rows = capacity_table_rows_for(&doc, "topology_diversification.rs");
+    let row = rows
+        .iter()
+        .find(|row| {
+            row.first().is_some_and(|cell| {
+                cell == "`topology_diversification.rs::input_reachable_hidden_depths`"
+            }) && row.get(1).is_some_and(|cell| cell == "traversal")
+        })
+        .expect("replacement traversal row must exist");
+    let bound = &row[3];
+    for detail in [
+        "Post-finalisation (#2383)",
+        "dfs_max_hidden_depth",
+        "exponential",
+        "50,000-hidden",
+        "overflowed the stack",
+        "replaced",
+    ] {
+        assert!(
+            bound.contains(detail),
+            "traversal reconciliation must mention {detail}"
         );
     }
 }
