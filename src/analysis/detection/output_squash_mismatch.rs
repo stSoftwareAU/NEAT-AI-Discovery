@@ -282,6 +282,8 @@ fn evaluate_alternative_squashes(
 ///
 /// # Returns
 /// Vector of detected mismatch candidates, sorted by estimated improvement (best first).
+/// Neurons whose mean absolute error is NaN or infinite (incl. f32 sum overflow) are
+/// skipped, so every emitted `estimated_improvement` is finite.
 ///
 /// This entry point preserves the pre-Issue-#1250 behaviour and assumes the
 /// recorded error is a linear residual. Callers that know the network's
@@ -298,6 +300,9 @@ pub fn detect_output_squash_mismatches(
 }
 
 /// Cost-aware variant of [`detect_output_squash_mismatches`] (Issue #1250).
+///
+/// Neurons whose mean absolute error is NaN or infinite (incl. f32 sum overflow) are
+/// skipped, so every emitted `estimated_improvement` is finite (Issue #2381).
 ///
 /// Strategy 4 (pre-activation squash comparison) reconstructs an "implied
 /// target" as `activation − error`. That identity only holds for
@@ -331,7 +336,8 @@ pub fn detect_output_squash_mismatches_with_cost_hint(
             .sum::<f32>()
             / records.len() as f32;
 
-        if mean_error < MIN_MEAN_ERROR_THRESHOLD {
+        // Issue #2381: NaN loses `<` and would be kept, and a summed-error overflow gives +inf; both emit a non-finite gain.
+        if !mean_error.is_finite() || mean_error < MIN_MEAN_ERROR_THRESHOLD {
             continue;
         }
 
@@ -531,11 +537,7 @@ pub fn detect_output_squash_mismatches_with_cost_hint(
     }
 
     // Sort by estimated improvement descending
-    candidates.sort_by(|a, b| {
-        b.estimated_improvement
-            .partial_cmp(&a.estimated_improvement)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
+    candidates.sort_by(|a, b| b.estimated_improvement.total_cmp(&a.estimated_improvement));
 
     candidates
 }

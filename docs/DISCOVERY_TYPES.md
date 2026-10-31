@@ -742,6 +742,10 @@ to their target data range. For example, using HARD_TANH (output range
 2. **Output neurons only**: Only output neurons are analysed.
 3. **Minimum samples**: At least 20 samples for reliable distribution
    analysis.
+4. **Finite error only**: neurons whose mean absolute error is NaN or infinite
+   (including an `f32` sum overflow of finite errors) are skipped, so no
+   output squash mismatch candidate carries a non-finite
+   `expectedCreatureScoreGain`.
 
 **Recommended actions**:
 
@@ -1675,6 +1679,12 @@ gated out.
 **Output**: Emitted as `coordinatedStructuralCandidates` with `addNeuron`
 and `addSynapse` operations.
 
+The candidate converter indexes source-target synapses in one topology pass,
+preserving synapse order and the first weight for duplicate connections. The
+discovery path checks the shared analysis deadline and cancellation while it
+builds that index and processes high-fan-out inputs; candidates completed
+before a stop are retained.
+
 ---
 
 ### Sentinel Gating Detection
@@ -1771,6 +1781,11 @@ small input changes cause disproportionate output swings.
 
 **Output**: Emitted as `coordinatedStructuralCandidates` with `setWeight`,
 `addNeuron`, or `setBias` operations.
+
+Dominant-input detection builds an output-connected source set alongside its
+synapse lookup, so checking a hidden target does not rescan that neuron's
+fan-out for each input. The discovery path checks the shared analysis deadline
+and cancellation during topology construction and input processing.
 
 ---
 
