@@ -426,7 +426,7 @@ Scope items 3–11 and the finding probes (a)–(d) are from #2271. Code is cite
 
   | check | location | pinned by |
   | --- | --- | --- |
-  | the fallback leaf is not followed through a symlink and must be a directory | `runtime_dir_is_trustworthy`, `symlink_metadata` and the `is_dir` check after it | `xdg_runtime_dir_rejects_symlink`, end to end `xdg_runtime_dir_apply_rejects_symlink` |
+  | the fallback leaf is not followed through a symlink and must be a directory | `runtime_dir_is_trustworthy`, `symlink_metadata` and the `is_dir` check after it | `xdg_runtime_dir_rejects_symlink`, `xdg_runtime_dir_apply_rejects_symlink` using an injected base with `apply_xdg_runtime_dir_in`; `test_apply_xdg_runtime_dir_sets_when_unset` pins the wrapper's temporary-directory base |
   | the owner must be the effective uid | `runtime_dir_is_trustworthy`, `metadata.uid() != uid` | `runtime_dir_rejects_other_uid`, the 13d-1 other-uid probe (#2270), with a positive control under the real euid |
   | no group or other permission bits | `runtime_dir_is_trustworthy`, `let mode` and `mode & 0o077` | `xdg_runtime_dir_rejects_preexisting_world_writable` |
   | created `0700` whatever the umask | `RUNTIME_DIR_MODE` (`0o700`), used by `prepare_runtime_dir` for `DirBuilder::mode` and `set_permissions` | `xdg_runtime_dir_created_with_mode_0700` |

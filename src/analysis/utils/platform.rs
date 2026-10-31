@@ -979,6 +979,14 @@ mod tests {
         unsafe { apply_xdg_runtime_dir() };
 
         let set = env::var("XDG_RUNTIME_DIR").expect("XDG_RUNTIME_DIR should be set");
+        let temp_dir = env::temp_dir()
+            .canonicalize()
+            .expect("temp dir should exist");
+        assert_eq!(
+            std::path::Path::new(&set),
+            expected_runtime_dir(&temp_dir),
+            "the fallback must use the process temporary directory"
+        );
         assert!(
             std::path::Path::new(&set).is_dir(),
             "XDG_RUNTIME_DIR should point at an existing directory"
