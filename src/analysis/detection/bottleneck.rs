@@ -361,6 +361,10 @@ pub fn bottleneck_neurons_to_coordinated_candidates(
                         .synapse_weight(&c.neuron_uuid, downstream_uuid)
                         .unwrap_or(0.1);
                     let bypass_weight = upstream_weight * downstream_weight * 0.5;
+                    // Issue #2375: f32 overflow (e.g. 2e19 x 2e19) yields +/-inf, which must not be emitted.
+                    if !bypass_weight.is_finite() {
+                        continue;
+                    }
 
                     results.push(CoordinatedStructuralCandidateJson {
                         remove_neuron_compensation: None,
