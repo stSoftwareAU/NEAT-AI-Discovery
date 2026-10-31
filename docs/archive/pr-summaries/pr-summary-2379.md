@@ -47,14 +47,12 @@ flowchart LR
 - `src/analysis/detection/input_sensitivity.rs::issue_2379_dominant_input_topology_work_grows_linearly_on_shared_hidden_fanout` — passed; restoring the old hidden fan-out scan made the counts `[1120, 16768]` instead of `[96, 384]`, and the test failed.
 - `tests/detection/issue_2379_quadratic_synapse_rescans.rs::issue_2379_observation_candidates_keep_target_weights_order_and_duplicate_semantics` — passed.
 - `tests/detection/issue_2379_quadratic_synapse_rescans.rs::issue_2379_dominant_inputs_preserve_direct_hidden_and_record_filters` — passed.
-- `tests/detection/issue_2379_quadratic_synapse_rescans.rs::issue_2379_observation_cancellation_stops_before_work` — failed against base production code and passed at head.
-- `tests/detection/issue_2379_quadratic_synapse_rescans.rs::issue_2379_dominant_input_cancellation_stops_before_work` — failed against base production code and passed at head.
 - `src/analysis/detection/observation_utilisation.rs::issue_2379_observation_deadline_stops_before_work_and_during_fan_out` — passed.
 - `src/analysis/detection/input_sensitivity.rs::issue_2379_dominant_input_deadline_stops_before_work_and_during_topology` and `src/analysis/detection/input_sensitivity.rs::issue_2379_dominant_input_deadline_keeps_completed_connection_candidates` — passed.
 - `src/analysis/module_dispatch_specs/scoring_specs.rs::issue_2379_observation_dispatch_passes_its_deadline_to_conversion` and `src/analysis/module_dispatch_specs/scoring_specs.rs::issue_2379_dominant_input_dispatch_passes_its_deadline_to_detection` — passed.
 - `cargo fmt --all -- --check` — passed.
 - `cargo test --lib issue_2379_ -- --test-threads=1` — passed, 7 tests.
-- `cargo test --test detection issue_2379_ -- --test-threads=1` — passed, 4 tests.
+- `cargo test --test detection issue_2379_ -- --test-threads=1` — passed, 2 tests.
 - `cargo test --test detection issue_543_observation_utilisation` — passed, 6 tests.
 - `cargo test --test detection issue_435_input_sensitivity_analysis` — passed, 14 tests.
 - `cargo clippy --all-targets --all-features -- -D warnings` — passed.
