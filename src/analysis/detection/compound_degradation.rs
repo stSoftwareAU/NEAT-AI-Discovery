@@ -28,7 +28,7 @@
 //! improvement) are kept, bounding pairs to 256·256 = 65,536. Reachable-output
 //! sets are computed once per distinct neuron with a visited set (`O(V+E)`
 //! time each), not once per pair, and each is retained as an output bitset
-//! over a dense output index ([`OutputBitset`]). Each bitset's words are
+//! over a dense output index (`OutputBitset`). Each bitset's words are
 //! allocated once, to exactly its length of at most `O / 64 + 1` words, so the
 //! retained memory is at most `512 × (O / 64 + 1) × 8` bytes, about 64 bytes
 //! per output neuron, rather than one hash set of output UUIDs per neuron.
@@ -41,7 +41,7 @@
 //! [`detect_compound_bias_weight_degradations_with_deadline`] checks the shared
 //! analysis deadline and global cancellation once per precomputed neuron and
 //! once per outer (bias) row, and reports any early stop or cap through
-//! [`ScanTruncation`](crate::analysis::recommendation::epistatic::ScanTruncation).
+//! [`ScanTruncation`].
 
 #![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 
