@@ -73,6 +73,10 @@ name = "synapse_counts"
 harness = false
 
 [[bench]]
+name = "topology_scan"
+harness = false
+
+[[bench]]
 name = "neuron_interning"
 harness = false
 

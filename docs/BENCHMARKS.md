@@ -5,7 +5,7 @@ performance regressions using Criterion.
 
 ## 🔍 Overview
 
-The project includes 44 Criterion benchmark suites in `benches/`. The
+The project includes 45 Criterion benchmark suites in `benches/`. The
 `benchmark_compare.sh` script automates baseline saving and regression
 detection by leveraging Criterion's built-in comparison features.
 
@@ -147,6 +147,7 @@ The following suites are defined in `Cargo.toml`:
 | `synapse_preparation` | String cloning cost in synapse preparation |
 | `tiered_loading` | Tiered cache loading strategies |
 | `topology_cache` | Pre-computed topology cache vs repeated map building |
+| `topology_scan` | Topology detector long-path and starved-neuron scan cost (Issue #2369) |
 | `topology_traversal` | Backtracking vs HashSet clone in topology traversal |
 | `upsert_candidate` | Candidate upsert operations |
 | `uuid_arc_preparation` | UUID string cloning reduction in analysis preparation (Issue #1036) |
@@ -168,7 +169,7 @@ Save a baseline on your machine before making performance-sensitive changes:
 ./benchmark_compare.sh --save-baseline
 ```
 
-This runs all 44 benchmark suites and stores results in `target/criterion/`.
+This runs all 45 benchmark suites and stores results in `target/criterion/`.
 
 > **Baselines do not survive `./scripts/runlib.sh`.** That script removes the
 > checkout's `target/` after a successful install (Issue #2072), so copy any
