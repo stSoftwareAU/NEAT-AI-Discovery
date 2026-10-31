@@ -160,13 +160,43 @@ pub fn watchdog_stall_timeout() -> Option<Duration> {
     }
 }
 
+/// Environment variable controlling the watchdog abort delay.
+const WATCHDOG_ABORT_DELAY_ENV: &str = "NEAT_AI_DISCOVERY_WATCHDOG_ABORT_DELAY_SECS";
+
+/// Default watchdog abort delay, in seconds.
+const DEFAULT_WATCHDOG_ABORT_DELAY_SECS: u64 = 2;
+
+/// Maximum accepted value, in seconds, for
+/// `NEAT_AI_DISCOVERY_WATCHDOG_ABORT_DELAY_SECS` (Issue #2404).
+///
+/// The watchdog sleeps for this long between the diagnostic dump and the abort,
+/// so an unbounded value would turn the abort into an indefinite hang. Larger
+/// values are clamped to this cap.
+pub const MAX_WATCHDOG_ABORT_DELAY_SECS: u64 = 60;
+
 /// Get the watchdog abort delay.
 ///
 /// Set `NEAT_AI_DISCOVERY_WATCHDOG_ABORT_DELAY_SECS` to control delay between
-/// thread dump and process abort. Default: 2 seconds. Any `u64` is accepted,
-/// with no upper bound (#2404); an unparsable value falls back to 2 seconds.
+/// thread dump and process abort. Default: 2 seconds. Accepted range:
+/// `0..=MAX_WATCHDOG_ABORT_DELAY_SECS` (60). `0` aborts immediately after the
+/// dump. A value above the cap is clamped to it and logs a `WARN` naming the
+/// variable, the value given and the cap (#2404). An unparsable value falls back
+/// to 2 seconds.
 pub fn watchdog_abort_delay() -> Duration {
-    let secs = parse_env::<u64>("NEAT_AI_DISCOVERY_WATCHDOG_ABORT_DELAY_SECS").unwrap_or(2);
+    let secs =
+        parse_env::<u64>(WATCHDOG_ABORT_DELAY_ENV).unwrap_or(DEFAULT_WATCHDOG_ABORT_DELAY_SECS);
+
+    if secs > MAX_WATCHDOG_ABORT_DELAY_SECS {
+        tracing::warn!(
+            env = WATCHDOG_ABORT_DELAY_ENV,
+            value = secs,
+            max = MAX_WATCHDOG_ABORT_DELAY_SECS,
+            "{WATCHDOG_ABORT_DELAY_ENV}={secs} is above the maximum of \
+             {MAX_WATCHDOG_ABORT_DELAY_SECS} seconds; clamping to \
+             {MAX_WATCHDOG_ABORT_DELAY_SECS}"
+        );
+        return Duration::from_secs(MAX_WATCHDOG_ABORT_DELAY_SECS);
+    }
 
     Duration::from_secs(secs)
 }
