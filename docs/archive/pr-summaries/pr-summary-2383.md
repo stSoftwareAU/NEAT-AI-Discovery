@@ -37,7 +37,7 @@ Version bump: `Cargo.toml` updated for this change; the merged commit records th
 
 - Original trigger closed: the detector no longer recursively enumerates paths. The graph is indexed once, each resolved edge is processed once in the depth pass, and each neuron receives one depth value reused by all outputs. Dangling endpoints are omitted, so they cannot create a second traversal path.
 - #2383 addressed the former `topology_diversification::dfs_max_hidden_depth`, which recursively enumerated every simple path, causing exponential time and stack overflow on a deep hidden chain. The current `input_reachable_hidden_depths` computes depths iteratively in evaluation order.
-- PR #2488 review: the audit ledger now marks all three iterative-pass buffers as added after the audit HEAD and reconciles 85 production capacity rows with 88 capacity hits. Earlier 82/85 figures describe their historical checkpoint.
+- PR #2488 review: the audit ledger now marks all three iterative-pass buffers as added after the audit HEAD and reconciles 84 production capacity rows (after #2347 removed one) with 87 capacity hits. Earlier 82/85 figures describe their historical checkpoint.
 - Updated traversal documentation in `docs/DISCOVERY_TYPES.md` and the chunk 8a audit ledger. Updated the sweep contract to track `input_reachable_hidden_depths` and its three storage buffers.
 
 ## Test Plan

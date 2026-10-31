@@ -56,6 +56,14 @@ graph LR
 > 🔴 **Cancellation!** Correlation(I1, I2) = 0.92. Net contribution ≈ 0 —
 > two synapses, no signal!
 
+> ⏱️ **Bounded scan:** the per-target pair scan is O(k²), so targets with
+> weighted fan-in above 256 (`MAX_FANIN_FOR_CANCELLATION_SCAN`) are skipped
+> and counted, and the whole scan stops after 1024 candidates
+> (`MAX_SYMMETRIC_CANCELLATION_CANDIDATES`) or once the analysis deadline is
+> reached — a truncated or skipping scan is logged. Each source neuron's
+> `obs_index → activation` map is built once and reused across all pairs and
+> targets, rather than rebuilt per pair.
+
 ---
 
 ## 🔬 How We Detect It
@@ -76,7 +84,11 @@ flowchart TD
     C2 -- "Yes" --> C3["🔴 Near-constant"]:::problem
     C2 -- "No" --> C4["🟢 Normal"]:::output
 
-    D --> D1["For each synapse pair\nto the same target"]:::step
+    D --> DL{"Deadline passed?"}:::step
+    DL -- "Yes" --> D8["⏹️ Scan stops early, logged"]:::problem
+    DL -- "No" --> D0{"Fan-in ≤ 256?"}:::step
+    D0 -- "No" --> D7["🟡 Skipped, counted"]:::problem
+    D0 -- "Yes" --> D1["For each synapse pair\nto the same target"]:::step
     D1 --> D2["Check opposite-sign weights\nCheck magnitude ratio ≥ 0.5"]:::step
     D2 --> D3["Compute Pearson correlation\nof source activations"]:::step
     D3 --> D4{"Correlation ≥ 0.8 and\ncancellation ratio > 0.5?"}:::step
