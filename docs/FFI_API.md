@@ -315,6 +315,12 @@ Query the per-module prediction-calibration summary accumulated in a
 `DiscoveryHistory`. Controllers use it to inspect how well each module's
 predicted gains have matched observed outcomes.
 
+Non-finite Rust-side observations are skipped with a warning. The reported
+mean absolute error and bias stay finite by saturating values that exceed the
+`f64` range. Calibration uses finite ratios only and reports the neutral factor
+`1.0` when no usable ratios remain; otherwise the factor is clamped to
+`[0.1, 10.0]`.
+
 - **Symbol**: `get_calibration_summary`
 - **Input**: JSON string carrying the serialised discovery history:
 

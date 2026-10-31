@@ -70,13 +70,14 @@ pub struct CalibrationSummaryEntry {
     pub candidate_type: String,
     /// Number of recorded predictions.
     pub sample_count: usize,
-    /// Mean absolute error between predicted and actual improvement.
+    /// Mean absolute error, saturated at the finite `f64` limit when needed.
     pub mean_absolute_error: f64,
     /// Bias direction: positive means over-prediction, negative means under-prediction.
-    /// Computed as mean(predicted - actual).
+    /// Computed as mean(predicted - actual), saturated at the finite `f64` limit.
     pub bias: f64,
     /// Calibration factor: multiply future predictions by this to correct bias.
-    /// Computed as mean(actual / predicted), clamped to [0.1, 10.0].
+    /// Computed from usable `actual / predicted` ratios, clamped to [0.1, 10.0].
+    /// Returns 1.0 when no usable ratios remain.
     pub calibration_factor: f64,
 }
 
@@ -85,7 +86,9 @@ pub struct CalibrationSummaryEntry {
 ///
 /// Records observations of (predicted improvement, actual improvement) and
 /// computes calibration metrics: mean absolute error, bias direction, and
-/// per-module calibration factors.
+/// per-module calibration factors. Non-finite observations are skipped. Metrics
+/// remain finite by saturating unrepresentable errors and using a neutral
+/// calibration factor when no usable ratios remain.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct CalibrationTracker {
@@ -114,6 +117,11 @@ impl CalibrationTracker {
     /// * `candidate_type` - The type of candidate (e.g. "addSynapse", "addNeuron")
     /// * `predicted` - The predicted improvement (expected creature score gain)
     /// * `actual` - The actual improvement observed after ablation testing
+    ///
+    /// Non-finite values are skipped and reported as a warning. Summary error
+    /// metrics saturate at finite `f64` limits when their mathematical value is
+    /// not representable. Calibration uses only finite ratios and returns 1.0
+    /// when no ratio is usable.
     pub fn record_prediction(
         &mut self,
         module_name: &str,
@@ -121,6 +129,17 @@ impl CalibrationTracker {
         predicted: f64,
         actual: f64,
     ) {
+        if !predicted.is_finite() || !actual.is_finite() {
+            tracing::warn!(
+                module_name,
+                candidate_type,
+                predicted,
+                actual,
+                "skipping non-finite calibration observation"
+            );
+            return;
+        }
+
         let key = calibration_key(module_name, candidate_type);
         self.observations
             .entry(key)
@@ -152,13 +171,7 @@ impl CalibrationTracker {
             .iter()
             .map(|(key, obs)| {
                 let (module_name, candidate_type) = parse_calibration_key(key);
-                let n = obs.len() as f64;
-                let mae: f64 = obs
-                    .iter()
-                    .map(|o| (o.predicted - o.actual).abs())
-                    .sum::<f64>()
-                    / n;
-                let bias: f64 = obs.iter().map(|o| o.predicted - o.actual).sum::<f64>() / n;
+                let (mae, bias) = calibration_errors(obs);
                 let factor = compute_calibration_factor(obs);
 
                 CalibrationSummaryEntry {
@@ -177,6 +190,55 @@ impl CalibrationTracker {
     }
 }
 
+/// Compute finite error metrics without overflowing intermediate differences or sums.
+fn calibration_errors(observations: &[CalibrationObservation]) -> (f64, f64) {
+    let scale = observations
+        .iter()
+        .flat_map(|obs| [obs.predicted.abs(), obs.actual.abs()])
+        .fold(0.0_f64, f64::max);
+    if scale == 0.0 {
+        return (0.0, 0.0);
+    }
+
+    let mut absolute_error_sum = 0.0;
+    let mut absolute_error_compensation = 0.0;
+    let mut bias_sum = 0.0;
+    let mut bias_compensation = 0.0;
+    for observation in observations {
+        let difference = observation.predicted / scale - observation.actual / scale;
+        compensated_add(
+            difference.abs(),
+            &mut absolute_error_sum,
+            &mut absolute_error_compensation,
+        );
+        compensated_add(difference, &mut bias_sum, &mut bias_compensation);
+    }
+
+    let count = observations.len() as f64;
+    (
+        saturating_finite_product(absolute_error_sum / count, scale),
+        saturating_finite_product(bias_sum / count, scale),
+    )
+}
+
+/// Add a value using Kahan compensation to retain cancellation in scaled sums.
+fn compensated_add(value: f64, sum: &mut f64, compensation: &mut f64) {
+    let adjusted = value - *compensation;
+    let next = *sum + adjusted;
+    *compensation = (next - *sum) - adjusted;
+    *sum = next;
+}
+
+/// Scale a bounded mean back to `f64`, saturating when the true result is too large.
+fn saturating_finite_product(mean: f64, scale: f64) -> f64 {
+    let value = mean * scale;
+    if value.is_infinite() {
+        f64::MAX.copysign(value)
+    } else {
+        value
+    }
+}
+
 /// Compute calibration factor from observations as mean(actual / predicted),
 /// clamped to a reasonable range.
 fn compute_calibration_factor(observations: &[CalibrationObservation]) -> f64 {
@@ -187,26 +249,45 @@ fn compute_calibration_factor(observations: &[CalibrationObservation]) -> f64 {
     // Use ratio-based calibration: mean(actual / predicted)
     // Skip entries where predicted is near zero to avoid division issues.
     let epsilon = 1e-10;
-    let mut ratio_sum = 0.0;
-    let mut ratio_count = 0u32;
+    let mut ratios = Vec::with_capacity(observations.len());
 
     for obs in observations {
+        if !obs.predicted.is_finite() || !obs.actual.is_finite() {
+            continue;
+        }
         if obs.predicted.abs() > epsilon {
-            ratio_sum += obs.actual / obs.predicted;
-            ratio_count += 1;
+            let ratio = obs.actual / obs.predicted;
+            if ratio.is_finite() {
+                ratios.push(ratio);
+            }
         } else {
             // Predicted was ~0 but actual may be non-zero.
             // Treat as a large under-prediction: cap ratio.
-            ratio_sum += CALIBRATION_FACTOR_MAX;
-            ratio_count += 1;
+            ratios.push(CALIBRATION_FACTOR_MAX);
         }
     }
 
-    if ratio_count == 0 {
+    if ratios.is_empty() {
         return 1.0;
     }
 
-    let mean_ratio = ratio_sum / ratio_count as f64;
+    let scale = ratios.iter().map(|ratio| ratio.abs()).fold(0.0, f64::max);
+    if scale == 0.0 {
+        return CALIBRATION_FACTOR_MIN;
+    }
+    let mut scaled_sum = 0.0;
+    let mut compensation = 0.0;
+    for ratio in &ratios {
+        compensated_add(*ratio / scale, &mut scaled_sum, &mut compensation);
+    }
+    let scaled_mean = scaled_sum / ratios.len() as f64;
+    let mean_ratio = if scaled_mean > 0.0 && scaled_mean >= CALIBRATION_FACTOR_MAX / scale {
+        CALIBRATION_FACTOR_MAX
+    } else if scaled_mean < 0.0 && scaled_mean <= CALIBRATION_FACTOR_MIN / scale {
+        CALIBRATION_FACTOR_MIN
+    } else {
+        scaled_mean * scale
+    };
     mean_ratio.clamp(CALIBRATION_FACTOR_MIN, CALIBRATION_FACTOR_MAX)
 }
 
@@ -470,7 +551,9 @@ impl DiscoveryHistory {
 
     /// Records a calibration observation (predicted vs actual improvement).
     ///
-    /// Delegates to the internal `CalibrationTracker`.
+    /// Delegates to the internal `CalibrationTracker`, which skips non-finite
+    /// values with a warning. Error summaries saturate at finite `f64` limits,
+    /// and calibration returns 1.0 when no ratio is usable.
     pub fn record_calibration(
         &mut self,
         module_name: &str,
@@ -609,6 +692,91 @@ mod tests {
     }
 
     #[test]
+    fn calibration_skips_non_finite_input_fields_and_keeps_valid_samples() {
+        let mut history = DiscoveryHistory::new();
+        for invalid in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            history.record_calibration("m", "t", invalid, 1.0);
+            history.record_calibration("m", "t", 1.0, invalid);
+        }
+        assert!(history.calibration_summary().is_empty());
+
+        history.record_calibration("m", "t", 0.10, 0.08);
+        let summary = history.calibration_summary();
+        assert_eq!(summary.len(), 1);
+        assert_eq!(summary[0].sample_count, 1);
+        assert!((summary[0].mean_absolute_error - 0.02).abs() < 1e-12);
+    }
+
+    #[test]
+    fn calibration_summary_handles_empty_persisted_observation_bucket() {
+        let history: DiscoveryHistory = serde_json::from_str(
+            r#"{"neurons":{},"calibration":{"observations":{"empty::bucket":[]}}}"#,
+        )
+        .expect("empty persisted bucket must deserialize");
+        let summary = history.calibration_summary();
+        assert_eq!(summary.len(), 1);
+        assert_eq!(summary[0].sample_count, 0);
+        assert_eq!(summary[0].mean_absolute_error, 0.0);
+        assert_eq!(summary[0].bias, 0.0);
+        assert_eq!(summary[0].calibration_factor, 1.0);
+    }
+
+    #[test]
+    fn calibration_errors_saturate_after_preserving_bias_cancellation() {
+        let observations = [
+            CalibrationObservation {
+                predicted: f64::MAX,
+                actual: -f64::MAX,
+            },
+            CalibrationObservation {
+                predicted: -f64::MAX,
+                actual: f64::MAX,
+            },
+        ];
+        let (mae, bias) = calibration_errors(&observations);
+        assert_eq!(mae, f64::MAX);
+        assert_eq!(bias, 0.0);
+
+        let (mae, bias) = calibration_errors(&observations[..1]);
+        assert_eq!(mae, f64::MAX);
+        assert_eq!(bias, f64::MAX);
+    }
+
+    #[test]
+    fn calibration_factor_discards_overflowing_ratios_and_uses_neutral_fallback() {
+        let observations = [
+            CalibrationObservation {
+                predicted: 1e-9,
+                actual: f64::MAX,
+            },
+            CalibrationObservation {
+                predicted: 1e-9,
+                actual: -f64::MAX,
+            },
+        ];
+        assert_eq!(compute_calibration_factor(&observations), 1.0);
+    }
+
+    #[test]
+    fn calibration_factor_respects_both_clamp_boundaries() {
+        let high = [CalibrationObservation {
+            predicted: 1.0,
+            actual: 1000.0,
+        }];
+        let low = [CalibrationObservation {
+            predicted: 1.0,
+            actual: 0.001,
+        }];
+        let zero = [CalibrationObservation {
+            predicted: 1.0,
+            actual: 0.0,
+        }];
+        assert_eq!(compute_calibration_factor(&high), CALIBRATION_FACTOR_MAX);
+        assert_eq!(compute_calibration_factor(&low), CALIBRATION_FACTOR_MIN);
+        assert_eq!(compute_calibration_factor(&zero), CALIBRATION_FACTOR_MIN);
+    }
+
+    #[test]
     fn test_discovery_history_prune() {
         let mut history = DiscoveryHistory::new();
         history.record("keep-1", true, None);
@@ -659,7 +827,6 @@ mod tests {
     /// `get_calibration_summary_internal`, because `serde_json` writes a
     /// non-finite `f64` as `null` under `success: true`.
     #[test]
-    #[ignore = "finding #2392: fails until calibration metrics stay finite"]
     fn test_calibration_summary_stays_finite_for_extreme_finite_observations() {
         let history_json = r#"{"neurons":{},"calibration":{"observations":{"saturation::addSynapse":[
                 {"predicted":1.7e308,"actual":-1.7e308},
@@ -723,7 +890,6 @@ mod tests {
     /// `f64::clamp` passes NaN through. (Issue #2253)
     /// Failing-first for finding #2392; its fix removes the `#[ignore]`.
     #[test]
-    #[ignore = "finding #2392: fails until calibration metrics stay finite"]
     fn test_calibration_factor_is_never_nan_for_finite_observations() {
         let mut h = DiscoveryHistory::new();
         h.record_calibration("saturation", "addSynapse", 1e-9, 1e308);
