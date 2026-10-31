@@ -1315,6 +1315,11 @@ capacity.
    cannot be reduced with existing structure.
 3. **Sufficient samples**: At least 20 samples for analysis.
 
+**Traversal cost**: Input reachability and maximum hidden depth are computed
+iteratively in validated neuron evaluation order, in O(N + S) time and storage
+for N neurons and S synapses. Synapses with dangling endpoints are omitted from
+the depth graph, matching the pipeline's tolerance of unresolved neuron UUIDs.
+
 **Recommended actions**:
 
 1. **Add neuron**: Insert a new hidden neuron to increase the network's
