@@ -34,7 +34,7 @@ const SWEPT: &[&str] = &[
 const TEST_ONLY_ROWS: &[&str] = &["src/analysis/detection/symmetry_breaking_deadline_tests.rs"];
 
 /// Swept files whose fix landed after the audit HEAD and now checks
-/// cancellation itself (#2398, #2400, #2410, #2346, #2350). Their audited-code rows keep
+/// cancellation itself (#2398, #2400, #2410, #2346, #2350, #2347). Their audited-code rows keep
 /// describing the unfixed code, so only the loops in `CHECKED_SINCE_AUDIT`
 /// have a changed Cancellation-checked? cell.
 const CANCELLATION_FIXED_FILES: &[&str] = &[
@@ -43,6 +43,7 @@ const CANCELLATION_FIXED_FILES: &[&str] = &[
     "src/analysis/detection/output_conflict.rs",
     "src/analysis/detection/correlated_error.rs",
     "src/analysis/detection/fanin_polarity_conflict.rs",
+    "src/analysis/detection/weight_coherence.rs",
 ];
 
 /// `(source path, qualifier)` of the `TRAVERSAL` rows whose loop now checks
@@ -71,6 +72,10 @@ const CHECKED_SINCE_AUDIT: &[(&str, &str)] = &[
     (
         "src/analysis/detection/fanin_polarity_conflict.rs",
         "`creature.neurons.iter().find` per candidate",
+    ),
+    (
+        "src/analysis/detection/weight_coherence.rs",
+        "per-`topo.fan_in`-target i<j loop over `incoming_synapses`",
     ),
 ];
 

@@ -45,6 +45,8 @@ use super::{
 ///
 /// Issue #2183: `deadline` is captured by the recommendation-core scans
 /// (multi-hop, fan-in, gradient) so each stops mid-scan once it passes.
+/// Issue #2347: `deadline` is also forwarded into the symmetric-cancellation
+/// pair scan, bounding it alongside its fan-in and candidate-count ceilings.
 /// Issue #2348: it is also captured by the co-adaptation pairwise scan.
 /// Issue #2349: `deadline` is also forwarded to the symmetry-breaking pair
 /// scan, so it stops at the deadline or on global cancellation too.
