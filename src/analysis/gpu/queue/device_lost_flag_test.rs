@@ -10,12 +10,16 @@
 use crossbeam_channel::{Sender, bounded};
 use serial_test::serial;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
+use super::executor::{EvaluatorFactory, RequestEvaluator};
 use super::fake_evaluator::{FakeEvaluatorFactory, FakeGpuEvaluator, WedgeBehaviour};
 use super::{GpuWorkQueue, GpuWorkRequest};
+use crate::analysis::gpu::analyzer::GpuAnalyzer;
 use crate::analysis::gpu::budget::GpuTimeBudget;
 use crate::analysis::gpu::heartbeat::GpuHeartbeat;
+use crate::analysis::gpu::none_field_tests::all_none_analyzer;
 use crate::analysis::samples::HelpfulSample;
 use crate::analysis::samples::{HarmfulStats, HelpfulStats, ReluStats};
 use anyhow::Result;
@@ -138,6 +142,50 @@ fn activation_batch_request() -> (GpuWorkRequest, ActivationBatchResponse) {
         liveness,
     };
     (request, response_rx)
+}
+
+struct FailingAnalyzerFactory(AtomicUsize);
+
+impl EvaluatorFactory<GpuAnalyzer> for FailingAnalyzerFactory {
+    fn create(&self, _batch_size_override: Option<usize>) -> Result<GpuAnalyzer> {
+        self.0.fetch_add(1, Ordering::SeqCst);
+        anyhow::bail!("test device initialisation failed")
+    }
+}
+
+#[test]
+#[serial(gpu_stale_skip)]
+fn real_analyzer_flag_routes_failure_to_recovery() {
+    for lost in [false, true] {
+        let (work_tx, work_rx) = bounded::<GpuWorkRequest>(4);
+        let (request, response_rx) = helpful_request();
+        enqueue(&work_tx, request);
+        enqueue(&work_tx, GpuWorkRequest::Shutdown);
+
+        let analyzer = all_none_analyzer();
+        analyzer.device_lost.store(lost, Ordering::SeqCst);
+        assert_eq!(RequestEvaluator::device_lost(&analyzer), lost);
+        let factory = FailingAnalyzerFactory(AtomicUsize::new(0));
+        let heartbeat = GpuHeartbeat::new();
+        GpuWorkQueue::run_work_loop(analyzer, work_rx, &factory, &heartbeat);
+
+        let attempts = factory.0.load(Ordering::SeqCst);
+        let response = response_rx
+            .try_recv()
+            .expect("caller must receive a result");
+        let err = response.expect_err("missing device must fail");
+        let text = format!("{err:#}");
+        if lost {
+            assert_eq!(attempts, crate::config::gpu_retry_limit() as usize);
+            assert!(
+                text.contains("GPU device lost and recovery failed"),
+                "{text}"
+            );
+        } else {
+            assert_eq!(attempts, 0);
+            assert_eq!(text, "GPU device unavailable for error-scoped evaluation");
+        }
+    }
 }
 
 /// Issue #2363: an opaque buffer-mapping error from a device whose
