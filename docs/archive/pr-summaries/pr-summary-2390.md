@@ -17,6 +17,7 @@ Ported the assertions of `tests/test_cargo_quality_workflow.sh` into a Rust inte
 
 ### Undiscoverable Facts
 
+- Develop's `./quality.sh` failed at the `cargo doc` stage (`RUSTDOCFLAGS="-D warnings"`) on two doc links in `src/analysis/detection/compound_degradation.rs` (a link to the private `OutputBitset`, and a redundant explicit link target on `ScanTruncation`). This PR fixes both doc lines so the gate can pass; no code changed there.
 - Running `bash tests/test_cargo_quality_workflow.sh` on Develop printed `Results: 8 passed, 1 failed` (the stale `dtolnay` assertion). Other `tests/*.sh` scripts are also unrun by the gate; they are out of scope here.
 
 ## Evidence
