@@ -406,10 +406,13 @@ files, including the test-only `symmetry_breaking_deadline_tests.rs` (#2400),
 - **Quadratic blowup** — at the audit HEAD no file under
   `src/analysis/detection` consulted `deadline_passed` or
   `cancellation::is_cancelled`, so once a pairwise loop there started, it ran
-  to completion. Seven files have since gained a check: `co_adaptation.rs`
+  to completion. Twelve files have since gained a check: `co_adaptation.rs`
   (#2398), `symmetry_breaking.rs` (#2400), `output_conflict.rs` (#2410),
-  `correlated_error.rs` (#2346), `skip_connection.rs` (#2368),
-  `redundant_path.rs` (#2374) and `dead_neuron.rs` (#2370). The super-linear loops are filed:
+  `correlated_error.rs` (#2346), `weight_coherence.rs` (#2347),
+  `fanin_polarity_conflict.rs` (#2350), `compound_degradation.rs` (#2367),
+  `skip_connection.rs` (#2368), `dead_neuron.rs` (#2370),
+  `redundant_path.rs` (#2374), `input_sensitivity.rs` (#2379) and
+  `observation_utilisation.rs` (#2379). The super-linear loops are filed:
   #2346, #2347, #2348, #2349, #2355, #2358, #2367, #2368, #2369, #2370,
   #2374, #2377 and #2379, plus the per-candidate `creature.neurons` /
   `creature.synapses` lookups carried by #2350. In `src/analysis/neuron`,
@@ -639,13 +642,14 @@ not new findings.
   #2152 (`per-neuron-b`) owns the `topology_diversification.rs` consumer of
   `error_dispersion`; neither is a finding filed by this sweep.
 - `#2379` (`security`, `lang:rust`, `severity:low`, `confidence:high`) —
-  `input_sensitivity.rs::detect_dominant_inputs` rescanned a hidden target's
-  outgoing list for every connected input; it now uses an output-connected
-  source set built with the synapse map.
+  `input_sensitivity.rs::detect_dominant_inputs` rescans `synapse_map`'s
+  per-target synapse list for every non-output target of every input, an
+  uncancellable O(S²/4) worst case, and
   `observation_utilisation.rs::observation_utilisation_to_coordinated_candidates`
-  filtered all synapses per observation and searched again per target; it now
-  uses one ordered source-target index and retains first-weight duplicate
-  semantics. Both scans now check the analysis deadline and cancellation.
+  filters `creature.synapses` per observation and then `find`s it again per
+  downstream target, O(I·S + ΣD·S). Filed by the `per-neuron-a` sweep
+  (Issue #2285). Fixed in Issue #2379: both scans build a one-pass topology
+  index and check the analysis deadline and cancellation.
 - #2351 — also carries two `per-neuron-a` sibling sites, added by #2285 as a
   comment (same root cause, not a new issue):
   `high_error_squash_exploration.rs::evaluate_neuron` (an unfiltered
