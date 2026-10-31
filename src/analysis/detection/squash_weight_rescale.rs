@@ -332,11 +332,8 @@ pub fn detect_squash_weight_rescale_candidates(
     }
 
     // Sort by estimated improvement descending
-    candidates.sort_by(|a, b| {
-        b.estimated_improvement
-            .partial_cmp(&a.estimated_improvement)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
+    // Issue #2381: total order, as the sibling detectors
+    candidates.sort_by(|a, b| b.estimated_improvement.total_cmp(&a.estimated_improvement));
 
     candidates
 }

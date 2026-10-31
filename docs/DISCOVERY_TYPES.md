@@ -742,6 +742,10 @@ to their target data range. For example, using HARD_TANH (output range
 2. **Output neurons only**: Only output neurons are analysed.
 3. **Minimum samples**: At least 20 samples for reliable distribution
    analysis.
+4. **Finite error only**: neurons whose mean absolute error is NaN or infinite
+   (including an `f32` sum overflow of finite errors) are skipped, so no
+   output squash mismatch candidate carries a non-finite
+   `expectedCreatureScoreGain`.
 
 **Recommended actions**:
 
