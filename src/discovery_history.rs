@@ -365,10 +365,13 @@ impl NeuronDiscoveryHistory {
     ///   improved the creature's score (survived ablation testing).
     /// * `epoch` - Optional epoch timestamp. If the attempt was successful, this
     ///   updates `last_success_epoch`.
+    ///
+    /// Both counters saturate at `u32::MAX`, so `successes <= attempts` (the
+    /// #1906 invariant) holds at the ceiling instead of overflowing (Issue #2391).
     pub fn record_attempt(&mut self, success: bool, epoch: Option<u64>) {
-        self.attempts += 1;
+        self.attempts = self.attempts.saturating_add(1);
         if success {
-            self.successes += 1;
+            self.successes = self.successes.saturating_add(1);
             if let Some(e) = epoch {
                 self.last_success_epoch = Some(e);
             }
@@ -627,9 +630,8 @@ mod tests {
     /// A failed attempt at the `u32::MAX` ceiling must saturate rather than
     /// overflow (panic in debug, wrap `attempts` to 0 in release and break
     /// the #1906 invariant). (Issue #2253)
-    /// Failing-first for finding #2391; its fix removes the `#[ignore]`.
+    /// Regression test for Issue #2391.
     #[test]
-    #[ignore = "finding #2391: fails until record_attempt saturates"]
     fn test_record_attempt_keeps_successes_within_attempts_at_u32_max() {
         let mut h: NeuronDiscoveryHistory =
             serde_json::from_str(r#"{"uuid":"n1","attempts":4294967295,"successes":4294967295}"#)
