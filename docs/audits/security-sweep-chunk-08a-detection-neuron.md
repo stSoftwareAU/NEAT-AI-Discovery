@@ -412,11 +412,11 @@ files, including the test-only `symmetry_breaking_deadline_tests.rs` (#2400),
 - **Quadratic blowup** — at the audit HEAD no file under
   `src/analysis/detection` consulted `deadline_passed` or
   `cancellation::is_cancelled`, so once a pairwise loop there started, it ran
-  to completion. Twelve files have since gained a check: `co_adaptation.rs`
+  to completion. Thirteen files have since gained a check: `co_adaptation.rs`
   (#2398), `symmetry_breaking.rs` (#2400), `output_conflict.rs` (#2410),
   `correlated_error.rs` (#2346), `weight_coherence.rs` (#2347),
   `fanin_polarity_conflict.rs` (#2350), `compound_degradation.rs` (#2367),
-  `skip_connection.rs` (#2368), `dead_neuron.rs` (#2370),
+  `skip_connection.rs` (#2368), `topology.rs` (#2369), `dead_neuron.rs` (#2370),
   `redundant_path.rs` (#2374), `input_sensitivity.rs` (#2379) and
   `observation_utilisation.rs` (#2379). The super-linear loops are filed:
   #2346, #2347, #2348, #2349, #2355, #2358, #2367, #2368, #2369, #2370,
