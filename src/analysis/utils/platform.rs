@@ -285,13 +285,24 @@ fn runtime_dir_is_trustworthy(runtime_dir: &std::path::Path, uid: u32) -> bool {
 /// access the process environment concurrently.
 #[cfg(any(target_os = "linux", all(unix, test)))]
 unsafe fn apply_xdg_runtime_dir() {
+    // SAFETY: the caller upholds the environment access precondition.
+    unsafe { apply_xdg_runtime_dir_in(&std::env::temp_dir()) };
+}
+
+/// Apply the fallback using an explicit base directory.
+///
+/// # Safety
+///
+/// Carries the same environment access precondition as `apply_xdg_runtime_dir`.
+#[cfg(any(target_os = "linux", all(unix, test)))]
+unsafe fn apply_xdg_runtime_dir_in(base: &std::path::Path) {
     use std::env;
 
     if env::var("XDG_RUNTIME_DIR").is_ok() {
         return;
     }
     // Create a temporary runtime directory if XDG_RUNTIME_DIR is not set
-    let Ok(temp_dir) = std::env::temp_dir().canonicalize() else {
+    let Ok(temp_dir) = base.canonicalize() else {
         return;
     };
     let Some(runtime_dir) = prepare_runtime_dir(&temp_dir) else {
@@ -446,13 +457,6 @@ mod tests {
 
     #[cfg(unix)]
     impl EnvGuard {
-        fn set(key: &'static str, value: &std::ffi::OsStr) -> Self {
-            let prior = std::env::var_os(key);
-            // SAFETY: callers are serialised and no other thread accesses the environment.
-            unsafe { std::env::set_var(key, value) };
-            Self { key, prior }
-        }
-
         fn unset(key: &'static str) -> Self {
             let prior = std::env::var_os(key);
             // SAFETY: callers are serialised and no other thread accesses the environment.
@@ -601,10 +605,8 @@ mod tests {
         );
 
         let _runtime = EnvGuard::unset("XDG_RUNTIME_DIR");
-        let _tmpdir = EnvGuard::set("TMPDIR", base_path.as_os_str());
-
         // SAFETY: serialised via #[serial]; no other thread touches the env here.
-        unsafe { apply_xdg_runtime_dir() };
+        unsafe { apply_xdg_runtime_dir_in(&base_path) };
 
         assert_eq!(
             std::env::var_os("XDG_RUNTIME_DIR"),
@@ -670,8 +672,8 @@ mod tests {
         );
     }
 
-    /// A symlink planted at the runtime-directory path is refused end to end by
-    /// `apply_xdg_runtime_dir`: `XDG_RUNTIME_DIR` stays unset and the symlink is
+    /// A symlink planted at the runtime-directory path is refused by
+    /// `apply_xdg_runtime_dir_in`: `XDG_RUNTIME_DIR` stays unset and the symlink is
     /// left in place rather than replaced (Issue #2270). Serial because it
     /// mutates the process environment.
     #[cfg(unix)]
@@ -692,10 +694,8 @@ mod tests {
         std::os::unix::fs::symlink(target.path(), &hostile).expect("symlink should be created");
 
         let _runtime = EnvGuard::unset("XDG_RUNTIME_DIR");
-        let _tmpdir = EnvGuard::set("TMPDIR", base_path.as_os_str());
-
         // SAFETY: serialised via #[serial]; no other thread touches the env here.
-        let ((), logs) = capture_logs(|| unsafe { apply_xdg_runtime_dir() });
+        let ((), logs) = capture_logs(|| unsafe { apply_xdg_runtime_dir_in(&base_path) });
 
         assert!(
             logs.contains("refusing pre-existing XDG_RUNTIME_DIR: not a directory"),
@@ -971,19 +971,36 @@ mod tests {
     fn test_apply_xdg_runtime_dir_sets_when_unset() {
         use std::env;
 
+        // Keep the base after the test: concurrent tempfile users may observe TMPDIR.
+        // SAFETY: `geteuid` takes no arguments and cannot fail.
+        let uid = unsafe { libc::geteuid() };
+        let base = env::temp_dir().join(format!("neat-ai-discovery-tmpdir-wiring-{uid}"));
+        std::fs::create_dir_all(&base).expect("wiring test base should exist");
+        let base = base
+            .canonicalize()
+            .expect("wiring test base should resolve");
+        assert_ne!(base, std::path::Path::new("/tmp"));
+        let _tmpdir = EnvGuard::unset("TMPDIR");
         let saved = env::var("XDG_RUNTIME_DIR").ok();
-        // SAFETY: serialised via #[serial]; no other thread touches the env here.
-        unsafe { env::remove_var("XDG_RUNTIME_DIR") };
+        // SAFETY: serialised via #[serial]; the persistent base is safe for tempfile users.
+        unsafe {
+            env::set_var("TMPDIR", &base);
+            env::remove_var("XDG_RUNTIME_DIR");
+        }
 
         // SAFETY: serialised via #[serial]; no other thread touches the env here.
         unsafe { apply_xdg_runtime_dir() };
 
         let set = env::var("XDG_RUNTIME_DIR").expect("XDG_RUNTIME_DIR should be set");
+        assert_eq!(
+            std::path::Path::new(&set),
+            expected_runtime_dir(&base),
+            "the fallback must use the process temporary directory"
+        );
         assert!(
             std::path::Path::new(&set).is_dir(),
             "XDG_RUNTIME_DIR should point at an existing directory"
         );
-
         // SAFETY: serialised via #[serial]; restore any pre-existing value.
         unsafe {
             match saved {
