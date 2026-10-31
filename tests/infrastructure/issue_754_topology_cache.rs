@@ -14,6 +14,7 @@ use neat_ai_discovery::analysis::detection::topology::{
     detect_topology_issues, topology_issues_to_coordinated_candidates,
 };
 use neat_ai_discovery::analysis::detection::topology_cache::CreatureTopologyCache;
+use serial_test::serial;
 
 /// Helper: build a creature with a bottleneck topology for testing.
 fn bottleneck_creature() -> neat_ai_discovery::CreatureJson {
@@ -172,6 +173,7 @@ fn test_bottleneck_conversion_cache_vs_no_cache() {
 }
 
 #[test]
+#[serial]
 fn test_topology_cache_vs_no_cache() {
     let creature = long_path_creature();
 
@@ -202,6 +204,7 @@ fn test_topology_cache_vs_no_cache() {
 }
 
 #[test]
+#[serial]
 fn test_topology_conversion_cache_vs_no_cache() {
     let creature = long_path_creature();
 
