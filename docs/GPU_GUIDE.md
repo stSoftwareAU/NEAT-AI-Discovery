@@ -727,7 +727,7 @@ Enable it with:
 # Abort if discovery makes no progress for 30 minutes
 export NEAT_AI_DISCOVERY_WATCHDOG_STALL_SECS=1800
 
-# Optional: delay between SIGUSR1 dump and abort (default: 2 seconds)
+# Optional: delay between SIGUSR1 dump and abort (default: 2 seconds, maximum 60)
 export NEAT_AI_DISCOVERY_WATCHDOG_ABORT_DELAY_SECS=2
 ```
 
