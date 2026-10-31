@@ -254,7 +254,13 @@ pub fn sentinel_gating_to_coordinated_candidates(
         let threshold = (c.sentinel_value + SENTINEL_TOLERANCE + c.useful_range_min) / 2.0;
         let gate_bias = -threshold;
 
-        let gate_uuid = format!("gate-sentinel-{}", c.neuron_uuid);
+        let gate_uuid = first_free_neuron_uuid(&existing, |salt| {
+            if salt == 0 {
+                format!("gate-sentinel-{}", c.neuron_uuid)
+            } else {
+                format!("gate-sentinel-{}-{salt}", c.neuron_uuid)
+            }
+        });
 
         let mut operations = Vec::new();
 

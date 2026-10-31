@@ -628,6 +628,7 @@ fn shared_neuron_uuid(group_uuids: &[String], index: usize, salt: u32) -> String
 /// # Arguments
 /// * `groups` - Detected correlated error groups.
 /// * `creature` - The creature topology (needed for neuron lookup).
+///
 /// Generated neuron UUIDs preserve the legacy FNV identifier when free and are
 /// salted around existing neuron UUIDs when necessary (Issue #2412).
 pub fn correlated_errors_to_coordinated_candidates(
