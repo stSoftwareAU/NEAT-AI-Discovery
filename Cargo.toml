@@ -1,6 +1,6 @@
 [package]
 name = "neat_ai_discovery"
-version = "0.74.311"
+version = "0.74.312"
 edition = "2024"
 # NEAT-AI family floor 1.99 (NEAT-AI-core#747). AtomicUsize::try_update
 # (src/cancellation.rs) needs >= 1.95 (Issue #2395). Keep equal to the
@@ -70,6 +70,10 @@ required-features = ["regression-harness"]
 
 [[bench]]
 name = "synapse_counts"
+harness = false
+
+[[bench]]
+name = "topology_scan"
 harness = false
 
 [[bench]]
