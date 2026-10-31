@@ -744,7 +744,8 @@ to their target data range. For example, using HARD_TANH (output range
    analysis.
 4. **Finite error only**: neurons whose mean absolute error is NaN or infinite
    (including an `f32` sum overflow of finite errors) are skipped, so no
-   candidate carries a non-finite `estimatedImprovement`.
+   output squash mismatch candidate carries a non-finite
+   `expectedCreatureScoreGain`.
 
 **Recommended actions**:
 

@@ -672,8 +672,8 @@ mod tests {
         );
     }
 
-    /// A symlink planted at the runtime-directory path is refused end to end by
-    /// `apply_xdg_runtime_dir`: `XDG_RUNTIME_DIR` stays unset and the symlink is
+    /// A symlink planted at the runtime-directory path is refused by
+    /// `apply_xdg_runtime_dir_in`: `XDG_RUNTIME_DIR` stays unset and the symlink is
     /// left in place rather than replaced (Issue #2270). Serial because it
     /// mutates the process environment.
     #[cfg(unix)]

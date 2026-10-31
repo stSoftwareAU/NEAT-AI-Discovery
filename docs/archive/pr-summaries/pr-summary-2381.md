@@ -2,6 +2,8 @@
 
 `detect_output_squash_mismatches_with_cost_hint` no longer emits a candidate with a `NaN` or `+∞` `estimated_improvement`, and its final sort (plus two sibling sorts) now uses `total_cmp`. Closes #2381.
 
+The CI follow-up also isolates runtime-directory test bases in `src/analysis/utils/platform.rs` to fix a Coverage test race.
+
 Version bump: `Cargo.toml` updated for this change; the merged commit records the final version.
 
 ## Spec
@@ -47,6 +49,8 @@ Original trigger closed: a `NaN` error or an overflowing error sum makes `mean_e
 - Docs updated: `docs/DISCOVERY_TYPES.md` (Output Squash Mismatch Detection, new criterion 4) and `docs/audits/security-sweep-chunk-08a-detection-neuron.md` (#2381 row, bullet and list marked fixed).
 
 - CI follow-up (#2485): format `HARD_TANH` as inline code in the regression test's doc comment. `cargo clippy --test issue_2381_output_squash_mismatch_non_finite_gain -- -D warnings` reproduced `clippy::doc_markdown` before the correction and passed afterwards.
+- CI follow-up (#2485): `xdg_runtime_dir_rejects_symlink` failed in Coverage when another test's temporary `TMPDIR` override was removed while it was in use. `src/analysis/utils/platform.rs` now passes an explicit base to the two tests that previously changed `TMPDIR`. Production still uses `std::env::temp_dir()` through the wrapper, so its runtime-directory behaviour is unchanged.
+- Platform test plan: run the `xdg_runtime_dir` library tests with all features to cover the explicit-base rejection cases and the existing runtime-directory behaviour.
 - CI-fix validation: all 3 regression tests passed with `--all-features`. The full gate passed its shell checks, dependency audit, debug build, formatting, all-target/all-feature Clippy and type checks.
 
 <!-- vibe-quality-gate-skipped reason="timeout 900 ./quality.sh expired during library tests (exit 124); the full test suite, documentation build and release build remain incomplete" -->
