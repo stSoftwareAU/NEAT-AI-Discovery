@@ -669,7 +669,8 @@ changed.
    observed relationship.
 
 **Output**: Emitted as `coordinatedStructuralCandidates` with `addNeuron` or
-`changeSquash` operations.
+`changeSquash` operations. The deterministic split-neuron UUID is retained
+when free and salted when it collides with a UUID already in the creature.
 
 ---
 
@@ -1118,7 +1119,9 @@ capacity as the neuron tries to combine contradictory signals.
 2. **Add synapse**: Add bypass connections for the dominant polarity group.
 
 **Output**: Emitted as `coordinatedStructuralCandidates` with `addNeuron`
-and/or `addSynapse` operations.
+and/or `addSynapse` operations. The legacy synthetic UUID is retained when
+free; a numeric salt is added if it is already in the creature. Synapse
+operations use the selected UUID.
 
 ---
 
@@ -1161,7 +1164,9 @@ cancellation.
    all outputs in the correlated group, addressing the shared missing cause.
 
 **Output**: Emitted as `coordinatedStructuralCandidates` with `addNeuron` and
-`addSynapse` operations.
+`addSynapse` operations. The legacy FNV-derived neuron UUID is retained when
+free; a numeric salt is added on collision and the selected UUID is used by
+synapse operations.
 
 ---
 
@@ -1718,7 +1723,9 @@ regions.
    multiplying the input by the gate output.
 
 **Output**: Emitted as `coordinatedStructuralCandidates` with `addNeuron`
-and `addSynapse` operations.
+and `addSynapse` operations. The legacy gate UUID is retained when free; if
+already present in the creature, conversion salts it and uses that UUID in the
+gate's synapses.
 
 ---
 
@@ -1780,7 +1787,10 @@ small input changes cause disproportionate output swings.
 3. **Adjust bias**: Shift the operating point away from thresholds.
 
 **Output**: Emitted as `coordinatedStructuralCandidates` with `setWeight`,
-`addNeuron`, or `setBias` operations.
+`addNeuron`, or `setBias` operations. Threshold-effect conversion receives the
+creature topology so its dampening UUID can retain the legacy spelling when
+free or be salted around an existing UUID. The `setBias` and `setWeight`
+actions are unchanged.
 
 Dominant-input detection builds an output-connected source set alongside its
 synapse lookup, so checking a hidden target does not rescan that neuron's

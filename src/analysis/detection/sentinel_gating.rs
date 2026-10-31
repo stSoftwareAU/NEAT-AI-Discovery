@@ -46,6 +46,7 @@ use crate::analysis::constants::{
     CANDIDATE_SENTINELS, MIN_DISCOVERY_SAMPLE_COUNT as MIN_SAMPLES, SENTINEL_TOLERANCE,
 };
 // Shared sentinel-cluster rule (Issue #2042)
+use crate::analysis::detection::helpers::{existing_neuron_uuids, first_free_neuron_uuid};
 use crate::analysis::detection::sentinel_cluster::assess_sentinel_cluster;
 
 /// Result of detecting a sentinel gating candidate on an observation.
@@ -210,7 +211,8 @@ fn estimate_gating_improvement(
 /// Each candidate produces a coordinated operation set that adds a gate neuron
 /// between the observation and its downstream targets. The gate neuron uses
 /// `STEP` activation (GPU-compatible scalar function) to produce ~0 for sentinel
-/// values and ~1 for useful values.
+/// values and ~1 for useful values. Its deterministic UUID keeps the legacy
+/// spelling when free and is salted when the creature already uses it (Issue #2412).
 ///
 /// # Structure
 ///
@@ -225,6 +227,7 @@ pub fn sentinel_gating_to_coordinated_candidates(
     candidates: &[SentinelGatingCandidate],
     creature: &CreatureJson,
 ) -> Vec<CoordinatedStructuralCandidateJson> {
+    let existing = existing_neuron_uuids(creature);
     let mut results = Vec::with_capacity(candidates.len());
 
     for c in candidates {

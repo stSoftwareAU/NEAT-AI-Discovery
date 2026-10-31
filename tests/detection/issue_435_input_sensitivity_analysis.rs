@@ -394,7 +394,17 @@ fn test_threshold_effect_produces_addneuron_candidate() {
         estimated_improvement: 0.015,
     };
 
-    let coordinated = threshold_effects_to_coordinated_candidates(&[candidate]);
+    let coordinated = threshold_effects_to_coordinated_candidates(
+        &[candidate],
+        &make_creature(
+            vec![
+                neuron("input-threshold", "input", "IDENTITY"),
+                neuron("hidden-steep", "hidden", "TANH"),
+                neuron("output-1", "output", "IDENTITY"),
+            ],
+            vec![],
+        ),
+    );
 
     assert_eq!(coordinated.len(), 1);
     let ops_json = serde_json::to_string(&coordinated[0].operations).unwrap();
@@ -422,7 +432,17 @@ fn test_threshold_effect_produces_setbias_candidate() {
         estimated_improvement: 0.008,
     };
 
-    let coordinated = threshold_effects_to_coordinated_candidates(&[candidate]);
+    let coordinated = threshold_effects_to_coordinated_candidates(
+        &[candidate],
+        &make_creature(
+            vec![
+                neuron("input-threshold", "input", "IDENTITY"),
+                neuron("hidden-threshold", "hidden", "TANH"),
+                neuron("output-1", "output", "IDENTITY"),
+            ],
+            vec![],
+        ),
+    );
 
     assert_eq!(coordinated.len(), 1);
     let ops_json = serde_json::to_string(&coordinated[0].operations).unwrap();
