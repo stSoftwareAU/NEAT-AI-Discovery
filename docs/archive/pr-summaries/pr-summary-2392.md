@@ -35,12 +35,12 @@ Version bump: package version updated for this change; the merged commit records
 - `src/discovery_history.rs::tests::calibration_errors_saturate_after_preserving_bias_cancellation` — passed; checks finite saturation and cancellation.
 - `src/discovery_history.rs::tests::calibration_factor_discards_overflowing_ratios_and_uses_neutral_fallback` and `src/discovery_history.rs::tests::calibration_factor_respects_both_clamp_boundaries` — passed.
 - Enabled `src/discovery_history.rs::tests::test_calibration_summary_stays_finite_for_extreme_finite_observations` and `src/discovery_history.rs::tests::test_calibration_factor_is_never_nan_for_finite_observations`; both passed.
-- `tests/scoring/issue_605_calibration_tracking.rs` — all 13 existing calibration tests passed, including ordinary calibration accuracy and near-zero prediction behaviour.
+- `tests/scoring/issue_605_calibration_tracking.rs::calibration_tracker_computes_mean_absolute_error`, `tests/scoring/issue_605_calibration_tracking.rs::ffi_get_calibration_summary_empty_history`, and `tests/scoring/issue_605_calibration_tracking.rs::calibration_tracker_handles_zero_predicted` — passed, covering ordinary accuracy, empty history, and the existing near-zero prediction behaviour. All 13 tests in the existing calibration module passed.
 - Mutation checks: removing either finite-input operand independently made `calibration_skips_non_finite_input_fields_and_keeps_valid_samples` fail; removing the ratio-finiteness filter made `calibration_factor_discards_overflowing_ratios_and_uses_neutral_fallback` fail with NaN; removing saturation made `calibration_errors_saturate_after_preserving_bias_cancellation` fail with infinity; removing the zero-scale guards made the zero-value and empty-bucket tests fail with NaN.
 - `cargo fmt --all --check`, `cargo clippy --lib --tests --all-features -- -D warnings`, and `git diff --check` passed.
-- `./quality.sh < /dev/null` was bounded at 900 seconds and timed out while compiling the full integration-test targets; it produced no full-suite result. The targeted calibration suites above passed.
+- `./quality.sh < /dev/null` was attempted twice with a 900-second bound. The first timed out while compiling full integration-test targets; the warmed second attempt compiled them and started the 1,741 library tests, then timed out before reporting a complete suite result. The targeted calibration suites above passed.
 
 ## Merge verification
 
-- Full `./quality.sh` result: pending; the bounded local run timed out during integration-test compilation.
+- Full `./quality.sh` result: incomplete; the bounded local runs timed out before the full gate completed.
 - CI and code review: pending.
