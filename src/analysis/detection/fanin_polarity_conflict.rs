@@ -35,6 +35,7 @@ use crate::types::DiscoverRecord;
 use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson, CreatureJson};
 
 use crate::analysis::constants::MIN_DISCOVERY_SAMPLE_COUNT;
+use crate::analysis::utils::deadline_passed;
 
 /// Minimum conflict score to flag a neuron (ratio of minority to majority group).
 /// 0.4 means the smaller-magnitude group is at least 40% of the larger group.
@@ -192,9 +193,42 @@ pub fn detect_fanin_polarity_conflicts(
 /// Each candidate proposes splitting the conflicting fan-in by adding a new hidden
 /// neuron to handle the negative-polarity pathway, rewiring the negative incoming
 /// synapses to the new neuron, and connecting the new neuron to the original target.
+///
+/// Issue #2350: no deadline — equivalent to calling
+/// [`fanin_polarity_conflicts_to_coordinated_candidates_with_deadline`] with a
+/// `None` deadline.
 pub fn fanin_polarity_conflicts_to_coordinated_candidates(
     candidates: &[FaninPolarityConflictCandidate],
     creature: &CreatureJson,
+) -> Vec<CoordinatedStructuralCandidateJson> {
+    fanin_polarity_conflicts_to_coordinated_candidates_with_deadline(candidates, creature, &None)
+}
+
+/// Deadline-aware variant of [`fanin_polarity_conflicts_to_coordinated_candidates`]
+/// (Issue #2350).
+///
+/// Builds the target-uuid → squash lookup once up front (rather than scanning
+/// `creature.neurons` per candidate) and checks `deadline` once per candidate
+/// so a hung or oversized conversion can be stopped mid-flight, returning the
+/// coordinated candidates built so far.
+pub fn fanin_polarity_conflicts_to_coordinated_candidates_with_deadline(
+    candidates: &[FaninPolarityConflictCandidate],
+    creature: &CreatureJson,
+    deadline: &Option<std::time::SystemTime>,
+) -> Vec<CoordinatedStructuralCandidateJson> {
+    fanin_polarity_conflicts_to_coordinated_candidates_with_observer(
+        candidates,
+        creature,
+        deadline,
+        &mut || {},
+    )
+}
+
+fn fanin_polarity_conflicts_to_coordinated_candidates_with_observer(
+    candidates: &[FaninPolarityConflictCandidate],
+    creature: &CreatureJson,
+    deadline: &Option<std::time::SystemTime>,
+    work_observer: &mut impl FnMut(),
 ) -> Vec<CoordinatedStructuralCandidateJson> {
     // Build incoming synapses lookup: target_uuid -> Vec<(from_uuid, weight)>
     let mut incoming_synapses: HashMap<&str, Vec<(&str, f32)>> = HashMap::new();
@@ -205,9 +239,25 @@ pub fn fanin_polarity_conflicts_to_coordinated_candidates(
             .push((synapse.from_uuid.as_str(), synapse.weight));
     }
 
+    // Issue #2350: build the uuid -> squash lookup once rather than scanning
+    // `creature.neurons` per candidate (was O(C·N)). `entry(..).or_insert(..)`
+    // preserves the original `find`'s first-match semantics when several
+    // neurons share a uuid.
+    let mut squash_by_uuid: HashMap<&str, &str> = HashMap::new();
+    for n in &creature.neurons {
+        work_observer();
+        squash_by_uuid
+            .entry(n.uuid.as_str())
+            .or_insert(n.squash.as_str());
+    }
+
     let mut results = Vec::with_capacity(candidates.len());
 
     for c in candidates {
+        if deadline_passed(deadline) {
+            break;
+        }
+
         // Determine which group is the minority (to be split off)
         let split_negative = c.negative_weight_sum <= c.positive_weight_sum;
 
@@ -235,12 +285,10 @@ pub fn fanin_polarity_conflicts_to_coordinated_candidates(
             continue;
         }
 
-        // Determine the activation function from the original neuron
-        let squash = creature
-            .neurons
-            .iter()
-            .find(|n| n.uuid == c.neuron_uuid)
-            .map_or_else(|| "TANH".to_string(), |n| n.squash.clone());
+        // Determine the activation function from the original neuron (Issue #2350:
+        // O(1) map lookup rather than a per-candidate linear scan of `creature.neurons`).
+        let squash = lookup_squash(&squash_by_uuid, c.neuron_uuid.as_str(), work_observer)
+            .map_or_else(|| "TANH".to_string(), str::to_string);
 
         // Generate a deterministic UUID for the new neuron
         let new_neuron_uuid = format!("fanin-split-{}", c.neuron_uuid);
@@ -304,4 +352,227 @@ pub fn fanin_polarity_conflicts_to_coordinated_candidates(
     });
 
     results
+}
+
+fn lookup_squash<'a>(
+    squash_by_uuid: &'a HashMap<&'a str, &'a str>,
+    neuron_uuid: &str,
+    work_observer: &mut impl FnMut(),
+) -> Option<&'a str> {
+    work_observer();
+    squash_by_uuid.get(neuron_uuid).copied()
+}
+
+#[cfg(test)]
+mod issue_2350_tests {
+    use super::*;
+
+    #[test]
+    fn squash_lookup_work_scales_linearly_at_n_and_4n() {
+        const N: usize = 128;
+
+        let measured_work = |count: usize| {
+            let mut neurons = vec![
+                crate::NeuronJson {
+                    uuid: "positive".to_string(),
+                    neuron_type: "input".to_string(),
+                    squash: "IDENTITY".to_string(),
+                    bias: 0.0,
+                },
+                crate::NeuronJson {
+                    uuid: "negative".to_string(),
+                    neuron_type: "input".to_string(),
+                    squash: "IDENTITY".to_string(),
+                    bias: 0.0,
+                },
+            ];
+            let mut synapses = Vec::with_capacity(count * 3);
+            let mut candidates = Vec::with_capacity(count);
+            for i in 0..count {
+                let uuid = format!("h{i}");
+                neurons.push(crate::NeuronJson {
+                    uuid: uuid.clone(),
+                    neuron_type: "hidden".to_string(),
+                    squash: "RELU".to_string(),
+                    bias: 0.0,
+                });
+                synapses.push(crate::SynapseJson {
+                    from_uuid: "positive".to_string(),
+                    to_uuid: uuid.clone(),
+                    weight: 2.0,
+                    synapse_type: None,
+                });
+                synapses.push(crate::SynapseJson {
+                    from_uuid: "negative".to_string(),
+                    to_uuid: uuid.clone(),
+                    weight: -2.0,
+                    synapse_type: None,
+                });
+                candidates.push(FaninPolarityConflictCandidate {
+                    neuron_uuid: uuid,
+                    positive_weight_sum: 2.0,
+                    negative_weight_sum: 2.0,
+                    positive_count: 1,
+                    negative_count: 1,
+                    conflict_score: 1.0,
+                    sample_count: 30,
+                    estimated_improvement: 0.01,
+                });
+            }
+            neurons.push(crate::NeuronJson {
+                uuid: "output".to_string(),
+                neuron_type: "output".to_string(),
+                squash: "IDENTITY".to_string(),
+                bias: 0.0,
+            });
+            for i in 0..count {
+                synapses.push(crate::SynapseJson {
+                    from_uuid: format!("h{i}"),
+                    to_uuid: "output".to_string(),
+                    weight: 1.0,
+                    synapse_type: None,
+                });
+            }
+            let creature = CreatureJson {
+                neurons,
+                synapses,
+                input: 2,
+                output: 1,
+            };
+            let mut work = 0;
+            let result = fanin_polarity_conflicts_to_coordinated_candidates_with_observer(
+                &candidates,
+                &creature,
+                &None,
+                &mut || work += 1,
+            );
+            assert_eq!(result.len(), count);
+            work
+        };
+
+        let small_work = measured_work(N);
+        let large_work = measured_work(N * 4);
+        assert_eq!(small_work, (N + 3) + N);
+        assert_eq!(large_work, (N * 4 + 3) + N * 4);
+        assert_eq!(large_work - 3, (small_work - 3) * 4);
+    }
+
+    /// Three hidden neurons, each fed by one +2.0 and one -2.0 input, so each is a
+    /// conflict that converts to exactly one coordinated candidate.
+    fn three_conflict_fixture() -> (CreatureJson, Vec<FaninPolarityConflictCandidate>) {
+        let mut neurons = vec![
+            crate::NeuronJson {
+                uuid: "positive".to_string(),
+                neuron_type: "input".to_string(),
+                squash: "IDENTITY".to_string(),
+                bias: 0.0,
+            },
+            crate::NeuronJson {
+                uuid: "negative".to_string(),
+                neuron_type: "input".to_string(),
+                squash: "IDENTITY".to_string(),
+                bias: 0.0,
+            },
+        ];
+        let mut synapses = Vec::new();
+        let mut candidates = Vec::new();
+        for i in 0..3 {
+            let uuid = format!("h{i}");
+            neurons.push(crate::NeuronJson {
+                uuid: uuid.clone(),
+                neuron_type: "hidden".to_string(),
+                squash: "RELU".to_string(),
+                bias: 0.0,
+            });
+            for (from, weight) in [("positive", 2.0), ("negative", -2.0)] {
+                synapses.push(crate::SynapseJson {
+                    from_uuid: from.to_string(),
+                    to_uuid: uuid.clone(),
+                    weight,
+                    synapse_type: None,
+                });
+            }
+            candidates.push(FaninPolarityConflictCandidate {
+                neuron_uuid: uuid,
+                positive_weight_sum: 2.0,
+                negative_weight_sum: 2.0,
+                positive_count: 1,
+                negative_count: 1,
+                conflict_score: 1.0,
+                sample_count: 30,
+                estimated_improvement: 0.01,
+            });
+        }
+        neurons.push(crate::NeuronJson {
+            uuid: "output".to_string(),
+            neuron_type: "output".to_string(),
+            squash: "IDENTITY".to_string(),
+            bias: 0.0,
+        });
+        for i in 0..3 {
+            synapses.push(crate::SynapseJson {
+                from_uuid: format!("h{i}"),
+                to_uuid: "output".to_string(),
+                weight: 1.0,
+                synapse_type: None,
+            });
+        }
+        let creature = CreatureJson {
+            neurons,
+            synapses,
+            input: 2,
+            output: 1,
+        };
+        (creature, candidates)
+    }
+
+    /// The deadline is checked once per candidate, and on expiry the candidates
+    /// already built are returned rather than discarded. The scripted sequence lets
+    /// the first candidate through and stops at the second, so hoisting the check
+    /// out of the loop (all three built) or replacing `break` with an empty return
+    /// (none built) both fail this test.
+    #[test]
+    #[serial_test::serial]
+    fn deadline_mid_conversion_returns_the_candidates_built_so_far() {
+        use crate::analysis::utils::deadline_override::DeadlineOverrideGuard;
+
+        let (creature, candidates) = three_conflict_fixture();
+
+        // Positive control: with no override every conflict converts.
+        let control = fanin_polarity_conflicts_to_coordinated_candidates_with_deadline(
+            &candidates,
+            &creature,
+            &None,
+        );
+        assert_eq!(
+            control.len(),
+            3,
+            "fixture must yield one candidate per conflict"
+        );
+
+        let _guard = DeadlineOverrideGuard::with_sequence(vec![false, true]);
+        let partial = fanin_polarity_conflicts_to_coordinated_candidates_with_deadline(
+            &candidates,
+            &creature,
+            &None,
+        );
+
+        assert_eq!(
+            partial.len(),
+            1,
+            "the deadline must stop the conversion at the second candidate and keep the first"
+        );
+        let split_target = partial[0].operations.iter().find_map(|op| match op {
+            CoordinatedStructuralOpJson::AddNeuron {
+                insert_before_neuron_uuid,
+                ..
+            } => insert_before_neuron_uuid.clone(),
+            _ => None,
+        });
+        assert_eq!(
+            split_target.as_deref(),
+            Some("h0"),
+            "the kept candidate must be the first conflict's"
+        );
+    }
 }
