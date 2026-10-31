@@ -142,22 +142,34 @@ fn oversized_values_keep_the_effective_millisecond_threshold_within_u64() {
 #[test]
 #[serial]
 fn ordinary_values_and_cap_boundary_are_preserved() {
-    for (given, expected) in [
-        ("1", Duration::from_secs(1)),
-        ("300", Duration::from_secs(300)),
-        ("86399", Duration::from_secs(86_399)),
-        ("86400", expected_cap()),
-        ("86401", expected_cap()),
+    for (given, expected, warns) in [
+        ("1", Duration::from_secs(1), false),
+        ("300", Duration::from_secs(300), false),
+        ("86399", Duration::from_secs(86_399), false),
+        ("86400", expected_cap(), false),
+        ("86401", expected_cap(), true),
     ] {
-        let _env = EnvGuard::set(ENV, given);
-        assert_eq!(watchdog_stall_timeout(), Some(expected), "{ENV}={given}");
+        let events = capture_events(|| {
+            let _env = EnvGuard::set(ENV, given);
+            assert_eq!(watchdog_stall_timeout(), Some(expected), "{ENV}={given}");
+        });
+        assert_eq!(
+            events.iter().filter(|event| event.level == "WARN").count(),
+            usize::from(warns),
+            "{ENV}={given}: unexpected warning events: {events:?}"
+        );
     }
 }
 
 #[test]
 #[serial]
 fn clamping_logs_a_warning_naming_variable_value_and_cap() {
-    for given in ["86401", "18446744073709552"] {
+    for given in [
+        "86401",
+        "18446744073709552",
+        "2305843009213693952",
+        "18446744073709551615",
+    ] {
         let events = capture_events(|| {
             let _env = EnvGuard::set(ENV, given);
             assert_eq!(watchdog_stall_timeout(), Some(expected_cap()));
