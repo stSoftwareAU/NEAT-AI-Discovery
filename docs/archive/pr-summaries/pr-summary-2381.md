@@ -46,4 +46,7 @@ Original trigger closed: a `NaN` error or an overflowing error sum makes `mean_e
 - Not covered by a red test: the two sibling `total_cmp` conversions (dead fallbacks, behaviour-neutral).
 - Docs updated: `docs/DISCOVERY_TYPES.md` (Output Squash Mismatch Detection, new criterion 4) and `docs/audits/security-sweep-chunk-08a-detection-neuron.md` (#2381 row, bullet and list marked fixed).
 
-<!-- vibe-quality-gate-skipped reason="the cargo-clippy proxy refuses the pinned 1.99.0 toolchain in this environment, so ./quality.sh was not run end to end; rustfmt --check and the targeted tests above pass, CI runs the full gate" -->
+- CI follow-up (#2485): format `HARD_TANH` as inline code in the regression test's doc comment. `cargo clippy --test issue_2381_output_squash_mismatch_non_finite_gain -- -D warnings` reproduced `clippy::doc_markdown` before the correction and passed afterwards.
+- CI-fix validation: all 3 regression tests passed with `--all-features`. The full gate passed its shell checks, dependency audit, debug build, formatting, all-target/all-feature Clippy and type checks.
+
+<!-- vibe-quality-gate-skipped reason="timeout 900 ./quality.sh expired during library tests (exit 124); the full test suite, documentation build and release build remain incomplete" -->

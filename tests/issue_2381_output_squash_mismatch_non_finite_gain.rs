@@ -14,7 +14,7 @@ use neat_ai_discovery::types::DiscoverRecord;
 const SAMPLES: u32 = 40;
 
 /// Builds `SAMPLES` records whose activations alternate +1.0 / -1.0, so every
-/// activation sits on a HARD_TANH bound and the clipping strategy applies.
+/// activation sits on a `HARD_TANH` bound and the clipping strategy applies.
 fn records(uuid: &str, error_at: impl Fn(u32) -> f32) -> Vec<DiscoverRecord> {
     (0..SAMPLES)
         .map(|i| DiscoverRecord {
