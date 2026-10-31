@@ -150,7 +150,7 @@ impl CalibrationTracker {
     /// Returns a calibration factor for the given module and candidate type.
     ///
     /// Multiply future predictions by this factor to correct for systematic bias.
-    /// Returns 1.0 (no correction) if no observations exist for the combination.
+    /// Returns 1.0 (no correction) if no usable ratios remain for the combination.
     pub fn calibration_factor(&self, module_name: &str, candidate_type: &str) -> f64 {
         let key = calibration_key(module_name, candidate_type);
 
@@ -164,6 +164,7 @@ impl CalibrationTracker {
 
     /// Returns a summary of calibration metrics for all tracked modules.
     ///
+    /// Empty persisted buckets report zero error metrics and the neutral factor.
     /// Results are sorted by sample count (descending) for easy review.
     pub fn calibration_summary(&self) -> Vec<CalibrationSummaryEntry> {
         let mut entries: Vec<CalibrationSummaryEntry> = self
@@ -239,8 +240,9 @@ fn saturating_finite_product(mean: f64, scale: f64) -> f64 {
     }
 }
 
-/// Compute calibration factor from observations as mean(actual / predicted),
-/// clamped to a reasonable range.
+/// Compute calibration from finite `actual / predicted` ratios, clamped to a
+/// reasonable range. Overflowing ratios are excluded and no usable ratios yield
+/// the neutral factor `1.0`.
 fn compute_calibration_factor(observations: &[CalibrationObservation]) -> f64 {
     if observations.is_empty() {
         return 1.0;
@@ -567,7 +569,7 @@ impl DiscoveryHistory {
 
     /// Returns the calibration factor for a given module and candidate type.
     ///
-    /// Returns 1.0 if no calibration data exists for the combination.
+    /// Returns 1.0 if no usable calibration ratios exist for the combination.
     pub fn calibration_factor(&self, module_name: &str, candidate_type: &str) -> f64 {
         self.calibration
             .calibration_factor(module_name, candidate_type)
@@ -719,6 +721,16 @@ mod tests {
         assert_eq!(summary[0].mean_absolute_error, 0.0);
         assert_eq!(summary[0].bias, 0.0);
         assert_eq!(summary[0].calibration_factor, 1.0);
+    }
+
+    #[test]
+    fn calibration_summary_handles_zero_valued_observations() {
+        let mut history = DiscoveryHistory::new();
+        history.record_calibration("zero", "change", 1.0, 0.0);
+        let summary = history.calibration_summary();
+        assert_eq!(summary[0].mean_absolute_error, 1.0);
+        assert_eq!(summary[0].bias, 1.0);
+        assert_eq!(summary[0].calibration_factor, CALIBRATION_FACTOR_MIN);
     }
 
     #[test]
