@@ -412,7 +412,7 @@ fn test_no_detection_when_individual_neurons_have_issues() {
 }
 
 // =============================================================================
-// 8. Diamond topology: backtracking finds deepest path through shared nodes
+// 8. Diamond topology shares a hidden node across paths
 // =============================================================================
 
 #[test]

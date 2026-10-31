@@ -1,12 +1,10 @@
-//! Benchmark for Issue #979: Backtracking vs `HashSet` clone in topology traversal.
+//! Benchmarks for Issues #979 and #2383: topology traversal cost.
 //!
 //! Measures the cost of `detect_topology_diversification_candidates` which
-//! traverses all paths from outputs back to inputs, counting hidden neuron
-//! depth. The optimisation replaces per-recursion `HashSet` clones with a
-//! backtracking approach (insert before recurse, remove after return).
+//! computes input-reachable hidden depth across the synapse graph.
 //!
-//! Uses layered topologies with controlled fan-out to create realistic
-//! visited-set pressure without exponential path explosion.
+//! Width-2 ladders expose path-count growth, while multiple outputs exercise
+//! graph setup reuse in a single detector call.
 
 #![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
@@ -16,11 +14,10 @@ use neat_ai_discovery::{CreatureJson, NeuronJson, SynapseJson};
 use std::hint::black_box;
 
 /// Create a creature with layered topology: inputs → layer1 → layer2 → ... → outputs.
-/// Each layer has `width` neurons with fan-out of 2 to the next layer, creating
-/// moderate path sharing without exponential blowup.
-fn create_layered_creature(depth: usize, width: usize) -> CreatureJson {
+/// Each neuron connects to two neurons in the next layer; width-2 cases create
+/// a fully connected ladder with exponentially many simple paths.
+fn create_layered_creature(depth: usize, width: usize, output_count: usize) -> CreatureJson {
     let input_count = 3;
-    let output_count = 2;
 
     let mut neurons = Vec::new();
     let mut synapses = Vec::new();
@@ -143,22 +140,27 @@ fn create_records(creature: &CreatureJson) -> Vec<(String, Vec<DiscoverRecord>)>
 }
 
 fn bench_topology_traversal(c: &mut Criterion) {
-    // (depth, width) combinations — total hidden neurons = depth × width
-    let configs: &[(usize, usize)] = &[
-        (3, 4),   // 12 hidden neurons
-        (5, 4),   // 20 hidden neurons
-        (5, 8),   // 40 hidden neurons
-        (8, 8),   // 64 hidden neurons
-        (10, 10), // 100 hidden neurons
+    // (depth, width, output count) combinations.
+    let configs: &[(usize, usize, usize)] = &[
+        (3, 4, 2),
+        (5, 4, 2),
+        (5, 8, 2),
+        (8, 8, 2),
+        (10, 10, 2),
+        (4, 2, 2),
+        (8, 2, 2),
+        (12, 2, 2),
+        (16, 2, 2),
+        (8, 2, 32),
     ];
 
     let mut group = c.benchmark_group("topology_traversal");
 
-    for &(depth, width) in configs {
+    for &(depth, width, output_count) in configs {
         let total = depth * width;
-        let creature = create_layered_creature(depth, width);
+        let creature = create_layered_creature(depth, width, output_count);
         let records = create_records(&creature);
-        let id = format!("{total}_hidden_{depth}d_{width}w");
+        let id = format!("{total}_hidden_{depth}d_{width}w_{output_count}o");
 
         group.bench_with_input(
             BenchmarkId::new("detect_diversification", &id),

@@ -460,6 +460,13 @@ pub fn run_discovery_module(
     if let Some(mut result) = detect_fn()
         && !result.candidates.is_empty()
     {
+        // Reject invalid groups before they consume the per-target cap.
+        let invalid =
+            super::candidate_aggregation::reject_non_finite_operations(&mut result.candidates);
+        syn.metadata.rejection_breakdown.record_many_u32(
+            super::diagnostics::rejection_reasons::REJECTION_NON_FINITE_OPERATION,
+            invalid,
+        );
         // Issue #1110: Filter coordinated candidates below the minimum
         // expected-gain floor. Gains at 1e-8 to 1e-7 are indistinguishable
         // from numerical noise and harm the network in production.
@@ -833,6 +840,14 @@ pub fn merge_discovery_module_results(
             && !result.candidates.is_empty()
         {
             let initial_count = result.candidates.len();
+            // Invalid candidates must not consume a module budget or target cap.
+            let invalid =
+                super::candidate_aggregation::reject_non_finite_operations(&mut result.candidates);
+            syn.metadata.rejection_breakdown.record_many_u32(
+                super::diagnostics::rejection_reasons::REJECTION_NON_FINITE_OPERATION,
+                invalid,
+            );
+            let valid_count = result.candidates.len();
 
             // Issue #967: Truncate to per-module candidate budget if set.
             if entry.max_candidates > 0 && result.candidates.len() > entry.max_candidates {
@@ -890,7 +905,7 @@ pub fn merge_discovery_module_results(
                     tracing::debug!(
                         module = %entry.module_name,
                         filtered = filtered_count,
-                        truncated = initial_count - pre_filter_count,
+                        truncated = valid_count - pre_filter_count,
                         negative_gain = pre_filter_count - post_filter_count,
                         weight = SOFT_FAILURE_WEIGHT,
                         "Recorded pre-filtering soft failures (Issue #1060)"

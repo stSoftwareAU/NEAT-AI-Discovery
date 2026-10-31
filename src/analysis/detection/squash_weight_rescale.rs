@@ -305,6 +305,11 @@ pub fn detect_squash_weight_rescale_candidates(
             })
             .collect();
 
+        // Issue #2375: an f32 product can overflow to ±inf (e.g. 1e38 * 4.0); never emit it.
+        if rescaled_weights.iter().any(|(_, _, w)| !w.is_finite()) {
+            continue;
+        }
+
         // Boosted improvement for coordinated change
         let boosted_improvement = improvement * COORDINATED_BOOST;
 

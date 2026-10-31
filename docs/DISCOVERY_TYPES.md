@@ -1299,6 +1299,28 @@ operations.
 **Expected improvement**: 10–15% success rate for topology-based suggestions,
 complementing existing activation-based discovery.
 
+**Scan bounds and cancellation**: The detector selects one output UUID for
+long-path candidates because every output has reverse-BFS distance zero and a
+hidden neuron more than three hops away cannot already connect directly to an
+output. It copies the cached input UUID set once, then stops at the first
+unconnected input for each starved neuron. If `H` is the hidden-neuron count,
+`I` the input count, and `E_s` the existing input edges examined during those
+searches, this selection work is `O(H + I + E_s)`, with `E_s ≤ E` (the
+creature's edge count): every rejected input is an existing edge to a
+different target. Copying the input UUIDs alone does not remove the possible
+`O(H·I)` upper bound when the graph itself contains those edges. Preparation
+and reverse BFS are `O(M + R + V + E)`, where `M` is the record-row count, `R`
+the total error-element count, and `V` the neuron count. Candidate ordering
+adds an uninterruptible `O(C log C)` sort for `C` candidates.
+
+Deadline and global-cancellation checks run during record and error-element
+processing, hidden-neuron qualification, output collection, reverse BFS,
+input copying, and the long-path, fan-in, and imbalance scans. A local topology
+cache is built without checks when the caller does not provide one, and the
+candidate sort cannot be interrupted; cancellation is reported after the sort
+if then observed. `BoundedScan` retains completed candidates in gain order and
+reports `DeadlinePassed` when an interruptible scan stops.
+
 ---
 
 ### Topology Diversification Detection
@@ -1318,6 +1340,11 @@ capacity.
 2. **Persistent error**: The network has significant remaining error that
    cannot be reduced with existing structure.
 3. **Sufficient samples**: At least 20 samples for analysis.
+
+**Traversal cost**: Input reachability and maximum hidden depth are computed
+iteratively in validated neuron evaluation order, in O(N + S) time and storage
+for N neurons and S synapses. Synapses with dangling endpoints are omitted from
+the depth graph, matching the pipeline's tolerance of unresolved neuron UUIDs.
 
 **Recommended actions**:
 
