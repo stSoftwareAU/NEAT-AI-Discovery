@@ -123,10 +123,10 @@ fn oversized_values_keep_the_effective_millisecond_threshold_within_u64() {
         let _env = EnvGuard::set(ENV, given);
         let timeout = watchdog_stall_timeout().expect("positive timeout enables watchdog");
         let milliseconds = timeout.as_millis();
-        if milliseconds > u64::MAX as u128
-            || timeout != expected_cap()
-            || milliseconds as u64 != expected_cap().as_millis() as u64
-        {
+        let effective_threshold = u64::try_from(milliseconds);
+        let expected_threshold = u64::try_from(expected_cap().as_millis())
+            .expect("the documented 24-hour cap fits in u64 milliseconds");
+        if effective_threshold != Ok(expected_threshold) || timeout != expected_cap() {
             violations.push(format!(
                 "{ENV}={given} gave {timeout:?} ({milliseconds} ms), expected {:?}",
                 expected_cap()
