@@ -122,7 +122,7 @@ pub struct ThresholdEffectCandidate {
     pub estimated_improvement: f32,
 }
 
-use super::helpers::build_record_map;
+use super::helpers::{build_record_map, existing_neuron_uuids, first_free_neuron_uuid};
 use super::stats::{compute_mean, compute_variance};
 
 /// Compute covariance between two equal-length slices.
@@ -618,18 +618,29 @@ pub fn dominant_inputs_to_coordinated_candidates(
 /// Convert threshold effect candidates to coordinated structural candidates.
 ///
 /// Each threshold effect produces an `AddNeuron`, `SetBias`, or `SetWeight`
-/// coordinated candidate depending on the recommended action.
+/// coordinated candidate depending on the recommended action. Dampening neuron
+/// UUIDs are salted when needed to avoid existing neuron UUIDs (Issue #2412).
 pub fn threshold_effects_to_coordinated_candidates(
     candidates: &[ThresholdEffectCandidate],
+    creature: &CreatureJson,
 ) -> Vec<CoordinatedStructuralCandidateJson> {
+    let existing = existing_neuron_uuids(creature);
     let mut results = Vec::with_capacity(candidates.len());
 
     for c in candidates {
         let operations = match c.recommended_action.as_str() {
             "addNeuron" => {
                 // Add a dampening neuron between input and the steep neuron
-                let new_uuid =
-                    format!("dampening-{}-{}", c.input_neuron_uuid, c.target_neuron_uuid);
+                let new_uuid = first_free_neuron_uuid(&existing, |salt| {
+                    if salt == 0 {
+                        format!("dampening-{}-{}", c.input_neuron_uuid, c.target_neuron_uuid)
+                    } else {
+                        format!(
+                            "dampening-{}-{}-{salt}",
+                            c.input_neuron_uuid, c.target_neuron_uuid
+                        )
+                    }
+                });
                 vec![CoordinatedStructuralOpJson::AddNeuron {
                     neuron_uuid: new_uuid.clone(),
                     neuron_type: "hidden".to_string(),
