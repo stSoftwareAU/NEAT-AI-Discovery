@@ -350,7 +350,7 @@ Documentation that disagrees with the code under `src/config`, recorded per regi
 
 - `docs/CONFIGURATION.md`, `NEAT_AI_DISCOVERY_FOCUS_RANKING_MEMORY_BUDGET_MB` row, and the doc comment on `user_facing.rs::focus_ranking_memory_budget_mb`: both say lazy mode is chosen with a structured `info` log (instead of a `WARN`). `focus/ranking/mod.rs::plan_loading` emits `tracing::warn!` on the budget path (Issue #1377). Reported on #2125.
 - `user_facing.rs` module doc names "outlier analysis" among the user-facing settings. `NEAT_AI_DISCOVERY_OUTLIER_PERCENTILE` and `outlier_analysis` were removed by `7694130` (#2195), and no reader remains. Reported on #2125.
-- `docs/CONFIGURATION.md`, `NEAT_AI_DISCOVERY_WATCHDOG_STALL_SECS` and `NEAT_AI_DISCOVERY_WATCHDOG_ABORT_DELAY_SECS` rows: do not say that an invalid stall value leaves the watchdog off, or that the stall value has an upper bound (#2405); the abort delay is capped at 60 seconds (#2404). Reported on #2125.
+- `docs/CONFIGURATION.md`, `NEAT_AI_DISCOVERY_WATCHDOG_STALL_SECS` and `NEAT_AI_DISCOVERY_WATCHDOG_ABORT_DELAY_SECS` rows: do not say that an invalid stall value leaves the watchdog off, or that the stall value has no upper bound (#2405); the abort delay is capped at 60 seconds (#2404). Reported on #2125.
 - `docs/CONFIGURATION.md`, `NEAT_AI_DISCOVERY_MH_TEMPERATURE` row: does not give the accepted range 0.01–5.0 or say the value is read once per process. Reported on #2125.
 - Checked and accurate: the `MAX_CACHED_BLOCKS`, `PREFETCH_DEPTH`, `PRELOAD_ALL` and `BLOCK_SIZE` rows of `docs/CONFIGURATION.md`. `RecordCache::new_tiered` and `TieredRecordCache::new` have no production caller, so "`LruRecordCache` ... is never constructed in production" holds.
 

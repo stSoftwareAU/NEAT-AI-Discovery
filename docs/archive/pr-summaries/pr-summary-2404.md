@@ -38,7 +38,7 @@ flowchart LR
     D --> L
 ```
 
-The original trigger is closed with no trivial bypass: the only reader of the setting is `watchdog_abort_delay()` (`WatchdogConfig::from_env` is its sole caller, `src/watchdog.rs:51`), and every parsed value above 60 now returns 60 s, so the sleep before `std::process::abort()` is at most 60 s whatever the environment holds.
+The original trigger is closed with no trivial bypass: the only reader of the setting is `watchdog_abort_delay()` (`watchdog.rs::WatchdogConfig::from_env` is its sole caller), and every parsed value above 60 now returns 60 s, so the sleep before `std::process::abort()` is at most 60 s whatever the environment holds.
 
 ## Test Plan
 
