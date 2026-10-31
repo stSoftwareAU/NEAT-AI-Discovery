@@ -96,9 +96,9 @@ fn imbalanced_fixture() -> (CreatureJson, Vec<(String, Vec<DiscoverRecord>)>) {
 fn long_path_loop_deadline_keeps_candidates_found_before_interruption() {
     let (creature, records) = long_path_fixture();
     let topology = CreatureTopologyCache::new(&creature);
-    // Preparation, output collection, BFS, and 80 record/error checks precede
+    // Preparation, output collection, and BFS precede
     // the second long-path iteration.
-    let mut checks = vec![false; 115];
+    let mut checks = vec![false; 35];
     checks.push(true);
     let _guard = DeadlineOverrideGuard::with_sequence(checks);
 
@@ -182,9 +182,9 @@ fn error_element_traversal_checks_cancellation_inside_a_record() {
         "h".to_string(),
         Some(0.5),
         0.5,
-        vec![0.2, 0.4],
+        vec![0.2; 2048],
     )];
-    let _guard = DeadlineOverrideGuard::with_sequence(vec![false, false, true]);
+    let _guard = DeadlineOverrideGuard::with_sequence(vec![false, true]);
 
     assert_eq!(
         mean_absolute_error(&records, &None),
@@ -230,7 +230,7 @@ fn imbalance_loop_deadline_keeps_candidates_found_before_interruption() {
     // long-path and fan-in checks, and two imbalance-loop elements complete
     // first. At most one of those two is `rich` (skipped via `continue`), so
     // the candidate count is 1 or 2 depending on the random hidden_uuids order.
-    let mut checks = vec![false; 197];
+    let mut checks = vec![false; 37];
     checks.push(true);
     let _guard = DeadlineOverrideGuard::with_sequence(checks);
 

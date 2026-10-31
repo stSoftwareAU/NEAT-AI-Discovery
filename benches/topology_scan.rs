@@ -4,9 +4,12 @@
 
 use std::collections::HashMap;
 use std::hint::black_box;
+use std::time::{Duration, SystemTime};
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
-use neat_ai_discovery::analysis::detection::topology::detect_topology_issues;
+use neat_ai_discovery::analysis::detection::topology::{
+    detect_topology_issues, detect_topology_issues_with_deadline,
+};
 use neat_ai_discovery::types::DiscoverRecord;
 use neat_ai_discovery::{CreatureJson, NeuronJson, SynapseJson};
 
@@ -197,6 +200,20 @@ fn bench_topology_scan(c: &mut Criterion) {
                 });
             },
         );
+
+        if size == 64 && !dense {
+            let deadline = Some(SystemTime::now() + Duration::from_secs(86_400));
+            group.bench_function("long_path_sparse_deadline/hidden=64", |b| {
+                b.iter(|| {
+                    black_box(detect_topology_issues_with_deadline(
+                        black_box(&creature),
+                        black_box(&records),
+                        None,
+                        black_box(&deadline),
+                    ))
+                });
+            });
+        }
 
         let input_count = if dense { (size / 4).max(3) } else { size };
         let (creature, records) = starved(size, input_count, dense);

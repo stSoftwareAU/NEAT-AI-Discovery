@@ -30,7 +30,7 @@
 
 Backend-only change; no UI files touched.
 
-Benchmark (`benches/topology_scan.rs`, criterion, `--warm-up-time 1 --measurement-time 2`; base is `0fdc998` with only the bench file added; the bench uses only the pre-existing `detect_topology_issues` API):
+Benchmark (`benches/topology_scan.rs`, criterion, `--warm-up-time 1 --measurement-time 2`; base is `0fdc998` with only the bench file added; the comparison uses the pre-existing `detect_topology_issues` API):
 
 | Case | Base | Head |
 | --- | --- | --- |
@@ -40,12 +40,14 @@ Benchmark (`benches/topology_scan.rs`, criterion, `--warm-up-time 1 --measuremen
 | `starved_sparse` hidden=256 | 334.4 µs | 332.5 µs |
 | `starved_dense` hidden=256 | 6.695 ms | 6.590 ms |
 
+A separate local run of `long_path_sparse_deadline/hidden=64` with a far-future deadline measured 105.31 µs (Criterion estimate, 87.620–123.78 µs interval, 10 samples). This run used the current working tree and a different machine from the comparison above, so the figures are not directly comparable.
+
 The long-path O(H·O) scan is removed (about 3.1x faster at hidden=256 with many outputs). The starved-neuron fixtures find an unconnected input at the front of the scan, so their time is dominated by other work and is unchanged; the change there is the cancellation checks and the removal of the per-neuron set iteration, not a measured speed-up.
 
 Security-fix evidence:
 
-- Regression test: `tests/issue_2369_topology_scan.rs::existing_detector_stops_when_global_cancellation_is_requested`. Run against base `0fdc998` production code with the new test file copied in, it fails (the base returns candidates after cancellation is requested); `local_and_cached_topology_preserve_long_path_and_imbalance_candidates` also fails there. Both pass at head.
-- Original trigger closed: the per-neuron `output_uuids.iter().filter().min_by_key()` and `input_uuids.iter().find()` scans over all outputs and inputs are gone, and the detector, its BFS, record lookup, long-path, fan-in and input loops all call `deadline_passed`. No equivalent unchecked loop remains in `detect_topology_issues_with_deadline`; the only unchecked work is the O(1) per-neuron arithmetic between checks.
+- Regression test: `tests/issue_2369_topology_scan.rs::existing_detector_stops_when_global_cancellation_is_requested`. Run against base `0fdc998` production code with the new test file copied in, it fails (the base returns candidates after cancellation is requested). `local_and_cached_topology_preserve_long_path_and_imbalance_candidates` preserves behaviour and passes on both base and head; the current test was rerun against a clean archive of base `0fdc998`.
+- Original trigger closed: the per-neuron `output_uuids.iter().filter().min_by_key()` and `input_uuids.iter().find()` scans over all outputs and inputs are gone, and the detector, its BFS, record lookup, long-path, fan-in and input loops all call `deadline_passed`. Error aggregation checks the deadline after at most 1,024 record or error elements, as well as before each qualified neuron.
 
 Not run: a break-the-guard check of each individual deadline check by deleting it; the deterministic tests below count the checks passed before the stop, which would shift if one were removed.
 
@@ -53,7 +55,7 @@ Not run: a break-the-guard check of each individual deadline check by deleting i
 
 - `src/analysis/topology_deadline_tests.rs`: `elapsed_deadline_is_reported_before_preparation`, `preparation_deadline_is_reported_during_record_lookup`, `long_path_loop_deadline_keeps_candidates_found_before_interruption`, `imbalance_loop_deadline_keeps_candidates_found_before_interruption`, `input_scan_checks_cancellation_between_existing_edges`. Passed.
 - `src/analysis/module_dispatch_specs/structural_specs_issue_2369_tests.rs`: `topology_spec_forwards_elapsed_deadline_to_detector`. Passed.
-- `tests/issue_2369_topology_scan.rs`: four tests, passed at head; two fail on base as stated above.
+- `tests/issue_2369_topology_scan.rs`: four tests, passed at head; the cancellation regression fails on base as stated above.
 - Audit record meta-tests (`issue_2154`, `2280`, `2281`, `2282`, `2284`, `2294`, `2298`, `2300`): passed (8 and 42 tests) after the six capacity rows were added.
 - Docs: `docs/DISCOVERY_TYPES.md` (topology scan bounds paragraph), `docs/audits/security-sweep-chunk-08a-detection-neuron.md` and `docs/BENCHMARKS.md` (topology suite row and both suite totals, now 45) updated.
 - CI fix for PR #2481: `cargo test --test issue_1685_doc_link_integrity benchmarks_doc_matches_cargo_bench_targets -- --exact` reproduced the stale-count assertion before correcting the totals. The same command passes after the fix, and `cargo test --test issue_1685_doc_link_integrity --all-features -- --test-threads=2` passes all nine tests. The existing test derives the count from `Cargo.toml`; no test changes were needed. A docs sweep found both stale totals in `docs/BENCHMARKS.md`; the count in `pr-summary-2350.md` describes its historical change and remains true.

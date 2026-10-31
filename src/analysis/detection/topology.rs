@@ -425,13 +425,22 @@ fn mean_absolute_error(
 ) -> Result<f32, ScanTruncation> {
     let mut total_error = 0.0_f32;
     let mut count = 0_usize;
+    let mut work_since_check = 0_usize;
     for record in records {
-        if deadline_passed(deadline) {
-            return Err(ScanTruncation::DeadlinePassed);
-        }
-        for error in &record.errors {
+        work_since_check += 1;
+        if work_since_check >= 1024 {
             if deadline_passed(deadline) {
                 return Err(ScanTruncation::DeadlinePassed);
+            }
+            work_since_check = 0;
+        }
+        for error in &record.errors {
+            work_since_check += 1;
+            if work_since_check >= 1024 {
+                if deadline_passed(deadline) {
+                    return Err(ScanTruncation::DeadlinePassed);
+                }
+                work_since_check = 0;
             }
             total_error += error.abs();
             count += 1;
