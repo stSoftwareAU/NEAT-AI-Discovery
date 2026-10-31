@@ -5,7 +5,7 @@ performance regressions using Criterion.
 
 ## 🔍 Overview
 
-The project includes 44 Criterion benchmark suites in `benches/`. The
+The project includes 45 Criterion benchmark suites in `benches/`. The
 `benchmark_compare.sh` script automates baseline saving and regression
 detection by leveraging Criterion's built-in comparison features.
 
@@ -169,7 +169,7 @@ Save a baseline on your machine before making performance-sensitive changes:
 ./benchmark_compare.sh --save-baseline
 ```
 
-This runs all 44 benchmark suites and stores results in `target/criterion/`.
+This runs all 45 benchmark suites and stores results in `target/criterion/`.
 
 > **Baselines do not survive `./scripts/runlib.sh`.** That script removes the
 > checkout's `target/` after a successful install (Issue #2072), so copy any
