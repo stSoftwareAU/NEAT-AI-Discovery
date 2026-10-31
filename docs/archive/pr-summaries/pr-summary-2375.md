@@ -5,7 +5,7 @@ Bottleneck bypass `AddSynapse` candidates and squash-rescale `SetWeight` operati
 - `bottleneck.rs::bottleneck_neurons_to_coordinated_candidates`: the bypass is skipped when `bypass_weight = upstream_weight * downstream_weight * 0.5` is not finite.
 - `squash_weight_rescale.rs::detect_squash_weight_rescale_candidates` (sibling site from the trusted comment on the issue): the candidate is dropped when any rescaled weight is not finite.
 - The final candidate pipeline rejects atomic groups containing non-finite operation weights or biases, covering the sibling sites in #2375 before module budgets and target caps.
-- `compound_degradation.rs`: two module-doc links changed so `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps` (a `quality.sh` step) passes; the base branch failed it.
+- `candidate_starvation.rs` classifies `non_finite_operation` as an upstream rejection for candidate-starvation decisions.
 - Version bump: `Cargo.toml` and `Cargo.lock` updated for this change; the merged commit records the final version.
 - Audit record `docs/audits/security-sweep-chunk-08a-detection-neuron.md` marks both findings fixed.
 
