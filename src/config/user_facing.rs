@@ -144,19 +144,40 @@ pub fn gpu_stall_window() -> Duration {
     Duration::from_secs(secs)
 }
 
+/// Environment variable controlling the watchdog stall timeout.
+const WATCHDOG_STALL_ENV: &str = "NEAT_AI_DISCOVERY_WATCHDOG_STALL_SECS";
+
+/// Maximum accepted watchdog stall timeout, in seconds (24 hours).
+///
+/// Keeping the millisecond threshold within `u64` prevents truncation in
+/// `watchdog_loop` (Issue #2405).
+pub const MAX_WATCHDOG_STALL_SECS: u64 = 86_400;
+
 /// Get the watchdog stall timeout.
 ///
 /// Set `NEAT_AI_DISCOVERY_WATCHDOG_STALL_SECS` to a positive number to enable.
-/// Any `u64` of 1 or more is accepted, with no upper bound (#2405). Returns
-/// `None` when disabled (unset or `0`). A value that does not parse also returns
-/// `None`, and nothing is logged (#2213, #2276).
+/// Values above `MAX_WATCHDOG_STALL_SECS` (24 hours) are clamped and log a
+/// `WARN` naming the variable, supplied value and cap. Returns `None` when
+/// disabled (unset or `0`). A value that does not parse also returns `None`,
+/// and nothing is logged (#2213, #2276).
 pub fn watchdog_stall_timeout() -> Option<Duration> {
-    let secs = parse_env::<u64>("NEAT_AI_DISCOVERY_WATCHDOG_STALL_SECS").unwrap_or(0);
+    let secs = parse_env::<u64>(WATCHDOG_STALL_ENV).unwrap_or(0);
 
     if secs == 0 {
         None
     } else {
-        Some(Duration::from_secs(secs))
+        if secs > MAX_WATCHDOG_STALL_SECS {
+            tracing::warn!(
+                env = WATCHDOG_STALL_ENV,
+                value = secs,
+                max = MAX_WATCHDOG_STALL_SECS,
+                "{WATCHDOG_STALL_ENV}={secs} is above the maximum of \
+                 {MAX_WATCHDOG_STALL_SECS} seconds; clamping to \
+                 {MAX_WATCHDOG_STALL_SECS}"
+            );
+        }
+
+        Some(Duration::from_secs(secs.min(MAX_WATCHDOG_STALL_SECS)))
     }
 }
 

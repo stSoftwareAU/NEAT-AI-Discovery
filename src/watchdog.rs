@@ -6,8 +6,8 @@
 //! - abort the process so orchestration can capture logs and restart.
 //!
 //! Configuration is via environment variables so callers can tune per machine:
-//! - `NEAT_AI_DISCOVERY_WATCHDOG_STALL_SECS` (u64): If set > 0, enables the watchdog and
-//!   triggers if no heartbeat occurs for this many seconds.
+//! - `NEAT_AI_DISCOVERY_WATCHDOG_STALL_SECS` (u64): A positive value enables the watchdog
+//!   and triggers if no heartbeat occurs for this many seconds, capped at 24 hours.
 //! - `NEAT_AI_DISCOVERY_WATCHDOG_ABORT_DELAY_SECS` (u64): Delay between requesting a thread
 //!   dump and aborting (default: 2 seconds).
 //!

@@ -120,9 +120,8 @@ fn gpu_stall_window_clamps_disables_and_falls_back() {
 #[test]
 #[serial]
 fn watchdog_stall_timeout_rejects_negative_and_nan() {
-    // The huge value is left out on purpose: the stall-timeout truncation
-    // finding (#2259) owns it, and its fix will change the result. `0` and
-    // unparsable input are already pinned by issue_2006.
+    // Huge positive values are covered by the 24-hour clamp regression test.
+    // `0` and unparsable input remain pinned by issue_2006.
     assert_table(
         "NEAT_AI_DISCOVERY_WATCHDOG_STALL_SECS",
         &cases(None, &[("-1", None), ("NaN", None), ("inf", None)]),
