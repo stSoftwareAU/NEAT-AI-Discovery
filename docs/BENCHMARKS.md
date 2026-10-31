@@ -148,6 +148,7 @@ The following suites are defined in `Cargo.toml`:
 | `synapse_preparation` | String cloning cost in synapse preparation |
 | `tiered_loading` | Tiered cache loading strategies |
 | `topology_cache` | Pre-computed topology cache vs repeated map building |
+| `topology_scan` | Topology detector long-path and starved-neuron scan cost (Issue #2369) |
 | `topology_traversal` | Backtracking vs HashSet clone in topology traversal |
 | `upsert_candidate` | Candidate upsert operations |
 | `uuid_arc_preparation` | UUID string cloning reduction in analysis preparation (Issue #1036) |
