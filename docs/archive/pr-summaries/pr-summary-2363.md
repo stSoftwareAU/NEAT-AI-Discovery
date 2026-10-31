@@ -2,7 +2,7 @@
 
 wgpu 30 reports a lost GPU device as an opaque `BufferAsyncError`, a poll panic or an uncaptured-error panic, so the text-only `is_device_lost_error` / `is_memory_exhaustion_error` classifiers never entered device-lost recovery (#647) or batch halving (#1083). Recovery is now routed by source as well as by text. Closes #2363.
 
-Version bump: `Cargo.toml` `version` updated for this change; the merged commit records the final version.
+Version bump: `Cargo.toml` and the crate's `Cargo.lock` entry are updated to `0.74.313` for this change.
 
 - `GpuAnalyzer::new` registers `Device::set_device_lost_callback`, which sets an `Arc<AtomicBool>` exposed as `RequestEvaluator::device_lost()`.
 - `execute_request` (all five request arms) enters recovery when `is_device_lost_error(e) || analyzer.device_lost()` (`routes_to_recovery`). A flag-only failure is re-tagged `GPU device lost: …` (`recovery_error`) so the retry loop classifies it. The #2365 budget-timeout reclassification (`reclassify_budget_timeout`) still runs first in each arm.
