@@ -128,7 +128,7 @@ pub(crate) fn append_scoring_specs(
             let config = input_sensitivity::InputSensitivityConfig::default();
             input_sensitivity::detect_threshold_effects(&creature, &records, &config)
         },
-        convert: |detected| input_sensitivity::threshold_effects_to_coordinated_candidates(&detected),
+        convert: |detected| input_sensitivity::threshold_effects_to_coordinated_candidates(&detected, &creature),
     );
 
     // Issue #423: Sample-weighted discovery — prioritise high-error samples
@@ -399,5 +399,95 @@ mod issue_2379_tests {
         let result = run_named(&mut modules, "dominant input detection")
             .expect("the direct input-to-output path is a positive control");
         assert!(!result.candidates.is_empty());
+    }
+
+    #[test]
+    fn issue_2412_threshold_dispatch_passes_creature_topology_to_conversion() {
+        let creature = Arc::new(crate::CreatureJson {
+            neurons: vec![
+                NeuronJson {
+                    uuid: "input".to_string(),
+                    neuron_type: "input".to_string(),
+                    squash: "IDENTITY".to_string(),
+                    bias: 0.0,
+                },
+                NeuronJson {
+                    uuid: "steep".to_string(),
+                    neuron_type: "hidden".to_string(),
+                    squash: "TANH".to_string(),
+                    bias: 0.0,
+                },
+                NeuronJson {
+                    uuid: "dampening-input-output".to_string(),
+                    neuron_type: "hidden".to_string(),
+                    squash: "IDENTITY".to_string(),
+                    bias: 0.0,
+                },
+                NeuronJson {
+                    uuid: "output".to_string(),
+                    neuron_type: "output".to_string(),
+                    squash: "IDENTITY".to_string(),
+                    bias: 0.0,
+                },
+            ],
+            synapses: vec![
+                SynapseJson {
+                    from_uuid: "input".to_string(),
+                    to_uuid: "steep".to_string(),
+                    weight: 20.0,
+                    synapse_type: None,
+                },
+                SynapseJson {
+                    from_uuid: "steep".to_string(),
+                    to_uuid: "output".to_string(),
+                    weight: 1.0,
+                    synapse_type: None,
+                },
+            ],
+            input: 1,
+            output: 1,
+        });
+        let cache = Arc::new(cache::RecordCache::with_loader(
+            "issue-2412-threshold",
+            Arc::new(|_, uuid| {
+                Ok((0..50)
+                    .map(|obs_index| {
+                        let value = (obs_index as f32 - 25.0) / 250.0;
+                        let activation = if uuid == "steep" { value * 20.0 } else { value };
+                        DiscoverRecord::new(
+                            obs_index,
+                            uuid.to_string(),
+                            Some(value),
+                            activation,
+                            vec![0.1],
+                        )
+                    })
+                    .collect())
+            }),
+        ));
+        let mut modules = Vec::new();
+        append_scoring_specs(
+            &mut modules,
+            &creature,
+            &cache,
+            CostFunctionHint::default(),
+            TaskDescriptor::default(),
+            None,
+        );
+
+        let result = run_named(&mut modules, "threshold effect detection")
+            .expect("fixture produces a threshold-effect detection");
+        let added_uuid = result
+            .candidates
+            .iter()
+            .flat_map(|candidate| &candidate.operations)
+            .find_map(|operation| match operation {
+                crate::CoordinatedStructuralOpJson::AddNeuron { neuron_uuid, .. } => {
+                    Some(neuron_uuid.as_str())
+                }
+                _ => None,
+            })
+            .expect("threshold dispatch emits a dampening neuron");
+        assert_eq!(added_uuid, "dampening-input-output-1");
     }
 }

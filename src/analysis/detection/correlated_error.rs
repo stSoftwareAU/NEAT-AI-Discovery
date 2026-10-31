@@ -40,7 +40,7 @@
 use std::collections::{HashMap, HashSet};
 use std::time::SystemTime;
 
-use super::helpers::build_record_map;
+use super::helpers::{build_record_map, existing_neuron_uuids, first_free_neuron_uuid};
 
 use crate::analysis::utils::deadline_passed;
 use crate::types::DiscoverRecord;
@@ -601,7 +601,7 @@ fn compute_mean_abs_error(
 }
 
 /// Generate a deterministic UUID for a shared hidden neuron.
-fn shared_neuron_uuid(group_uuids: &[String], index: usize) -> String {
+fn shared_neuron_uuid(group_uuids: &[String], index: usize, salt: u32) -> String {
     let mut key = format!("correlated-shared|{index}");
     for uuid in group_uuids {
         key.push('|');
@@ -613,7 +613,11 @@ fn shared_neuron_uuid(group_uuids: &[String], index: usize) -> String {
         hash ^= *b as u64;
         hash = hash.wrapping_mul(0x100000001b3);
     }
-    format!("cs-{hash:016x}")
+    if salt == 0 {
+        format!("cs-{hash:016x}")
+    } else {
+        format!("cs-{hash:016x}-{salt}")
+    }
 }
 
 /// Convert correlated error groups into coordinated structural candidates.
@@ -624,10 +628,14 @@ fn shared_neuron_uuid(group_uuids: &[String], index: usize) -> String {
 /// # Arguments
 /// * `groups` - Detected correlated error groups.
 /// * `creature` - The creature topology (needed for neuron lookup).
+///
+/// Generated neuron UUIDs preserve the legacy FNV identifier when free and are
+/// salted around existing neuron UUIDs when necessary (Issue #2412).
 pub fn correlated_errors_to_coordinated_candidates(
     groups: &[CorrelatedErrorGroup],
     creature: &CreatureJson,
 ) -> Vec<CoordinatedStructuralCandidateJson> {
+    let existing = existing_neuron_uuids(creature);
     // Find the first output neuron UUID for insert_before placement
     let first_output_uuid = creature
         .neurons
@@ -638,7 +646,9 @@ pub fn correlated_errors_to_coordinated_candidates(
     let mut results = Vec::new();
 
     for (idx, group) in groups.iter().enumerate() {
-        let new_uuid = shared_neuron_uuid(&group.output_neuron_uuids, idx);
+        let new_uuid = first_free_neuron_uuid(&existing, |salt| {
+            shared_neuron_uuid(&group.output_neuron_uuids, idx, salt)
+        });
 
         let mut operations = Vec::new();
 
