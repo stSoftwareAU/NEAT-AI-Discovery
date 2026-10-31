@@ -535,3 +535,48 @@ fn every_issue_linked_from_a_swept_row_appears_under_issues_filed() {
         );
     }
 }
+
+#[test]
+fn topology_finding_preserves_filed_history_and_fix() {
+    let doc = read(RECORD);
+    let file_row = doc
+        .lines()
+        .find(|line| line.starts_with("| `src/analysis/detection/topology_diversification.rs` |"))
+        .expect("topology diversification file row must exist");
+    assert!(file_row.contains("Filed by the `per-neuron-b` sweep (Issue #2299)"));
+
+    let entry = doc
+        .split("- `#2383` (")
+        .nth(1)
+        .expect("#2383 finding log entry must exist")
+        .split("\n- ")
+        .next()
+        .unwrap();
+    assert!(entry.contains("topology_diversification.rs::dfs_max_hidden_depth"));
+    assert!(entry.contains("Filed by the `per-neuron-b`\n  sweep (Issue #2299)"));
+    assert!(entry.contains("Fixed by Issue #2383 (PR #2488)."));
+
+    let rows = capacity_table_rows_for(&doc, "topology_diversification.rs");
+    let row = rows
+        .iter()
+        .find(|row| {
+            row.first().is_some_and(|cell| {
+                cell == "`topology_diversification.rs::input_reachable_hidden_depths`"
+            }) && row.get(1).is_some_and(|cell| cell == "traversal")
+        })
+        .expect("replacement traversal row must exist");
+    let bound = &row[3];
+    for detail in [
+        "Post-finalisation (#2383)",
+        "dfs_max_hidden_depth",
+        "exponential",
+        "50,000-hidden",
+        "overflowed the stack",
+        "replaced",
+    ] {
+        assert!(
+            bound.contains(detail),
+            "traversal reconciliation must mention {detail}"
+        );
+    }
+}
