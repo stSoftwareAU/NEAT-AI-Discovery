@@ -42,8 +42,8 @@ The original trigger is closed with no trivial bypass: the only reader of the se
 
 ## Test Plan
 
-- `cargo test --test issue_2404_watchdog_abort_delay_cap`: 7 passed.
-- Red-check: with the clamp disabled (`if false && secs > MAX…`), `huge_values_are_clamped_to_the_cap`, `cap_boundary_is_accepted_and_one_above_clamps` and `clamping_logs_a_warning_naming_variable_value_and_cap` went red (4 passed, 3 failed); restored, 7 pass. On the base commit the file does not compile because `MAX_WATCHDOG_ABORT_DELAY_SECS` does not exist, so it is also red there.
+- `tests/issue_2404_watchdog_abort_delay_cap.rs` (7 tests at head): 7 passed.
+- Red-check on `tests/issue_2404_watchdog_abort_delay_cap.rs` (7 tests at head): with the clamp disabled (`if false && secs > MAX…` in `src/config/user_facing.rs`), `huge_values_are_clamped_to_the_cap`, `cap_boundary_is_accepted_and_one_above_clamps` and `clamping_logs_a_warning_naming_variable_value_and_cap` went red (4 passed, 3 failed); restored, 7 pass. On the base commit the file does not compile because `MAX_WATCHDOG_ABORT_DELAY_SECS` does not exist, so it is also red there.
 - Existing suites re-run and passing: `issue_2006_numeric_env_override_trim` (14), `issue_2096_config_user_facing_a` (16), `issue_2096_config_doc_parity` (17), `issue_2252_chunk_11c1_watchdog_tracking_alloc_test` (4), `issue_1611_env_var_single_source` (8), `issue_2124_chunk_13d_ledger` (10), `issue_2211_chunk_13_ledger_scaffold` (12), chunk-11 ledger suites 2233, 2251, 2253, 2254, and `cargo test --lib config::` (34). `cargo fmt --check` and clippy `--lib --tests -D warnings` are clean.
 - `tests/issue_2096_config_user_facing_a.rs`: comment only; no assertion removed.
 - Docs updated: `docs/CONFIGURATION.md` (abort-delay row), `docs/GPU_GUIDE.md`, and the chunk 11 and chunk 13 audit ledgers (finding marked fixed, range `0..=60`, "ten rows with no numeric bound" corrected to nine).
