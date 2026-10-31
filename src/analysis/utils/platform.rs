@@ -971,27 +971,36 @@ mod tests {
     fn test_apply_xdg_runtime_dir_sets_when_unset() {
         use std::env;
 
+        // Keep the base after the test: concurrent tempfile users may observe TMPDIR.
+        // SAFETY: `geteuid` takes no arguments and cannot fail.
+        let uid = unsafe { libc::geteuid() };
+        let base = env::temp_dir().join(format!("neat-ai-discovery-tmpdir-wiring-{uid}"));
+        std::fs::create_dir_all(&base).expect("wiring test base should exist");
+        let base = base
+            .canonicalize()
+            .expect("wiring test base should resolve");
+        assert_ne!(base, std::path::Path::new("/tmp"));
+        let _tmpdir = EnvGuard::unset("TMPDIR");
         let saved = env::var("XDG_RUNTIME_DIR").ok();
-        // SAFETY: serialised via #[serial]; no other thread touches the env here.
-        unsafe { env::remove_var("XDG_RUNTIME_DIR") };
+        // SAFETY: serialised via #[serial]; the persistent base is safe for tempfile users.
+        unsafe {
+            env::set_var("TMPDIR", &base);
+            env::remove_var("XDG_RUNTIME_DIR");
+        }
 
         // SAFETY: serialised via #[serial]; no other thread touches the env here.
         unsafe { apply_xdg_runtime_dir() };
 
         let set = env::var("XDG_RUNTIME_DIR").expect("XDG_RUNTIME_DIR should be set");
-        let temp_dir = env::temp_dir()
-            .canonicalize()
-            .expect("temp dir should exist");
         assert_eq!(
             std::path::Path::new(&set),
-            expected_runtime_dir(&temp_dir),
+            expected_runtime_dir(&base),
             "the fallback must use the process temporary directory"
         );
         assert!(
             std::path::Path::new(&set).is_dir(),
             "XDG_RUNTIME_DIR should point at an existing directory"
         );
-
         // SAFETY: serialised via #[serial]; restore any pre-existing value.
         unsafe {
             match saved {
