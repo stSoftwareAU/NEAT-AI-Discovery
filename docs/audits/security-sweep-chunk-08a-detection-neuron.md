@@ -261,9 +261,9 @@ rows added by the section sub-issues.
 | `sentinel_gating.rs::detect_sentinel_gating_candidates` (`candidates`) | capacity | `Vec::with_capacity(neuron_records.len())` | no numeric cap — bounded by the caller-supplied `neuron_records` slice, with at most one push per `"input"`-typed entry with ≥ `MIN_SAMPLES` records | n/a — one linear pass over `neuron_records` |
 | `sentinel_gating.rs::sentinel_gating_to_coordinated_candidates` (`results`) | capacity | `Vec::with_capacity(candidates.len())` | bounded — one push per entry of the live `candidates` slice; the per-candidate `creature.synapses` filter is its own #2350 sibling site | n/a — sized once |
 | `squash_weight_rescale.rs::detect_squash_weight_rescale_candidates` (`candidates`) | capacity | `Vec::with_capacity(hidden_neurons.len())` | no numeric cap — the hidden-neuron count is uncapped; bounded by the caller-supplied `hidden_neurons` slice, with at most one push per entry | n/a — the per-neuron record lookup was its own #2377 sibling site and is now an O(1) `build_record_map` get |
-| `topology_diversification.rs::input_reachable_hidden_depths` (`reverse_adj`) | capacity | `vec![Vec::new(); creature.neurons.len()]` | N adjacency lists with at most one stored index per resolved synapse, O(N+S) total | n/a — built once for the iterative depth pass |
-| `topology_diversification.rs::input_reachable_hidden_depths` (`input_reachable`) | capacity | `vec![false; creature.neurons.len()]` | exactly one reachability flag per neuron | n/a — built once for the iterative depth pass |
-| `topology_diversification.rs::input_reachable_hidden_depths` (`depths`) | capacity | `vec![0; creature.neurons.len()]` | exactly one hidden-depth value per neuron | n/a — built once for the iterative depth pass |
+| `topology_diversification.rs::input_reachable_hidden_depths` (`reverse_adj`) | capacity | `vec![Vec::new(); creature.neurons.len()]` | N adjacency lists with at most one stored index per resolved synapse, O(N+S) total. Added after the audit HEAD | n/a — built once for the iterative depth pass |
+| `topology_diversification.rs::input_reachable_hidden_depths` (`input_reachable`) | capacity | `vec![false; creature.neurons.len()]` | exactly one reachability flag per neuron. Added after the audit HEAD | n/a — built once for the iterative depth pass |
+| `topology_diversification.rs::input_reachable_hidden_depths` (`depths`) | capacity | `vec![0; creature.neurons.len()]` | exactly one hidden-depth value per neuron. Added after the audit HEAD | n/a — built once for the iterative depth pass |
 | `topology_diversification.rs::detect_topology_diversification_candidates` (`candidates`) | capacity | `Vec::with_capacity(output_neurons.len())` | no numeric cap — output-typed count bounded only by the already-deserialised `creature.neurons` `Vec`; at most one candidate per output | n/a — one pass over outputs; depth is reused across outputs |
 | `unbounded_capping.rs::detect_unbounded_capping_candidates` (`candidates`) | capacity | `Vec::with_capacity(neurons.len())` | no numeric cap — the hidden-neuron count is uncapped; bounded by the caller-supplied `neurons` slice, with at most one push per entry | n/a — one pass with O(1) `build_record_map` look-ups |
 | `unbounded_capping.rs::unbounded_capping_to_coordinated_candidates` (`results`) | capacity | `Vec::with_capacity(candidates.len())` | bounded — one push per entry of the live `candidates` slice | n/a — one pass over candidates |
@@ -319,14 +319,20 @@ against HEAD `6e3ca6f`:
   `dead_neuron_deadline_tests.rs`. Counted as deltas on Develop's figures: the file count goes
   55 → 56 (+1 for `compound_degradation_tests.rs`); #2370 removes one production capacity row
   (see above) and #2367 adds one, `OutputBitset::from_outputs`'s `vec![0u64; max / 64 - offset + 1]`
-  (`words`, with its own `capacity` row above), so the production capacity rows are 82; and the
-  capacity hits are 85, the 82 production rows plus three test-only hits (`symmetry_breaking_deadline_tests.rs`,
+  (`words`, with its own `capacity` row above), so at that checkpoint the production capacity rows were 82; and the
+  capacity hits were 85, the 82 production rows plus three test-only hits (`symmetry_breaking_deadline_tests.rs`,
   `redundant_path_deadline_tests.rs` and the `vec![false; hidden + 1 + 1]` in
   `compound_degradation_tests.rs`), none of which has a row. These hit counts follow
   `is_capacity_site` in `tests/issue_2154_chunk_08a_finalisation.rs`, which is the binding contract.
   The capacity ERE quoted at the start of this bullet under-counts: `[^\]]` is the bracket `[^\]`
   followed by a literal `]`, so it misses `vec![false; …]` forms and the shell command prints
   fewer hits than this record states.
+
+  **Post-finalisation reconciliation (#2383).** #2383 added three production sites
+  to `topology_diversification.rs::input_reachable_hidden_depths` (`reverse_adj`,
+  `input_reachable` and `depths`), each marked "Added after the audit HEAD" above.
+  The live totals are 85 production capacity rows and 88 capacity hits, including
+  the three test-only hits named above.
 
 - **Traversal** — `grep -rnE 'fn .*\(.*\) .*\{' src/analysis/detection/ src/analysis/neuron/ | grep -E 'depth|visited|frontier|queue'`
   returns one hit, `skip_connection.rs::compute_depths_from_inputs`, which is
@@ -375,7 +381,7 @@ files, including the test-only `symmetry_breaking_deadline_tests.rs` (#2400),
 `redundant_path_deadline_tests.rs` (#2374), `dead_neuron_deadline_tests.rs`
 (#2370) and `compound_degradation_tests.rs` (#2367). Per class:
 
-- **Unbounded allocation** — 82 capacity sites after the post-finalisation
+- **Unbounded allocation** — 85 capacity sites after the post-finalisation
   changes (76 at the audit HEAD), all in the table above. One is
   unbounded: the dense `n_outputs × n_outputs` `correlation_matrix` in
   `correlated_error.rs::detect_correlated_error_patterns` (#2346). The rest
@@ -780,9 +786,9 @@ files, and the sweep read every change:
 - `src/analysis/detection/operating_point.rs` (#2316, `638ec0a`) changed only
   a doc comment.
 
-The `p[e]nding` count must print `0`. The recorded capacity figure is `85`:
-the ledger's 82 production capacity rows plus the three named test-only hits
-(after #2368, #2370, #2374 and #2367; `76` at finalisation, before #2400). It is the
+The `p[e]nding` count must print `0`. The recorded capacity figure is `88`:
+the ledger's 85 production capacity rows plus the three named test-only hits
+(after #2368, #2370, #2374, #2367 and #2383; `76` at finalisation, before #2400). It is the
 ledger's arithmetic, not this grep's output: the ERE `[^\]]*` misses
 multi-character `vec![…; n]` sites, so the grep under-counts (#2480). The Rust
 capacity scanner in `tests/issue_2282_chunk_08a_graph_sweep.rs` is the binding

@@ -157,6 +157,7 @@ fn mixed_outputs_diamond_and_disconnected_chains_keep_candidate_results() {
         synapse("diamond-join", "output-deep"),
         synapse("input", "output-shallow"),
         synapse("disconnected-1", "disconnected-2"),
+        synapse("disconnected-2", "output-shallow"),
     ];
     let creature = creature(neurons, synapses);
     let candidates = detect_topology_diversification_candidates(&creature, &records_for(&creature));
