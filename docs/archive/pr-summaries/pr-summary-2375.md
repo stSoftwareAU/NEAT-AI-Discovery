@@ -43,4 +43,4 @@ Original trigger closed: any non-finite bypass weight (including NaN) is rejecte
 - Existing bottleneck and squash-rescale suites (`analysis`, `detection`, `infrastructure`, `scoring`, `recommendation`, issue 2377/2298/2280/2282/2351/2359 targets) passed.
 - No existing assertions were removed or edited.
 - `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps`: passed.
-- `./quality.sh`: run in full after the last edit (result recorded in the PR comment).
+- `./quality.sh < /dev/null`: passed in full on the pushed head (exit 0, "All quality checks passed!"); the run exceeded the 10-minute foreground cap, so it ran in the background.
