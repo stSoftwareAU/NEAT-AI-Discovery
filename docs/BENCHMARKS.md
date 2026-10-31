@@ -5,7 +5,7 @@ performance regressions using Criterion.
 
 ## 🔍 Overview
 
-The project includes 46 Criterion benchmark suites in `benches/`. The
+The project includes 47 Criterion benchmark suites in `benches/`. The
 `benchmark_compare.sh` script automates baseline saving and regression
 detection by leveraging Criterion's built-in comparison features.
 
@@ -125,6 +125,7 @@ The following suites are defined in `Cargo.toml`:
 | `gpu_buffer_transfers` | GPU buffer transfer overhead |
 | `gpu_helpful_chunk_reuse` | GPU buffer reuse across helpful-batch chunks (Issue #1369) |
 | `gpu_shader_workgroup` | GPU shader workgroup optimisation |
+| `impact_cache_contention` | Shared-cache contention across wide, deep and diamond-mesh networks (Issue #835) |
 | `impact_uuid_cloning` | UUID string cloning in focus/impact hot loops |
 | `input_uuid_precompute` | Input-neuron UUID construction on the recording hot path (Issue #1368) |
 | `issue_2379_synapse_rescans` | Observation-utilisation and dominant-input detection, synapse rescan cost as creature size grows (Issue #2379) |
@@ -170,7 +171,7 @@ Save a baseline on your machine before making performance-sensitive changes:
 ./benchmark_compare.sh --save-baseline
 ```
 
-This runs all 46 benchmark suites and stores results in `target/criterion/`.
+This runs all 47 benchmark suites and stores results in `target/criterion/`.
 
 > **Baselines do not survive `./scripts/runlib.sh`.** That script removes the
 > checkout's `target/` after a successful install (Issue #2072), so copy any
