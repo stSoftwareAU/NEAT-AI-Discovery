@@ -40,7 +40,7 @@ Benchmark (`benches/topology_scan.rs`, criterion, `--warm-up-time 1 --measuremen
 | `starved_sparse` hidden=256 | 334.4 µs | 332.5 µs |
 | `starved_dense` hidden=256 | 6.695 ms | 6.590 ms |
 
-A separate local run of `long_path_sparse_deadline/hidden=64` with a far-future deadline measured 105.31 µs (Criterion estimate, 87.620–123.78 µs interval, 10 samples). This run used the current working tree and a different machine from the comparison above, so the figures are not directly comparable.
+A paired local run on the current working tree (`cargo bench --locked --bench topology_scan -- 'long_path_sparse.*/hidden=64' --warm-up-time 1 --measurement-time 2 --sample-size 10`) measured 40.113 µs (39.517–40.615 µs) without a deadline and 50.408 µs (49.829–50.873 µs) with a far-future deadline. These Criterion estimates use the same fixture and machine; the deadline path is approximately 26% slower in this run. This machine differs from the base comparison above, so those absolute figures are not directly comparable.
 
 The long-path O(H·O) scan is removed (about 3.1x faster at hidden=256 with many outputs). The starved-neuron fixtures find an unconnected input at the front of the scan, so their time is dominated by other work and is unchanged; the change there is the cancellation checks and the removal of the per-neuron set iteration, not a measured speed-up.
 
