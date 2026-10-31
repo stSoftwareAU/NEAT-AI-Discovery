@@ -120,6 +120,7 @@ The following suites are defined in `Cargo.toml`:
 | `clone_reduction` | Clone elimination in hot paths |
 | `cpu_pre_reject` | CPU pre-reject screen before the helpful GPU submit (Issue #1544) |
 | `error_collection` | Lock-free vs mutex-based error collection |
+| `fanin_polarity_squash_lookup` | Fan-in polarity conflict conversion, squash lookup cost as candidates grow (Issue #2350) |
 | `ffi_marshalling` | FFI JSON marshalling overhead across the FFI boundary (Issue #1040) |
 | `gpu_buffer_transfers` | GPU buffer transfer overhead |
 | `gpu_helpful_chunk_reuse` | GPU buffer reuse across helpful-batch chunks (Issue #1369) |

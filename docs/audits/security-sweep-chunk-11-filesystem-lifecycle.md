@@ -278,15 +278,18 @@ Probe dispositions (Issue #2253):
   `test_bayesian_score_invalid_counts_saturates` and
   `test_deserialize_accepts_valid_counts` exist and pass.
 - **`record_attempt` overflow — reachable through the Rust API only, finding
-  filed (#2391).** `discovery_history.rs::NeuronDiscoveryHistory::record_attempt`
-  adds with a plain `+= 1`. `try_from` accepts
-  `attempts == successes == u32::MAX`; one more failed attempt then panics in
+  filed and now fixed (#2391).** `discovery_history.rs::NeuronDiscoveryHistory::record_attempt`
+  used a plain `+= 1`. `try_from` accepts
+  `attempts == successes == u32::MAX`; one more failed attempt then panicked in
   debug (`attempt to add with overflow`) or, with `[profile.release]` leaving
-  `overflow-checks` off, wraps `attempts` to 0 while `successes` stays at
-  `u32::MAX`, so the saved history fails its next load. No FFI path reaches
+  `overflow-checks` off, wrapped `attempts` to 0 while `successes` stayed at
+  `u32::MAX`, so the saved history failed its next load. `record_attempt` now
+  uses `saturating_add`, so both counters pin at `u32::MAX` and
+  `successes <= attempts` holds. Pinned by the unit test
+  `test_record_attempt_keeps_successes_within_attempts_at_u32_max` and by
+  `tests/issue_2391_record_attempt_saturates.rs`. No FFI path reaches
   it: nothing in `src/` calls `DiscoveryHistory::record`, and the FFI entry
-  above never records. Pinned by the ignored failing-first unit test
-  `test_record_attempt_keeps_successes_within_attempts_at_u32_max`.
+  above never records.
 - **Calibration NaN/inf — reaches the FFI summary, finding filed (#2392).**
   JSON carries no NaN or inf literal, and serde_json refuses an out-of-range
   number such as `1e400` (pinned by the passing unit test
@@ -439,7 +442,7 @@ rg -n 'remove_(file|dir_all)|create_dir|rename|symlink|canonicalize|set_permissi
 | #1903 | lock re-read immediately before removal (`LockRecheck::Enforce` → `CleanupOutcome::Claimed`); fail-closed lock probe (only `NotFound` means "no lock"); age floor (a child touched at or after `scan_started` is counted `claimed`) | `discovery_cleanup.rs::remove_discovery_dir` (re-check), `discovery_cleanup.rs::is_directory_orphaned` (fail-closed probe), `discovery_cleanup.rs::directory_touched_since` and the age-floor match in `discovery_cleanup.rs::clean_orphaned_discovery_dirs_since`; regression surface `tests/issue_1903_orphan_sweep_lock_recheck.rs` | yes — FFI `ffi/utilities.rs::clean_orphaned_discovery_dirs` → `discovery_cleanup.rs::clean_orphaned_discovery_dirs` → `clean_orphaned_discovery_dirs_since` → `remove_discovery_dir` (`LockRecheck::Enforce`). Holds for UTF-8 names; this sweep found #2255 (the age floor could be bypassed for a non-UTF-8 entry) and #2256 (the guard keyed on a name the known host never writes), both since fixed: #2255 by commit 2ef5eba, #2256 by PR #2269 |
 | #1905 | owner-only per-invocation capture directory removed on `Drop` on every exit path, including kill-on-timeout; a symlink or foreign-owned file at the capture path is refused, not followed; guard test `tests/issue_1905_sample_temp_dir.rs` | `sample_dir.rs::SampleDir::create`, `sample_dir.rs::create_private_dir`, `sample_dir.rs::Drop::drop`, `sample_dir.rs::read_guarded` (via `sample_capture.rs::read_capture`); fallback-text surface `tests/issue_1934_sample_fallback.rs` | yes — SIGUSR1 → `debug.rs::dump_all_threads` → `debug.rs::render_thread_dump` → `sample_capture.rs::capture`. The manual fallback hint named `/tmp/sample.txt` (#2266), since fixed by PR #2275: `sample_capture.rs::write_manual_hint` now prints `"$(mktemp -d)/sample.txt"` |
 | #1904 | `RUNTIME_DIR_MODE` (`0700`) and `prepare_runtime_dir` in `src/analysis/utils/platform.rs`: create owner-only, re-apply the mode past the umask, refuse a pre-existing world-writable directory or a symlink | `platform.rs::prepare_runtime_dir`, pinned by its `xdg_runtime_dir_*` unit tests; the sampler only mirrors the pattern in `sample_dir.rs::create_private_dir` and does not call it | yes on Linux (`platform.rs::ensure_xdg_runtime_dir`); not on the sampler path — no `src/debug*` file references it |
-| #1906 | `successes > attempts` refused on every deserialise; the failure count saturates when scoring | `discovery_history.rs::NeuronDiscoveryHistory::try_from` (the `TryFrom<NeuronDiscoveryHistoryWire>` impl behind `#[serde(try_from)]`), `discovery_history.rs::NeuronDiscoveryHistory::bayesian_score`; regression tests `test_deserialize_rejects_successes_exceeding_attempts`, `test_bayesian_score_invalid_counts_saturates` and `test_deserialize_accepts_valid_counts` in `src/discovery_history.rs` | yes — FFI `ffi/utilities.rs::get_calibration_summary` → `ffi_internal/analysis.rs::get_calibration_summary_internal` → `serde_json::from_str` into `DiscoveryHistory` runs `try_from` per entry, and a corrupt entry fails the call as `InvalidInput`. `bayesian_score` is off the FFI path (Rust API only). The invariant holds on the way in, but `record_attempt` can break it at the `u32` ceiling (#2391) |
+| #1906 | `successes > attempts` refused on every deserialise; the failure count saturates when scoring | `discovery_history.rs::NeuronDiscoveryHistory::try_from` (the `TryFrom<NeuronDiscoveryHistoryWire>` impl behind `#[serde(try_from)]`), `discovery_history.rs::NeuronDiscoveryHistory::bayesian_score`; regression tests `test_deserialize_rejects_successes_exceeding_attempts`, `test_bayesian_score_invalid_counts_saturates` and `test_deserialize_accepts_valid_counts` in `src/discovery_history.rs` | yes — FFI `ffi/utilities.rs::get_calibration_summary` → `ffi_internal/analysis.rs::get_calibration_summary_internal` → `serde_json::from_str` into `DiscoveryHistory` runs `try_from` per entry, and a corrupt entry fails the call as `InvalidInput`. `bayesian_score` is off the FFI path (Rust API only). The invariant holds on the way in and, since the saturating `record_attempt` fix (#2391), at the `u32` ceiling too |
 | #1902 | `preserve_tmp_on_drop` set before `writer.finish()` and the rename, so `Drop` keeps the complete `.tmp` after a failed finalise | `streaming.rs::finish_session` (sets the flag), `streaming.rs::Drop::drop` (returns before `fs::remove_file` when it is set); regression tests `test_failed_finish_preserves_tmp` and `test_empty_session_finish_removes_tmp` in the `src/streaming.rs` tests module | yes — FFI `ffi/recording.rs::finish_discovery_session` → `streaming.rs::finish_session`; the flag is set after the `records_written == 0` exit (an empty recording is still deleted, by design) and before both fallible steps |
 
 ## Outcome
@@ -452,12 +455,12 @@ findings were filed:
 - #2256 (CLOSED, fixed) — the liveness probe keyed on an unwritten lock name.
 - #2266 (CLOSED, fixed) — the manual thread-dump hint re-taught the
   predictable `/tmp/sample.txt` path.
-- #2391 (OPEN) — `record_attempt` can overflow `u32` at the ceiling #1906
-  accepts.
+- #2391 (CLOSED, fixed by Issue #2391) — `record_attempt` could overflow `u32`
+  at the ceiling #1906 accepts; it now saturates.
 - #2392 (OPEN) — non-finite calibration metrics can reach the FFI under
   `success: true`.
 
-Two of the five findings remain open.
+One of the five findings remains open.
 
 ## Issues filed
 
@@ -472,7 +475,8 @@ Two of the five findings remain open.
   fixed by PR #2275)
 - #2391 — NeuronDiscoveryHistory::record_attempt overflows u32 at the ceiling
   the #1906 guard accepts, breaking successes <= attempts
-  (src/discovery_history.rs::NeuronDiscoveryHistory::record_attempt) (OPEN)
+  (src/discovery_history.rs::NeuronDiscoveryHistory::record_attempt)
+  (CLOSED, fixed by Issue #2391)
 - #2392 — Calibration metrics go non-finite from finite inputs and reach the
   get_calibration_summary FFI as null under success: true
   (src/discovery_history.rs::compute_calibration_factor) (OPEN)
