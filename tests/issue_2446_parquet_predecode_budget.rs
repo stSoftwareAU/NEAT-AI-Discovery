@@ -1,7 +1,9 @@
 //! Footer preflight must reject hostile decoded sizes before Arrow allocates
 //! their list values (Issue #2446).
 
-use arrow::array::{ArrayRef, Float32Array, ListArray, RecordBatch, StringArray, UInt32Array};
+use arrow::array::{
+    ArrayRef, Float32Array, Int64Array, ListArray, RecordBatch, StringArray, UInt32Array,
+};
 use arrow::buffer::OffsetBuffer;
 use arrow::datatypes::{DataType, Field, Schema};
 use neat_ai_discovery::analysis::streaming::StreamingRecordCache;
@@ -130,6 +132,25 @@ fn malformed_hostile_file(path: &std::path::Path, error_count: usize) {
     writer.close().expect("close malformed Parquet");
 }
 
+fn write_uuid_schema_file(
+    path: &std::path::Path,
+    uuid_type: DataType,
+    uuid_nullable: bool,
+    uuid_values: ArrayRef,
+) {
+    let schema = Arc::new(Schema::new(vec![Field::new(
+        "neuron_uuid",
+        uuid_type,
+        uuid_nullable,
+    )]));
+    let batch =
+        RecordBatch::try_new(Arc::clone(&schema), vec![uuid_values]).expect("UUID schema batch");
+    let file = std::fs::File::create(path).expect("create UUID schema Parquet");
+    let mut writer = ArrowWriter::try_new(file, schema, None).expect("UUID schema writer");
+    writer.write(&batch).expect("write UUID schema batch");
+    writer.close().expect("close UUID schema Parquet");
+}
+
 macro_rules! assert_memory_exhausted {
     ($result:expr, $path:expr) => {{
         let error = $result
@@ -239,6 +260,51 @@ fn streaming_index_rejects_malformed_schema_before_reading_unprojected_errors() 
 }
 
 #[test]
+fn streaming_index_rejects_nullable_uuid_column() {
+    let dir = TempDir::new().expect("temporary directory");
+    assert_streaming_index_rejects_uuid_schema(
+        &dir,
+        "nullable",
+        DataType::Utf8,
+        true,
+        Arc::new(StringArray::from(vec!["neuron-a"])),
+    );
+}
+
+#[test]
+fn streaming_index_rejects_non_utf8_uuid_column() {
+    let dir = TempDir::new().expect("temporary directory");
+    assert_streaming_index_rejects_uuid_schema(
+        &dir,
+        "wrong-type",
+        DataType::Int64,
+        false,
+        Arc::new(Int64Array::from(vec![1])),
+    );
+}
+
+fn assert_streaming_index_rejects_uuid_schema(
+    dir: &TempDir,
+    name: &str,
+    uuid_type: DataType,
+    uuid_nullable: bool,
+    values: ArrayRef,
+) {
+    let path = dir.path().join(format!("{name}.parquet"));
+    write_uuid_schema_file(&path, uuid_type, uuid_nullable, values);
+    let result =
+        StreamingRecordCache::new(path.to_str().expect("UUID schema path"), Some(1), Some(0));
+    let error = match result {
+        Ok(_) => panic!("{name} neuron_uuid column must be refused before reading"),
+        Err(error) => error,
+    };
+    assert!(
+        format!("{error:#}").contains("must be non-null Utf8"),
+        "{name} UUID schema error should identify the required type: {error:#}"
+    );
+}
+
+#[test]
 #[serial]
 fn every_production_reader_preflights_before_filtering_and_respects_projection() {
     let dir = TempDir::new().expect("temporary directory");
@@ -273,17 +339,30 @@ fn every_production_reader_preflights_before_filtering_and_respects_projection()
     // SAFETY: both tests that access this environment variable use `#[serial]`.
     unsafe { std::env::set_var("NEAT_AI_DISCOVERY_MAX_PARQUET_DECODE_MB", "1") };
 
-    let by_uuid =
-        read_records_from_parquet_with_profile(hostile_path, "another-neuron", ColumnProfile::Full);
-    assert_memory_exhausted!(by_uuid, "UUID-filtered read of an unrelated neuron");
-
-    let by_observation = read_records_from_parquet_with_limit_and_budget(
-        hostile_path,
-        Some(1),
-        ColumnProfile::Full,
-        Some(1),
+    assert_refused_before_batch(
+        || {
+            read_records_from_parquet_with_profile(
+                hostile_path,
+                "another-neuron",
+                ColumnProfile::Full,
+            )
+        },
+        |result| assert_memory_exhausted!(result, "UUID-filtered read of an unrelated neuron"),
+        "UUID-filtered read",
     );
-    assert_memory_exhausted!(by_observation, "observation-limited read");
+
+    assert_refused_before_batch(
+        || {
+            read_records_from_parquet_with_limit_and_budget(
+                hostile_path,
+                Some(1),
+                ColumnProfile::Full,
+                Some(1),
+            )
+        },
+        |result| assert_memory_exhausted!(result, "observation-limited read"),
+        "observation-limited read",
+    );
 
     let wanted = HashSet::from(["another-neuron"]);
     let summary = read_mean_abs_activation_by_neuron(hostile_path, &wanted, None);
@@ -293,19 +372,29 @@ fn every_production_reader_preflights_before_filtering_and_respects_projection()
             .is_empty()
     );
     let wanted = HashSet::from(["neuron-00000000000000000000000000000000"]);
-    let summary = read_mean_abs_activation_by_neuron(
-        activation_oversized.to_str().expect("activation path"),
-        &wanted,
-        None,
+    assert_refused_before_batch(
+        || {
+            read_mean_abs_activation_by_neuron(
+                activation_oversized.to_str().expect("activation path"),
+                &wanted,
+                None,
+            )
+        },
+        |result| assert_memory_exhausted!(result, "activation summary's selected columns"),
+        "activation summary",
     );
-    assert_memory_exhausted!(summary, "activation summary's selected columns");
 
-    let index = StreamingRecordCache::new(
-        activation_oversized.to_str().expect("activation path"),
-        Some(1),
-        Some(0),
+    assert_refused_before_batch(
+        || {
+            StreamingRecordCache::new(
+                activation_oversized.to_str().expect("activation path"),
+                Some(1),
+                Some(0),
+            )
+        },
+        |result| assert_memory_exhausted!(result, "streaming UUID index"),
+        "streaming UUID index",
     );
-    assert_memory_exhausted!(index, "streaming UUID index");
 
     let cache = StreamingRecordCache::new(hostile_path, Some(1), Some(0)).expect("build index");
     assert_refused_before_batch(
@@ -343,7 +432,7 @@ fn every_production_reader_preflights_before_filtering_and_respects_projection()
     }
 }
 
-fn assert_refused_before_batch<T: std::fmt::Debug, E>(
+fn assert_refused_before_batch<T, E>(
     read: impl FnOnce() -> Result<T, E>,
     verify: impl FnOnce(Result<T, E>),
     path: &str,

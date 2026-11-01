@@ -260,7 +260,7 @@ pub(crate) fn validate_neuron_uuid_column(
         .into());
     };
 
-    if field.data_type() != &DataType::Utf8 || field.is_nullable() {
+    if field.is_nullable() {
         return Err(DiscoveryError::Io {
             detail: format!(
                 "Parquet file '{file_path}' schema mismatch: column 'neuron_uuid' at index \
