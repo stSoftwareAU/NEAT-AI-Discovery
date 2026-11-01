@@ -36,11 +36,10 @@ equivalent spellings and overflow to infinity cannot bypass the validation.
 
 ## Test Plan
 
-- Added `tests/issue_2438_detection_threshold_hostile_values.rs`:
-  - `noise_signal_threshold_rejects_non_finite_and_non_positive_overrides`
-  - `dominance_threshold_rejects_non_finite_and_non_positive_overrides`
-  - `gradient_threshold_rejects_non_finite_and_non_positive_overrides`
-  - `noisy_neuron_detection_uses_default_when_threshold_is_nan`
+- Added `tests/issue_2438_detection_threshold_hostile_values.rs::noise_signal_threshold_rejects_non_finite_and_non_positive_overrides`.
+- Added `tests/issue_2438_detection_threshold_hostile_values.rs::dominance_threshold_rejects_non_finite_and_non_positive_overrides`.
+- Added `tests/issue_2438_detection_threshold_hostile_values.rs::gradient_threshold_rejects_non_finite_and_non_positive_overrides`.
+- Added `tests/issue_2438_detection_threshold_hostile_values.rs::noisy_neuron_detection_uses_default_when_threshold_is_nan`.
 - Added caller-fallback checks for NaN, positive and negative infinity, zero,
   negative zero, negative values, overflow, empty and malformed values, and
   unset variables. The three accessor checks passed on the final implementation.
