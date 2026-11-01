@@ -2,6 +2,8 @@
 //!
 //! Builds common topology data structures once per `analyze_all` call so that
 //! detection modules can share them instead of each rebuilding independently.
+//! Input and output UUID sets grow from neurons listed in the creature, not
+//! from its declared observation widths.
 
 use std::collections::{HashMap, HashSet};
 
@@ -41,8 +43,8 @@ impl CreatureTopologyCache {
 
         // Classify neurons by type in a single pass.
         let mut hidden_uuids = HashSet::with_capacity(neuron_count);
-        let mut output_uuids = HashSet::with_capacity(creature.output);
-        let mut input_uuids = HashSet::with_capacity(creature.input);
+        let mut output_uuids = HashSet::new();
+        let mut input_uuids = HashSet::new();
 
         for n in &creature.neurons {
             match n.neuron_type.as_str() {

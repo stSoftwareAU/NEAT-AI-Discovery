@@ -261,7 +261,10 @@ fn test_cache_construction_correctness() {
     assert_eq!(cache.synapse_weight("h1", "o1"), Some(0.9));
 }
 
-fn sparse_count_creature(input_count: usize, output_count: usize) -> neat_ai_discovery::CreatureJson {
+fn sparse_count_creature(
+    input_count: usize,
+    output_count: usize,
+) -> neat_ai_discovery::CreatureJson {
     let mut creature = make_creature(
         vec![
             NeuronJson {

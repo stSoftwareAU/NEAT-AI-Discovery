@@ -30,12 +30,10 @@
 //! to emit it at serialisation; this gate is the belt-and-braces check for
 //! creatures constructed in Rust and handed to an entry point directly.
 //!
-//! `creature.output` carries the same pair of bounds (Issue #2078). The
-//! output width sizes the output-UUID `HashSet` in
-//! `CreatureTopologyCache::new` (`src/analysis/detection/topology_cache.rs`),
-//! so an unbounded count reproduces the Issue #1867 abort through the
-//! analysis path — `HashSet::with_capacity(usize::MAX)` is the same
-//! `handle_alloc_error` abort by another route.
+//! `creature.output` carries the same width bounds (Issue #2078). The topology
+//! cache classifies only neurons listed in `creature.neurons`, so its input- and
+//! output-UUID sets grow from those listed neurons rather than the declared
+//! widths. The output bound remains an observation-width validation rule.
 
 use super::{CreatureJson, DiscoveryError};
 
@@ -66,11 +64,10 @@ pub const MAX_CREATURE_INPUT_NEURONS: usize = 1_000_000;
 /// Maximum accepted `creature.output` (inclusive).
 ///
 /// The sibling of [`MAX_CREATURE_INPUT_NEURONS`] for the output width
-/// (Issue #2078). `CreatureTopologyCache::new` sizes an output-UUID
-/// `HashSet` from this count, so an unbounded value drives an
-/// attacker-chosen allocation whose failure aborts the process. One million
-/// output neurons already far exceeds any real NEAT creature, so the cap is
-/// deliberately generous rather than tuned.
+/// (Issue #2078). The topology cache's output-UUID set grows from listed output
+/// neurons, but this caller-supplied observation width remains bounded. One
+/// million output neurons already far exceeds any real NEAT creature, so the
+/// cap is deliberately generous rather than tuned.
 pub const MAX_CREATURE_OUTPUT_NEURONS: usize = 1_000_000;
 
 /// Verify that `creature.input` is within `1..=`[`MAX_CREATURE_INPUT_NEURONS`]
@@ -104,15 +101,13 @@ pub fn validate_creature_input_bounds(creature: &CreatureJson) -> Result<(), Dis
         });
     }
 
-    // Issue #2078: the output width sizes the output-UUID set in
-    // `CreatureTopologyCache::new`, so it needs the same upper bound.
+    // Issue #2078: keep the caller-supplied output observation width bounded.
     if creature.output > MAX_CREATURE_OUTPUT_NEURONS {
         return Err(DiscoveryError::InvalidInput {
             detail: format!(
                 "creature declares {} output neurons, exceeding the maximum of {} \
-                 (Issue #2078). An output count this large is a corrupt creature: \
-                 it would drive an unbounded allocation that aborts the process \
-                 rather than returning an error.",
+                 (Issue #2078). This output width is outside the supported \
+                 observation bounds.",
                 creature.output, MAX_CREATURE_OUTPUT_NEURONS
             ),
         });
