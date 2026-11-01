@@ -104,7 +104,11 @@ impl DecodeBudget {
             return Ok(());
         }
 
-        Err(self.memory_exhausted(self.consumed_bytes, file_path))
+        Err(self.memory_exhausted(
+            self.consumed_bytes,
+            file_path,
+            "record charging after Arrow batch construction",
+        ))
     }
 
     /// Refuse a footer-projected decode that cannot fit without consuming the
@@ -114,7 +118,11 @@ impl DecodeBudget {
             .limit_bytes
             .is_some_and(|limit| projected_bytes > limit)
         {
-            return Err(self.memory_exhausted(projected_bytes, file_path));
+            return Err(self.memory_exhausted(
+                projected_bytes,
+                file_path,
+                "footer preflight before Arrow batch construction",
+            ));
         }
         Ok(())
     }
@@ -136,11 +144,11 @@ impl DecodeBudget {
         self.check_projected(projected, file_path)
     }
 
-    fn memory_exhausted(&self, required_bytes: u64, file_path: &str) -> anyhow::Error {
+    fn memory_exhausted(&self, required_bytes: u64, file_path: &str, stage: &str) -> anyhow::Error {
         let limit = self.limit_bytes.unwrap_or(u64::MAX);
         DiscoveryError::MemoryExhausted {
             detail: format!(
-                "Parquet decode budget exceeded while reading '{file_path}': \
+                "Parquet decode budget exceeded during {stage} while reading '{file_path}': \
                  decoded records are estimated to need {required_mb} MB, above the \
                  {limit_mb} MB decode budget. Parquet compresses this schema \
                  far better than 3:1, so the file's on-disk size does not bound \

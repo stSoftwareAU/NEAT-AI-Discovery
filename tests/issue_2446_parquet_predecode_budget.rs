@@ -38,14 +38,14 @@ fn process_high_water_kib() -> usize {
 }
 
 fn hostile_file(path: &std::path::Path, error_count: usize) {
-    hostile_file_with_rows(path, error_count, false);
+    hostile_file_with_rows(path, &[(0, "neuron-a", error_count)]);
 }
 
 fn hostile_two_row_group_file(path: &std::path::Path, error_count: usize) {
-    hostile_file_with_rows(path, error_count, true);
+    hostile_file_with_rows(path, &[(0, "neuron-a", 0), (1, "neuron-b", error_count)]);
 }
 
-fn hostile_file_with_rows(path: &std::path::Path, error_count: usize, two_groups: bool) {
+fn hostile_file_with_rows(path: &std::path::Path, rows: &[(u32, &str, usize)]) {
     let schema = Arc::new(Schema::new(vec![
         Field::new("obs_index", DataType::UInt32, false),
         Field::new("neuron_uuid", DataType::Utf8, false),
@@ -64,12 +64,7 @@ fn hostile_file_with_rows(path: &std::path::Path, error_count: usize, two_groups
         .build();
     let mut writer =
         ArrowWriter::try_new(file, Arc::clone(&schema), Some(properties)).expect("writer");
-    let rows = if two_groups {
-        vec![(0_u32, "neuron-a", 0), (1, "neuron-b", error_count)]
-    } else {
-        vec![(0_u32, "neuron-a", error_count)]
-    };
-    for (obs, neuron, count) in rows {
+    for &(obs, neuron, count) in rows {
         let errors = Arc::new(
             ListArray::try_new(
                 Arc::new(Field::new("item", DataType::Float32, false)),
@@ -88,9 +83,7 @@ fn hostile_file_with_rows(path: &std::path::Path, error_count: usize, two_groups
         ];
         let batch = RecordBatch::try_new(Arc::clone(&schema), columns).expect("hostile batch");
         writer.write(&batch).expect("write hostile batch");
-        if two_groups {
-            writer.flush().expect("finish row group");
-        }
+        writer.flush().expect("finish row group");
     }
     writer.close().expect("close hostile parquet");
     if let Ok(seed_path) = std::env::var("ISSUE_2446_FUZZ_SEED_PATH") {
@@ -162,6 +155,11 @@ macro_rules! assert_memory_exhausted {
             "{} must reject through the decode budget: {error:#}",
             $path
         );
+        assert!(
+            format!("{error:#}").contains("footer preflight before Arrow batch construction"),
+            "{} must refuse during preflight: {error:#}",
+            $path
+        );
     }};
 }
 
@@ -196,7 +194,7 @@ fn oversized_error_list_is_rejected_before_arrow_materialises_it() {
         "the refusal must be the decode-budget preflight: {error:#}"
     );
     assert!(
-        format!("{error:#}").contains("estimated to need"),
+        format!("{error:#}").contains("footer preflight before Arrow batch construction"),
         "the error must come from footer preflight before record charging: {error:#}"
     );
     #[cfg(target_os = "linux")]
@@ -336,10 +334,10 @@ fn every_production_reader_preflights_before_filtering_and_respects_projection()
     std::fs::write(&output, b"existing merge destination").expect("seed merge destination");
     let hostile_path = hostile.to_str().expect("hostile path");
     let prior_limit = std::env::var_os("NEAT_AI_DISCOVERY_MAX_PARQUET_DECODE_MB");
-    // SAFETY: both tests that access this environment variable use `#[serial]`.
+    // SAFETY: tests that mutate this environment variable use `#[serial]`.
     unsafe { std::env::set_var("NEAT_AI_DISCOVERY_MAX_PARQUET_DECODE_MB", "1") };
 
-    assert_refused_before_batch(
+    assert_read_without_large_allocation(
         || {
             read_records_from_parquet_with_profile(
                 hostile_path,
@@ -351,7 +349,7 @@ fn every_production_reader_preflights_before_filtering_and_respects_projection()
         "UUID-filtered read",
     );
 
-    assert_refused_before_batch(
+    assert_read_without_large_allocation(
         || {
             read_records_from_parquet_with_limit_and_budget(
                 hostile_path,
@@ -372,7 +370,7 @@ fn every_production_reader_preflights_before_filtering_and_respects_projection()
             .is_empty()
     );
     let wanted = HashSet::from(["neuron-00000000000000000000000000000000"]);
-    assert_refused_before_batch(
+    assert_read_without_large_allocation(
         || {
             read_mean_abs_activation_by_neuron(
                 activation_oversized.to_str().expect("activation path"),
@@ -384,7 +382,7 @@ fn every_production_reader_preflights_before_filtering_and_respects_projection()
         "activation summary",
     );
 
-    assert_refused_before_batch(
+    assert_read_without_large_allocation(
         || {
             StreamingRecordCache::new(
                 activation_oversized.to_str().expect("activation path"),
@@ -397,7 +395,7 @@ fn every_production_reader_preflights_before_filtering_and_respects_projection()
     );
 
     let cache = StreamingRecordCache::new(hostile_path, Some(1), Some(0)).expect("build index");
-    assert_refused_before_batch(
+    assert_read_without_large_allocation(
         || cache.get("neuron-a"),
         |result| assert_memory_exhausted!(result, "streaming block read"),
         "streaming block read",
@@ -408,7 +406,7 @@ fn every_production_reader_preflights_before_filtering_and_respects_projection()
             .expect("projection that skips errors must not charge the skipped list");
     assert!(projected["neuron-a"][0].errors.is_empty());
 
-    assert_refused_before_batch(
+    assert_read_without_large_allocation(
         || {
             merge_parquet_files(
                 output.to_str().expect("output path"),
@@ -432,7 +430,7 @@ fn every_production_reader_preflights_before_filtering_and_respects_projection()
     }
 }
 
-fn assert_refused_before_batch<T, E>(
+fn assert_read_without_large_allocation<T, E>(
     read: impl FnOnce() -> Result<T, E>,
     verify: impl FnOnce(Result<T, E>),
     path: &str,
@@ -445,12 +443,143 @@ fn assert_refused_before_batch<T, E>(
         let increase = process_high_water_kib().saturating_sub(before);
         assert!(
             increase < 8 * 1024,
-            "{path} high-water mark grew by {increase} KiB before refusal"
+            "{path} high-water mark grew by {increase} KiB during the read"
         );
     }
     #[cfg(not(target_os = "linux"))]
     {
         let _ = path;
         verify(read());
+    }
+}
+
+#[test]
+#[serial]
+fn combined_row_groups_exceed_budget_even_when_each_group_fits() {
+    let dir = TempDir::new().unwrap();
+    for (name, rows) in [
+        ("first", vec![(0, "neuron-a", 150_000)]),
+        ("second", vec![(1, "neuron-b", 150_000)]),
+        (
+            "combined",
+            vec![(0, "neuron-a", 150_000), (1, "neuron-b", 150_000)],
+        ),
+    ] {
+        let path = dir.path().join(format!("{name}.parquet"));
+        hostile_file_with_rows(&path, &rows);
+        let read = || {
+            read_all_records_grouped_by_neuron_bounded(
+                path.to_str().unwrap(),
+                None,
+                ColumnProfile::Full,
+                Some(1),
+            )
+        };
+        if name == "combined" {
+            assert_read_without_large_allocation(
+                read,
+                |result| assert_memory_exhausted!(result, "combined row groups"),
+                "combined row groups",
+            );
+        } else {
+            assert_eq!(read().expect("each individual group fits 1 MB").len(), 1);
+        }
+    }
+}
+
+#[test]
+#[serial]
+fn streaming_projects_away_oversized_extra_columns() {
+    extra_column_projection(false);
+}
+
+#[test]
+#[serial]
+fn merge_projects_away_oversized_extra_columns() {
+    extra_column_projection(true);
+}
+
+fn extra_column_projection(merge: bool) {
+    let dir = TempDir::new().unwrap();
+    let source = dir.path().join("extra.parquet");
+    let output = dir.path().join("merged.parquet");
+    let mut fields = neat_ai_discovery::parquet_format::create_schema()
+        .fields()
+        .to_vec();
+    fields.push(Arc::new(Field::new(
+        "extra",
+        DataType::List(Arc::new(Field::new("item", DataType::Float32, false))),
+        false,
+    )));
+    let schema = Arc::new(Schema::new(fields));
+    let list = |count| {
+        Arc::new(
+            ListArray::try_new(
+                Arc::new(Field::new("item", DataType::Float32, false)),
+                OffsetBuffer::<i32>::from_lengths([count]),
+                Arc::new(Float32Array::from(vec![0.0; count])),
+                None,
+            )
+            .unwrap(),
+        ) as ArrayRef
+    };
+    let batch = RecordBatch::try_new(
+        Arc::clone(&schema),
+        vec![
+            Arc::new(UInt32Array::from(vec![0])),
+            Arc::new(StringArray::from(vec!["neuron-a"])),
+            Arc::new(Float32Array::from(vec![Some(0.5)])),
+            Arc::new(Float32Array::from(vec![0.7])),
+            list(1),
+            list(20_000_000),
+        ],
+    )
+    .unwrap();
+    let props = WriterProperties::builder()
+        .set_compression(Compression::SNAPPY)
+        .set_dictionary_enabled(true)
+        .build();
+    let mut writer =
+        ArrowWriter::try_new(std::fs::File::create(&source).unwrap(), schema, Some(props)).unwrap();
+    writer.write(&batch).unwrap();
+    writer.close().unwrap();
+    drop(batch);
+    let prior_limit = std::env::var_os("NEAT_AI_DISCOVERY_MAX_PARQUET_DECODE_MB");
+    // SAFETY: environment-mutating tests in this suite are serialised.
+    unsafe { std::env::set_var("NEAT_AI_DISCOVERY_MAX_PARQUET_DECODE_MB", "1") };
+    let source_path = source.to_str().unwrap();
+    if !merge {
+        let cache = StreamingRecordCache::new(source_path, Some(1), Some(0)).unwrap();
+        assert_read_without_large_allocation(
+            || cache.get("neuron-a"),
+            |result| {
+                let records = result.expect("streaming must skip extra columns");
+                assert_eq!(records.len(), 1);
+                assert_eq!(records[0].errors, vec![0.0]);
+            },
+            "streaming extra column",
+        );
+    } else {
+        assert_read_without_large_allocation(
+            || merge_parquet_files(output.to_str().unwrap(), &[source_path.to_owned()]),
+            |result| result.expect("merge must skip extra columns"),
+            "merge extra column",
+        );
+        let records = read_all_records_grouped_by_neuron_bounded(
+            output.to_str().unwrap(),
+            None,
+            ColumnProfile::Full,
+            Some(1),
+        )
+        .unwrap();
+        assert_eq!(records["neuron-a"][0].errors, vec![0.0]);
+    }
+    // SAFETY: environment-mutating tests in this suite are serialised.
+    unsafe {
+        if let Some(value) = prior_limit {
+            std::env::set_var("NEAT_AI_DISCOVERY_MAX_PARQUET_DECODE_MB", value);
+        } else {
+            std::env::remove_var("NEAT_AI_DISCOVERY_MAX_PARQUET_DECODE_MB");
+        }
     }
 }

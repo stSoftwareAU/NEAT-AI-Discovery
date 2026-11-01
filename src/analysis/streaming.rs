@@ -454,6 +454,8 @@ impl StreamingRecordCache {
     ) -> Result<HashMap<String, Vec<DiscoverRecord>>> {
         use crate::parquet_format::batch_columns::DiscoveryBatchColumns;
         use crate::parquet_format::decode_budget::DecodeBudget;
+        use crate::parquet_format::{ColumnProfile, validate_parquet_schema};
+        use parquet::arrow::ProjectionMask;
         use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
         use std::fs::File;
 
@@ -463,14 +465,16 @@ impl StreamingRecordCache {
         let builder = ParquetRecordBatchReaderBuilder::try_new(file)
             .context("Failed to create Parquet reader builder")?;
 
+        let profile = ColumnProfile::Full;
+        validate_parquet_schema(&builder, parquet_file, profile)?;
         let mut budget = DecodeBudget::resolve(None);
-        budget.preflight_columns(
-            builder.metadata(),
-            &crate::parquet_format::ColumnProfile::Full.root_names(),
-            parquet_file,
-        )?;
+        budget.preflight_columns(builder.metadata(), &profile.root_names(), parquet_file)?;
 
-        let reader = builder.build().context("Failed to build Parquet reader")?;
+        let mask = ProjectionMask::roots(builder.parquet_schema(), profile.root_indices());
+        let reader = builder
+            .with_projection(mask)
+            .build()
+            .context("Failed to build Parquet reader")?;
 
         let mut records_by_neuron: HashMap<String, Vec<DiscoverRecord>> = HashMap::new();
         let mut current_block = 0;

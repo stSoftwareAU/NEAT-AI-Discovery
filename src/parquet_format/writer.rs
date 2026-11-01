@@ -23,7 +23,7 @@ use anyhow::{Context, Result};
 use arrow::array::{Float32Array, ListArray, StringArray, UInt32Array};
 use arrow::datatypes::{DataType, Field};
 use arrow::record_batch::RecordBatch;
-use parquet::arrow::ArrowWriter;
+use parquet::arrow::{ArrowWriter, ProjectionMask};
 use parquet::file::properties::WriterProperties;
 use std::fs::{self, File};
 use std::path::{Path, PathBuf};
@@ -380,7 +380,10 @@ fn merge_into_temp_file(tmp_path: &str, input_files: &[String]) -> Result<()> {
             &ColumnProfile::Full.root_names(),
             input_path,
         )?;
+        let mask =
+            ProjectionMask::roots(builder.parquet_schema(), ColumnProfile::Full.root_indices());
         let reader = builder
+            .with_projection(mask)
             .build()
             .with_context(|| format!("Failed to build reader for {input_path}"))?;
 
