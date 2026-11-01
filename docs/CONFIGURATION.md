@@ -96,9 +96,9 @@ their fallback and range rules are those in the row.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `NEAT_AI_DISCOVERY_NOISE_SIGNAL_THRESHOLD` | 2.0 | Noise-to-signal ratio threshold for the noise-signal detection module. Parsed as `f32`; unset or unparsable uses the module default. No validation: `NaN`, `inf`, zero and negative values are accepted as-is (#2438). |
-| `NEAT_AI_DISCOVERY_DOMINANCE_THRESHOLD` | 2.0 | Input-dominance threshold for input-sensitivity detection. Parsed as `f32`; unset or unparsable uses the module default. No validation: `NaN`, `inf`, zero and negative values are accepted as-is (#2438). |
-| `NEAT_AI_DISCOVERY_GRADIENT_THRESHOLD` | 10.0 | Gradient threshold for input-sensitivity detection. Parsed as `f32`; unset or unparsable uses the module default. No validation: `NaN`, `inf`, zero and negative values are accepted as-is (#2438). |
+| `NEAT_AI_DISCOVERY_NOISE_SIGNAL_THRESHOLD` | 2.0 | Noise-to-signal ratio threshold for the noise-signal detection module. Only finite positive values are accepted; unset, unparsable, non-finite, zero and negative values use the module default (#2438). |
+| `NEAT_AI_DISCOVERY_DOMINANCE_THRESHOLD` | 2.0 | Input-dominance threshold for input-sensitivity detection. Only finite positive values are accepted; unset, unparsable, non-finite, zero and negative values use the module default (#2438). |
+| `NEAT_AI_DISCOVERY_GRADIENT_THRESHOLD` | 10.0 | Gradient threshold for input-sensitivity detection. Only finite positive values are accepted; unset, unparsable, non-finite, zero and negative values use the module default (#2438). |
 
 ## Analysis budget & deadlines
 
