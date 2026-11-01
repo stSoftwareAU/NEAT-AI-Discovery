@@ -54,6 +54,9 @@ mod staleness;
 /// (Issue #1932) can be exercised from integration tests.
 pub mod submission;
 
+/// Regression tests for the Issue #2363 device-lost flag routing.
+#[cfg(test)]
+mod device_lost_flag_test;
 /// Empty-input short-circuits vs an all-zero GPU answer (Issue #2243).
 #[cfg(test)]
 mod empty_vs_zero_tests;

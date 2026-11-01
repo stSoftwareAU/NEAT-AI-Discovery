@@ -8,6 +8,9 @@
 //! replaces `GpuAnalyzer` wholesale, so it cannot prove this property. The
 //! `RequestEvaluator` delegation is covered in `queue/none_field_tests.rs`.
 
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
+
 use anyhow::Result;
 
 use super::analyzer::{GpuAnalyzer, GpuEvaluator};
@@ -35,6 +38,7 @@ pub(super) fn all_none_analyzer() -> GpuAnalyzer {
         activation_reduce_layout: None,
         activation_reduce_pipeline: None,
         batch_size: 64,
+        device_lost: Arc::new(AtomicBool::new(false)),
     }
 }
 

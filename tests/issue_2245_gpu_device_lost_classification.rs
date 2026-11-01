@@ -113,8 +113,10 @@ fn every_producer_bearing_ledger_row_classifies_as_recorded() {
     }
 }
 
-// This is current behaviour recorded as finding #2363 (SEC-19ddcad53b91); the
-// fix must flip these assertions once device loss is correctly propagated.
+// Finding #2363 (SEC-19ddcad53b91): the map-callback errors still carry no
+// device-loss text, so the text classifier ignores them — the analyser's
+// device-lost flag routes those. wgpu-core's Metal out-of-memory wording
+// ("Not enough memory left") is now matched by the classifier (flipped below).
 #[test]
 fn device_loss_reported_through_the_map_callback_is_not_classified() {
     let multi = wrapped(
@@ -131,9 +133,10 @@ fn device_loss_reported_through_the_map_callback_is_not_classified() {
     assert!(!is_device_lost_error(&single));
     assert!(!is_memory_exhaustion_error(&single));
 
+    // Flipped by the #2363 fix: the "not enough memory left" pattern now matches.
     let core_oom = anyhow::anyhow!("{}", wgpu::wgc::device::DeviceError::OutOfMemory);
-    assert!(!is_device_lost_error(&core_oom));
-    assert!(!is_memory_exhaustion_error(&core_oom));
+    assert!(is_device_lost_error(&core_oom));
+    assert!(is_memory_exhaustion_error(&core_oom));
 }
 
 // No `MapRangeError` producer reaches either classifier, so it correctly

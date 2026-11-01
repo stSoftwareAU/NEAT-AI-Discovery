@@ -99,6 +99,10 @@ impl RequestEvaluator for CountingEvaluator {
         1024
     }
 
+    fn device_lost(&self) -> bool {
+        false
+    }
+
     fn evaluate_helpful_batch(
         &self,
         _samples_batch: &[&[HelpfulSample]],
