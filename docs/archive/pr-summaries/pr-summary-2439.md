@@ -57,7 +57,7 @@ rejects unsupported counts, and the cache no longer reserves from those counts.
 - `timeout 900 cargo test --lib topology_deadline_tests < /dev/null` — passed, 8 deadline and cancellation tests.
 - `cargo fmt --all -- --check` and `git diff --check` — passed.
 - `cargo bench --bench topology_cache -- declared_width < /dev/null` — before and after measurements recorded above.
-- `timeout 900 ./quality.sh < /dev/null` — timed out twice with exit 124 while compiling the full integration-test matrix. Shell checks, dependency audit, debug build, formatter, Clippy and type checks passed before the test compilation stage; the full test stage and remaining gate steps did not complete.
+- `timeout 900 ./quality.sh < /dev/null` — timed out three times with exit 124 while compiling the full integration-test matrix. Shell checks, dependency audit, debug build, formatter, Clippy and type checks passed before the test compilation stage; the full test stage and remaining gate steps did not complete.
 - No existing test assertions were removed or changed.
 
 ## Security
