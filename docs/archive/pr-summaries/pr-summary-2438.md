@@ -108,7 +108,5 @@ Documentation sweep: read and updated the `Detection thresholds` section in
 `src/config/detection.rs`. Updated the stale Issue #2438 commentary in
 `tests/issue_2272_config_small_modules.rs`. A final search of those updated files
 found no remaining claims that these overrides pass hostile values through.
-The historical audit in `docs/audits/security-sweep-chunk-13-config-env.md`
-still records the pre-fix pass-through behaviour and the replaced test names
-in its three detection-threshold rows; those rows describe the audited baseline,
-not the current implementation.
+Updated `docs/audits/security-sweep-chunk-13-config-env.md` to record the
+fixed threshold behaviour and cite the renamed tests.
