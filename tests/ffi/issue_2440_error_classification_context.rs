@@ -1,7 +1,7 @@
 //! Issue #2440 — classify and expose the complete anyhow cause chain.
 
 use neat_ai_discovery::AnalyzeParallelOutput;
-use neat_ai_discovery::ffi_types::DiscoveryError;
+use neat_ai_discovery::ffi_types::{DiscoveryError, DiscoveryErrorKind, classify_error};
 
 fn host_json(error: &anyhow::Error) -> serde_json::Value {
     let output = AnalyzeParallelOutput::failure(error);
@@ -75,4 +75,27 @@ fn context_wrapped_typed_gpu_wedged_error_keeps_typed_precedence() {
     assert!(message.contains("analysis dispatch timed out"));
     assert!(message.contains("GPU wedged:"));
     assert!(message.contains("abandoned GPU threads: 1"));
+}
+
+#[test]
+fn typed_timeout_takes_precedence_over_conflicting_device_lost_context() {
+    let error = anyhow::Error::new(DiscoveryError::Timeout { deadline_ms: 300 })
+        .context("analysis dispatch failed: Device is lost");
+
+    assert_eq!(
+        classify_error(&format!("{error:#}")),
+        DiscoveryErrorKind::GpuTransient,
+        "fixture must classify differently when only its text is considered"
+    );
+
+    let json = host_json(&error);
+
+    assert_eq!(json["success"], false);
+    assert_eq!(json["errorKind"], "timeout");
+    assert_eq!(json["retryable"], true);
+    let message = json["error"]
+        .as_str()
+        .expect("failure response must include an error message");
+    assert!(message.contains("analysis dispatch failed: Device is lost"));
+    assert!(message.contains("Deadline exceeded after 300ms"));
 }
