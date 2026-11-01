@@ -95,6 +95,19 @@ flowchart LR
   — passed on the final head. Against base production files it failed with
   161,288 KiB additional high-water memory while the missing-UUID fallback
   built an unprojected reader.
+- `tests/issue_2446_parquet_predecode_budget.rs::streaming_index_rejects_nullable_uuid_column`
+  and `tests/issue_2446_parquet_predecode_budget.rs::streaming_index_rejects_non_utf8_uuid_column`
+  — passed. Removing the nullability check made the nullable test return a
+  cache; removing the type check made the wrong-type test reach the later
+  `Failed to cast neuron_uuid column` error instead of the schema refusal.
+- Per-reader mutation checks — removing the grouped preflight made the hostile
+  row test fail at 239,620 KiB additional high-water memory. Removing the
+  UUID-filtered or observation-limited preflight made the broad reader test
+  return `Ok` because each filter skipped the hostile row. Removing the
+  activation-summary or streaming-index preflight also returned `Ok`; removing
+  the streaming-block preflight failed at 237,776 KiB additional high-water
+  memory; removing the merge preflight returned `Ok`. Each mutation was
+  restored, and the test passed with all guards present.
 - `tests/issue_2005_shared_batch_decoder.rs::the_streaming_index_preflights_the_decode_budget`
   — passed; the streaming index rejects the projected file before indexing.
 - `tests/recording/issue_193_streaming_parquet.rs::streaming_cache_new_rejects_short_schema_without_panic`
