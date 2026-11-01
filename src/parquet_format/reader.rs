@@ -357,7 +357,6 @@ pub fn read_all_records_grouped_by_neuron_bounded(
 
     let mut budget = DecodeBudget::resolve(budget_mb);
     budget.preflight_columns(builder.metadata(), &profile.root_names(), file_path)?;
-
     let mask = ProjectionMask::roots(builder.parquet_schema(), profile.root_indices());
     let reader = builder
         .with_projection(mask)
@@ -552,7 +551,6 @@ pub fn read_records_from_parquet_with_limit_and_budget(
 
     let mut budget = DecodeBudget::resolve(budget_mb);
     budget.preflight_columns(builder.metadata(), &profile.root_names(), file_path)?;
-
     let mask = ProjectionMask::roots(builder.parquet_schema(), profile.root_indices());
     let reader = builder
         .with_projection(mask)

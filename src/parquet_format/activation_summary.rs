@@ -92,7 +92,6 @@ pub fn read_mean_abs_activation_by_neuron(
 
     let budget = DecodeBudget::resolve(None);
     budget.preflight_columns(builder.metadata(), &profile.root_names(), file_path)?;
-
     let mask = ProjectionMask::roots(builder.parquet_schema(), profile.root_indices());
     let reader = builder
         .with_projection(mask)

@@ -374,7 +374,6 @@ impl StreamingRecordCache {
             &["neuron_uuid"],
             parquet_file,
         )?;
-
         let mask = ProjectionMask::roots(builder.parquet_schema(), [uuid_root]);
         let reader = builder
             .with_projection(mask)

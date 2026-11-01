@@ -193,14 +193,14 @@ fn oversized_error_list_is_rejected_before_arrow_materialises_it() {
         DiscoveryErrorKind::MemoryExhausted,
         "the refusal must be the decode-budget preflight: {error:#}"
     );
-    assert!(
-        format!("{error:#}").contains("footer preflight before Arrow batch construction"),
-        "the error must come from footer preflight before record charging: {error:#}"
-    );
     #[cfg(target_os = "linux")]
     assert!(
         allocated_kib < 8 * 1024,
-        "reader high-water mark grew by {allocated_kib} KiB; Arrow appears to have materialised the list"
+        "reader high-water mark grew by {allocated_kib} KiB; Arrow appears to have materialised the list: {error:#}"
+    );
+    assert!(
+        format!("{error:#}").contains("footer preflight before Arrow batch construction"),
+        "the error must come from footer preflight before record charging: {error:#}"
     );
 
     let near_budget = (0..1_000)
