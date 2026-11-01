@@ -197,6 +197,10 @@ name = "impact_uuid_cloning"
 harness = false
 
 [[bench]]
+name = "impact_cache_contention"
+harness = false
+
+[[bench]]
 name = "analysis_pipeline_clones"
 harness = false
 
