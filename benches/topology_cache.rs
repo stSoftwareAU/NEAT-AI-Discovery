@@ -98,6 +98,35 @@ fn create_test_creature(hidden_count: usize) -> CreatureJson {
     }
 }
 
+/// Build a sparse topology while varying only the declared observation widths.
+fn create_sparse_width_creature(input: usize, output: usize) -> CreatureJson {
+    CreatureJson {
+        neurons: vec![
+            NeuronJson {
+                uuid: "listed-input".to_string(),
+                neuron_type: "input".to_string(),
+                squash: "IDENTITY".to_string(),
+                bias: 0.0,
+            },
+            NeuronJson {
+                uuid: "hidden".to_string(),
+                neuron_type: "hidden".to_string(),
+                squash: "TANH".to_string(),
+                bias: 0.0,
+            },
+            NeuronJson {
+                uuid: "listed-output".to_string(),
+                neuron_type: "output".to_string(),
+                squash: "LOGISTIC".to_string(),
+                bias: 0.0,
+            },
+        ],
+        synapses: Vec::new(),
+        input,
+        output,
+    }
+}
+
 /// Simulate what a single detection module does: build topology maps from scratch.
 fn build_topology_per_module(creature: &CreatureJson) {
     let _hidden_uuids: HashSet<&str> = creature
@@ -193,6 +222,38 @@ fn bench_topology_cache(c: &mut Criterion) {
     }
 
     group.finish();
+
+    let mut width_group = c.benchmark_group("topology_cache_declared_width");
+    width_group.sample_size(10);
+    width_group.warm_up_time(std::time::Duration::from_secs(1));
+    width_group.measurement_time(std::time::Duration::from_secs(2));
+
+    for (label, input, output) in [
+        ("ordinary", 1, 1),
+        ("maximum_input", 1_000_000, 1),
+        ("maximum_output", 1, 1_000_000),
+    ] {
+        let creature = create_sparse_width_creature(input, output);
+        width_group.bench_function(BenchmarkId::new("construction", label), |b| {
+            b.iter(|| black_box(CreatureTopologyCache::new(black_box(&creature))));
+        });
+
+        let cache = CreatureTopologyCache::new(&creature);
+        width_group.bench_function(BenchmarkId::new("repeated_full_scans", label), |b| {
+            b.iter(|| {
+                for _ in 0..MODULE_COUNT {
+                    for uuid in &cache.input_uuids {
+                        black_box(uuid);
+                    }
+                    for uuid in &cache.output_uuids {
+                        black_box(uuid);
+                    }
+                }
+            });
+        });
+    }
+
+    width_group.finish();
 }
 
 criterion_group!(benches, bench_topology_cache);
