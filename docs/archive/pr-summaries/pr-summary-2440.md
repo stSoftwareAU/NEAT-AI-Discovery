@@ -4,8 +4,8 @@ Classify untyped `anyhow` failures from their full context-and-cause chain and
 include that chain in the host-visible error message. Typed `DiscoveryError`
 classification still takes precedence. Closes #2440.
 
-Version bump: `Cargo.toml` remains at `0.74.317`, matching the base branch.
-The patch bump is pending and will be managed by CI when the PR is raised.
+Version bump: `Cargo.toml` updated for this change; the merged commit records
+the final version.
 
 ## Spec
 
