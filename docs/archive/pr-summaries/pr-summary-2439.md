@@ -58,7 +58,12 @@ rejects unsupported counts, and the cache no longer reserves from those counts.
 - `cargo fmt --all -- --check` and `git diff --check` — passed.
 - `cargo bench --bench topology_cache -- declared_width < /dev/null` — before and after measurements recorded above.
 - `timeout 900 ./quality.sh < /dev/null` — timed out three times with exit 124 while compiling the full integration-test matrix. Shell checks, dependency audit, debug build, formatter, Clippy and type checks passed before the test compilation stage; the full test stage and remaining gate steps did not complete.
-- No existing test assertions were removed or changed.
+- `tests/issue_2281_chunk_08a_shared_sweep.rs` — the shared capacity row
+  count changed from eight to six and the `CreatureTopologyCache::new` count
+  from seven to five; the exact-row test was renamed accordingly. The two
+  `HashSet::with_capacity(creature.output/input)` sites were removed, along
+  with their rows in `docs/audits/security-sweep-chunk-08a-detection-neuron.md`.
+  The remaining capacity sites are still cross-checked against the ledger.
 
 ## Security
 
