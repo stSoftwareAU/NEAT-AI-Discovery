@@ -17,6 +17,7 @@ mod writer;
 
 // Re-export public API at the parquet_format level for backward compatibility
 pub use activation_summary::{ActivationSummary, read_mean_abs_activation_by_neuron};
+pub(crate) use reader::validate_neuron_uuid_column;
 pub use reader::{
     ColumnProfile, read_all_records_from_parquet, read_all_records_grouped_by_neuron,
     read_all_records_grouped_by_neuron_bounded, read_all_records_grouped_by_neuron_with_deadline,

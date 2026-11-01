@@ -356,6 +356,7 @@ impl StreamingRecordCache {
     /// Build an index mapping neurons to blocks.
     fn build_block_index(parquet_file: &str, block_size: usize) -> Result<BlockIndex> {
         use crate::parquet_format::decode_budget::DecodeBudget;
+        use crate::parquet_format::validate_neuron_uuid_column;
         use arrow::array::StringArray;
         use parquet::arrow::ProjectionMask;
         use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
@@ -367,26 +368,18 @@ impl StreamingRecordCache {
         let builder = ParquetRecordBatchReaderBuilder::try_new(file)
             .context("Failed to create Parquet reader builder")?;
 
+        let uuid_root = validate_neuron_uuid_column(&builder, parquet_file)?;
         DecodeBudget::resolve(None).preflight_columns(
             builder.metadata(),
             &["neuron_uuid"],
             parquet_file,
         )?;
 
-        let uuid_root = builder
-            .parquet_schema()
-            .root_schema()
-            .get_fields()
-            .iter()
-            .position(|field| field.name() == "neuron_uuid");
-        let reader = if let Some(uuid_root) = uuid_root {
-            let mask = ProjectionMask::roots(builder.parquet_schema(), [uuid_root]);
-            builder.with_projection(mask).build()
-        } else {
-            // Keep malformed schemas on the existing validation path below.
-            builder.build()
-        }
-        .context("Failed to build Parquet reader")?;
+        let mask = ProjectionMask::roots(builder.parquet_schema(), [uuid_root]);
+        let reader = builder
+            .with_projection(mask)
+            .build()
+            .context("Failed to build Parquet reader")?;
 
         let mut neuron_blocks: HashMap<String, Vec<usize>> = HashMap::new();
         let mut current_block = 0;

@@ -96,6 +96,40 @@ fn hostile_file_with_rows(path: &std::path::Path, error_count: usize, two_groups
     }
 }
 
+fn malformed_hostile_file(path: &std::path::Path, error_count: usize) {
+    let schema = Arc::new(Schema::new(vec![
+        Field::new("id", DataType::UInt32, false),
+        Field::new(
+            "errors",
+            DataType::List(Arc::new(Field::new("item", DataType::Float32, false))),
+            false,
+        ),
+    ]));
+    let file = std::fs::File::create(path).expect("create malformed Parquet");
+    let properties = WriterProperties::builder()
+        .set_compression(Compression::SNAPPY)
+        .set_dictionary_enabled(true)
+        .build();
+    let mut writer =
+        ArrowWriter::try_new(file, Arc::clone(&schema), Some(properties)).expect("writer");
+    let errors = Arc::new(
+        ListArray::try_new(
+            Arc::new(Field::new("item", DataType::Float32, false)),
+            OffsetBuffer::<i32>::from_lengths([error_count]),
+            Arc::new(Float32Array::from(vec![0.0_f32; error_count])),
+            None,
+        )
+        .expect("errors list"),
+    );
+    let batch = RecordBatch::try_new(
+        Arc::clone(&schema),
+        vec![Arc::new(UInt32Array::from(vec![0])), errors],
+    )
+    .expect("malformed batch");
+    writer.write(&batch).expect("write malformed batch");
+    writer.close().expect("close malformed Parquet");
+}
+
 macro_rules! assert_memory_exhausted {
     ($result:expr, $path:expr) => {{
         let error = $result
@@ -119,18 +153,6 @@ fn oversized_error_list_is_rejected_before_arrow_materialises_it() {
 
     // Create the large fixture before tracking the reader's allocations.
     hostile_file(&hostile, 20_000_000);
-    write_records_to_parquet(
-        legal.to_str().expect("legal path"),
-        &[DiscoverRecord::new(
-            0,
-            "neuron-a".into(),
-            Some(0.5),
-            0.7,
-            vec![0.1],
-        )],
-    )
-    .expect("write legal file");
-
     #[cfg(target_os = "linux")]
     {
         std::fs::write("/proc/self/clear_refs", "5").expect("reset process high-water mark");
@@ -152,20 +174,68 @@ fn oversized_error_list_is_rejected_before_arrow_materialises_it() {
         DiscoveryErrorKind::MemoryExhausted,
         "the refusal must be the decode-budget preflight: {error:#}"
     );
+    assert!(
+        format!("{error:#}").contains("estimated to need"),
+        "the error must come from footer preflight before record charging: {error:#}"
+    );
     #[cfg(target_os = "linux")]
     assert!(
         allocated_kib < 8 * 1024,
         "reader high-water mark grew by {allocated_kib} KiB; Arrow appears to have materialised the list"
     );
 
+    let near_budget = (0..1_000)
+        .map(|index| DiscoverRecord::new(index, "neuron-a".into(), Some(0.5), 0.7, vec![0.1; 100]))
+        .collect::<Vec<_>>();
+    write_records_to_parquet(legal.to_str().expect("legal path"), &near_budget)
+        .expect("write legal near-budget file");
     let records = read_all_records_grouped_by_neuron_bounded(
         legal.to_str().expect("legal path"),
         None,
         ColumnProfile::Full,
         Some(1),
     )
-    .expect("legal file below the budget remains readable");
-    assert_eq!(records["neuron-a"].len(), 1);
+    .expect("legal file near the 1 MB budget remains readable");
+    assert_eq!(records["neuron-a"].len(), 1_000);
+    assert_eq!(records["neuron-a"][999].errors.len(), 100);
+}
+
+#[test]
+#[serial]
+fn streaming_index_rejects_malformed_schema_before_reading_unprojected_errors() {
+    let dir = TempDir::new().expect("temporary directory");
+    let malformed = dir.path().join("malformed-hostile.parquet");
+    malformed_hostile_file(&malformed, 20_000_000);
+
+    #[cfg(target_os = "linux")]
+    {
+        std::fs::write("/proc/self/clear_refs", "5").expect("reset process high-water mark");
+    }
+    #[cfg(target_os = "linux")]
+    let high_water_before = process_high_water_kib();
+
+    let result = StreamingRecordCache::new(
+        malformed.to_str().expect("malformed path"),
+        Some(1),
+        Some(0),
+    );
+    let error = match result {
+        Ok(_) => panic!("missing neuron_uuid must be rejected from the schema"),
+        Err(error) => error,
+    };
+
+    assert!(
+        format!("{error:#}").contains("missing 'neuron_uuid' column"),
+        "schema failure should identify the missing index column: {error:#}"
+    );
+    #[cfg(target_os = "linux")]
+    {
+        let allocated_kib = process_high_water_kib().saturating_sub(high_water_before);
+        assert!(
+            allocated_kib < 8 * 1024,
+            "malformed schema read grew the high-water mark by {allocated_kib} KiB"
+        );
+    }
 }
 
 #[test]

@@ -238,6 +238,44 @@ pub(crate) fn validate_parquet_schema(
     Ok(())
 }
 
+/// Validate the column used by the streaming block index before projecting it.
+/// Other discovery columns are checked when a block is loaded.
+pub(crate) fn validate_neuron_uuid_column(
+    builder: &ParquetRecordBatchReaderBuilder<File>,
+    file_path: &str,
+) -> Result<usize> {
+    let schema = builder.schema();
+    let Some((index, field)) = schema
+        .fields()
+        .iter()
+        .enumerate()
+        .find(|(_, field)| field.name() == "neuron_uuid")
+    else {
+        return Err(DiscoveryError::Io {
+            detail: format!(
+                "Parquet file '{file_path}' schema mismatch: missing 'neuron_uuid' column. \
+                 The file may not be a valid discovery Parquet file."
+            ),
+        }
+        .into());
+    };
+
+    if field.data_type() != &DataType::Utf8 || field.is_nullable() {
+        return Err(DiscoveryError::Io {
+            detail: format!(
+                "Parquet file '{file_path}' schema mismatch: column 'neuron_uuid' at index \
+                 {index} must be non-null Utf8, but has type {:?} and nullable={}. \
+                 The file may not be a valid discovery Parquet file.",
+                field.data_type(),
+                field.is_nullable()
+            ),
+        }
+        .into());
+    }
+
+    Ok(index)
+}
+
 /// Read all discovery records from a Parquet file, grouped by neuron UUID.
 /// This is more efficient than calling `read_records_from_parquet` multiple times
 /// when you need records for multiple neurons.
