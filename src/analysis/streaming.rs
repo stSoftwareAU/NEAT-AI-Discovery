@@ -373,11 +373,20 @@ impl StreamingRecordCache {
             parquet_file,
         )?;
 
-        let mask = ProjectionMask::roots(builder.parquet_schema(), vec![1]);
-        let reader = builder
-            .with_projection(mask)
-            .build()
-            .context("Failed to build Parquet reader")?;
+        let uuid_root = builder
+            .parquet_schema()
+            .root_schema()
+            .get_fields()
+            .iter()
+            .position(|field| field.name() == "neuron_uuid");
+        let reader = if let Some(uuid_root) = uuid_root {
+            let mask = ProjectionMask::roots(builder.parquet_schema(), [uuid_root]);
+            builder.with_projection(mask).build()
+        } else {
+            // Keep malformed schemas on the existing validation path below.
+            builder.build()
+        }
+        .context("Failed to build Parquet reader")?;
 
         let mut neuron_blocks: HashMap<String, Vec<usize>> = HashMap::new();
         let mut current_block = 0;
