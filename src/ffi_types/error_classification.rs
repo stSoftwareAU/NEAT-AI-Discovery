@@ -139,21 +139,22 @@ impl DiscoveryError {
 // ============================================================================
 
 /// Classify an `anyhow::Error` by first attempting to downcast to a typed
-/// `DiscoveryError`, then falling back to string-based classification.
+/// `DiscoveryError`, then classifying the complete context and cause chain.
 pub fn classify_anyhow_error(err: &anyhow::Error) -> DiscoveryErrorKind {
     if let Some(discovery_err) = err.downcast_ref::<DiscoveryError>() {
         return discovery_err.error_kind();
     }
-    classify_error(&err.to_string())
+    classify_error(&format!("{err:#}"))
 }
 
 /// Return `(error_msg, error_kind, retryable)` from an `anyhow::Error`,
-/// preferring typed downcast over string matching.
+/// preserving the complete context and cause chain in `error_msg` and
+/// preferring typed downcast over string matching for classification.
 pub fn error_fields_from_anyhow(
     err: &anyhow::Error,
 ) -> (String, Option<DiscoveryErrorKind>, Option<bool>) {
     let kind = classify_anyhow_error(err);
-    (err.to_string(), Some(kind), Some(kind.is_retryable()))
+    (format!("{err:#}"), Some(kind), Some(kind.is_retryable()))
 }
 
 // ============================================================================
