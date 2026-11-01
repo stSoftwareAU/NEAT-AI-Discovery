@@ -22,9 +22,8 @@
 //! three accessors only.
 //!
 //! The detection-threshold pins (`noise_signal_threshold`,
-//! `dominance_threshold`, `gradient_threshold`) record a defect filed as
-//! Issue #2438: a non-finite or negative threshold is passed straight through
-//! to the consumer gates. Those gates are:
+//! `dominance_threshold`, `gradient_threshold`) verify the finite-positive
+//! override validation from Issue #2438. Their consumer gates are:
 //!
 //! - `noise_signal.rs::detect_noisy_neurons` (gate `noise_to_signal_ratio <=
 //!   threshold`, then the improvement factor divides by the threshold);
@@ -33,7 +32,8 @@
 //! - `input_sensitivity.rs::detect_threshold_effects` (gate `effective_gradient <
 //!   config.gradient_threshold`, factor divides by it).
 //!
-//! When Issue #2438 is fixed, the fix must update the pins below deliberately.
+//! Hostile threshold overrides use the caller's fallback before reaching
+//! those consumer gates.
 
 use neat_ai_discovery::analysis::module_tiering::DEFAULT_MODULE_TIERING_HIDDEN_THRESHOLD;
 use neat_ai_discovery::config::{
@@ -62,126 +62,114 @@ fn with_env<T>(name: &str, value: &str, body: impl FnOnce() -> T) -> T {
 }
 
 // ---------------------------------------------------------------------------
-// src/config/detection.rs — float thresholds (defect: Issue #2438)
+// src/config/detection.rs — float thresholds (Issue #2438)
 // ---------------------------------------------------------------------------
 
-// Issue #2438's fix will change this to the default (0.5).
 #[test]
 #[serial]
-fn noise_signal_threshold_passes_nan_through() {
+fn noise_signal_threshold_nan_uses_fallback() {
     let value = with_env("NEAT_AI_DISCOVERY_NOISE_SIGNAL_THRESHOLD", "NaN", || {
         noise_signal_threshold(0.5)
     });
-    assert!(
-        value.is_nan(),
-        "NaN override is currently passed through as NaN, got {value}"
+    assert_eq!(
+        value, 0.5,
+        "NaN override must use the caller-supplied fallback"
     );
 }
 
-// Issue #2438's fix will change this to the default (0.5).
 #[test]
 #[serial]
-fn noise_signal_threshold_passes_infinity_through() {
+fn noise_signal_threshold_infinity_uses_fallback() {
     let value = with_env("NEAT_AI_DISCOVERY_NOISE_SIGNAL_THRESHOLD", "inf", || {
         noise_signal_threshold(0.5)
     });
     assert_eq!(
-        value,
-        f32::INFINITY,
-        "inf override is currently passed through as infinity"
+        value, 0.5,
+        "inf override must use the caller-supplied fallback"
     );
 }
 
-// Issue #2438's fix will change this to the default (0.5).
 #[test]
 #[serial]
-fn noise_signal_threshold_passes_negative_one_through() {
+fn noise_signal_threshold_negative_one_uses_fallback() {
     let value = with_env("NEAT_AI_DISCOVERY_NOISE_SIGNAL_THRESHOLD", "-1", || {
         noise_signal_threshold(0.5)
     });
     assert_eq!(
-        value, -1.0,
-        "negative override is currently passed through unchanged"
+        value, 0.5,
+        "negative override must use the caller-supplied fallback"
     );
 }
 
-// Issue #2438's fix will change this to the default (0.5).
 #[test]
 #[serial]
-fn dominance_threshold_passes_nan_through() {
+fn dominance_threshold_nan_uses_fallback() {
     let value = with_env("NEAT_AI_DISCOVERY_DOMINANCE_THRESHOLD", "NaN", || {
         dominance_threshold(0.5)
     });
-    assert!(
-        value.is_nan(),
-        "NaN override is currently passed through as NaN, got {value}"
+    assert_eq!(
+        value, 0.5,
+        "NaN override must use the caller-supplied fallback"
     );
 }
 
-// Issue #2438's fix will change this to the default (0.5).
 #[test]
 #[serial]
-fn dominance_threshold_passes_infinity_through() {
+fn dominance_threshold_infinity_uses_fallback() {
     let value = with_env("NEAT_AI_DISCOVERY_DOMINANCE_THRESHOLD", "inf", || {
         dominance_threshold(0.5)
     });
     assert_eq!(
-        value,
-        f32::INFINITY,
-        "inf override is currently passed through as infinity"
+        value, 0.5,
+        "inf override must use the caller-supplied fallback"
     );
 }
 
-// Issue #2438's fix will change this to the default (0.5).
 #[test]
 #[serial]
-fn dominance_threshold_passes_negative_one_through() {
+fn dominance_threshold_negative_one_uses_fallback() {
     let value = with_env("NEAT_AI_DISCOVERY_DOMINANCE_THRESHOLD", "-1", || {
         dominance_threshold(0.5)
     });
     assert_eq!(
-        value, -1.0,
-        "negative override is currently passed through unchanged"
+        value, 0.5,
+        "negative override must use the caller-supplied fallback"
     );
 }
 
-// Issue #2438's fix will change this to the default (0.5).
 #[test]
 #[serial]
-fn gradient_threshold_passes_nan_through() {
+fn gradient_threshold_nan_uses_fallback() {
     let value = with_env("NEAT_AI_DISCOVERY_GRADIENT_THRESHOLD", "NaN", || {
         gradient_threshold(0.5)
     });
-    assert!(
-        value.is_nan(),
-        "NaN override is currently passed through as NaN, got {value}"
+    assert_eq!(
+        value, 0.5,
+        "NaN override must use the caller-supplied fallback"
     );
 }
 
-// Issue #2438's fix will change this to the default (0.5).
 #[test]
 #[serial]
-fn gradient_threshold_passes_infinity_through() {
+fn gradient_threshold_infinity_uses_fallback() {
     let value = with_env("NEAT_AI_DISCOVERY_GRADIENT_THRESHOLD", "inf", || {
         gradient_threshold(0.5)
     });
     assert_eq!(
-        value,
-        f32::INFINITY,
-        "inf override is currently passed through as infinity"
+        value, 0.5,
+        "inf override must use the caller-supplied fallback"
     );
 }
 
-// Issue #2438's fix will change this to the default (0.5).
 #[test]
 #[serial]
-fn gradient_threshold_passes_negative_one_through() {
+fn gradient_threshold_negative_one_uses_fallback() {
     let value = with_env("NEAT_AI_DISCOVERY_GRADIENT_THRESHOLD", "-1", || {
         gradient_threshold(0.5)
     });
     assert_eq!(
-        value, -1.0,
-        "negative override is currently passed through unchanged"
+        value, 0.5,
+        "negative override must use the caller-supplied fallback"
     );
 }
 
