@@ -1,12 +1,8 @@
 //! Cumulative decode budget for Parquet reads (Issue #1869).
 //!
-//! Parquet's dictionary and RLE encodings routinely achieve far better than
-//! the 3:1 ratio the pre-load projection assumes, so a projection can never be
-//! a *bound*. This budget is the bound: every record materialised by the reader
-//! is charged against it inside the batch loop, and the decode fails loud with
-//! a typed [`DiscoveryError::MemoryExhausted`] the moment the ceiling is
-//! reached. Footer preflight checks reject known oversized decodes before
-//! Arrow builds a batch; cumulative record charging remains a second check.
+//! Footer estimates reject known oversized decodes before Arrow builds a
+//! batch. Per-record charging remains a second check after batch decoding, but
+//! cannot protect against a footer that understates decoded sizes.
 
 use anyhow::Result;
 
@@ -35,6 +31,31 @@ pub fn estimated_record_bytes(uuid_len: usize, errors_len: usize) -> u64 {
     RECORD_STRUCT_BYTES
         .saturating_add(uuid_len as u64)
         .saturating_add((errors_len as u64).saturating_mul(4))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::DecodeBudget;
+
+    #[test]
+    fn projected_check_is_non_consuming_and_rejects_only_over_limit() {
+        let budget = DecodeBudget::new(Some(100));
+        budget.check_projected(100, "fixture.parquet").unwrap();
+        assert_eq!(budget.consumed_bytes(), 0);
+
+        let error = budget
+            .check_projected(101, "fixture.parquet")
+            .expect_err("projected size above the ceiling is refused");
+        assert!(error.to_string().contains("decode budget"));
+        assert_eq!(budget.consumed_bytes(), 0);
+    }
+
+    #[test]
+    fn projected_check_allows_unbounded_budget() {
+        DecodeBudget::new(None)
+            .check_projected(u64::MAX, "fixture.parquet")
+            .expect("unbounded budgets accept any projected size");
+    }
 }
 
 /// Default decode ceiling derived from total system RAM.

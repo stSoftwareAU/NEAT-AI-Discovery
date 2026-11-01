@@ -36,6 +36,14 @@ fn process_high_water_kib() -> usize {
 }
 
 fn hostile_file(path: &std::path::Path, error_count: usize) {
+    hostile_file_with_rows(path, error_count, false);
+}
+
+fn hostile_two_row_group_file(path: &std::path::Path, error_count: usize) {
+    hostile_file_with_rows(path, error_count, true);
+}
+
+fn hostile_file_with_rows(path: &std::path::Path, error_count: usize, two_groups: bool) {
     let schema = Arc::new(Schema::new(vec![
         Field::new("obs_index", DataType::UInt32, false),
         Field::new("neuron_uuid", DataType::Utf8, false),
@@ -52,9 +60,14 @@ fn hostile_file(path: &std::path::Path, error_count: usize) {
         .set_compression(Compression::SNAPPY)
         .set_dictionary_enabled(true)
         .build();
-    let mut writer = ArrowWriter::try_new(file, Arc::clone(&schema), Some(properties))
-        .expect("writer");
-    for (obs, neuron, count) in [(0_u32, "neuron-a", 0), (1, "neuron-b", error_count)] {
+    let mut writer =
+        ArrowWriter::try_new(file, Arc::clone(&schema), Some(properties)).expect("writer");
+    let rows = if two_groups {
+        vec![(0_u32, "neuron-a", 0), (1, "neuron-b", error_count)]
+    } else {
+        vec![(0_u32, "neuron-a", error_count)]
+    };
+    for (obs, neuron, count) in rows {
         let errors = Arc::new(
             ListArray::try_new(
                 Arc::new(Field::new("item", DataType::Float32, false)),
@@ -73,6 +86,9 @@ fn hostile_file(path: &std::path::Path, error_count: usize) {
         ];
         let batch = RecordBatch::try_new(Arc::clone(&schema), columns).expect("hostile batch");
         writer.write(&batch).expect("write hostile batch");
+        if two_groups {
+            writer.flush().expect("finish row group");
+        }
     }
     writer.close().expect("close hostile parquet");
     if let Ok(seed_path) = std::env::var("ISSUE_2446_FUZZ_SEED_PATH") {
@@ -80,7 +96,20 @@ fn hostile_file(path: &std::path::Path, error_count: usize) {
     }
 }
 
-#[cfg(target_os = "linux")]
+macro_rules! assert_memory_exhausted {
+    ($result:expr, $path:expr) => {{
+        let error = $result
+            .err()
+            .expect("oversized decode must be refused before batch construction");
+        assert_eq!(
+            classify_anyhow_error(&error),
+            DiscoveryErrorKind::MemoryExhausted,
+            "{} must reject through the decode budget: {error:#}",
+            $path
+        );
+    }};
+}
+
 #[test]
 fn oversized_error_list_is_rejected_before_arrow_materialises_it() {
     let dir = TempDir::new().expect("temporary directory");
@@ -101,7 +130,11 @@ fn oversized_error_list_is_rejected_before_arrow_materialises_it() {
     )
     .expect("write legal file");
 
-    std::fs::write("/proc/self/clear_refs", "5").expect("reset process high-water mark");
+    #[cfg(target_os = "linux")]
+    {
+        std::fs::write("/proc/self/clear_refs", "5").expect("reset process high-water mark");
+    }
+    #[cfg(target_os = "linux")]
     let high_water_before = process_high_water_kib();
     let result = read_all_records_grouped_by_neuron_bounded(
         hostile.to_str().expect("hostile path"),
@@ -109,6 +142,7 @@ fn oversized_error_list_is_rejected_before_arrow_materialises_it() {
         ColumnProfile::Full,
         Some(1),
     );
+    #[cfg(target_os = "linux")]
     let allocated_kib = process_high_water_kib().saturating_sub(high_water_before);
 
     let error = result.expect_err("20 million errors exceed the 1 MB ceiling");
@@ -117,6 +151,7 @@ fn oversized_error_list_is_rejected_before_arrow_materialises_it() {
         DiscoveryErrorKind::MemoryExhausted,
         "the refusal must be the decode-budget preflight: {error:#}"
     );
+    #[cfg(target_os = "linux")]
     assert!(
         allocated_kib < 8 * 1024,
         "reader high-water mark grew by {allocated_kib} KiB; Arrow appears to have materialised the list"
@@ -132,14 +167,30 @@ fn oversized_error_list_is_rejected_before_arrow_materialises_it() {
     assert_eq!(records["neuron-a"].len(), 1);
 }
 
-#[cfg(target_os = "linux")]
 #[test]
 #[serial]
 fn every_production_reader_preflights_before_filtering_and_respects_projection() {
     let dir = TempDir::new().expect("temporary directory");
     let hostile = dir.path().join("hostile.parquet");
+    let activation_oversized = dir.path().join("activation-oversized.parquet");
     let output = dir.path().join("merged.parquet");
-    hostile_file(&hostile, 20_000_000);
+    hostile_two_row_group_file(&hostile, 20_000_000);
+    let many_records = (0..12_000)
+        .map(|index| {
+            DiscoverRecord::new(
+                index,
+                format!("neuron-{index:032}"),
+                Some(0.5),
+                0.7,
+                Vec::new(),
+            )
+        })
+        .collect::<Vec<_>>();
+    write_records_to_parquet(
+        activation_oversized.to_str().expect("activation path"),
+        &many_records,
+    )
+    .expect("write oversized activation-only selection");
     std::fs::write(&output, b"existing merge destination").expect("seed merge destination");
     let hostile_path = hostile.to_str().expect("hostile path");
     let prior_limit = std::env::var_os("NEAT_AI_DISCOVERY_MAX_PARQUET_DECODE_MB");
@@ -147,7 +198,7 @@ fn every_production_reader_preflights_before_filtering_and_respects_projection()
 
     let by_uuid =
         read_records_from_parquet_with_profile(hostile_path, "another-neuron", ColumnProfile::Full);
-    assert_memory_exhausted(by_uuid, "UUID-filtered read of an unrelated neuron");
+    assert_memory_exhausted!(by_uuid, "UUID-filtered read of an unrelated neuron");
 
     let by_observation = read_records_from_parquet_with_limit_and_budget(
         hostile_path,
@@ -155,7 +206,7 @@ fn every_production_reader_preflights_before_filtering_and_respects_projection()
         ColumnProfile::Full,
         Some(1),
     );
-    assert_memory_exhausted(by_observation, "observation-limited read");
+    assert_memory_exhausted!(by_observation, "observation-limited read");
 
     let wanted = HashSet::from(["another-neuron"]);
     let summary = read_mean_abs_activation_by_neuron(hostile_path, &wanted, None);
@@ -164,20 +215,43 @@ fn every_production_reader_preflights_before_filtering_and_respects_projection()
             .expect("activation summary projects away the oversized errors list")
             .is_empty()
     );
+    let wanted = HashSet::from(["neuron-00000000000000000000000000000000"]);
+    let summary = read_mean_abs_activation_by_neuron(
+        activation_oversized.to_str().expect("activation path"),
+        &wanted,
+        None,
+    );
+    assert_memory_exhausted!(summary, "activation summary's selected columns");
+
+    let index = StreamingRecordCache::new(
+        activation_oversized.to_str().expect("activation path"),
+        Some(1),
+        Some(0),
+    );
+    assert_memory_exhausted!(index, "streaming UUID index");
 
     let cache = StreamingRecordCache::new(hostile_path, Some(1), Some(0)).expect("build index");
-    assert_memory_exhausted(cache.get("neuron-a"), "streaming block read");
+    assert_refused_before_batch(
+        || cache.get("neuron-a"),
+        |result| assert_memory_exhausted!(result, "streaming block read"),
+        "streaming block read",
+    );
 
     let projected =
         read_all_records_grouped_by_neuron_with_profile(hostile_path, ColumnProfile::WithoutErrors)
             .expect("projection that skips errors must not charge the skipped list");
     assert!(projected["neuron-a"][0].errors.is_empty());
 
-    let merge = merge_parquet_files(
-        output.to_str().expect("output path"),
-        &[hostile_path.to_owned()],
+    assert_refused_before_batch(
+        || {
+            merge_parquet_files(
+                output.to_str().expect("output path"),
+                &[hostile_path.to_owned()],
+            )
+        },
+        |result| assert_memory_exhausted!(result, "merge input read"),
+        "merge input read",
     );
-    assert_memory_exhausted(merge, "merge input read");
     assert_eq!(
         std::fs::read(&output).expect("destination remains readable"),
         b"existing merge destination",
@@ -190,11 +264,25 @@ fn every_production_reader_preflights_before_filtering_and_respects_projection()
     }
 }
 
-fn assert_memory_exhausted<T: std::fmt::Debug>(result: anyhow::Result<T>, path: &str) {
-    let error = result.expect_err("oversized decode must be refused before batch construction");
-    assert_eq!(
-        classify_anyhow_error(&error),
-        DiscoveryErrorKind::MemoryExhausted,
-        "{path} must reject through the decode budget: {error:#}"
-    );
+fn assert_refused_before_batch<T: std::fmt::Debug, E>(
+    read: impl FnOnce() -> Result<T, E>,
+    verify: impl FnOnce(Result<T, E>),
+    path: &str,
+) {
+    #[cfg(target_os = "linux")]
+    {
+        std::fs::write("/proc/self/clear_refs", "5").expect("reset process high-water mark");
+        let before = process_high_water_kib();
+        verify(read());
+        let increase = process_high_water_kib().saturating_sub(before);
+        assert!(
+            increase < 8 * 1024,
+            "{path} high-water mark grew by {increase} KiB before refusal"
+        );
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = path;
+        verify(read());
+    }
 }
