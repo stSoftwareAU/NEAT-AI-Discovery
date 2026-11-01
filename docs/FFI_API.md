@@ -1301,15 +1301,17 @@ Every entry point that accepts a `creature` also bounds `creature.input` and
   inclusive.
 - A larger count returns `success: false` with
   `errorKind: "data_validation"` before any recording or analysis work starts.
-  The count sizes allocations in both pipelines, so an unbounded value would
-  abort the process rather than return an error.
+  The input count drives recording and analysis allocations, so its cap keeps
+  those allocations bounded. The output count remains capped as a supported
+  observation width.
 - The bounds are absolute, **not** relative to `creature.neurons.length`: input
   neurons are implied by the count and are not listed in `creature.neurons`
   (the example payload above pairs `"input": 20` with a single listed neuron).
-- `creature.output` sizes the output-UUID set the analysis pipeline builds per
-  call (`CreatureTopologyCache`), so an unbounded count aborts the process the
-  same way — `"output": 18446744073709551615` now returns
-  `errorKind: "data_validation"` instead (Issue #2078).
+- The topology cache's input- and output-UUID sets grow from neurons actually
+  listed in `creature.neurons`; declared observation widths do not size them.
+  The output cap still rejects unsupported widths, including
+  `"output": 18446744073709551615`, with `errorKind: "data_validation"`
+  (Issue #2078).
 
 ### 🚧 Observation Width — `input >= 1`, `output >= 1` (Issue #2020)
 
@@ -1341,9 +1343,9 @@ defence-in-depth gate every entry point that accepts a `CreatureJson` runs
 `src/ffi_types/creature_bounds.rs`, `src/ffi_types/neuron_bias.rs`) so the set
 of gates and their order cannot drift (Issue #2046) — never call them by hand.
 It runs after JSON deserialisation and before any business logic, and a failure
-returns `success: false` with `errorKind: "data_validation"`. The width caps are
-enforced here rather than at the allocation: an unbounded count aborts the
-process via `handle_alloc_error`, which `panic::catch_unwind` cannot intercept
+returns `success: false` with `errorKind: "data_validation"`. The input width
+cap prevents caller-supplied counts from driving unbounded recording and
+analysis allocations; the output cap enforces the supported observation width
 (see Creature Width Bounds and Observation Width above).
 
 #### Neuron Bias Finitude (Issue #2133)
