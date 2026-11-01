@@ -33,31 +33,6 @@ pub fn estimated_record_bytes(uuid_len: usize, errors_len: usize) -> u64 {
         .saturating_add((errors_len as u64).saturating_mul(4))
 }
 
-#[cfg(test)]
-mod tests {
-    use super::DecodeBudget;
-
-    #[test]
-    fn projected_check_is_non_consuming_and_rejects_only_over_limit() {
-        let budget = DecodeBudget::new(Some(100));
-        budget.check_projected(100, "fixture.parquet").unwrap();
-        assert_eq!(budget.consumed_bytes(), 0);
-
-        let error = budget
-            .check_projected(101, "fixture.parquet")
-            .expect_err("projected size above the ceiling is refused");
-        assert!(error.to_string().contains("decode budget"));
-        assert_eq!(budget.consumed_bytes(), 0);
-    }
-
-    #[test]
-    fn projected_check_allows_unbounded_budget() {
-        DecodeBudget::new(None)
-            .check_projected(u64::MAX, "fixture.parquet")
-            .expect("unbounded budgets accept any projected size");
-    }
-}
-
 /// Default decode ceiling derived from total system RAM.
 ///
 /// Returns half of `total_system_bytes`, or `None` when the total is unknown
@@ -189,5 +164,30 @@ impl DecodeBudget {
     #[must_use]
     pub const fn limit_bytes(&self) -> Option<u64> {
         self.limit_bytes
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::DecodeBudget;
+
+    #[test]
+    fn projected_check_is_non_consuming_and_rejects_only_over_limit() {
+        let budget = DecodeBudget::new(Some(100));
+        budget.check_projected(100, "fixture.parquet").unwrap();
+        assert_eq!(budget.consumed_bytes(), 0);
+
+        let error = budget
+            .check_projected(101, "fixture.parquet")
+            .expect_err("projected size above the ceiling is refused");
+        assert!(error.to_string().contains("decode budget"));
+        assert_eq!(budget.consumed_bytes(), 0);
+    }
+
+    #[test]
+    fn projected_check_allows_unbounded_budget() {
+        DecodeBudget::new(None)
+            .check_projected(u64::MAX, "fixture.parquet")
+            .expect("unbounded budgets accept any projected size");
     }
 }
