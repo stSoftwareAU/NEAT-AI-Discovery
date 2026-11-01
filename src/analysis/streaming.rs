@@ -368,7 +368,7 @@ impl StreamingRecordCache {
             .context("Failed to create Parquet reader builder")?;
 
         DecodeBudget::resolve(None).preflight_columns(
-            &builder.metadata(),
+            builder.metadata(),
             &["neuron_uuid"],
             parquet_file,
         )?;
@@ -463,7 +463,7 @@ impl StreamingRecordCache {
 
         let mut budget = DecodeBudget::resolve(None);
         budget.preflight_columns(
-            &builder.metadata(),
+            builder.metadata(),
             &crate::parquet_format::ColumnProfile::Full.root_names(),
             parquet_file,
         )?;

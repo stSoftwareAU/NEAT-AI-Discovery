@@ -134,31 +134,25 @@ fn the_without_errors_profile_still_yields_empty_error_lists() {
     assert_eq!(with_null.value, None, "nullability survives the projection");
 }
 
-/// Issue #1869 landed on the three `reader.rs` copies but not on the streaming
-/// block loader. With one shared decoder the streaming path charges the same
-/// budget, so an oversized block fails loud instead of materialising.
+/// The streaming UUID index rejects a whole file whose projected decoded size
+/// exceeds the ceiling before it builds an Arrow batch (Issue #2446).
 #[test]
 #[serial]
-fn the_streaming_block_loader_charges_the_decode_budget() {
+fn the_streaming_index_preflights_the_decode_budget() {
     let file = write_bulky_parquet(20_000, 32);
     let path = file.path().to_str().expect("utf-8 path");
 
     // SAFETY: `#[serial]` guarantees no other test runs concurrently, so no
     // other thread can read the environment while it is being mutated.
     unsafe { std::env::set_var("NEAT_AI_DISCOVERY_MAX_PARQUET_DECODE_MB", "1") };
-    let bounded = StreamingRecordCache::new(path, None, None)
-        .expect("the block index builds without materialising records")
-        .get(NEURON);
+    let bounded = StreamingRecordCache::new(path, None, None);
     // SAFETY: as above — `#[serial]` serialises this test against all others.
     unsafe { std::env::remove_var("NEAT_AI_DISCOVERY_MAX_PARQUET_DECODE_MB") };
 
     // Match rather than `expect_err`: the success value is 10k records, and
     // debug-printing them would bury the assertion in megabytes of output.
     let err = match bounded {
-        Ok(records) => panic!(
-            "a 1 MB budget cannot hold a 10k-record block, but {} records were returned",
-            records.len()
-        ),
+        Ok(_) => panic!("the 1 MB budget must reject the projected Parquet file before indexing"),
         Err(err) => err,
     };
     let kind = neat_ai_discovery::ffi_types::classify_anyhow_error(&err);

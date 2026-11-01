@@ -27,6 +27,7 @@ fuzz_target!(|data: &[u8]| {
         return;
     }
     let _input = InputFile(path.clone());
+    // SAFETY: libFuzzer invokes this target synchronously in one process.
     unsafe { std::env::set_var("NEAT_AI_DISCOVERY_MAX_PARQUET_DECODE_MB", "1") };
     let _ = read_all_records_grouped_by_neuron_bounded(
         path.to_str().expect("temporary path is UTF-8"),

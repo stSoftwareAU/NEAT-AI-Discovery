@@ -376,7 +376,7 @@ fn merge_into_temp_file(tmp_path: &str, input_files: &[String]) -> Result<()> {
                 .with_context(|| format!("Failed to create reader for {input_path}"))?;
         validate_parquet_schema(&builder, input_path, ColumnProfile::Full)?;
         crate::parquet_format::decode_budget::DecodeBudget::resolve(None).preflight_columns(
-            &builder.metadata(),
+            builder.metadata(),
             &ColumnProfile::Full.root_names(),
             input_path,
         )?;

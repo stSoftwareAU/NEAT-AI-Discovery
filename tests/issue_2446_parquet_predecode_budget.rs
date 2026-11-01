@@ -111,6 +111,7 @@ macro_rules! assert_memory_exhausted {
 }
 
 #[test]
+#[serial]
 fn oversized_error_list_is_rejected_before_arrow_materialises_it() {
     let dir = TempDir::new().expect("temporary directory");
     let hostile = dir.path().join("hostile.parquet");
@@ -175,6 +176,11 @@ fn every_production_reader_preflights_before_filtering_and_respects_projection()
     let activation_oversized = dir.path().join("activation-oversized.parquet");
     let output = dir.path().join("merged.parquet");
     hostile_two_row_group_file(&hostile, 20_000_000);
+    let metadata = parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder::try_new(
+        std::fs::File::open(&hostile).expect("open multi-row-group fixture"),
+    )
+    .expect("read multi-row-group footer");
+    assert_eq!(metadata.metadata().row_groups().len(), 2);
     let many_records = (0..12_000)
         .map(|index| {
             DiscoverRecord::new(
@@ -194,6 +200,7 @@ fn every_production_reader_preflights_before_filtering_and_respects_projection()
     std::fs::write(&output, b"existing merge destination").expect("seed merge destination");
     let hostile_path = hostile.to_str().expect("hostile path");
     let prior_limit = std::env::var_os("NEAT_AI_DISCOVERY_MAX_PARQUET_DECODE_MB");
+    // SAFETY: both tests that access this environment variable use `#[serial]`.
     unsafe { std::env::set_var("NEAT_AI_DISCOVERY_MAX_PARQUET_DECODE_MB", "1") };
 
     let by_uuid =
@@ -258,8 +265,10 @@ fn every_production_reader_preflights_before_filtering_and_respects_projection()
         "preflight failure must preserve the existing merge destination"
     );
     if let Some(value) = prior_limit {
+        // SAFETY: this test is serialised with the other environment mutator.
         unsafe { std::env::set_var("NEAT_AI_DISCOVERY_MAX_PARQUET_DECODE_MB", value) };
     } else {
+        // SAFETY: this test is serialised with the other environment mutator.
         unsafe { std::env::remove_var("NEAT_AI_DISCOVERY_MAX_PARQUET_DECODE_MB") };
     }
 }
