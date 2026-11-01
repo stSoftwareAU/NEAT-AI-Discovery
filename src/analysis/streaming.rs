@@ -355,7 +355,9 @@ impl StreamingRecordCache {
 
     /// Build an index mapping neurons to blocks.
     fn build_block_index(parquet_file: &str, block_size: usize) -> Result<BlockIndex> {
+        use crate::parquet_format::decode_budget::DecodeBudget;
         use arrow::array::StringArray;
+        use parquet::arrow::ProjectionMask;
         use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
         use std::fs::File;
 
@@ -365,7 +367,17 @@ impl StreamingRecordCache {
         let builder = ParquetRecordBatchReaderBuilder::try_new(file)
             .context("Failed to create Parquet reader builder")?;
 
-        let reader = builder.build().context("Failed to build Parquet reader")?;
+        DecodeBudget::resolve(None).preflight_columns(
+            &builder.metadata(),
+            &["neuron_uuid"],
+            parquet_file,
+        )?;
+
+        let mask = ProjectionMask::roots(builder.parquet_schema(), vec![1]);
+        let reader = builder
+            .with_projection(mask)
+            .build()
+            .context("Failed to build Parquet reader")?;
 
         let mut neuron_blocks: HashMap<String, Vec<usize>> = HashMap::new();
         let mut current_block = 0;
@@ -449,6 +461,13 @@ impl StreamingRecordCache {
         let builder = ParquetRecordBatchReaderBuilder::try_new(file)
             .context("Failed to create Parquet reader builder")?;
 
+        let mut budget = DecodeBudget::resolve(None);
+        budget.preflight_columns(
+            &builder.metadata(),
+            &crate::parquet_format::ColumnProfile::Full.root_names(),
+            parquet_file,
+        )?;
+
         let reader = builder.build().context("Failed to build Parquet reader")?;
 
         let mut records_by_neuron: HashMap<String, Vec<DiscoverRecord>> = HashMap::new();
@@ -456,7 +475,6 @@ impl StreamingRecordCache {
         let mut rows_in_block = 0;
         let mut found_target_block = false;
         // Issue #1869 / #2005: bound the records this block materialises.
-        let mut budget = DecodeBudget::resolve(None);
 
         for batch_result in reader {
             let batch = batch_result.context("Failed to read record batch")?;

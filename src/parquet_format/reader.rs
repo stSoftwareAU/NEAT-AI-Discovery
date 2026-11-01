@@ -13,9 +13,9 @@
 //! [`create_schema`](crate::parquet_format::create_schema) — a widened
 //! nullability would otherwise decode as `""` or `0.0` rather than failing —
 //! and a `.parquet.tmp` path is rejected outright as an in-progress write. The
-//! `_bounded` / `_with_deadline` variants additionally charge every
-//! materialised record against a [`DecodeBudget`] and abort part-way with a
-//! typed error instead of exhausting the host.
+//! Record readers preflight footer estimates before building Arrow batches and
+//! also charge each decoded record against a [`DecodeBudget`]. A dishonest
+//! footer remains a separate limitation.
 
 use anyhow::{Context, Result};
 use arrow::datatypes::DataType;
@@ -65,6 +65,13 @@ impl ColumnProfile {
     /// Whether this profile includes the errors column.
     fn includes_errors(self) -> bool {
         matches!(self, Self::Full)
+    }
+
+    pub(crate) fn root_names(self) -> Vec<&'static str> {
+        self.root_indices()
+            .into_iter()
+            .map(|index| EXPECTED_COLUMNS[index])
+            .collect()
     }
 }
 
@@ -287,10 +294,9 @@ pub fn read_all_records_grouped_by_neuron_with_deadline_and_profile(
 /// `budget_mb` is the caller's memory budget (the analysis phase forwards its
 /// `max_analysis_memory_mb`). When it is `None` the ceiling falls back to
 /// `NEAT_AI_DISCOVERY_MAX_PARQUET_DECODE_MB`, then to half of total system RAM.
-/// Every materialised record is charged inside the batch loop, so a file whose
-/// decoded size far exceeds its compressed size aborts with a typed
-/// memory-exhaustion error part-way through rather than after the allocation
-/// has already been made.
+/// Footer estimates are checked before Arrow builds a batch, then each
+/// materialised record is charged inside the batch loop. Footer under-reporting
+/// is not addressed here.
 pub fn read_all_records_grouped_by_neuron_bounded(
     file_path: &str,
     deadline: Option<SystemTime>,
@@ -311,6 +317,9 @@ pub fn read_all_records_grouped_by_neuron_bounded(
 
     validate_parquet_schema(&builder, file_path, profile)?;
 
+    let mut budget = DecodeBudget::resolve(budget_mb);
+    budget.preflight_columns(&builder.metadata(), &profile.root_names(), file_path)?;
+
     let mask = ProjectionMask::roots(builder.parquet_schema(), profile.root_indices());
     let reader = builder
         .with_projection(mask)
@@ -319,8 +328,6 @@ pub fn read_all_records_grouped_by_neuron_bounded(
 
     let include_errors = profile.includes_errors();
     let mut grouped_records: HashMap<String, Vec<DiscoverRecord>> = HashMap::new();
-    // Issue #1869: the bound that actually holds — charged per record below.
-    let mut budget = DecodeBudget::resolve(budget_mb);
 
     for (batch_count, batch_result) in reader.enumerate() {
         // Issue #1047: Check cancellation flag at each batch boundary so
@@ -407,6 +414,9 @@ pub fn read_records_from_parquet_with_profile(
 
     validate_parquet_schema(&builder, file_path, profile)?;
 
+    let mut budget = DecodeBudget::resolve(None);
+    budget.preflight_columns(&builder.metadata(), &profile.root_names(), file_path)?;
+
     let mask = ProjectionMask::roots(builder.parquet_schema(), profile.root_indices());
     let reader = builder
         .with_projection(mask)
@@ -415,8 +425,6 @@ pub fn read_records_from_parquet_with_profile(
 
     let include_errors = profile.includes_errors();
     let mut records = Vec::new();
-    // Issue #1869: bound the retained rows even though most are filtered out.
-    let mut budget = DecodeBudget::resolve(None);
 
     for batch_result in reader {
         let batch = batch_result.context("Failed to read record batch")?;
@@ -504,6 +512,9 @@ pub fn read_records_from_parquet_with_limit_and_budget(
 
     validate_parquet_schema(&builder, file_path, profile)?;
 
+    let mut budget = DecodeBudget::resolve(budget_mb);
+    budget.preflight_columns(&builder.metadata(), &profile.root_names(), file_path)?;
+
     let mask = ProjectionMask::roots(builder.parquet_schema(), profile.root_indices());
     let reader = builder
         .with_projection(mask)
@@ -513,8 +524,6 @@ pub fn read_records_from_parquet_with_limit_and_budget(
     let include_errors = profile.includes_errors();
     let mut records = Vec::new();
     let mut accepted_obs_indices: HashSet<u32> = HashSet::new();
-    // Issue #1869: max_obs bounds observations, not rows — this bounds bytes.
-    let mut budget = DecodeBudget::resolve(budget_mb);
 
     for batch_result in reader {
         let batch = batch_result.context("Failed to read record batch")?;

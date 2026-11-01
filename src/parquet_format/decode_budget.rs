@@ -5,13 +5,16 @@
 //! a *bound*. This budget is the bound: every record materialised by the reader
 //! is charged against it inside the batch loop, and the decode fails loud with
 //! a typed [`DiscoveryError::MemoryExhausted`] the moment the ceiling is
-//! reached — before the allocation that would exhaust the host completes.
+//! reached. Footer preflight checks reject known oversized decodes before
+//! Arrow builds a batch; cumulative record charging remains a second check.
 
 use anyhow::Result;
 
 use crate::DiscoveryError;
 use crate::analysis::utils::get_memory_info;
-use crate::parquet_format::footer::RECORD_STRUCT_BYTES;
+use crate::parquet_format::footer::{
+    ASSUMED_UUID_HEAP_BYTES, RECORD_STRUCT_BYTES, projected_bytes_for_columns,
+};
 
 /// One megabyte in bytes.
 const BYTES_PER_MB: u64 = 1024 * 1024;
@@ -85,9 +88,9 @@ impl DecodeBudget {
 
     /// Charge one materialised record against the budget.
     ///
-    /// Returns a typed [`DiscoveryError::MemoryExhausted`] once the cumulative
-    /// decode reaches the ceiling, so the caller aborts mid-decode instead of
-    /// completing an allocation the host cannot hold.
+    /// Returns a typed [`DiscoveryError::MemoryExhausted`] once cumulative
+    /// retained record estimates exceed the ceiling. Footer preflight is what
+    /// rejects estimates before Arrow constructs record batches.
     pub fn charge_record(
         &mut self,
         uuid_len: usize,
@@ -105,20 +108,54 @@ impl DecodeBudget {
             return Ok(());
         }
 
-        Err(DiscoveryError::MemoryExhausted {
+        Err(self.memory_exhausted(self.consumed_bytes, file_path))
+    }
+
+    /// Refuse a footer-projected decode that cannot fit without consuming the
+    /// budget, leaving per-record charging to account for the actual rows.
+    pub fn check_projected(&self, projected_bytes: u64, file_path: &str) -> Result<()> {
+        if self
+            .limit_bytes
+            .is_some_and(|limit| projected_bytes > limit)
+        {
+            return Err(self.memory_exhausted(projected_bytes, file_path));
+        }
+        Ok(())
+    }
+
+    /// Check the projected selected columns using metadata already held by the
+    /// reader builder. This does not charge the budget.
+    pub fn preflight_columns(
+        &self,
+        metadata: &parquet::file::metadata::ParquetMetaData,
+        selected_roots: &[&str],
+        file_path: &str,
+    ) -> Result<()> {
+        let projected = projected_bytes_for_columns(
+            metadata,
+            selected_roots,
+            RECORD_STRUCT_BYTES.saturating_add(ASSUMED_UUID_HEAP_BYTES),
+            selected_roots.contains(&"errors"),
+        );
+        self.check_projected(projected, file_path)
+    }
+
+    fn memory_exhausted(&self, required_bytes: u64, file_path: &str) -> anyhow::Error {
+        let limit = self.limit_bytes.unwrap_or(u64::MAX);
+        DiscoveryError::MemoryExhausted {
             detail: format!(
                 "Parquet decode budget exceeded while reading '{file_path}': \
-                 decoded records already need {consumed_mb} MB, above the \
+                 decoded records are estimated to need {required_mb} MB, above the \
                  {limit_mb} MB decode budget. Parquet compresses this schema \
                  far better than 3:1, so the file's on-disk size does not bound \
                  its decoded size. Raise the analysis memory budget, set \
                  NEAT_AI_DISCOVERY_MAX_PARQUET_DECODE_MB, or reduce \
                  discoverySampleRate so fewer rows are recorded.",
-                consumed_mb = self.consumed_bytes.div_ceil(BYTES_PER_MB),
+                required_mb = required_bytes.div_ceil(BYTES_PER_MB),
                 limit_mb = limit.div_ceil(BYTES_PER_MB),
             ),
         }
-        .into())
+        .into()
     }
 
     /// Bytes charged so far.

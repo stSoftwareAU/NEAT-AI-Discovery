@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-# Fuzzing CI script — runs both fuzz targets for a configurable duration.
+# Fuzzing CI script — runs all fuzz targets for a configurable duration.
 #
 # Usage:
 #   ./scripts/fuzz-ci.sh [max_total_time_per_target]
@@ -45,6 +45,7 @@ fi
 FUZZ_TARGETS=(
     "fuzz_ffi_deserialisation"
     "fuzz_ffi_entry_points"
+    "fuzz_parquet_predecode_budget"
 )
 
 FAILED=0
