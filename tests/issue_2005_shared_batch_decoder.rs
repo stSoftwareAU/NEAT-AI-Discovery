@@ -140,7 +140,7 @@ fn the_without_errors_profile_still_yields_empty_error_lists() {
 #[test]
 #[serial]
 fn the_streaming_index_preflights_an_oversized_row_group() {
-    let file = write_bulky_parquet(20_000, 32);
+    let file = write_bulky_parquet(30_000, 32);
     let path = file.path().to_str().expect("utf-8 path");
 
     // SAFETY: `#[serial]` guarantees no other test runs concurrently, so no
@@ -255,4 +255,18 @@ fn the_streaming_block_loader_succeeds_within_a_generous_budget() {
         !records.is_empty(),
         "records are still returned when the budget fits"
     );
+}
+
+/// Ordinary UUID rows fit the Arrow projection even when retained record
+/// overhead would exceed the budget. Errors are projected away by the index.
+#[test]
+#[serial]
+fn the_streaming_index_accepts_ordinary_rows_without_record_overhead() {
+    let file = write_bulky_parquet(20_000, 32);
+    // SAFETY: environment-mutating tests are serialised.
+    unsafe { std::env::set_var("NEAT_AI_DISCOVERY_MAX_PARQUET_DECODE_MB", "1") };
+    let result = StreamingRecordCache::new(file.path().to_str().unwrap(), None, None);
+    // SAFETY: restore the environment before assertions.
+    unsafe { std::env::remove_var("NEAT_AI_DISCOVERY_MAX_PARQUET_DECODE_MB") };
+    assert!(result.is_ok(), "the UUID-only index fits the ceiling");
 }

@@ -365,7 +365,7 @@ impl StreamingRecordCache {
         let file = File::open(parquet_file)
             .with_context(|| format!("Failed to open Parquet file: {parquet_file}"))?;
 
-        let builder = ParquetRecordBatchReaderBuilder::try_new(file)
+        let builder = ParquetRecordBatchReaderBuilder::try_new(file.try_clone()?)
             .context("Failed to create Parquet reader builder")?;
 
         let uuid_root = validate_neuron_uuid_column(&builder, parquet_file)?;
@@ -375,10 +375,11 @@ impl StreamingRecordCache {
             parquet_file,
         )?;
         let mask = ProjectionMask::roots(builder.parquet_schema(), [uuid_root]);
-        let reader = builder
-            .with_projection(mask)
-            .build()
-            .context("Failed to build Parquet reader")?;
+        let reader = crate::parquet_format::decode_budget::row_group_batches(
+            file,
+            builder.metadata().clone(),
+            mask,
+        )?;
 
         let mut neuron_blocks: HashMap<String, Vec<usize>> = HashMap::new();
         let mut current_block = 0;
@@ -461,7 +462,7 @@ impl StreamingRecordCache {
         let file = File::open(parquet_file)
             .with_context(|| format!("Failed to open Parquet file: {parquet_file}"))?;
 
-        let builder = ParquetRecordBatchReaderBuilder::try_new(file)
+        let builder = ParquetRecordBatchReaderBuilder::try_new(file.try_clone()?)
             .context("Failed to create Parquet reader builder")?;
 
         let profile = ColumnProfile::Full;
@@ -470,10 +471,11 @@ impl StreamingRecordCache {
         budget.preflight_row_groups(builder.metadata(), &profile.root_names(), parquet_file)?;
 
         let mask = ProjectionMask::roots(builder.parquet_schema(), profile.root_indices());
-        let reader = builder
-            .with_projection(mask)
-            .build()
-            .context("Failed to build Parquet reader")?;
+        let reader = crate::parquet_format::decode_budget::row_group_batches(
+            file,
+            builder.metadata().clone(),
+            mask,
+        )?;
 
         let mut records_by_neuron: HashMap<String, Vec<DiscoverRecord>> = HashMap::new();
         let mut current_block = 0;

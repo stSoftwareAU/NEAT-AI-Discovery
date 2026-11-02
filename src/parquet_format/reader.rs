@@ -446,7 +446,7 @@ pub fn read_records_from_parquet_with_profile(
 ) -> Result<Vec<DiscoverRecord>> {
     let file = open_parquet_file(file_path)?;
 
-    let builder = ParquetRecordBatchReaderBuilder::try_new(file)
+    let builder = ParquetRecordBatchReaderBuilder::try_new(file.try_clone()?)
         .context("Failed to create Parquet reader builder")?;
 
     validate_parquet_schema(&builder, file_path, profile)?;
@@ -455,10 +455,11 @@ pub fn read_records_from_parquet_with_profile(
     budget.preflight_row_groups(builder.metadata(), &profile.root_names(), file_path)?;
 
     let mask = ProjectionMask::roots(builder.parquet_schema(), profile.root_indices());
-    let reader = builder
-        .with_projection(mask)
-        .build()
-        .context("Failed to build Parquet reader")?;
+    let reader = crate::parquet_format::decode_budget::row_group_batches(
+        file,
+        builder.metadata().clone(),
+        mask,
+    )?;
 
     let include_errors = profile.includes_errors();
     let mut records = Vec::new();
@@ -544,7 +545,7 @@ pub fn read_records_from_parquet_with_limit_and_budget(
 
     let file = open_parquet_file(file_path)?;
 
-    let builder = ParquetRecordBatchReaderBuilder::try_new(file)
+    let builder = ParquetRecordBatchReaderBuilder::try_new(file.try_clone()?)
         .context("Failed to create Parquet reader builder")?;
 
     validate_parquet_schema(&builder, file_path, profile)?;
@@ -552,10 +553,11 @@ pub fn read_records_from_parquet_with_limit_and_budget(
     let mut budget = DecodeBudget::resolve(budget_mb);
     budget.preflight_row_groups(builder.metadata(), &profile.root_names(), file_path)?;
     let mask = ProjectionMask::roots(builder.parquet_schema(), profile.root_indices());
-    let reader = builder
-        .with_projection(mask)
-        .build()
-        .context("Failed to build Parquet reader")?;
+    let reader = crate::parquet_format::decode_budget::row_group_batches(
+        file,
+        builder.metadata().clone(),
+        mask,
+    )?;
 
     let include_errors = profile.includes_errors();
     let mut records = Vec::new();

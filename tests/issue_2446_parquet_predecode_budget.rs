@@ -378,7 +378,7 @@ fn every_production_reader_preflights_before_filtering_and_respects_projection()
         None,
     )
     .unwrap();
-    for chunk in many_records.chunks(4_000) {
+    for chunk in many_records.chunks(12_000) {
         let batch = RecordBatch::try_new(
             Arc::clone(&schema),
             vec![
@@ -724,4 +724,69 @@ fn lazy_and_streaming_reads_accept_large_files_with_bounded_row_groups() {
     assert_eq!(streamed.len(), 1);
     assert_eq!(streamed[0].errors.len(), 150_000);
     merge.expect("merge streams bounded row groups");
+}
+
+/// Many individually legal groups must never be coalesced into one enormous
+/// Arrow batch by filtering, limiting, streaming or merging readers.
+#[test]
+#[serial]
+fn small_row_groups_cannot_combine_into_an_oversized_arrow_batch() {
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("many-error-groups.parquet");
+    let mut rows: Vec<_> = (0..127)
+        .map(|i| (i, "neuron-a", if i < 120 { 200_000 } else { 0 }))
+        .collect();
+    rows.push((127, "neuron-b", 200_000));
+    hostile_file_with_rows(&path, &rows);
+    let path = path.to_str().unwrap();
+    let footer = neat_ai_discovery::parquet_format::footer::read_footer_stats(path).unwrap();
+    assert!(footer.projected_in_memory_bytes() > 64 * 1024 * 1024);
+    let prior = std::env::var_os("NEAT_AI_DISCOVERY_MAX_PARQUET_DECODE_MB");
+    let prior_block = std::env::var_os("NEAT_AI_DISCOVERY_BLOCK_SIZE");
+    // SAFETY: environment-mutating tests are serialised.
+    unsafe {
+        std::env::set_var("NEAT_AI_DISCOVERY_MAX_PARQUET_DECODE_MB", "1");
+        std::env::set_var("NEAT_AI_DISCOVERY_BLOCK_SIZE", "10");
+    }
+    assert_read_without_large_allocation(
+        || read_records_from_parquet_with_profile(path, "absent", ColumnProfile::Full),
+        |result| assert!(result.unwrap().is_empty()),
+        "many-group lazy read",
+    );
+    assert_read_without_large_allocation(
+        || {
+            read_records_from_parquet_with_limit_and_budget(
+                path,
+                Some(1),
+                ColumnProfile::Full,
+                Some(1),
+            )
+        },
+        |result| assert_eq!(result.unwrap().len(), 1),
+        "many-group limited read",
+    );
+    assert_read_without_large_allocation(
+        || StreamingRecordCache::new(path, Some(1), Some(0)).map(|cache| cache.get("neuron-b")),
+        |result| assert_eq!(result.unwrap().unwrap()[0].errors.len(), 200_000),
+        "many-group streaming block",
+    );
+    let merged = dir.path().join("merged.parquet");
+    assert_read_without_large_allocation(
+        || merge_parquet_files(merged.to_str().unwrap(), &[path.to_owned()]),
+        |result| result.unwrap(),
+        "many-group merge",
+    );
+    // SAFETY: restore the environment before leaving the serial test.
+    unsafe {
+        if let Some(value) = prior {
+            std::env::set_var("NEAT_AI_DISCOVERY_MAX_PARQUET_DECODE_MB", value);
+        } else {
+            std::env::remove_var("NEAT_AI_DISCOVERY_MAX_PARQUET_DECODE_MB");
+        }
+        if let Some(value) = prior_block {
+            std::env::set_var("NEAT_AI_DISCOVERY_BLOCK_SIZE", value);
+        } else {
+            std::env::remove_var("NEAT_AI_DISCOVERY_BLOCK_SIZE");
+        }
+    }
 }

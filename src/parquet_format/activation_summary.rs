@@ -84,7 +84,7 @@ pub fn read_mean_abs_activation_by_neuron(
     }
 
     let file = open_parquet_file(file_path)?;
-    let builder = ParquetRecordBatchReaderBuilder::try_new(file)
+    let builder = ParquetRecordBatchReaderBuilder::try_new(file.try_clone()?)
         .context("Failed to create Parquet reader builder")?;
 
     let profile = ColumnProfile::ActivationOnly;
@@ -93,10 +93,11 @@ pub fn read_mean_abs_activation_by_neuron(
     let budget = DecodeBudget::resolve(None);
     budget.preflight_row_groups(builder.metadata(), &profile.root_names(), file_path)?;
     let mask = ProjectionMask::roots(builder.parquet_schema(), profile.root_indices());
-    let reader = builder
-        .with_projection(mask)
-        .build()
-        .context("Failed to build Parquet reader")?;
+    let reader = crate::parquet_format::decode_budget::row_group_batches(
+        file,
+        builder.metadata().clone(),
+        mask,
+    )?;
 
     let mut accumulators: HashMap<&str, Accumulator> = HashMap::with_capacity(wanted.len());
 

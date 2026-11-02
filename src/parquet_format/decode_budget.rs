@@ -145,7 +145,9 @@ impl DecodeBudget {
     }
 
     /// Bound each row group's selected decode for readers that filter, fold or
-    /// stream rather than retaining the whole file.
+    /// stream rather than retaining the whole file. Only Arrow column storage is
+    /// estimated here, not the `DiscoverRecord` allocations these readers discard.
+    /// Callers must use `row_group_batches` so batches cannot span groups.
     pub fn preflight_row_groups(
         &self,
         metadata: &parquet::file::metadata::ParquetMetaData,
@@ -156,7 +158,14 @@ impl DecodeBudget {
             let projected = crate::parquet_format::footer::projected_bytes_for_row_groups(
                 std::slice::from_ref(group),
                 selected_roots,
-                RECORD_STRUCT_BYTES.saturating_add(ASSUMED_UUID_HEAP_BYTES),
+                selected_roots
+                    .iter()
+                    .map(|root| match *root {
+                        "neuron_uuid" => ASSUMED_UUID_HEAP_BYTES + 4,
+                        "obs_index" | "value" | "activation" | "errors" => 4,
+                        _ => 0,
+                    })
+                    .sum(),
                 selected_roots.contains(&"errors"),
             );
             self.check_projected(projected, file_path)?;
@@ -193,6 +202,48 @@ impl DecodeBudget {
     pub const fn limit_bytes(&self) -> Option<u64> {
         self.limit_bytes
     }
+}
+
+/// Build batches one row group at a time, matching `preflight_row_groups`.
+/// A normal Arrow reader can fill one batch across many small row groups.
+/// Reuse the parsed footer and the same open file for every group.
+pub(crate) fn row_group_batches(
+    file: std::fs::File,
+    metadata: std::sync::Arc<parquet::file::metadata::ParquetMetaData>,
+    projection: parquet::arrow::ProjectionMask,
+) -> Result<impl Iterator<Item = Result<arrow::array::RecordBatch>>> {
+    use parquet::arrow::arrow_reader::{
+        ArrowReaderMetadata, ArrowReaderOptions, ParquetRecordBatchReader,
+        ParquetRecordBatchReaderBuilder,
+    };
+
+    let mut groups = 0..metadata.num_row_groups();
+    let metadata = ArrowReaderMetadata::try_new(metadata, ArrowReaderOptions::default())?;
+    let mut current: Option<ParquetRecordBatchReader> = None;
+    Ok(std::iter::from_fn(move || {
+        (|| -> Result<Option<arrow::array::RecordBatch>> {
+            loop {
+                if let Some(reader) = &mut current
+                    && let Some(batch) = reader.next()
+                {
+                    return Ok(Some(batch?));
+                }
+                let Some(group) = groups.next() else {
+                    return Ok(None);
+                };
+                current = Some(
+                    ParquetRecordBatchReaderBuilder::new_with_metadata(
+                        file.try_clone()?,
+                        metadata.clone(),
+                    )
+                    .with_projection(projection.clone())
+                    .with_row_groups(vec![group])
+                    .build()?,
+                );
+            }
+        })()
+        .transpose()
+    }))
 }
 
 #[cfg(test)]

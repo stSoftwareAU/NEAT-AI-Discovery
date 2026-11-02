@@ -371,9 +371,10 @@ fn merge_into_temp_file(tmp_path: &str, input_files: &[String]) -> Result<()> {
     for input_path in input_files {
         let input_file = File::open(input_path)
             .with_context(|| format!("Failed to open discovery Parquet file: {input_path}"))?;
-        let builder =
-            parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder::try_new(input_file)
-                .with_context(|| format!("Failed to create reader for {input_path}"))?;
+        let builder = parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder::try_new(
+            input_file.try_clone()?,
+        )
+        .with_context(|| format!("Failed to create reader for {input_path}"))?;
         validate_parquet_schema(&builder, input_path, ColumnProfile::Full)?;
         crate::parquet_format::decode_budget::DecodeBudget::resolve(None).preflight_row_groups(
             builder.metadata(),
@@ -382,10 +383,11 @@ fn merge_into_temp_file(tmp_path: &str, input_files: &[String]) -> Result<()> {
         )?;
         let mask =
             ProjectionMask::roots(builder.parquet_schema(), ColumnProfile::Full.root_indices());
-        let reader = builder
-            .with_projection(mask)
-            .build()
-            .with_context(|| format!("Failed to build reader for {input_path}"))?;
+        let reader = crate::parquet_format::decode_budget::row_group_batches(
+            input_file,
+            builder.metadata().clone(),
+            mask,
+        )?;
 
         for batch_result in reader {
             let batch =
@@ -393,6 +395,10 @@ fn merge_into_temp_file(tmp_path: &str, input_files: &[String]) -> Result<()> {
             writer
                 .write(&batch)
                 .with_context(|| format!("Failed to append batch from {input_path}"))?;
+            // Do not accumulate many bounded decode units in the output encoder.
+            writer
+                .flush()
+                .context("Failed to flush merged Parquet batch")?;
         }
     }
 
