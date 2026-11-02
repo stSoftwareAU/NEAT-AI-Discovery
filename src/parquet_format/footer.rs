@@ -66,7 +66,8 @@ impl ParquetFooterStats {
 
 /// Estimate the selected decoded columns from an already-open reader's footer.
 /// `record_overhead` is the per-row allocation outside the selected Arrow
-/// columns, and `include_errors` adds the exact decoded list value count.
+/// columns, and `include_errors` adds the decoded list value count. The
+/// selected uncompressed size is a floor, as in the preload planner's estimate.
 pub(crate) fn projected_bytes_for_columns(
     metadata: &parquet::file::metadata::ParquetMetaData,
     selected_roots: &[&str],
@@ -107,8 +108,8 @@ pub(crate) fn projected_bytes_for_columns(
     };
 
     rows.saturating_mul(record_overhead)
-        .saturating_add(selected_uncompressed)
         .saturating_add(selected_errors)
+        .max(selected_uncompressed)
 }
 
 /// Read the row count and uncompressed row-group sizes from `file_path`'s

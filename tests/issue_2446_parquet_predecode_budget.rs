@@ -203,11 +203,57 @@ fn oversized_error_list_is_rejected_before_arrow_materialises_it() {
         "the error must come from footer preflight before record charging: {error:#}"
     );
 
+    let neuron = "n".repeat(100);
     let near_budget = (0..1_000)
-        .map(|index| DiscoverRecord::new(index, "neuron-a".into(), Some(0.5), 0.7, vec![0.1; 100]))
+        .map(|index| {
+            let errors = (0_u16..195)
+                .map(|i| f32::from(u16::try_from(index).unwrap()) * 195.0 + f32::from(i))
+                .collect();
+            DiscoverRecord::new(index, neuron.clone(), Some(0.5), 0.7, errors)
+        })
         .collect::<Vec<_>>();
-    write_records_to_parquet(legal.to_str().expect("legal path"), &near_budget)
-        .expect("write legal near-budget file");
+    let retained_bytes: u64 = near_budget
+        .iter()
+        .map(|record| {
+            neat_ai_discovery::parquet_format::decode_budget::estimated_record_bytes(
+                record.neuron_uuid.len(),
+                record.errors.len(),
+            )
+        })
+        .sum();
+    assert!((1024 * 1024 * 9 / 10..=1024 * 1024).contains(&retained_bytes));
+    let schema = Arc::new(neat_ai_discovery::parquet_format::create_schema());
+    let errors = ListArray::try_new(
+        Arc::new(Field::new("item", DataType::Float32, false)),
+        OffsetBuffer::<i32>::from_lengths(vec![195; near_budget.len()]),
+        Arc::new(Float32Array::from_iter_values(
+            near_budget
+                .iter()
+                .flat_map(|record| record.errors.iter().copied()),
+        )),
+        None,
+    )
+    .unwrap();
+    let batch = RecordBatch::try_new(
+        Arc::clone(&schema),
+        vec![
+            Arc::new(UInt32Array::from_iter_values(0..1_000)),
+            Arc::new(StringArray::from_iter_values(
+                near_budget.iter().map(|record| record.neuron_uuid.as_str()),
+            )),
+            Arc::new(Float32Array::from(vec![Some(0.5); 1_000])),
+            Arc::new(Float32Array::from(vec![0.7; 1_000])),
+            Arc::new(errors),
+        ],
+    )
+    .unwrap();
+    let props = WriterProperties::builder()
+        .set_dictionary_enabled(false)
+        .build();
+    let mut writer =
+        ArrowWriter::try_new(std::fs::File::create(&legal).unwrap(), schema, Some(props)).unwrap();
+    writer.write(&batch).unwrap();
+    writer.close().unwrap();
     let records = read_all_records_grouped_by_neuron_bounded(
         legal.to_str().expect("legal path"),
         None,
@@ -215,8 +261,8 @@ fn oversized_error_list_is_rejected_before_arrow_materialises_it() {
         Some(1),
     )
     .expect("legal file near the 1 MB budget remains readable");
-    assert_eq!(records["neuron-a"].len(), 1_000);
-    assert_eq!(records["neuron-a"][999].errors.len(), 100);
+    assert_eq!(records[&neuron].len(), 1_000);
+    assert_eq!(records[&neuron][999].errors, near_budget[999].errors);
 }
 
 #[test]

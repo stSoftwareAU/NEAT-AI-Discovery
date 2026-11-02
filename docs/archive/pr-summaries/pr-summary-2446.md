@@ -85,7 +85,8 @@ flowchart LR
 - `cargo test --locked --all-features --test issue_2446_parquet_predecode_budget -- --test-threads=1`
   — passed, 8 tests. The regression includes the 20,000,000-value hostile row,
   a phase-specific `MemoryExhausted` refusal and a readable 1,000-row,
-  100-error-per-row fixture under the 1 MB budget.
+  195-distinct-error-per-row fixture whose retained charge exceeds 90% of the
+  1 MB budget.
 - Red-to-green check for
   `tests/issue_2446_parquet_predecode_budget.rs::oversized_error_list_is_rejected_before_arrow_materialises_it`
   — against `origin/Develop` (`37fe687`), failed because the read increased
