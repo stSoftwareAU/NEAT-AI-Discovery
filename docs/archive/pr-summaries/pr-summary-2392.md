@@ -24,23 +24,23 @@ Version bump: package version updated for this change; the merged commit records
 
 ## Evidence
 
-- `tests/issue_2392_calibration_metrics_finite.rs::extreme_finite_history_returns_numeric_metrics` failed on Develop with `success: true`, `meanAbsoluteError: null`, and `bias: null`; it passes on this branch.
+- `tests/issue_2392_calibration_metrics_finite.rs::extreme_finite_history_returns_numeric_metrics` failed on `origin/Develop` with `success: true`, `meanAbsoluteError: null`, and `bias: null`; it passed on the final head.
 - The original trigger and equivalent arithmetic variants are closed without a trivial bypass: finite inputs remain accepted, error differences and sums are scaled before they can overflow, unrepresentable final errors saturate to signed `f64::MAX`, overflowing ratios are excluded, and usable ratios are accumulated without an overflowing intermediate sum. The FFI summary uses this same calculation path.
 - Calibration behaviour is documented in the `Calibration Summary` section of `docs/FFI_API.md`. This is a backend-only change; no visual surface changed.
 
 ## Test Plan
 
-- `tests/issue_2392_calibration_metrics_finite.rs::extreme_finite_history_returns_numeric_metrics` — base red: `cargo test --test issue_2392_calibration_metrics_finite extreme_finite_history_returns_numeric_metrics -- --exact` failed because the successful FFI response contained a null `meanAbsoluteError`; final head: `cargo test --test issue_2392_calibration_metrics_finite` passed.
+- `tests/issue_2392_calibration_metrics_finite.rs::extreme_finite_history_returns_numeric_metrics` — base red: `cargo test --test issue_2392_calibration_metrics_finite extreme_finite_history_returns_numeric_metrics -- --exact --nocapture` failed because the successful FFI response contained `meanAbsoluteError: null`; final head: `cargo test --test issue_2392_calibration_metrics_finite -- --nocapture` passed (1 test).
 - `src/discovery_history.rs::tests::test_calibration_summary_stays_finite_for_extreme_finite_observations` and `src/discovery_history.rs::tests::test_calibration_factor_is_never_nan_for_finite_observations` — enabled and passed.
 - `src/discovery_history.rs::tests::calibration_skips_non_finite_input_fields_and_keeps_valid_samples` — passed for NaN and both infinities in each input field, then a valid observation. Removing either recorder finiteness check alone made it fail at the empty-summary assertion.
 - `src/discovery_history.rs::tests::calibration_factor_discards_overflowing_ratios_and_uses_neutral_fallback` — passed for all-overflowing ratios, mixed overflowing and usable ratios, and non-finite helper inputs. Removing either helper input-finiteness operand alone made it fail; removing the finite-ratio filter alone made it return NaN instead of `1.0`.
 - `src/discovery_history.rs::tests::calibration_factor_sums_finite_ratios_without_overflow` — passed with overflowing intermediate sums and cancelling finite ratios, yielding approximately `0.4`; restoring direct summation made it fail.
 - `src/discovery_history.rs::tests::calibration_errors_saturate_after_preserving_bias_cancellation` — passed for positive and negative saturation and cancellation; removing saturation made it fail with infinity.
 - `src/discovery_history.rs::tests::calibration_summary_handles_empty_persisted_observation_bucket`, `src/discovery_history.rs::tests::calibration_summary_handles_zero_valued_observations`, and `src/discovery_history.rs::tests::calibration_factor_respects_both_clamp_boundaries` — passed. Removing either zero-scale guard alone made its corresponding empty or zero case fail with NaN.
-- `cargo test --lib discovery_history::tests::calibration_` — 7 passed.
-- `cargo test --test scoring issue_605_calibration_tracking::` — 13 passed, including ordinary metrics, empty FFI history, and near-zero predictions.
+- `cargo test --lib discovery_history::tests:: -- --nocapture` — 17 passed, including both previously ignored regressions and the calibration edge cases.
+- `cargo test --test scoring` — 245 passed, including the established near-zero prediction calibration behaviour.
 - `cargo fmt --all --check`, `cargo clippy --lib --tests --all-features -- -D warnings`, and `git diff --check` — passed.
-- `timeout 900 ./quality.sh < /dev/null` — passed all checks, including the full test targets, documentation build, and release build.
+- `timeout 900 ./quality.sh < /dev/null` — timed out with exit 124 during `cargo build --release --lib`; licence and dependency audit, debug build, lint, type checks, all test targets, and documentation build had completed successfully before the timeout. The full quality gate did not complete.
 - No existing test assertions were removed; the two existing calibration regressions had only their `#[ignore]` attributes removed.
 
 ## Merge verification
