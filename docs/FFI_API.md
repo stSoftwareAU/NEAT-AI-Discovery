@@ -625,6 +625,13 @@ Error:
 }
 ```
 
+For failures represented by `anyhow::Error`, `error` contains the full
+context-and-cause chain, so the outer operation and underlying diagnostic are
+both available to the host. Classification first uses a typed `DiscoveryError`
+when one exists in the chain; otherwise it classifies the full chain text.
+`errorKind` and `retryable` therefore reflect the underlying cause even when
+analysis, recording, GPU, or utility code adds context.
+
 ### Drought Diagnostic Metadata (Issue #1202)
 
 When the rolling discovery outcome log shows a sustained run of empty passes

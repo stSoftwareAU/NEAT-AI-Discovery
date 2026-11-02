@@ -23,7 +23,7 @@ use anyhow::{Context, Result};
 use arrow::array::{Float32Array, ListArray, StringArray, UInt32Array};
 use arrow::datatypes::{DataType, Field};
 use arrow::record_batch::RecordBatch;
-use parquet::arrow::ArrowWriter;
+use parquet::arrow::{ArrowWriter, ProjectionMask};
 use parquet::file::properties::WriterProperties;
 use std::fs::{self, File};
 use std::path::{Path, PathBuf};
@@ -356,6 +356,9 @@ fn remove_merge_temp_file(tmp_path: &str) {
     }
 }
 
+/// Decoded bytes buffered at which a merge closes the current output row group.
+const MERGE_OUTPUT_ROW_GROUP_FLUSH_BYTES: usize = 2 * 1024 * 1024;
+
 /// Read every input file and write the merged result into `tmp_path`.
 ///
 /// Each input's schema is validated before any batch is appended, so a foreign
@@ -368,16 +371,27 @@ fn merge_into_temp_file(tmp_path: &str, input_files: &[String]) -> Result<()> {
     let mut writer = ArrowWriter::try_new(file, schema, Some(props))
         .context("Failed to create ArrowWriter for merge")?;
 
+    let mut buffered_bytes = 0_usize;
     for input_path in input_files {
         let input_file = File::open(input_path)
             .with_context(|| format!("Failed to open discovery Parquet file: {input_path}"))?;
-        let builder =
-            parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder::try_new(input_file)
-                .with_context(|| format!("Failed to create reader for {input_path}"))?;
+        let builder = parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder::try_new(
+            input_file.try_clone()?,
+        )
+        .with_context(|| format!("Failed to create reader for {input_path}"))?;
         validate_parquet_schema(&builder, input_path, ColumnProfile::Full)?;
-        let reader = builder
-            .build()
-            .with_context(|| format!("Failed to build reader for {input_path}"))?;
+        crate::parquet_format::decode_budget::DecodeBudget::resolve(None).preflight_row_groups(
+            builder.metadata(),
+            &ColumnProfile::Full.root_names(),
+            input_path,
+        )?;
+        let mask =
+            ProjectionMask::roots(builder.parquet_schema(), ColumnProfile::Full.root_indices());
+        let reader = crate::parquet_format::decode_budget::row_group_batches(
+            input_file,
+            builder.metadata().clone(),
+            mask,
+        )?;
 
         for batch_result in reader {
             let batch =
@@ -385,6 +399,18 @@ fn merge_into_temp_file(tmp_path: &str, input_files: &[String]) -> Result<()> {
             writer
                 .write(&batch)
                 .with_context(|| format!("Failed to append batch from {input_path}"))?;
+            // Close the output row group once enough decoded data has been
+            // buffered, so the merged file keeps few, large row groups while
+            // the encoder stays bounded by this limit plus one input batch.
+            // The encoder's own size estimate undercounts highly compressible
+            // data, so count the decoded Arrow bytes instead.
+            buffered_bytes = buffered_bytes.saturating_add(batch.get_array_memory_size());
+            if buffered_bytes >= MERGE_OUTPUT_ROW_GROUP_FLUSH_BYTES {
+                writer
+                    .flush()
+                    .context("Failed to flush merged Parquet row group")?;
+                buffered_bytes = 0;
+            }
         }
     }
 

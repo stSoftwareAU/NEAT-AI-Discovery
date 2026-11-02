@@ -35,6 +35,7 @@ use crate::types::DiscoverRecord;
 use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson, CreatureJson};
 
 use crate::analysis::constants::MIN_DISCOVERY_SAMPLE_COUNT;
+use crate::analysis::detection::helpers::{existing_neuron_uuids, first_free_neuron_uuid};
 use crate::analysis::utils::deadline_passed;
 
 /// Minimum conflict score to flag a neuron (ratio of minority to majority group).
@@ -193,6 +194,8 @@ pub fn detect_fanin_polarity_conflicts(
 /// Each candidate proposes splitting the conflicting fan-in by adding a new hidden
 /// neuron to handle the negative-polarity pathway, rewiring the negative incoming
 /// synapses to the new neuron, and connecting the new neuron to the original target.
+/// The synthetic UUID preserves its legacy spelling when free and is salted
+/// around existing neuron UUIDs (Issue #2412).
 ///
 /// Issue #2350: no deadline — equivalent to calling
 /// [`fanin_polarity_conflicts_to_coordinated_candidates_with_deadline`] with a
@@ -230,6 +233,7 @@ fn fanin_polarity_conflicts_to_coordinated_candidates_with_observer(
     deadline: &Option<std::time::SystemTime>,
     work_observer: &mut impl FnMut(),
 ) -> Vec<CoordinatedStructuralCandidateJson> {
+    let existing = existing_neuron_uuids(creature);
     // Build incoming synapses lookup: target_uuid -> Vec<(from_uuid, weight)>
     let mut incoming_synapses: HashMap<&str, Vec<(&str, f32)>> = HashMap::new();
     for synapse in &creature.synapses {
@@ -291,7 +295,13 @@ fn fanin_polarity_conflicts_to_coordinated_candidates_with_observer(
             .map_or_else(|| "TANH".to_string(), str::to_string);
 
         // Generate a deterministic UUID for the new neuron
-        let new_neuron_uuid = format!("fanin-split-{}", c.neuron_uuid);
+        let new_neuron_uuid = first_free_neuron_uuid(&existing, |salt| {
+            if salt == 0 {
+                format!("fanin-split-{}", c.neuron_uuid)
+            } else {
+                format!("fanin-split-{}-{salt}", c.neuron_uuid)
+            }
+        });
 
         let mut operations = Vec::new();
 

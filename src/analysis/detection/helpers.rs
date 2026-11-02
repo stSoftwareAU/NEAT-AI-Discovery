@@ -13,8 +13,8 @@
 //! | [`compute_mean_abs_activation`] | Mean absolute activation | 6+ |
 //! | [`sort_candidates_by_score_gain`] | Descending sort on score gain | 20+ |
 //! | [`weighted_confidence`] | Multi-factor confidence scoring | 14+ |
-//! | [`existing_neuron_uuids`] | Set of UUIDs the creature already has (Issue #2359) | 5 |
-//! | [`first_free_neuron_uuid`] | Re-salt a synthetic UUID until it is unused (Issue #2359) | 5 |
+//! | [`existing_neuron_uuids`] | Set of UUIDs the creature already has (Issue #2359) | 10 |
+//! | [`first_free_neuron_uuid`] | Re-salt a synthetic UUID until it is unused (Issue #2359) | 10 |
 
 #![allow(clippy::cast_precision_loss)] // Intentional numeric casts for neural network computation (Issue #873)
 

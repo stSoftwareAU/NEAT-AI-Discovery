@@ -50,6 +50,7 @@ use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson, Cre
 
 use super::stats::spearman_rank_correlation;
 use crate::analysis::constants::MIN_DISCOVERY_SAMPLE_COUNT as MIN_SAMPLES_FOR_DETECTION;
+use crate::analysis::detection::helpers::{existing_neuron_uuids, first_free_neuron_uuid};
 use crate::analysis::quantised_error::is_quantised_zero_one;
 
 /// Minimum |rho| below which a neuron is considered non-monotonic.
@@ -165,11 +166,13 @@ pub fn detect_non_monotonic_neurons(
 ///
 /// Which candidate is produced depends on the creature's topology — if the neuron
 /// has downstream synapses, we prefer adding a neuron to split the workload;
-/// otherwise we suggest changing the activation function.
+/// otherwise we suggest changing the activation function. Its synthetic UUID
+/// is salted when needed to avoid existing neuron UUIDs (Issue #2412).
 pub fn non_monotonic_neurons_to_coordinated_candidates(
     candidates: &[MonotonicityCandidate],
     creature: &CreatureJson,
 ) -> Vec<CoordinatedStructuralCandidateJson> {
+    let existing = existing_neuron_uuids(creature);
     let mut results = Vec::with_capacity(candidates.len());
 
     for c in candidates {
@@ -200,7 +203,13 @@ pub fn non_monotonic_neurons_to_coordinated_candidates(
             // AddNeuron: create a new neuron inserted before the target of the
             // first outgoing synapse, with a complementary activation function
             let target_uuid = &outgoing[0].to_uuid;
-            let new_uuid = format!("split-{}", c.neuron_uuid);
+            let new_uuid = first_free_neuron_uuid(&existing, |salt| {
+                if salt == 0 {
+                    format!("split-{}", c.neuron_uuid)
+                } else {
+                    format!("split-{}-{salt}", c.neuron_uuid)
+                }
+            });
             let new_squash = suggest_complementary_squash(current_squash);
 
             let mut operations = vec![CoordinatedStructuralOpJson::AddNeuron {

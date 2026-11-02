@@ -25,6 +25,7 @@ pub use reader::{
     read_records_from_parquet_with_limit, read_records_from_parquet_with_limit_and_budget,
     read_records_from_parquet_with_limit_and_profile, read_records_from_parquet_with_profile,
 };
+pub(crate) use reader::{validate_neuron_uuid_column, validate_parquet_schema};
 pub use schema::create_schema;
 pub use writer::{ParquetRecordWriter, merge_parquet_files, write_records_to_parquet};
 

@@ -4,26 +4,35 @@ use super::helpers::parse_env;
 
 /// Get the noise-to-signal detection threshold.
 ///
-/// Set `NEAT_AI_DISCOVERY_NOISE_SIGNAL_THRESHOLD` to override.
-/// Requires each detection module's default to be passed as fallback.
+/// Set `NEAT_AI_DISCOVERY_NOISE_SIGNAL_THRESHOLD` to override. Only finite,
+/// positive values are accepted; unset, malformed, non-finite, zero and
+/// negative values use the caller-supplied fallback.
 pub fn noise_signal_threshold(default: f32) -> f32 {
-    parse_env("NEAT_AI_DISCOVERY_NOISE_SIGNAL_THRESHOLD").unwrap_or(default)
+    parse_env::<f32>("NEAT_AI_DISCOVERY_NOISE_SIGNAL_THRESHOLD")
+        .filter(|v| v.is_finite() && *v > 0.0)
+        .unwrap_or(default)
 }
 
 /// Get the input dominance detection threshold.
 ///
-/// Set `NEAT_AI_DISCOVERY_DOMINANCE_THRESHOLD` to override.
-/// Requires each detection module's default to be passed as fallback.
+/// Set `NEAT_AI_DISCOVERY_DOMINANCE_THRESHOLD` to override. Only finite,
+/// positive values are accepted; unset, malformed, non-finite, zero and
+/// negative values use the caller-supplied fallback.
 pub fn dominance_threshold(default: f32) -> f32 {
-    parse_env("NEAT_AI_DISCOVERY_DOMINANCE_THRESHOLD").unwrap_or(default)
+    parse_env::<f32>("NEAT_AI_DISCOVERY_DOMINANCE_THRESHOLD")
+        .filter(|v| v.is_finite() && *v > 0.0)
+        .unwrap_or(default)
 }
 
 /// Get the gradient detection threshold.
 ///
-/// Set `NEAT_AI_DISCOVERY_GRADIENT_THRESHOLD` to override.
-/// Requires each detection module's default to be passed as fallback.
+/// Set `NEAT_AI_DISCOVERY_GRADIENT_THRESHOLD` to override. Only finite,
+/// positive values are accepted; unset, malformed, non-finite, zero and
+/// negative values use the caller-supplied fallback.
 pub fn gradient_threshold(default: f32) -> f32 {
-    parse_env("NEAT_AI_DISCOVERY_GRADIENT_THRESHOLD").unwrap_or(default)
+    parse_env::<f32>("NEAT_AI_DISCOVERY_GRADIENT_THRESHOLD")
+        .filter(|v| v.is_finite() && *v > 0.0)
+        .unwrap_or(default)
 }
 
 /// Hidden-neuron count above which expensive discovery modules are tiered out
