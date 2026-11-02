@@ -20,7 +20,7 @@ Version bump: package version updated for this change; the merged commit records
 ### Undiscoverable Facts
 
 - Develop was fetched at `21371f75faeef91dc42dd5bdf0cc7e70bc8fbdcc`; the package version was resolved to `0.74.324` over its `0.74.323`.
-- The baseline regression was run in a detached Develop worktree with only the new integration test copied in.
+- The base reproduction temporarily used `origin/Develop`’s `src/discovery_history.rs` with the new integration test retained, then restored the checkpointed source.
 
 ## Evidence
 
@@ -38,9 +38,9 @@ Version bump: package version updated for this change; the merged commit records
 - `src/discovery_history.rs::tests::calibration_errors_saturate_after_preserving_bias_cancellation` — passed for positive and negative saturation and cancellation; removing saturation made it fail with infinity.
 - `src/discovery_history.rs::tests::calibration_summary_handles_empty_persisted_observation_bucket`, `src/discovery_history.rs::tests::calibration_summary_handles_zero_valued_observations`, and `src/discovery_history.rs::tests::calibration_factor_respects_both_clamp_boundaries` — passed. Removing either zero-scale guard alone made its corresponding empty or zero case fail with NaN.
 - `cargo test --lib discovery_history::tests:: -- --nocapture` — 17 passed, including both previously ignored regressions and the calibration edge cases.
-- `cargo test --test scoring` — 245 passed, including the established near-zero prediction calibration behaviour.
-- `cargo fmt --all --check`, `cargo clippy --lib --tests --all-features -- -D warnings`, and `git diff --check` — passed.
-- `timeout 900 ./quality.sh < /dev/null` — timed out with exit 124 during `cargo build --release --lib`; licence and dependency audit, debug build, lint, type checks, all test targets, and documentation build had completed successfully before the timeout. The full quality gate did not complete.
+- `cargo test --test scoring` — 245 passed, including `tests/scoring/issue_805_numeric_safety.rs::calibration_factor_near_zero_predicted_no_div_by_zero` and the existing ordinary-value calibration cases.
+- `cargo fmt --all --check`, `cargo clippy --all-targets --all-features -- -D warnings`, and `git diff --check` — passed.
+- `timeout 900 ./quality.sh < /dev/null` — passed all quality checks, including the full test suite, documentation build, and release library build.
 - No existing test assertions were removed; the two existing calibration regressions had only their `#[ignore]` attributes removed.
 
 ## Merge verification
