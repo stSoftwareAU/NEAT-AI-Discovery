@@ -28,7 +28,7 @@ Version bump: `Cargo.toml` updated for this change; the merged commit records th
 - The original trigger is closed: negative counts and sizes fail conversion, and understated or overstated file row counts fail the row-group consistency check; equivalent malformed footer values cannot be accepted as zero.
 - `read_footer_stats` is used by `estimate_parquet_in_memory_bytes`; its existing unreadable-footer warning and compressed-size fallback remain unchanged.
 - Footer fuzz target and seed: `fuzz/fuzz_targets/fuzz_parquet_footer_stats.rs` and `fuzz/seeds/parquet_footer_stats/negative_file_num_rows`.
-- `cargo check --manifest-path fuzz/Cargo.toml --locked --offline --bin fuzz_parquet_footer_stats` passed. A bounded direct libFuzzer smoke run completed 100 executions and replayed the seed; the stable binary reported that sanitizer coverage callbacks were unavailable, so this was not a coverage-guided `cargo-fuzz` run.
+- `cargo check --manifest-path fuzz/Cargo.toml --offline --bin fuzz_parquet_footer_stats` passed on the initial implementation; it was not re-run on this head (the dependency cache is unavailable here), and `--locked` is not claimed because `fuzz/Cargo.lock` records `neat_ai_discovery` 0.74.322 against `Cargo.toml` 0.74.323 (tracked in #2506). A bounded direct libFuzzer smoke run completed 100 executions and replayed the seed; the stable binary reported that sanitizer coverage callbacks were unavailable, so this was not a coverage-guided `cargo-fuzz` run.
 - `gh issue view 2447 --json title,labels` confirmed the issue title and `bug` / `security` labels used for this record.
 
 ## Reproduction
