@@ -790,3 +790,69 @@ fn small_row_groups_cannot_combine_into_an_oversized_arrow_batch() {
         }
     }
 }
+
+/// Merging many bounded input row groups must not shatter the output into one
+/// tiny row group per Arrow batch (PR #2504 review).
+#[test]
+fn merge_keeps_few_large_output_row_groups() {
+    let dir = TempDir::new().unwrap();
+    let input = dir.path().join("many-small-groups.parquet");
+    let output = dir.path().join("merged.parquet");
+    let schema = Arc::new(neat_ai_discovery::parquet_format::create_schema());
+    let rows = 3_000_u32;
+    let props = WriterProperties::builder()
+        .set_max_row_group_row_count(Some(500))
+        .build();
+    let mut writer = ArrowWriter::try_new(
+        std::fs::File::create(&input).unwrap(),
+        Arc::clone(&schema),
+        Some(props),
+    )
+    .unwrap();
+    let batch = RecordBatch::try_new(
+        Arc::clone(&schema),
+        vec![
+            Arc::new(UInt32Array::from_iter_values(0..rows)),
+            Arc::new(StringArray::from(vec!["neuron-a"; rows as usize])),
+            Arc::new(Float32Array::from(vec![Some(0.5); rows as usize])),
+            Arc::new(Float32Array::from(vec![0.7; rows as usize])),
+            Arc::new(
+                ListArray::try_new(
+                    Arc::new(Field::new("item", DataType::Float32, false)),
+                    OffsetBuffer::<i32>::from_lengths(vec![0; rows as usize]),
+                    Arc::new(Float32Array::from(Vec::<f32>::new())),
+                    None,
+                )
+                .unwrap(),
+            ),
+        ],
+    )
+    .unwrap();
+    writer.write(&batch).unwrap();
+    writer.close().unwrap();
+
+    let row_groups = |path: &std::path::Path| {
+        parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder::try_new(
+            std::fs::File::open(path).unwrap(),
+        )
+        .unwrap()
+        .metadata()
+        .num_row_groups()
+    };
+    assert_eq!(
+        row_groups(&input),
+        6,
+        "the fixture must start with 6 groups"
+    );
+
+    merge_parquet_files(
+        output.to_str().unwrap(),
+        &[input.to_str().unwrap().to_owned()],
+    )
+    .expect("merge succeeds");
+    assert_eq!(
+        row_groups(&output),
+        1,
+        "the merge must not close an output row group per input batch"
+    );
+}

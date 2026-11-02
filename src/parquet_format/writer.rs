@@ -356,6 +356,9 @@ fn remove_merge_temp_file(tmp_path: &str) {
     }
 }
 
+/// Decoded bytes buffered at which a merge closes the current output row group.
+const MERGE_OUTPUT_ROW_GROUP_FLUSH_BYTES: usize = 2 * 1024 * 1024;
+
 /// Read every input file and write the merged result into `tmp_path`.
 ///
 /// Each input's schema is validated before any batch is appended, so a foreign
@@ -368,6 +371,7 @@ fn merge_into_temp_file(tmp_path: &str, input_files: &[String]) -> Result<()> {
     let mut writer = ArrowWriter::try_new(file, schema, Some(props))
         .context("Failed to create ArrowWriter for merge")?;
 
+    let mut buffered_bytes = 0_usize;
     for input_path in input_files {
         let input_file = File::open(input_path)
             .with_context(|| format!("Failed to open discovery Parquet file: {input_path}"))?;
@@ -395,10 +399,18 @@ fn merge_into_temp_file(tmp_path: &str, input_files: &[String]) -> Result<()> {
             writer
                 .write(&batch)
                 .with_context(|| format!("Failed to append batch from {input_path}"))?;
-            // Do not accumulate many bounded decode units in the output encoder.
-            writer
-                .flush()
-                .context("Failed to flush merged Parquet batch")?;
+            // Close the output row group once enough decoded data has been
+            // buffered, so the merged file keeps few, large row groups while
+            // the encoder stays bounded by this limit plus one input batch.
+            // The encoder's own size estimate undercounts highly compressible
+            // data, so count the decoded Arrow bytes instead.
+            buffered_bytes = buffered_bytes.saturating_add(batch.get_array_memory_size());
+            if buffered_bytes >= MERGE_OUTPUT_ROW_GROUP_FLUSH_BYTES {
+                writer
+                    .flush()
+                    .context("Failed to flush merged Parquet row group")?;
+                buffered_bytes = 0;
+            }
         }
     }
 

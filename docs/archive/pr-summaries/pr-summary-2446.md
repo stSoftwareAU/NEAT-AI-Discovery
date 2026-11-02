@@ -20,8 +20,11 @@ preflight, while large files with individually bounded groups remain usable.
 - All row groups are checked before decoding. A filter cannot hide an
   oversized group. Parsed metadata and the open file are reused for separate
   row-group readers.
-- Retained records still consume the cumulative record budget. Merge flushes
-  each bounded batch so its output encoder cannot accumulate many decode units.
+- Retained records still consume the cumulative record budget. Merge closes an
+  output row group only after 2 MiB of decoded Arrow data has been buffered
+  (`MERGE_OUTPUT_ROW_GROUP_FLUSH_BYTES`), so the encoder stays bounded without
+  writing one tiny output row group per batch. The encoder's own
+  `in_progress_size` was not used: it undercounts highly compressible data.
 - Projections match the selected columns used by the estimate. The UUID index
   does not decode errors or unrelated columns.
 - Footer under-reporting remains a limitation, tracked in #2447.
@@ -29,7 +32,7 @@ preflight, while large files with individually bounded groups remain usable.
 
 ## Evidence
 
-The Issue #2446 suite contains 10 tests, including:
+The Issue #2446 suite contains 11 tests, including:
 
 - A 20,000,000-value hostile list, refused before Arrow allocation.
 - A legal file with distinct errors and retained charge above 90% of 1 MB.
@@ -41,6 +44,7 @@ The Issue #2446 suite contains 10 tests, including:
   and merge readers succeed with a bounded Linux VmHWM increase, rather than
   constructing a batch containing all groups.
 - Projection, schema validation and merge-destination preservation.
+- A 3,000-row input in six row groups merges to a single output row group.
 
 The shared-decoder suite contains 6 tests. The original 20,000-row UUID index
 fixture succeeds without retained-record overhead. A 30,000-row group exceeds
@@ -59,11 +63,15 @@ VmHWM assertions are exercised:
 - `cargo fmt --all -- --check`: passed.
 - `cargo clippy --locked --all-targets --all-features -- -D warnings`: passed.
 - `cargo test --locked --all-features --test issue_2446_parquet_predecode_budget
-  --test issue_2005_shared_batch_decoder -- --test-threads=2`: 16 passed
-  (`tests/issue_2446_parquet_predecode_budget.rs` 10 tests,
+  --test issue_2005_shared_batch_decoder -- --test-threads=2`: 17 passed
+  (`tests/issue_2446_parquet_predecode_budget.rs` 11 tests,
   `tests/issue_2005_shared_batch_decoder.rs` 6 tests), including
   `lazy_and_streaming_reads_accept_large_files_with_bounded_row_groups` and
-  `small_row_groups_cannot_combine_into_an_oversized_arrow_batch`.
+  `small_row_groups_cannot_combine_into_an_oversized_arrow_batch` and
+  `merge_keeps_few_large_output_row_groups`.
+- Red check: with `MERGE_OUTPUT_ROW_GROUP_FLUSH_BYTES` set to 0 (a flush after
+  every batch), `merge_keeps_few_large_output_row_groups` failed with
+  `left: 6, right: 1`. The constant was restored.
 - `cargo test --locked --all-features --test issue_1869_parquet_decode_bound
   --test issue_1901_parquet_schema_nullability
   --test issue_1923_activation_summary`: 25 passed (11, 7 and 7 tests).
