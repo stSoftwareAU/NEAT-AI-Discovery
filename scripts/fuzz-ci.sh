@@ -46,6 +46,7 @@ FUZZ_TARGETS=(
     "fuzz_ffi_deserialisation"
     "fuzz_ffi_entry_points"
     "fuzz_parquet_footer_stats"
+    "fuzz_parquet_predecode_budget"
 )
 
 FAILED=0
