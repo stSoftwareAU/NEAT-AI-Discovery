@@ -27,6 +27,7 @@ Version bump: package version updated for this change; the merged commit records
 - `tests/issue_2392_calibration_metrics_finite.rs::extreme_finite_history_returns_numeric_metrics` failed on `origin/Develop` with `success: true`, `meanAbsoluteError: null`, and `bias: null`; it passed on the final head.
 - The original trigger and equivalent arithmetic variants are closed without a trivial bypass: finite inputs remain accepted, error differences and sums are scaled before they can overflow, unrepresentable final errors saturate to signed `f64::MAX`, overflowing ratios are excluded, and usable ratios are accumulated without an overflowing intermediate sum. The FFI summary uses this same calculation path.
 - Calibration behaviour is documented in the `Calibration Summary` section of `docs/FFI_API.md`. This is a backend-only change; no visual surface changed.
+- The chunk-11 security audit record now marks #2392 closed and describes the guards and passing regression tests; the test comments identify them as regressions.
 
 ## Test Plan
 

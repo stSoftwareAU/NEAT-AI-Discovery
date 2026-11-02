@@ -890,7 +890,7 @@ mod tests {
 
     /// Every input is a finite JSON number, yet `predicted - actual` overflows
     /// to +/-inf and the sum to NaN. (Issue #2253)
-    /// Failing-first for finding #2392; its fix removes the `#[ignore]`.
+    /// Regression for finding #2392.
     ///
     /// Also checks through the shipped FFI entry point
     /// `get_calibration_summary_internal`, because `serde_json` writes a
@@ -957,7 +957,7 @@ mod tests {
 
     /// The two ratios overflow to +inf and -inf, their sum is NaN, and
     /// `f64::clamp` passes NaN through. (Issue #2253)
-    /// Failing-first for finding #2392; its fix removes the `#[ignore]`.
+    /// Regression for finding #2392.
     #[test]
     fn test_calibration_factor_is_never_nan_for_finite_observations() {
         let mut h = DiscoveryHistory::new();
