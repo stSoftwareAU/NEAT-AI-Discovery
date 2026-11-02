@@ -144,6 +144,26 @@ impl DecodeBudget {
         self.check_projected(projected, file_path)
     }
 
+    /// Bound each row group's selected decode for readers that filter, fold or
+    /// stream rather than retaining the whole file.
+    pub fn preflight_row_groups(
+        &self,
+        metadata: &parquet::file::metadata::ParquetMetaData,
+        selected_roots: &[&str],
+        file_path: &str,
+    ) -> Result<()> {
+        for group in metadata.row_groups() {
+            let projected = crate::parquet_format::footer::projected_bytes_for_row_groups(
+                std::slice::from_ref(group),
+                selected_roots,
+                RECORD_STRUCT_BYTES.saturating_add(ASSUMED_UUID_HEAP_BYTES),
+                selected_roots.contains(&"errors"),
+            );
+            self.check_projected(projected, file_path)?;
+        }
+        Ok(())
+    }
+
     fn memory_exhausted(&self, required_bytes: u64, file_path: &str, stage: &str) -> anyhow::Error {
         let limit = self.limit_bytes.unwrap_or(u64::MAX);
         DiscoveryError::MemoryExhausted {

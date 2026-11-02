@@ -369,7 +369,7 @@ impl StreamingRecordCache {
             .context("Failed to create Parquet reader builder")?;
 
         let uuid_root = validate_neuron_uuid_column(&builder, parquet_file)?;
-        DecodeBudget::resolve(None).preflight_columns(
+        DecodeBudget::resolve(None).preflight_row_groups(
             builder.metadata(),
             &["neuron_uuid"],
             parquet_file,
@@ -467,7 +467,7 @@ impl StreamingRecordCache {
         let profile = ColumnProfile::Full;
         validate_parquet_schema(&builder, parquet_file, profile)?;
         let mut budget = DecodeBudget::resolve(None);
-        budget.preflight_columns(builder.metadata(), &profile.root_names(), parquet_file)?;
+        budget.preflight_row_groups(builder.metadata(), &profile.root_names(), parquet_file)?;
 
         let mask = ProjectionMask::roots(builder.parquet_schema(), profile.root_indices());
         let reader = builder

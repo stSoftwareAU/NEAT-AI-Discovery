@@ -74,9 +74,26 @@ pub(crate) fn projected_bytes_for_columns(
     record_overhead: u64,
     include_errors: bool,
 ) -> u64 {
-    let rows = u64::try_from(metadata.file_metadata().num_rows()).unwrap_or(0);
-    let selected_uncompressed = metadata
-        .row_groups()
+    projected_bytes_for_row_groups(
+        metadata.row_groups(),
+        selected_roots,
+        record_overhead,
+        include_errors,
+    )
+}
+
+/// Estimate the selected columns of the supplied decode units.
+pub(crate) fn projected_bytes_for_row_groups(
+    row_groups: &[parquet::file::metadata::RowGroupMetaData],
+    selected_roots: &[&str],
+    record_overhead: u64,
+    include_errors: bool,
+) -> u64 {
+    let rows = row_groups
+        .iter()
+        .map(|group| u64::try_from(group.num_rows()).unwrap_or(0))
+        .fold(0_u64, u64::saturating_add);
+    let selected_uncompressed = row_groups
         .iter()
         .flat_map(parquet::file::metadata::RowGroupMetaData::columns)
         .filter(|column| {
@@ -89,8 +106,7 @@ pub(crate) fn projected_bytes_for_columns(
         .map(|column| u64::try_from(column.uncompressed_size()).unwrap_or(0))
         .fold(0_u64, u64::saturating_add);
     let selected_errors = if include_errors {
-        metadata
-            .row_groups()
+        row_groups
             .iter()
             .flat_map(parquet::file::metadata::RowGroupMetaData::columns)
             .filter(|column| {

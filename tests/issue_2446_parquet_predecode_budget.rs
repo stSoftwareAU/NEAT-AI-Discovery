@@ -12,7 +12,6 @@ use neat_ai_discovery::parquet_format::{
     ColumnProfile, merge_parquet_files, read_all_records_grouped_by_neuron_bounded,
     read_all_records_grouped_by_neuron_with_profile, read_mean_abs_activation_by_neuron,
     read_records_from_parquet_with_limit_and_budget, read_records_from_parquet_with_profile,
-    write_records_to_parquet,
 };
 use neat_ai_discovery::types::DiscoverRecord;
 use parquet::arrow::ArrowWriter;
@@ -372,11 +371,41 @@ fn every_production_reader_preflights_before_filtering_and_respects_projection()
             )
         })
         .collect::<Vec<_>>();
-    write_records_to_parquet(
-        activation_oversized.to_str().expect("activation path"),
-        &many_records,
+    let schema = Arc::new(neat_ai_discovery::parquet_format::create_schema());
+    let mut writer = ArrowWriter::try_new(
+        std::fs::File::create(&activation_oversized).unwrap(),
+        Arc::clone(&schema),
+        None,
     )
-    .expect("write oversized activation-only selection");
+    .unwrap();
+    for chunk in many_records.chunks(4_000) {
+        let batch = RecordBatch::try_new(
+            Arc::clone(&schema),
+            vec![
+                Arc::new(UInt32Array::from_iter_values(
+                    chunk.iter().map(|r| r.obs_index),
+                )),
+                Arc::new(StringArray::from_iter_values(
+                    chunk.iter().map(|r| r.neuron_uuid.as_str()),
+                )),
+                Arc::new(Float32Array::from(vec![Some(0.5); chunk.len()])),
+                Arc::new(Float32Array::from(vec![0.7; chunk.len()])),
+                Arc::new(
+                    ListArray::try_new(
+                        Arc::new(Field::new("item", DataType::Float32, false)),
+                        OffsetBuffer::<i32>::from_lengths(vec![0; chunk.len()]),
+                        Arc::new(Float32Array::from(Vec::<f32>::new())),
+                        None,
+                    )
+                    .unwrap(),
+                ),
+            ],
+        )
+        .unwrap();
+        writer.write(&batch).unwrap();
+        writer.flush().unwrap();
+    }
+    writer.close().unwrap();
     std::fs::write(&output, b"existing merge destination").expect("seed merge destination");
     let hostile_path = hostile.to_str().expect("hostile path");
     let prior_limit = std::env::var_os("NEAT_AI_DISCOVERY_MAX_PARQUET_DECODE_MB");
@@ -424,7 +453,10 @@ fn every_production_reader_preflights_before_filtering_and_respects_projection()
                 None,
             )
         },
-        |result| assert_memory_exhausted!(result, "activation summary's selected columns"),
+        |result| {
+            let summary = result.expect("summary folds row groups within the ceiling");
+            assert_eq!(summary.len(), 1);
+        },
         "activation summary",
     );
 
@@ -436,7 +468,9 @@ fn every_production_reader_preflights_before_filtering_and_respects_projection()
                 Some(0),
             )
         },
-        |result| assert_memory_exhausted!(result, "streaming UUID index"),
+        |result| {
+            result.expect("index streams row groups within the ceiling");
+        },
         "streaming UUID index",
     );
 
@@ -634,4 +668,60 @@ fn extra_column_projection(merge: bool) {
             std::env::remove_var("NEAT_AI_DISCOVERY_MAX_PARQUET_DECODE_MB");
         }
     }
+}
+
+/// Large recordings remain usable through bounded lazy and streaming reads.
+#[test]
+#[serial]
+fn lazy_and_streaming_reads_accept_large_files_with_bounded_row_groups() {
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("large-multiple-groups.parquet");
+    let mut rows = vec![(0, "neuron-a", 150_000)];
+    rows.extend((1..1_000).map(|i| (i, "neuron-a", 0)));
+    rows.push((1_000, "neuron-b", 150_000));
+    hostile_file_with_rows(&path, &rows);
+    let path = path.to_str().unwrap();
+    let prior = std::env::var_os("NEAT_AI_DISCOVERY_MAX_PARQUET_DECODE_MB");
+    let prior_block = std::env::var_os("NEAT_AI_DISCOVERY_BLOCK_SIZE");
+    // SAFETY: environment-mutating tests are serialised.
+    unsafe { std::env::set_var("NEAT_AI_DISCOVERY_BLOCK_SIZE", "1000") };
+    // SAFETY: environment-mutating tests are serialised.
+    unsafe { std::env::set_var("NEAT_AI_DISCOVERY_MAX_PARQUET_DECODE_MB", "1") };
+    let eager =
+        read_all_records_grouped_by_neuron_bounded(path, None, ColumnProfile::Full, Some(1));
+    let lazy = read_records_from_parquet_with_profile(path, "neuron-b", ColumnProfile::Full);
+    let limited = read_records_from_parquet_with_limit_and_budget(
+        path,
+        Some(1),
+        ColumnProfile::Full,
+        Some(1),
+    );
+    let streamed =
+        StreamingRecordCache::new(path, Some(1), Some(0)).map(|cache| cache.get("neuron-b"));
+    let merged = dir.path().join("merged.parquet");
+    let merge = merge_parquet_files(merged.to_str().unwrap(), &[path.to_owned()]);
+    // SAFETY: restore the environment before assertions.
+    unsafe {
+        if let Some(value) = prior_block {
+            std::env::set_var("NEAT_AI_DISCOVERY_BLOCK_SIZE", value);
+        } else {
+            std::env::remove_var("NEAT_AI_DISCOVERY_BLOCK_SIZE");
+        }
+        if let Some(value) = prior {
+            std::env::set_var("NEAT_AI_DISCOVERY_MAX_PARQUET_DECODE_MB", value);
+        } else {
+            std::env::remove_var("NEAT_AI_DISCOVERY_MAX_PARQUET_DECODE_MB");
+        }
+    }
+    assert_memory_exhausted!(eager, "eager selection");
+    let lazy = lazy.expect("lazy read retains only the requested neuron");
+    assert_eq!(lazy.len(), 1);
+    assert_eq!(lazy[0].errors.len(), 150_000);
+    assert_eq!(limited.expect("limited selection fits").len(), 1);
+    let streamed = streamed
+        .expect("index builds")
+        .expect("one-record streaming block fits");
+    assert_eq!(streamed.len(), 1);
+    assert_eq!(streamed[0].errors.len(), 150_000);
+    merge.expect("merge streams bounded row groups");
 }

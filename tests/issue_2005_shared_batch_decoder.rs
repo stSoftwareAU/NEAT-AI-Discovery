@@ -135,11 +135,11 @@ fn the_without_errors_profile_still_yields_empty_error_lists() {
     assert_eq!(with_null.value, None, "nullability survives the projection");
 }
 
-/// The streaming UUID index rejects a whole file whose projected decoded size
+/// The streaming UUID index rejects a single row group whose projected decoded size
 /// exceeds the ceiling before it builds an Arrow batch (Issue #2446).
 #[test]
 #[serial]
-fn the_streaming_index_preflights_the_decode_budget() {
+fn the_streaming_index_preflights_an_oversized_row_group() {
     let file = write_bulky_parquet(20_000, 32);
     let path = file.path().to_str().expect("utf-8 path");
 
@@ -153,7 +153,9 @@ fn the_streaming_index_preflights_the_decode_budget() {
     // Match rather than `expect_err`: the success value is 10k records, and
     // debug-printing them would bury the assertion in megabytes of output.
     let err = match bounded {
-        Ok(_) => panic!("the 1 MB budget must reject the projected Parquet file before indexing"),
+        Ok(_) => {
+            panic!("the 1 MB budget must reject the projected Parquet row group before indexing")
+        }
         Err(err) => err,
     };
     let kind = neat_ai_discovery::ffi_types::classify_anyhow_error(&err);

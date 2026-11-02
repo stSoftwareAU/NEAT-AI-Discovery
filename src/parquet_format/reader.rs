@@ -452,7 +452,7 @@ pub fn read_records_from_parquet_with_profile(
     validate_parquet_schema(&builder, file_path, profile)?;
 
     let mut budget = DecodeBudget::resolve(None);
-    budget.preflight_columns(builder.metadata(), &profile.root_names(), file_path)?;
+    budget.preflight_row_groups(builder.metadata(), &profile.root_names(), file_path)?;
 
     let mask = ProjectionMask::roots(builder.parquet_schema(), profile.root_indices());
     let reader = builder
@@ -550,7 +550,7 @@ pub fn read_records_from_parquet_with_limit_and_budget(
     validate_parquet_schema(&builder, file_path, profile)?;
 
     let mut budget = DecodeBudget::resolve(budget_mb);
-    budget.preflight_columns(builder.metadata(), &profile.root_names(), file_path)?;
+    budget.preflight_row_groups(builder.metadata(), &profile.root_names(), file_path)?;
     let mask = ProjectionMask::roots(builder.parquet_schema(), profile.root_indices());
     let reader = builder
         .with_projection(mask)

@@ -135,7 +135,7 @@ single authoritative reference,
 |-------|-----------|---------------------|
 | `max_analysis_memory_mb` | `analyze_parallel` input JSON | The budget the projection is compared against. Lower it to force lazy mode; raise it to permit eager pre-load. |
 | `NEAT_AI_DISCOVERY_FOCUS_RANKING_MEMORY_MARGIN_MB` | environment | Safety margin reserved from OS-available memory on the auto-detect path. Raise it to bias towards lazy. |
-| `NEAT_AI_DISCOVERY_MAX_PARQUET_DECODE_MB` | environment | Decode ceiling for a Parquet read. Selected-column footer estimates are checked before Arrow builds batches, then decoded records are cumulatively charged. Bounds paths without a caller budget, including streaming readers and activation summaries. A footer that understates decoded sizes is outside this protection. |
+| `NEAT_AI_DISCOVERY_MAX_PARQUET_DECODE_MB` | environment | Decode ceiling for a Parquet read. Selected-column footer estimates are checked for the whole eager selection or each row group in filtering, folding and streaming readers before Arrow builds batches, then decoded records are cumulatively charged. Bounds paths without a caller budget, including streaming readers and activation summaries. A footer that understates decoded sizes is outside this protection. |
 
 ### Levers that do **not** reach it
 
