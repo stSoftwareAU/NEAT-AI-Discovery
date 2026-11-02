@@ -53,52 +53,27 @@ rather than splitting those rows to conceal record-overhead rejection.
 
 ## Test Plan
 
-Validation results for this revision are recorded below. Historical base
-reproduction and mutation results are not claimed as runs of this revision.
-Linux allocation assertions require Linux and are not exercised on macOS.
+Run on this head (Linux aarch64, Rust 1.99, warnings denied), so the Linux
+VmHWM assertions are exercised:
 
-- Passed on this macOS host with Rust 1.99 and warnings denied:
-  `cargo fmt --all -- --check`, fuzz formatting,
-  `cargo clippy --locked --all-targets --all-features -- -D warnings`,
-  `cargo check --locked --all-targets --all-features`,
-  `cargo deny check` and `RUSTDOCFLAGS="-D warnings" cargo doc --locked --no-deps`.
-- Focused tests passed with `--all-features -- --test-threads=2`:
-  Issue #2446 (10), shared decoder (6), decode bound (11), schema nullability
-  (7), activation summary (7) and recording (81), 122 tests total.
-  This includes `lazy_and_streaming_reads_accept_large_files_with_bounded_row_groups`
-  and the new many-group regression. Linux VmHWM assertions remain for CI.
-- `./quality.sh` passed Bash syntax, ShellCheck and cargo-install pinning,
-  then its summary-layout script could not create a temporary file because
-  macOS `mktemp` selected a sandbox-denied system temporary directory.
-  The remaining Rust gates were invoked separately using a toolchain and
-  Cargo cache under the permitted TMPDIR.
-
-- Debug and release library builds passed with warnings denied.
-
-- The full `cargo test --locked --lib --tests --all-features -- --test-threads=2`
-  run stopped at
-  `issue_1865_quality_gate_no_dep_mutation::quality_gate_never_mutates_the_dependency_graph`.
-  It invokes the real quality script and encounters the same sandbox-denied
-  macOS `mktemp` path. This existing test and the gate remain unchanged.
-- After adding an explicit greater-than-64-MB fixture precondition, the new
-  many-group test passed again, and all-target Clippy passed again.
-
-- Babysitter verification of head `b877432` on macOS repeated root and fuzz
-  formatting checks, all-target/all-feature Clippy and compile checks with
-  warnings denied, and all six focused suites listed above: 122 tests passed,
-  including all 10 Issue #2446 tests and all 6 shared-decoder tests.
-  The full quality script again passed its three shell gates before the
-  summary-layout check hit the sandbox-denied macOS `mktemp` path. Linux
-  allocation assertions remain for CI. The replacement PR description is
-  prepared from this summary in `.babysitter-pr-body`.
-
-- Babysitter verification of head `98c0b83` repeated root and fuzz formatting,
-  all-target/all-feature Clippy and compile checks with warnings denied,
-  dependency audit, documentation build and the six focused suites above:
-  122 tests passed, including all 10 predecode-budget and 6 shared-decoder tests.
-  Rust 1.99 was installed under the permitted TMPDIR. Fuzz binary compile and
-  Clippy checks also passed using the installed macOS SDK's C++ headers
-  explicitly. The full quality script passed its three shell gates, then hit
-  the same sandbox-denied `mktemp` call in the summary-layout check. Linux
-  allocation assertions remain for CI. The complete replacement PR description
-  is supplied in `.babysitter-pr-body`.
+- `cargo fmt --all -- --check`: passed.
+- `cargo clippy --locked --all-targets --all-features -- -D warnings`: passed.
+- `cargo test --locked --all-features --test issue_2446_parquet_predecode_budget
+  --test issue_2005_shared_batch_decoder -- --test-threads=2`: 16 passed
+  (`tests/issue_2446_parquet_predecode_budget.rs` 10 tests,
+  `tests/issue_2005_shared_batch_decoder.rs` 6 tests), including
+  `lazy_and_streaming_reads_accept_large_files_with_bounded_row_groups` and
+  `small_row_groups_cannot_combine_into_an_oversized_arrow_batch`.
+- `cargo test --locked --all-features --test issue_1869_parquet_decode_bound
+  --test issue_1901_parquet_schema_nullability
+  --test issue_1923_activation_summary`: 25 passed (11, 7 and 7 tests).
+- Red check: with `row_group_batches` in
+  `src/parquet_format/decode_budget.rs` changed to give every group's reader all
+  row groups (so one Arrow batch spans groups),
+  `small_row_groups_cannot_combine_into_an_oversized_arrow_batch` failed at its
+  first assertion: `many-group lazy read high-water mark grew by 196296 KiB
+  during the read`. The change was reverted; the other three readers in that
+  test share `row_group_batches` but were not individually red-checked.
+- Not run on this head: `./quality.sh` and the full `cargo test` run (the
+  Issue #1865 quality-gate test invokes the script), the recording suite, and
+  `cargo deny`. CI runs them.
