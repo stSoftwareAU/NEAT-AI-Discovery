@@ -51,7 +51,29 @@ Version bump: `Cargo.toml` updated for this change; the merged commit records th
 - `tests/issue_1869_parquet_decode_bound.rs` — 11 passed.
 - `timeout 900s ./quality.sh < /dev/null` — passed, including formatting, Clippy, type checks, all library and integration tests, docs, and release build.
 - Documentation sweep covered the footer reader and its estimate/fallback behavior; updated `README.md`'s Fuzz Testing section and `docs/CACHE_TUNING.md`'s memory-estimate section.
-- No existing test assertions were removed or changed.
+- No existing test assertions were weakened or removed.
+
+## Review Follow-up
+
+The footer fuzz target now uses the shared exclusive input writer in
+fuzz/footer_input.rs. It creates a private directory and file with Unix modes
+0700 and 0600, rejects oversized data before disk access, and cleans up with an
+ownership guard. New security tests cover permissions, confinement, planted
+symlink preservation, the inclusive size bound, and cleanup.
+
+The footer regression suite now includes groups of 17 and 33 rows, exact combined
+bytes from writer metadata, and rejection of a file count patched to 17. The
+single-group positive test also asserts exact bytes using independent metadata.
+Library version and both lockfiles are updated to 0.74.320.
+
+For this revision, formatting, shell syntax, ShellCheck, dependency-install
+pinning, and a standalone compiled smoke test of the actual input helper pass.
+The earlier full-suite results above describe the initial implementation.
+Re-running Cargo checks and the affected integration suites is blocked by this
+host's read-only dependency cache, missing locked dependencies, and unavailable
+Rust 1.99 toolchain. The full quality gate also hits a sandbox restriction when
+mktemp chooses a path outside the writable roots. CI must validate the committed
+revision.
 
 ## Remaining Work and Risk
 

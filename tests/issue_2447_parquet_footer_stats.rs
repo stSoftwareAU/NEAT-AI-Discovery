@@ -104,7 +104,7 @@ fn valid_footer_stats_match_written_records() {
     let stats = read_footer_stats(path.to_str().expect("UTF-8 path")).expect("valid footer");
     assert_eq!(stats.num_rows, 50);
     assert_eq!(stats.error_values, 100);
-    assert!(stats.uncompressed_bytes > 0);
+    assert_eq!(stats.uncompressed_bytes, expected_bytes(&path));
 }
 
 #[test]
@@ -179,4 +179,57 @@ fn negative_non_error_column_num_values_is_rejected() {
     // FileMetaData.num_rows is first; the following num_values belongs to obs_index.
     patch_first_compact_field(&mut bytes, 0x16, 50, -1, 1);
     expect_footer_error(&bytes, "num_values", "Invalid Parquet footer num_values");
+}
+
+fn expected_bytes(path: &std::path::Path) -> u64 {
+    use parquet::file::reader::{FileReader, SerializedFileReader};
+    let reader = SerializedFileReader::new(fs::File::open(path).unwrap()).unwrap();
+    reader
+        .metadata()
+        .row_groups()
+        .iter()
+        .map(|group| u64::try_from(group.total_byte_size()).unwrap())
+        .sum()
+}
+
+fn two_row_groups() -> (tempfile::TempDir, std::path::PathBuf, u64) {
+    use parquet::arrow::{ArrowWriter, arrow_reader::ParquetRecordBatchReaderBuilder};
+    let (dir, path) = valid_parquet();
+    let batch = ParquetRecordBatchReaderBuilder::try_new(fs::File::open(&path).unwrap())
+        .unwrap()
+        .build()
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap();
+    let mut writer =
+        ArrowWriter::try_new(fs::File::create(&path).unwrap(), batch.schema(), None).unwrap();
+    writer.write(&batch.slice(0, 17)).unwrap();
+    writer.flush().unwrap();
+    writer.write(&batch.slice(17, 33)).unwrap();
+    let metadata = writer.close().unwrap();
+    assert_eq!(metadata.row_groups().len(), 2);
+    let expected = metadata
+        .row_groups()
+        .iter()
+        .map(|group| u64::try_from(group.total_byte_size()).unwrap())
+        .sum();
+    (dir, path, expected)
+}
+
+#[test]
+fn valid_two_row_group_stats_include_both_groups() {
+    let (_dir, path, expected) = two_row_groups();
+    let stats = read_footer_stats(path.to_str().unwrap()).unwrap();
+    assert_eq!(stats.num_rows, 50);
+    assert_eq!(stats.error_values, 100);
+    assert_eq!(stats.uncompressed_bytes, expected);
+}
+
+#[test]
+fn file_num_rows_equal_to_first_group_is_rejected() {
+    let (_dir, path, _) = two_row_groups();
+    let mut bytes = read_bytes(&path);
+    patch_first_compact_field(&mut bytes, 0x16, 50, 17, 0);
+    expect_footer_error(&bytes, "num_rows", "50");
 }
