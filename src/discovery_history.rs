@@ -752,6 +752,14 @@ mod tests {
         let (mae, bias) = calibration_errors(&observations[..1]);
         assert_eq!(mae, f64::MAX);
         assert_eq!(bias, f64::MAX);
+
+        let negative = [CalibrationObservation {
+            predicted: -f64::MAX,
+            actual: f64::MAX,
+        }];
+        let (mae, bias) = calibration_errors(&negative);
+        assert_eq!(mae, f64::MAX);
+        assert_eq!(bias, -f64::MAX);
     }
 
     #[test]
@@ -767,6 +775,43 @@ mod tests {
             },
         ];
         assert_eq!(compute_calibration_factor(&observations), 1.0);
+
+        let mixed = [
+            observations[0].clone(),
+            observations[1].clone(),
+            CalibrationObservation {
+                predicted: 1.0,
+                actual: 2.0,
+            },
+        ];
+        assert_eq!(compute_calibration_factor(&mixed), 2.0);
+    }
+
+    #[test]
+    fn calibration_factor_sums_finite_ratios_without_overflow() {
+        let observations = [
+            CalibrationObservation {
+                predicted: 1.0,
+                actual: f64::MAX,
+            },
+            CalibrationObservation {
+                predicted: 1.0,
+                actual: f64::MAX,
+            },
+            CalibrationObservation {
+                predicted: 1.0,
+                actual: -f64::MAX,
+            },
+            CalibrationObservation {
+                predicted: 1.0,
+                actual: -f64::MAX,
+            },
+            CalibrationObservation {
+                predicted: 1.0,
+                actual: 2.0,
+            },
+        ];
+        assert!((compute_calibration_factor(&observations) - 0.4).abs() < 1e-12);
     }
 
     #[test]
