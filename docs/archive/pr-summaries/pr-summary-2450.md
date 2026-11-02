@@ -1,9 +1,10 @@
 ## Summary
 
-Merge inputs are protected from collisions with the merge temporary path. Each
-merge now writes through an exclusively created unique sibling file and cleans
-up only the file it created. The crate version is incremented for this change.
-Closes #2450.
+Merge inputs can no longer be truncated or redirected through `{output}.tmp`.
+The merge rejects aliases to that reserved path and writes through an
+exclusively created, unique sibling file, cleaning up only its own file. The
+FFI merge documentation describes the updated behaviour. `Cargo.toml` and
+`Cargo.lock` carry the required version bump. Closes #2450.
 
 Version bump: `Cargo.toml` updated for this change; the merged commit records
 the final version.
@@ -12,32 +13,37 @@ the final version.
 
 ### Intent and Rationale
 
-- Prevent an input named `{output_file}.tmp` or a pre-existing symlink there
-  from being truncated, overwritten, or deleted by a merge.
-- Use exclusive creation with bounded collision retries so concurrent merges
-  can use separate sibling files without opening existing paths.
+- Preserve recordings and symlink targets that occupy the former predictable
+  temporary path.
+- Use exclusive creation and bounded collision retries so a merge never opens
+  or removes an occupied candidate.
 
 ### Essential Design Decisions
 
-- Keep `{output_file}.tmp` reserved as an input alias and allocate actual merge
-  files as `{output_file}.tmp.<process-id>.<counter>`.
-- Pass the exclusively opened `File` into the writer, preserving schema checks,
-  writer closure, and rename-on-success behaviour.
+- Reserve `{output}.tmp` from inputs and allocate sibling files named
+  `{output-name}.tmp.{process-id}.{counter}` with `create_new`.
+- Limit allocation to 128 attempts, fail on non-collision errors, and pass the
+  exclusively opened file handle to the Parquet writer.
+- Remove a temporary file only after this merge created it; keep rename-on-
+  success so failed merges leave the destination untouched.
 
 ### Undiscoverable Facts
 
-- Before the fix, the input-at-temp-path test failed with `EOF: Parquet file
-  too small. Size is 0 but need 8`; the input had been truncated before read.
-- Symlink regression tests use `#[cfg(unix)]`; this run exercised them on Linux.
+- Against `origin/Develop` at `21371f7`, the input regression reproduced the
+  reported `EOF: Parquet file too small. Size is 0 but need 8` after the input
+  had been truncated.
+- Against the same base, the symlink regression observed the victim changed to
+  merged Parquet bytes. The fixed symlink test ran on Linux.
 
 ## Evidence
 
-Backend-only change. Regression tests use real Parquet recordings in isolated
-temporary directories. The original trigger is closed: canonical alias checks
-reject inputs resolving to the reserved `.tmp` path, while the actual temporary
-file is opened with `create_new` and its already-open handle is passed to the
-writer. No existing file or symlink can be opened through that pathname, and
-cleanup is reached only after this call created its unique file.
+Backend-only change. Regression tests use real Parquet recordings and paths
+inside `tempfile` directories. The original trigger is closed: the literal
+`{output}.tmp` input is rejected before allocation, aliases to an allocated
+temporary path are rejected before reading, and each candidate is opened with
+`create_new`. An occupied regular file or symlink causes a collision retry;
+the merge does not open or delete that candidate. The destination is renamed
+only after a successful write.
 
 ```mermaid
 flowchart TD
@@ -45,31 +51,33 @@ flowchart TD
     B -- yes --> C[Reject before writing]
     B -- no --> D[Create unique sibling with create_new]
     D -- collision --> D
-    D -- created --> E[Write and validate through open File]
-    E -- failure --> F[Remove this call's temporary file]
+    D -- created --> E[Check aliases and write through open handle]
+    E -- failure --> F[Remove this merge's temporary file]
     E -- success --> G[Rename temporary file to output]
 ```
 
 ## Reproduction
 
-- **symptom** — an input at `{output_file}.tmp` was truncated to zero bytes
-  before reading, and a pre-existing symlink there redirected writes to its
-  target.
-- **status** — `verified` — the regression test failed against the unfixed
-  implementation and passed after the fix.
+- **symptom** — an input named `{output}.tmp` was truncated and later deleted;
+  a symlink there redirected the merged Parquet output to its target.
+- **status** — `verified` — both regression tests failed against the base
+  production code and passed with the fix.
 - **regression test** — `tests/issue_2450_merge_temp_path.rs::input_at_legacy_temp_path_is_refused_without_changing_bytes`
 
 ## Test Plan
 
-- `tests/issue_2450_merge_temp_path.rs::input_at_legacy_temp_path_is_refused_without_changing_bytes` — failed against the base implementation, then passed with the fix. Removing the legacy alias guard made it fail again.
-- `tests/issue_2450_merge_temp_path.rs::pre_existing_temp_symlink_and_target_are_unchanged` — passed; the symlink and its target remain byte-identical.
-- `tests/issue_2450_merge_temp_path.rs::occupied_regular_temp_path_is_preserved_during_successful_merge` — passed; the merge succeeds without modifying the occupied path.
-- `tests/issue_2450_merge_temp_path.rs::failed_merge_preserves_occupied_temp_path_and_cleans_its_own_temp` — passed; the merge error is reported, the occupied path remains unchanged, and this call's temp is removed.
-- `tests/issue_2450_merge_temp_path.rs::resolved_alias_to_legacy_temp_path_is_refused_unchanged` — passed; a symlink alias to the reserved temp path is rejected without changing the target.
-- `src/parquet_format/writer.rs::tests::merge_temp_creation_does_not_open_an_existing_path` — passed; replacing exclusive creation with truncating creation made it fail.
-- `src/parquet_format/writer.rs::tests::merge_temp_allocation_uses_distinct_sibling_paths` — passed.
-- `src/parquet_format/writer.rs::tests::merge_preserves_destination_when_input_missing`, `src/parquet_format/writer.rs::tests::merge_rejects_foreign_schema_and_leaves_destination_untouched`, `src/parquet_format/writer.rs::tests::merge_rejects_output_aliasing_input`, and `src/parquet_format/writer.rs::tests::merge_writes_all_inputs_and_leaves_no_temp_file` passed.
-- `cargo fmt --all -- --check` passed.
-- `./quality.sh < /dev/null` passed on retry: dependency audit, build, Clippy, type checks, all tests, documentation build, and release library build passed. The suite reported 1,757 library tests passed and 2 ignored.
-- No existing test assertions were removed.
-- Not checked: macOS and Windows execution. The symlink regression is limited to Unix; no run was performed on macOS.
+- `tests/issue_2450_merge_temp_path.rs::input_at_legacy_temp_path_is_refused_without_changing_bytes` — passed on the final head; failed against `origin/Develop` with the reported EOF after truncation.
+- `tests/issue_2450_merge_temp_path.rs::pre_existing_temp_symlink_and_target_are_unchanged` — passed on the final head; failed against `origin/Develop` after the victim was overwritten.
+- `tests/issue_2450_merge_temp_path.rs::occupied_regular_temp_path_is_preserved_during_successful_merge` — passed; the merge succeeds and leaves the occupied bytes intact.
+- `tests/issue_2450_merge_temp_path.rs::failed_merge_preserves_occupied_temp_path_and_cleans_its_own_temp` — passed; the error preserves the occupied path and removes the file created by this merge.
+- `tests/issue_2450_merge_temp_path.rs::resolved_alias_to_legacy_temp_path_is_refused_unchanged` — passed; a symlink alias is refused with its target unchanged.
+- `src/parquet_format/writer.rs::tests::merge_temp_creation_does_not_open_an_existing_path` — passed; replacing `create_new` with truncating creation made it fail.
+- `src/parquet_format/writer.rs::tests::merge_temp_allocation_retries_collision_without_changing_occupied_file` — passed; changing the collision branch to fail immediately made it fail.
+- `src/parquet_format/writer.rs::tests::merge_temp_allocation_fails_after_collision_limit` and `src/parquet_format/writer.rs::tests::merge_temp_allocation_reports_non_collision_errors` — passed for exhausted collisions and an unavailable parent directory.
+- `src/parquet_format/writer.rs::tests::merge_rejects_input_alias_to_new_temp_path` — passed; removing the allocated-path alias guard made it fail.
+- `src/parquet_format/writer.rs::tests::merge_rename_failure_preserves_destination_and_cleans_created_temp` — passed; removing rename-failure cleanup made it detect the leftover temp file.
+- Removing cleanup after an input-read failure made `tests/issue_2450_merge_temp_path.rs::failed_merge_preserves_occupied_temp_path_and_cleans_its_own_temp` fail on the leftover file.
+- Final targeted runs: `cargo test --test issue_2450_merge_temp_path -- --nocapture` passed (5 tests); `cargo test --lib parquet_format::writer::tests::merge_ -- --nocapture` passed (11 tests).
+- `cargo fmt --all -- --check` passed. `git diff --check` passed.
+- `./quality.sh < /dev/null` passed, including dependency audit, build, Clippy, type checks, all tests (1,762 passed, 2 ignored), documentation build, and release library build.
+- No assertions from base-branch tests were removed or modified. macOS and Windows execution was not checked; the symlink-specific cases are Unix-only.
