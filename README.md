@@ -501,7 +501,8 @@ cargo +nightly fuzz run --locked fuzz_ffi_deserialisation -- -max_total_time=60
 cargo +nightly fuzz run --locked fuzz_ffi_entry_points -- -max_total_time=60 -max_len=4096
 
 # Fuzz footer parsing with input size bounded to 64 KiB
-cargo +nightly fuzz run --locked fuzz_parquet_footer_stats fuzz/seeds/parquet_footer_stats -- -max_total_time=60 -max_len=65536
+mkdir -p fuzz/corpus/fuzz_parquet_footer_stats
+cargo +nightly fuzz run --locked fuzz_parquet_footer_stats fuzz/corpus/fuzz_parquet_footer_stats fuzz/seeds/parquet_footer_stats -- -max_total_time=60 -max_len=65536
 
 # List all available fuzz targets
 cargo +nightly fuzz list

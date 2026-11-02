@@ -59,14 +59,16 @@ for target in "${FUZZ_TARGETS[@]}"; do
     # longer reproducible (Issue #1992).
     if [ "${target}" = "fuzz_parquet_footer_stats" ]; then
         fuzz_args=("-max_total_time=${MAX_TIME}" "-max_len=65536")
-        fuzz_corpus="fuzz/seeds/parquet_footer_stats"
+        # libFuzzer writes discoveries to the first corpus, keeping seeds unchanged.
+        mkdir -p "fuzz/corpus/${target}"
+        fuzz_corpus="fuzz/corpus/${target}"
     else
         fuzz_args=("-max_total_time=${MAX_TIME}")
         fuzz_corpus=""
     fi
     fuzz_status=0
     if [ -n "${fuzz_corpus}" ]; then
-        if ! cargo +nightly fuzz run --locked "${target}" "${fuzz_corpus}" -- "${fuzz_args[@]}"; then
+        if ! cargo +nightly fuzz run --locked "${target}" "${fuzz_corpus}" fuzz/seeds/parquet_footer_stats -- "${fuzz_args[@]}"; then
             fuzz_status=1
         fi
     elif ! cargo +nightly fuzz run --locked "${target}" -- "${fuzz_args[@]}"; then
