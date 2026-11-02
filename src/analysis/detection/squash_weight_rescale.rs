@@ -305,6 +305,11 @@ pub fn detect_squash_weight_rescale_candidates(
             })
             .collect();
 
+        // Issue #2375: an f32 product can overflow to ±inf (e.g. 1e38 * 4.0); never emit it.
+        if rescaled_weights.iter().any(|(_, _, w)| !w.is_finite()) {
+            continue;
+        }
+
         // Boosted improvement for coordinated change
         let boosted_improvement = improvement * COORDINATED_BOOST;
 
@@ -327,11 +332,8 @@ pub fn detect_squash_weight_rescale_candidates(
     }
 
     // Sort by estimated improvement descending
-    candidates.sort_by(|a, b| {
-        b.estimated_improvement
-            .partial_cmp(&a.estimated_improvement)
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
+    // Issue #2381: total order, as the sibling detectors
+    candidates.sort_by(|a, b| b.estimated_improvement.total_cmp(&a.estimated_improvement));
 
     candidates
 }

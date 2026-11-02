@@ -78,7 +78,21 @@ pub(crate) fn append_scoring_specs(
         records: cache.load_records_for_neuron_types(&creature, &["input"]),
         guard_records,
         detect: |records| observation_utilisation::detect_underutilised_observations(&creature, &records),
-        convert: |detected| observation_utilisation::observation_utilisation_to_coordinated_candidates(&detected, &creature),
+        convert: |detected| {
+            let scan = observation_utilisation::observation_utilisation_to_coordinated_candidates_with_deadline(
+                &detected,
+                &creature,
+                &deadline,
+            );
+            if let Some(reason) = scan.stop {
+                tracing::warn!(
+                    reason = ?reason,
+                    returned = scan.candidates.len(),
+                    "Observation utilisation conversion stopped early; returning partial candidates."
+                );
+            }
+            scan.candidates
+        },
     );
 
     // Issue #435: Input sensitivity analysis for dominant inputs
@@ -88,7 +102,20 @@ pub(crate) fn append_scoring_specs(
         guard_records,
         detect: |records| {
             let config = input_sensitivity::InputSensitivityConfig::default();
-            input_sensitivity::detect_dominant_inputs(&creature, &records, &config)
+            let scan = input_sensitivity::detect_dominant_inputs_with_deadline(
+                &creature,
+                &records,
+                &config,
+                &deadline,
+            );
+            if let Some(reason) = scan.stop {
+                tracing::warn!(
+                    reason = ?reason,
+                    returned = scan.candidates.len(),
+                    "Dominant input detection stopped early; returning partial candidates."
+                );
+            }
+            scan.candidates
         },
         convert: |detected| input_sensitivity::dominant_inputs_to_coordinated_candidates(&detected),
     );
@@ -101,7 +128,7 @@ pub(crate) fn append_scoring_specs(
             let config = input_sensitivity::InputSensitivityConfig::default();
             input_sensitivity::detect_threshold_effects(&creature, &records, &config)
         },
-        convert: |detected| input_sensitivity::threshold_effects_to_coordinated_candidates(&detected),
+        convert: |detected| input_sensitivity::threshold_effects_to_coordinated_candidates(&detected, &creature),
     );
 
     // Issue #423: Sample-weighted discovery — prioritise high-error samples
@@ -260,5 +287,207 @@ pub(crate) fn append_scoring_specs(
             detect: |records| batch_successful::detect_batch_successful_groups(&creature, &records),
             convert: |detected| batch_successful::batch_successful_to_coordinated_candidates(&detected),
         );
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::cast_precision_loss)]
+mod issue_2379_tests {
+    use super::*;
+    use crate::types::DiscoverRecord;
+    use crate::{NeuronJson, SynapseJson};
+
+    fn make_records(uuid: &str) -> Vec<DiscoverRecord> {
+        (0..50)
+            .map(|obs_index| {
+                if uuid == "input" && obs_index < 20 {
+                    DiscoverRecord::new(obs_index, uuid.to_string(), Some(-1.0), -1.0, vec![0.01])
+                } else {
+                    let value = if uuid == "input" {
+                        0.2 + (obs_index as f32 - 20.0) / 50.0
+                    } else {
+                        obs_index as f32
+                    };
+                    DiscoverRecord::new(
+                        obs_index,
+                        uuid.to_string(),
+                        Some(value),
+                        value,
+                        vec![value],
+                    )
+                }
+            })
+            .collect()
+    }
+
+    fn scoring_specs(deadline: Option<SystemTime>) -> Vec<discovery_dispatch::DiscoveryModuleSpec> {
+        let creature = Arc::new(crate::CreatureJson {
+            neurons: vec![
+                NeuronJson {
+                    uuid: "input".to_string(),
+                    neuron_type: "input".to_string(),
+                    squash: "IDENTITY".to_string(),
+                    bias: 0.0,
+                },
+                NeuronJson {
+                    uuid: "output".to_string(),
+                    neuron_type: "output".to_string(),
+                    squash: "IDENTITY".to_string(),
+                    bias: 0.0,
+                },
+            ],
+            synapses: vec![SynapseJson {
+                from_uuid: "input".to_string(),
+                to_uuid: "output".to_string(),
+                weight: 20.0,
+                synapse_type: None,
+            }],
+            input: 1,
+            output: 1,
+        });
+        let cache = Arc::new(crate::analysis::cache::RecordCache::with_loader(
+            "test-records",
+            Arc::new(|_, uuid| Ok(make_records(uuid))),
+        ));
+        let mut modules = Vec::new();
+        append_scoring_specs(
+            &mut modules,
+            &creature,
+            &cache,
+            CostFunctionHint::default(),
+            TaskDescriptor::default(),
+            deadline,
+        );
+        modules
+    }
+
+    fn run_named(
+        modules: &mut Vec<discovery_dispatch::DiscoveryModuleSpec>,
+        name: &str,
+    ) -> Option<discovery_dispatch::DiscoveryDetectionResult> {
+        let index = modules
+            .iter()
+            .position(|module| module.module_name == name)
+            .expect("requested scoring spec is present");
+        let spec = modules.remove(index);
+        (spec.detect_fn)()
+    }
+
+    #[test]
+    fn issue_2379_observation_dispatch_passes_its_deadline_to_conversion() {
+        let past_deadline = Some(SystemTime::UNIX_EPOCH);
+        let mut modules = scoring_specs(past_deadline);
+        let result = run_named(&mut modules, "observation utilisation detection")
+            .expect("the observation detector still produced a detection");
+        assert!(result.detected_count > 0);
+        assert!(
+            result.candidates.is_empty(),
+            "deadline stops conversion before topology work"
+        );
+    }
+
+    #[test]
+    fn issue_2379_dominant_input_dispatch_passes_its_deadline_to_detection() {
+        let mut modules = scoring_specs(Some(SystemTime::UNIX_EPOCH));
+        let result = run_named(&mut modules, "dominant input detection");
+        assert!(
+            result.is_none(),
+            "expired deadline prevents a dominant-input result"
+        );
+
+        let mut modules = scoring_specs(None);
+        let result = run_named(&mut modules, "dominant input detection")
+            .expect("the direct input-to-output path is a positive control");
+        assert!(!result.candidates.is_empty());
+    }
+
+    #[test]
+    fn issue_2412_threshold_dispatch_passes_creature_topology_to_conversion() {
+        let creature = Arc::new(crate::CreatureJson {
+            neurons: vec![
+                NeuronJson {
+                    uuid: "input".to_string(),
+                    neuron_type: "input".to_string(),
+                    squash: "IDENTITY".to_string(),
+                    bias: 0.0,
+                },
+                NeuronJson {
+                    uuid: "steep".to_string(),
+                    neuron_type: "hidden".to_string(),
+                    squash: "TANH".to_string(),
+                    bias: 0.0,
+                },
+                NeuronJson {
+                    uuid: "dampening-input-output".to_string(),
+                    neuron_type: "hidden".to_string(),
+                    squash: "IDENTITY".to_string(),
+                    bias: 0.0,
+                },
+                NeuronJson {
+                    uuid: "output".to_string(),
+                    neuron_type: "output".to_string(),
+                    squash: "IDENTITY".to_string(),
+                    bias: 0.0,
+                },
+            ],
+            synapses: vec![
+                SynapseJson {
+                    from_uuid: "input".to_string(),
+                    to_uuid: "steep".to_string(),
+                    weight: 20.0,
+                    synapse_type: None,
+                },
+                SynapseJson {
+                    from_uuid: "steep".to_string(),
+                    to_uuid: "output".to_string(),
+                    weight: 1.0,
+                    synapse_type: None,
+                },
+            ],
+            input: 1,
+            output: 1,
+        });
+        let cache = Arc::new(cache::RecordCache::with_loader(
+            "issue-2412-threshold",
+            Arc::new(|_, uuid| {
+                Ok((0..50)
+                    .map(|obs_index| {
+                        let value = (obs_index as f32 - 25.0) / 250.0;
+                        let activation = if uuid == "steep" { value * 20.0 } else { value };
+                        DiscoverRecord::new(
+                            obs_index,
+                            uuid.to_string(),
+                            Some(value),
+                            activation,
+                            vec![0.1],
+                        )
+                    })
+                    .collect())
+            }),
+        ));
+        let mut modules = Vec::new();
+        append_scoring_specs(
+            &mut modules,
+            &creature,
+            &cache,
+            CostFunctionHint::default(),
+            TaskDescriptor::default(),
+            None,
+        );
+
+        let result = run_named(&mut modules, "threshold effect detection")
+            .expect("fixture produces a threshold-effect detection");
+        let added_uuid = result
+            .candidates
+            .iter()
+            .flat_map(|candidate| &candidate.operations)
+            .find_map(|operation| match operation {
+                crate::CoordinatedStructuralOpJson::AddNeuron { neuron_uuid, .. } => {
+                    Some(neuron_uuid.as_str())
+                }
+                _ => None,
+            })
+            .expect("threshold dispatch emits a dampening neuron");
+        assert_eq!(added_uuid, "dampening-input-output-1");
     }
 }

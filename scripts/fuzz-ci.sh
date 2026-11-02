@@ -1,7 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 
-# Fuzzing CI script — runs both fuzz targets for a configurable duration.
+# Fuzzing CI script — runs all fuzz targets for a configurable duration.
 #
 # Usage:
 #   ./scripts/fuzz-ci.sh [max_total_time_per_target]
@@ -45,6 +45,8 @@ fi
 FUZZ_TARGETS=(
     "fuzz_ffi_deserialisation"
     "fuzz_ffi_entry_points"
+    "fuzz_parquet_footer_stats"
+    "fuzz_parquet_predecode_budget"
 )
 
 FAILED=0
@@ -56,7 +58,24 @@ for target in "${FUZZ_TARGETS[@]}"; do
     # `--locked` keeps the run on the committed `fuzz/Cargo.lock` resolution the
     # README promises; without it cargo re-resolves the graph and the run is no
     # longer reproducible (Issue #1992).
-    if cargo +nightly fuzz run --locked "${target}" -- -max_total_time="${MAX_TIME}"; then
+    if [ "${target}" = "fuzz_parquet_footer_stats" ]; then
+        fuzz_args=("-max_total_time=${MAX_TIME}" "-max_len=65536")
+        # libFuzzer writes discoveries to the first corpus, keeping seeds unchanged.
+        mkdir -p "fuzz/corpus/${target}"
+        fuzz_corpus="fuzz/corpus/${target}"
+    else
+        fuzz_args=("-max_total_time=${MAX_TIME}")
+        fuzz_corpus=""
+    fi
+    fuzz_status=0
+    if [ -n "${fuzz_corpus}" ]; then
+        if ! cargo +nightly fuzz run --locked "${target}" "${fuzz_corpus}" fuzz/seeds/parquet_footer_stats -- "${fuzz_args[@]}"; then
+            fuzz_status=1
+        fi
+    elif ! cargo +nightly fuzz run --locked "${target}" -- "${fuzz_args[@]}"; then
+        fuzz_status=1
+    fi
+    if [ "${fuzz_status}" -eq 0 ]; then
         echo "✅ ${target} completed without crashes"
     else
         echo "❌ ${target} failed"

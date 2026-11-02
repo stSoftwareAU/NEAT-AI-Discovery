@@ -102,6 +102,8 @@ pub const GATE_SIDE_REJECTION_REASONS: &[&str] = &[
 /// A run dominated by these is **candidate-starved** — generation is the
 /// limiting factor, so widening (novelty escalation) is warranted.
 pub const UPSTREAM_REJECTION_REASONS: &[&str] = &[
+    // Invalid operation parameters are rejected before the scoring gate.
+    reasons::REJECTION_NON_FINITE_OPERATION,
     reasons::REJECTION_DUPLICATE_OF_FAILURE_CACHE,
     reasons::REJECTION_ADD_SYNAPSE_GATED,
     reasons::REJECTION_CPU_PRE_REJECT_NO_SIGNAL,
@@ -433,6 +435,19 @@ mod tests {
         let class = classify(&signals, &StarvationConfig::default());
         assert_eq!(class, StarvationClass::CandidateStarved);
         assert!(recommend_widening(class));
+    }
+
+    #[test]
+    fn non_finite_operations_are_upstream_rejections() {
+        let b = breakdown(&[(reasons::REJECTION_NON_FINITE_OPERATION, 10)]);
+        let signals = signals_from_breakdown(&b, 0);
+        assert_eq!(signals.upstream_rejections, 10);
+        assert_eq!(signals.gate_side_rejections, 0);
+        assert_eq!(signals.abundance_rejections, 0);
+        assert_eq!(
+            classify(&signals, &StarvationConfig::default()),
+            StarvationClass::CandidateStarved
+        );
     }
 
     #[test]
