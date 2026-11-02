@@ -32,7 +32,7 @@ final version.
 
 ### Undiscoverable Facts
 
-- On `origin/Develop` at `37fe687`, the regression test failed with a 239,748
+- On `origin/Develop` at `37fe687`, the regression test failed with a 239,688
   KiB high-water increase. On the fixed head, it passed its allocation bound.
 - The allocation assertion uses Linux `/proc`. Other platforms still require
   the typed error and the footer-preflight phase message, and read the legal
@@ -134,10 +134,9 @@ flowchart LR
   `fuzz/corpus/fuzz_parquet_predecode_budget/oversized-errors.parquet` with
   `cargo run --manifest-path fuzz/Cargo.toml --locked --bin fuzz_parquet_predecode_budget -- fuzz/corpus/fuzz_parquet_predecode_budget -runs=1`
   completed 2 runs over 1 corpus file. The binary was not coverage-instrumented.
-- `timeout 900 ./quality.sh < /dev/null` — passed on the regression-coverage
-  retry. All script checks, dependency audit, debug build, formatting, Clippy,
-  type checks, tests, documentation build and release library build completed.
-  The 291 test suites reported 6,438 passed, 0 failed and 8 ignored.
+- `timeout 900 ./quality.sh < /dev/null` — passed on 2026-11-02. Script
+  checks, dependency audit, debug build, formatting, Clippy, type checks, tests,
+  documentation build and release library build completed.
 - A separate base-branch replay of the malformed-UUID test was not completed:
   the copied test failed to compile with `E0308` / `E0277` because the base
   dependency graph had mismatched Arrow schema `Field` types. The malformed
