@@ -614,6 +614,12 @@ Success:
 }
 ```
 
+`record_discovery_data` writes to a sibling `discovery_data.parquet.tmp`,
+finalises and closes the Parquet writer, then renames the completed file to
+`discovery_data.parquet`. A processing, finalisation, or publication error
+removes the temporary file and leaves any previously published recording in
+place.
+
 Error:
 ```json
 {
