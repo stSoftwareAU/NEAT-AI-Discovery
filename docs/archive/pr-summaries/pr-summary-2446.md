@@ -82,3 +82,12 @@ Linux allocation assertions require Linux and are not exercised on macOS.
   macOS `mktemp` path. This existing test and the gate remain unchanged.
 - After adding an explicit greater-than-64-MB fixture precondition, the new
   many-group test passed again, and all-target Clippy passed again.
+
+- Babysitter verification of head `b877432` on macOS repeated root and fuzz
+  formatting checks, all-target/all-feature Clippy and compile checks with
+  warnings denied, and all six focused suites listed above: 122 tests passed,
+  including all 10 Issue #2446 tests and all 6 shared-decoder tests.
+  The full quality script again passed its three shell gates before the
+  summary-layout check hit the sandbox-denied macOS `mktemp` path. Linux
+  allocation assertions remain for CI. The replacement PR description is
+  prepared from this summary in `.babysitter-pr-body`.
