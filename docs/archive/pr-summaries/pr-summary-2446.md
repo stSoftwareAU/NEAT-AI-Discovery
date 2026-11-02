@@ -91,3 +91,14 @@ Linux allocation assertions require Linux and are not exercised on macOS.
   summary-layout check hit the sandbox-denied macOS `mktemp` path. Linux
   allocation assertions remain for CI. The replacement PR description is
   prepared from this summary in `.babysitter-pr-body`.
+
+- Babysitter verification of head `98c0b83` repeated root and fuzz formatting,
+  all-target/all-feature Clippy and compile checks with warnings denied,
+  dependency audit, documentation build and the six focused suites above:
+  122 tests passed, including all 10 predecode-budget and 6 shared-decoder tests.
+  Rust 1.99 was installed under the permitted TMPDIR. Fuzz binary compile and
+  Clippy checks also passed using the installed macOS SDK's C++ headers
+  explicitly. The full quality script passed its three shell gates, then hit
+  the same sandbox-denied `mktemp` call in the summary-layout check. Linux
+  allocation assertions remain for CI. The complete replacement PR description
+  is supplied in `.babysitter-pr-body`.
