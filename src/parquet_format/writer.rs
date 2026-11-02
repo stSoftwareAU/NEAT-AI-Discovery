@@ -25,9 +25,10 @@ use arrow::datatypes::{DataType, Field};
 use arrow::record_batch::RecordBatch;
 use parquet::arrow::{ArrowWriter, ProjectionMask};
 use parquet::file::properties::WriterProperties;
-use std::fs::{self, File};
+use std::fs::{self, File, OpenOptions};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::parquet_format::reader::{ColumnProfile, validate_parquet_schema};
 use crate::parquet_format::schema::{
@@ -344,29 +345,70 @@ fn resolve_for_alias_check(path: &str) -> PathBuf {
 }
 
 /// Remove a temporary merge file, warning loudly if the cleanup itself fails.
-fn remove_merge_temp_file(tmp_path: &str) {
+fn remove_merge_temp_file(tmp_path: &Path) {
     if let Err(err) = fs::remove_file(tmp_path)
         && err.kind() != std::io::ErrorKind::NotFound
     {
         tracing::warn!(
-            tmp_path,
+            tmp_path = %tmp_path.display(),
             error = %err,
             "Failed to remove temporary merged Parquet file"
         );
     }
 }
 
+fn create_temp_file_exclusive(path: &Path) -> std::io::Result<File> {
+    OpenOptions::new().write(true).create_new(true).open(path)
+}
+
+/// Allocate an exclusive sibling path for a merge, retrying name collisions.
+fn create_merge_temp_file(output_file: &str) -> Result<(PathBuf, File)> {
+    static NEXT_TEMP_ID: AtomicU64 = AtomicU64::new(0);
+    const MAX_TEMP_ATTEMPTS: u32 = 128;
+
+    let output_path = Path::new(output_file);
+    let parent = output_path.parent().unwrap_or_else(|| Path::new("."));
+    let file_name = output_path
+        .file_name()
+        .ok_or_else(|| anyhow::anyhow!("Merge output path has no file name: {output_file}"))?;
+
+    for _ in 0..MAX_TEMP_ATTEMPTS {
+        let id = NEXT_TEMP_ID.fetch_add(1, Ordering::Relaxed);
+        let tmp_name = format!(
+            "{}.tmp.{}.{}",
+            file_name.to_string_lossy(),
+            std::process::id(),
+            id
+        );
+        let tmp_path = parent.join(tmp_name);
+        match create_temp_file_exclusive(&tmp_path) {
+            Ok(file) => return Ok((tmp_path, file)),
+            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(err) => {
+                return Err(err).with_context(|| {
+                    format!(
+                        "Failed to create temporary merged Parquet file: {}",
+                        tmp_path.display()
+                    )
+                });
+            }
+        }
+    }
+
+    anyhow::bail!(
+        "Failed to allocate a unique temporary file for merge output {output_file} after {MAX_TEMP_ATTEMPTS} attempts"
+    )
+}
+
 /// Decoded bytes buffered at which a merge closes the current output row group.
 const MERGE_OUTPUT_ROW_GROUP_FLUSH_BYTES: usize = 2 * 1024 * 1024;
 
-/// Read every input file and write the merged result into `tmp_path`.
+/// Read every input file and write the merged result into the open temp file.
 ///
 /// Each input's schema is validated before any batch is appended, so a foreign
 /// schema is rejected rather than smuggled into the merged output.
-fn merge_into_temp_file(tmp_path: &str, input_files: &[String]) -> Result<()> {
+fn merge_into_temp_file(file: File, input_files: &[String]) -> Result<()> {
     let schema = Arc::new(create_schema());
-    let file = File::create(tmp_path)
-        .with_context(|| format!("Failed to create temporary merged Parquet file: {tmp_path}"))?;
     let props = WriterProperties::builder().build();
     let mut writer = ArrowWriter::try_new(file, schema, Some(props))
         .context("Failed to create ArrowWriter for merge")?;
@@ -424,15 +466,17 @@ fn merge_into_temp_file(tmp_path: &str, input_files: &[String]) -> Result<()> {
 /// Input files are appended in the provided order.
 ///
 /// The merge is non-destructive (Issue #1900): every input is read and
-/// schema-validated into a sibling `{output_file}.tmp`, which is renamed onto
-/// `output_file` only once the merged writer has closed cleanly. Any failure
-/// removes the temporary file and leaves an existing destination untouched.
+/// schema-validated into a uniquely named sibling temporary file, which is
+/// created exclusively and renamed onto `output_file` only once the merged
+/// writer has closed cleanly. Any failure removes only the temporary file
+/// created by this invocation and leaves an existing destination untouched.
 ///
 /// # Errors
 ///
 /// Returns an error if `input_files` is empty, if any entry of `input_files`
-/// resolves to `output_file` (which would otherwise truncate an input), if any
-/// input is missing, unreadable, or carries a non-discovery schema, or if the
+/// resolves to `output_file` or the reserved `{output_file}.tmp` path (which
+/// would otherwise collide with a merge temporary path), if any input is
+/// missing, unreadable, or carries a non-discovery schema, or if a unique
 /// temporary file cannot be written or renamed.
 pub fn merge_parquet_files(output_file: &str, input_files: &[String]) -> Result<()> {
     if input_files.is_empty() {
@@ -442,6 +486,8 @@ pub fn merge_parquet_files(output_file: &str, input_files: &[String]) -> Result<
     }
 
     let output_resolved = resolve_for_alias_check(output_file);
+    let legacy_tmp_path = format!("{output_file}.tmp");
+    let legacy_tmp_resolved = resolve_for_alias_check(&legacy_tmp_path);
     for input_path in input_files {
         if resolve_for_alias_check(input_path) == output_resolved {
             anyhow::bail!(
@@ -449,10 +495,26 @@ pub fn merge_parquet_files(output_file: &str, input_files: &[String]) -> Result<
                  '{input_path}'; refusing to merge a file onto itself"
             );
         }
+        if resolve_for_alias_check(input_path) == legacy_tmp_resolved {
+            anyhow::bail!(
+                "Merge input '{input_path}' aliases the reserved temporary path '{legacy_tmp_path}'; refusing to merge it"
+            );
+        }
     }
 
-    let tmp_path = format!("{output_file}.tmp");
-    if let Err(err) = merge_into_temp_file(&tmp_path, input_files) {
+    let (tmp_path, file) = create_merge_temp_file(output_file)?;
+    let tmp_path_string = tmp_path.to_string_lossy().into_owned();
+    let resolved_tmp_path = resolve_for_alias_check(&tmp_path_string);
+    if let Some(input_path) = input_files
+        .iter()
+        .find(|input_path| resolve_for_alias_check(input_path) == resolved_tmp_path)
+    {
+        remove_merge_temp_file(&tmp_path);
+        anyhow::bail!(
+            "Merge input '{input_path}' aliases the temporary path '{tmp_path_string}'; refusing to merge it"
+        );
+    }
+    if let Err(err) = merge_into_temp_file(file, input_files) {
         remove_merge_temp_file(&tmp_path);
         return Err(err);
     }
@@ -460,7 +522,7 @@ pub fn merge_parquet_files(output_file: &str, input_files: &[String]) -> Result<
     if let Err(err) = fs::rename(&tmp_path, output_file) {
         remove_merge_temp_file(&tmp_path);
         return Err(anyhow::Error::new(err).context(format!(
-            "Failed to rename temporary file {tmp_path} to {output_file}"
+            "Failed to rename temporary file {tmp_path_string} to {output_file}"
         )));
     }
 
@@ -512,6 +574,37 @@ mod tests {
 
     fn path_in(dir: &TempDir, name: &str) -> String {
         dir.path().join(name).to_string_lossy().into_owned()
+    }
+
+    #[test]
+    fn merge_temp_creation_does_not_open_an_existing_path() {
+        let dir = TempDir::new().expect("temp dir");
+        let path = dir.path().join("occupied.tmp");
+        fs::write(&path, b"preserve these bytes").expect("write existing file");
+
+        let err = create_temp_file_exclusive(&path).expect_err("existing path must be refused");
+
+        assert_eq!(err.kind(), std::io::ErrorKind::AlreadyExists);
+        assert_eq!(
+            fs::read(path).expect("read existing file"),
+            b"preserve these bytes"
+        );
+    }
+
+    #[test]
+    fn merge_temp_allocation_uses_distinct_sibling_paths() {
+        let dir = TempDir::new().expect("temp dir");
+        let output = path_in(&dir, "merged.parquet");
+
+        let (first_path, first_file) = create_merge_temp_file(&output).expect("first temp file");
+        let (second_path, second_file) = create_merge_temp_file(&output).expect("second temp file");
+
+        assert_ne!(first_path, second_path);
+        assert_eq!(first_path.parent(), Path::new(&output).parent());
+        assert_eq!(second_path.parent(), Path::new(&output).parent());
+        drop((first_file, second_file));
+        fs::remove_file(first_path).expect("remove first temp file");
+        fs::remove_file(second_path).expect("remove second temp file");
     }
 
     #[test]
