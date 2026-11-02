@@ -14,6 +14,7 @@
 
 use neat_ai_discovery::analysis::cache::StreamingRecordCache;
 use neat_ai_discovery::ffi_types::DiscoveryErrorKind;
+use neat_ai_discovery::parquet_format::decode_budget::{DecodeBudget, estimated_record_bytes};
 use neat_ai_discovery::parquet_format::{
     ColumnProfile, read_all_records_from_parquet, read_all_records_grouped_by_neuron,
     read_records_from_parquet, read_records_from_parquet_with_limit_and_profile,
@@ -134,31 +135,27 @@ fn the_without_errors_profile_still_yields_empty_error_lists() {
     assert_eq!(with_null.value, None, "nullability survives the projection");
 }
 
-/// Issue #1869 landed on the three `reader.rs` copies but not on the streaming
-/// block loader. With one shared decoder the streaming path charges the same
-/// budget, so an oversized block fails loud instead of materialising.
+/// The streaming UUID index rejects a single row group whose projected decoded size
+/// exceeds the ceiling before it builds an Arrow batch (Issue #2446).
 #[test]
 #[serial]
-fn the_streaming_block_loader_charges_the_decode_budget() {
+fn the_streaming_index_preflights_an_oversized_row_group() {
     let file = write_bulky_parquet(20_000, 32);
     let path = file.path().to_str().expect("utf-8 path");
 
     // SAFETY: `#[serial]` guarantees no other test runs concurrently, so no
     // other thread can read the environment while it is being mutated.
     unsafe { std::env::set_var("NEAT_AI_DISCOVERY_MAX_PARQUET_DECODE_MB", "1") };
-    let bounded = StreamingRecordCache::new(path, None, None)
-        .expect("the block index builds without materialising records")
-        .get(NEURON);
+    let bounded = StreamingRecordCache::new(path, None, None);
     // SAFETY: as above — `#[serial]` serialises this test against all others.
     unsafe { std::env::remove_var("NEAT_AI_DISCOVERY_MAX_PARQUET_DECODE_MB") };
 
     // Match rather than `expect_err`: the success value is 10k records, and
     // debug-printing them would bury the assertion in megabytes of output.
     let err = match bounded {
-        Ok(records) => panic!(
-            "a 1 MB budget cannot hold a 10k-record block, but {} records were returned",
-            records.len()
-        ),
+        Ok(_) => {
+            panic!("the 1 MB budget must reject the projected Parquet row group before indexing")
+        }
         Err(err) => err,
     };
     let kind = neat_ai_discovery::ffi_types::classify_anyhow_error(&err);
@@ -170,6 +167,72 @@ fn the_streaming_block_loader_charges_the_decode_budget() {
     assert!(
         err.to_string().contains("decode budget"),
         "the error should name the decode budget: {err}"
+    );
+}
+
+/// Dictionary encoding keeps repeated long identifiers small in the footer,
+/// while each retained record owns its full identifier. Both preflights fit,
+/// but the block must still enforce the cumulative record budget.
+#[test]
+#[serial]
+fn the_streaming_block_loader_charges_the_decode_budget() {
+    let file = NamedTempFile::with_suffix(".parquet").expect("temp file");
+    let path = file.path().to_str().expect("utf-8 path");
+    let uuid = "n".repeat(100);
+    let records: Vec<_> = (0..7_000)
+        .map(|i| DiscoverRecord::new(i, uuid.clone(), Some(0.5), 0.5, vec![]))
+        .collect();
+    write_records_to_parquet(path, &records).expect("write long-identifier fixture");
+
+    let limit_bytes = 1024 * 1024;
+    assert!(
+        estimated_record_bytes(uuid.len(), 0) * records.len() as u64 > limit_bytes,
+        "the retained records must exceed the 1 MB ceiling"
+    );
+    let builder = parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder::try_new(
+        std::fs::File::open(file.path()).expect("open fixture"),
+    )
+    .expect("fixture metadata");
+    let budget = DecodeBudget::new(Some(limit_bytes));
+    budget
+        .preflight_columns(builder.metadata(), &["neuron_uuid"], path)
+        .expect("the index preflight must fit within 1 MB");
+    budget
+        .preflight_columns(
+            builder.metadata(),
+            &["obs_index", "neuron_uuid", "value", "activation", "errors"],
+            path,
+        )
+        .expect("the block preflight must fit within 1 MB");
+
+    // SAFETY: `#[serial]` serialises tests that mutate these environment variables.
+    unsafe {
+        std::env::set_var("NEAT_AI_DISCOVERY_MAX_PARQUET_DECODE_MB", "1");
+        std::env::set_var("NEAT_AI_DISCOVERY_BLOCK_SIZE", "10000");
+    }
+    let bounded = StreamingRecordCache::new(path, None, None).map(|cache| cache.get(&uuid));
+    // SAFETY: as above, the environment mutations are serialised.
+    unsafe {
+        std::env::remove_var("NEAT_AI_DISCOVERY_MAX_PARQUET_DECODE_MB");
+        std::env::remove_var("NEAT_AI_DISCOVERY_BLOCK_SIZE");
+    }
+
+    let loaded = bounded.expect("the streaming index must build within 1 MB");
+    let err = match loaded {
+        Ok(records) => panic!(
+            "the 1 MB record budget must reject the block, but {} records were returned",
+            records.len()
+        ),
+        Err(err) => err,
+    };
+    assert_eq!(
+        neat_ai_discovery::ffi_types::classify_anyhow_error(&err),
+        DiscoveryErrorKind::MemoryExhausted,
+        "record budget aborts must be typed as memory exhaustion: {err:#}"
+    );
+    assert!(
+        format!("{err:#}").contains("record charging after Arrow batch construction"),
+        "the refusal must come from record charging after both preflights: {err:#}"
     );
 }
 

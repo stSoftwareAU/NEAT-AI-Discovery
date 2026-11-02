@@ -1,17 +1,16 @@
 //! Cumulative decode budget for Parquet reads (Issue #1869).
 //!
-//! Parquet's dictionary and RLE encodings routinely achieve far better than
-//! the 3:1 ratio the pre-load projection assumes, so a projection can never be
-//! a *bound*. This budget is the bound: every record materialised by the reader
-//! is charged against it inside the batch loop, and the decode fails loud with
-//! a typed [`DiscoveryError::MemoryExhausted`] the moment the ceiling is
-//! reached — before the allocation that would exhaust the host completes.
+//! Footer estimates reject known oversized decodes before Arrow builds a
+//! batch. Per-record charging remains a second check after batch decoding, but
+//! cannot protect against a footer that understates decoded sizes.
 
 use anyhow::Result;
 
 use crate::DiscoveryError;
 use crate::analysis::utils::get_memory_info;
-use crate::parquet_format::footer::RECORD_STRUCT_BYTES;
+use crate::parquet_format::footer::{
+    ASSUMED_UUID_HEAP_BYTES, RECORD_STRUCT_BYTES, projected_bytes_for_columns,
+};
 
 /// One megabyte in bytes.
 const BYTES_PER_MB: u64 = 1024 * 1024;
@@ -85,9 +84,9 @@ impl DecodeBudget {
 
     /// Charge one materialised record against the budget.
     ///
-    /// Returns a typed [`DiscoveryError::MemoryExhausted`] once the cumulative
-    /// decode reaches the ceiling, so the caller aborts mid-decode instead of
-    /// completing an allocation the host cannot hold.
+    /// Returns a typed [`DiscoveryError::MemoryExhausted`] once cumulative
+    /// retained record estimates exceed the ceiling. Footer preflight is what
+    /// rejects estimates before Arrow constructs record batches.
     pub fn charge_record(
         &mut self,
         uuid_len: usize,
@@ -105,20 +104,82 @@ impl DecodeBudget {
             return Ok(());
         }
 
-        Err(DiscoveryError::MemoryExhausted {
+        Err(self.memory_exhausted(
+            self.consumed_bytes,
+            file_path,
+            "record charging after Arrow batch construction",
+        ))
+    }
+
+    /// Refuse a footer-projected decode that cannot fit without consuming the
+    /// budget, leaving per-record charging to account for the actual rows.
+    pub fn check_projected(&self, projected_bytes: u64, file_path: &str) -> Result<()> {
+        if self
+            .limit_bytes
+            .is_some_and(|limit| projected_bytes > limit)
+        {
+            return Err(self.memory_exhausted(
+                projected_bytes,
+                file_path,
+                "footer preflight before Arrow batch construction",
+            ));
+        }
+        Ok(())
+    }
+
+    /// Check the projected selected columns using metadata already held by the
+    /// reader builder. This does not charge the budget.
+    pub fn preflight_columns(
+        &self,
+        metadata: &parquet::file::metadata::ParquetMetaData,
+        selected_roots: &[&str],
+        file_path: &str,
+    ) -> Result<()> {
+        let projected = projected_bytes_for_columns(
+            metadata,
+            selected_roots,
+            RECORD_STRUCT_BYTES.saturating_add(ASSUMED_UUID_HEAP_BYTES),
+            selected_roots.contains(&"errors"),
+        );
+        self.check_projected(projected, file_path)
+    }
+
+    /// Bound each row group's selected decode for readers that filter, fold or
+    /// stream rather than retaining the whole file.
+    pub fn preflight_row_groups(
+        &self,
+        metadata: &parquet::file::metadata::ParquetMetaData,
+        selected_roots: &[&str],
+        file_path: &str,
+    ) -> Result<()> {
+        for group in metadata.row_groups() {
+            let projected = crate::parquet_format::footer::projected_bytes_for_row_groups(
+                std::slice::from_ref(group),
+                selected_roots,
+                RECORD_STRUCT_BYTES.saturating_add(ASSUMED_UUID_HEAP_BYTES),
+                selected_roots.contains(&"errors"),
+            );
+            self.check_projected(projected, file_path)?;
+        }
+        Ok(())
+    }
+
+    fn memory_exhausted(&self, required_bytes: u64, file_path: &str, stage: &str) -> anyhow::Error {
+        let limit = self.limit_bytes.unwrap_or(u64::MAX);
+        DiscoveryError::MemoryExhausted {
             detail: format!(
-                "Parquet decode budget exceeded while reading '{file_path}': \
-                 decoded records already need {consumed_mb} MB, above the \
+                "Parquet decode budget exceeded during {stage} while reading '{file_path}': \
+                 decoded records are estimated to need {required_mb} MB, above the \
                  {limit_mb} MB decode budget. Parquet compresses this schema \
                  far better than 3:1, so the file's on-disk size does not bound \
                  its decoded size. Raise the analysis memory budget, set \
                  NEAT_AI_DISCOVERY_MAX_PARQUET_DECODE_MB, or reduce \
                  discoverySampleRate so fewer rows are recorded.",
-                consumed_mb = self.consumed_bytes.div_ceil(BYTES_PER_MB),
+                required_mb = required_bytes.div_ceil(BYTES_PER_MB),
                 limit_mb = limit.div_ceil(BYTES_PER_MB),
             ),
         }
-        .into())
+        .into()
     }
 
     /// Bytes charged so far.
@@ -131,5 +192,30 @@ impl DecodeBudget {
     #[must_use]
     pub const fn limit_bytes(&self) -> Option<u64> {
         self.limit_bytes
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::DecodeBudget;
+
+    #[test]
+    fn projected_check_is_non_consuming_and_rejects_only_over_limit() {
+        let budget = DecodeBudget::new(Some(100));
+        budget.check_projected(100, "fixture.parquet").unwrap();
+        assert_eq!(budget.consumed_bytes(), 0);
+
+        let error = budget
+            .check_projected(101, "fixture.parquet")
+            .expect_err("projected size above the ceiling is refused");
+        assert!(error.to_string().contains("decode budget"));
+        assert_eq!(budget.consumed_bytes(), 0);
+    }
+
+    #[test]
+    fn projected_check_allows_unbounded_budget() {
+        DecodeBudget::new(None)
+            .check_projected(u64::MAX, "fixture.parquet")
+            .expect("unbounded budgets accept any projected size");
     }
 }

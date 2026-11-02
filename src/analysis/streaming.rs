@@ -355,7 +355,10 @@ impl StreamingRecordCache {
 
     /// Build an index mapping neurons to blocks.
     fn build_block_index(parquet_file: &str, block_size: usize) -> Result<BlockIndex> {
+        use crate::parquet_format::decode_budget::DecodeBudget;
+        use crate::parquet_format::validate_neuron_uuid_column;
         use arrow::array::StringArray;
+        use parquet::arrow::ProjectionMask;
         use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
         use std::fs::File;
 
@@ -365,7 +368,17 @@ impl StreamingRecordCache {
         let builder = ParquetRecordBatchReaderBuilder::try_new(file)
             .context("Failed to create Parquet reader builder")?;
 
-        let reader = builder.build().context("Failed to build Parquet reader")?;
+        let uuid_root = validate_neuron_uuid_column(&builder, parquet_file)?;
+        DecodeBudget::resolve(None).preflight_row_groups(
+            builder.metadata(),
+            &["neuron_uuid"],
+            parquet_file,
+        )?;
+        let mask = ProjectionMask::roots(builder.parquet_schema(), [uuid_root]);
+        let reader = builder
+            .with_projection(mask)
+            .build()
+            .context("Failed to build Parquet reader")?;
 
         let mut neuron_blocks: HashMap<String, Vec<usize>> = HashMap::new();
         let mut current_block = 0;
@@ -440,6 +453,8 @@ impl StreamingRecordCache {
     ) -> Result<HashMap<String, Vec<DiscoverRecord>>> {
         use crate::parquet_format::batch_columns::DiscoveryBatchColumns;
         use crate::parquet_format::decode_budget::DecodeBudget;
+        use crate::parquet_format::{ColumnProfile, validate_parquet_schema};
+        use parquet::arrow::ProjectionMask;
         use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
         use std::fs::File;
 
@@ -449,14 +464,22 @@ impl StreamingRecordCache {
         let builder = ParquetRecordBatchReaderBuilder::try_new(file)
             .context("Failed to create Parquet reader builder")?;
 
-        let reader = builder.build().context("Failed to build Parquet reader")?;
+        let profile = ColumnProfile::Full;
+        validate_parquet_schema(&builder, parquet_file, profile)?;
+        let mut budget = DecodeBudget::resolve(None);
+        budget.preflight_row_groups(builder.metadata(), &profile.root_names(), parquet_file)?;
+
+        let mask = ProjectionMask::roots(builder.parquet_schema(), profile.root_indices());
+        let reader = builder
+            .with_projection(mask)
+            .build()
+            .context("Failed to build Parquet reader")?;
 
         let mut records_by_neuron: HashMap<String, Vec<DiscoverRecord>> = HashMap::new();
         let mut current_block = 0;
         let mut rows_in_block = 0;
         let mut found_target_block = false;
         // Issue #1869 / #2005: bound the records this block materialises.
-        let mut budget = DecodeBudget::resolve(None);
 
         for batch_result in reader {
             let batch = batch_result.context("Failed to read record batch")?;

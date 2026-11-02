@@ -64,6 +64,70 @@ impl ParquetFooterStats {
     }
 }
 
+/// Estimate the selected decoded columns from an already-open reader's footer.
+/// `record_overhead` is the per-row allocation outside the selected Arrow
+/// columns, and `include_errors` adds the decoded list value count. The
+/// selected uncompressed size is a floor, as in the preload planner's estimate.
+pub(crate) fn projected_bytes_for_columns(
+    metadata: &parquet::file::metadata::ParquetMetaData,
+    selected_roots: &[&str],
+    record_overhead: u64,
+    include_errors: bool,
+) -> u64 {
+    projected_bytes_for_row_groups(
+        metadata.row_groups(),
+        selected_roots,
+        record_overhead,
+        include_errors,
+    )
+}
+
+/// Estimate the selected columns of the supplied decode units.
+pub(crate) fn projected_bytes_for_row_groups(
+    row_groups: &[parquet::file::metadata::RowGroupMetaData],
+    selected_roots: &[&str],
+    record_overhead: u64,
+    include_errors: bool,
+) -> u64 {
+    let rows = row_groups
+        .iter()
+        .map(|group| u64::try_from(group.num_rows()).unwrap_or(0))
+        .fold(0_u64, u64::saturating_add);
+    let selected_uncompressed = row_groups
+        .iter()
+        .flat_map(parquet::file::metadata::RowGroupMetaData::columns)
+        .filter(|column| {
+            column
+                .column_path()
+                .parts()
+                .first()
+                .is_some_and(|root| selected_roots.contains(&root.as_str()))
+        })
+        .map(|column| u64::try_from(column.uncompressed_size()).unwrap_or(0))
+        .fold(0_u64, u64::saturating_add);
+    let selected_errors = if include_errors {
+        row_groups
+            .iter()
+            .flat_map(parquet::file::metadata::RowGroupMetaData::columns)
+            .filter(|column| {
+                column
+                    .column_path()
+                    .parts()
+                    .first()
+                    .is_some_and(|root| root == ERRORS_COLUMN)
+            })
+            .map(|column| u64::try_from(column.num_values()).unwrap_or(0))
+            .fold(0_u64, u64::saturating_add)
+            .saturating_mul(ERROR_VALUE_BYTES)
+    } else {
+        0
+    };
+
+    rows.saturating_mul(record_overhead)
+        .saturating_add(selected_errors)
+        .max(selected_uncompressed)
+}
+
 /// Read the row count and uncompressed row-group sizes from `file_path`'s
 /// Parquet footer.
 ///
