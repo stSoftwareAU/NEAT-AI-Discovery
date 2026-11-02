@@ -30,3 +30,8 @@ doc = false
 name = "fuzz_ffi_entry_points"
 path = "fuzz_targets/fuzz_ffi_entry_points.rs"
 doc = false
+
+[[bin]]
+name = "fuzz_parquet_predecode_budget"
+path = "fuzz_targets/fuzz_parquet_predecode_budget.rs"
+doc = false
