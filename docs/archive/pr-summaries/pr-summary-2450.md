@@ -80,4 +80,17 @@ flowchart TD
 - Final targeted runs: `cargo test --test issue_2450_merge_temp_path -- --nocapture` passed (5 tests); `cargo test --lib parquet_format::writer::tests::merge_ -- --nocapture` passed (11 tests).
 - `cargo fmt --all -- --check` passed. `git diff --check` passed.
 - `./quality.sh < /dev/null` passed, including dependency audit, build, Clippy, type checks, all tests (1,762 passed, 2 ignored), documentation build, and release library build.
-- No assertions from base-branch tests were removed or modified. macOS and Windows execution was not checked; the symlink-specific cases are Unix-only.
+- Updated all four existing merge cleanup assertions to scan for unique temporary siblings after success, missing inputs, foreign schemas and output aliases. macOS and Windows execution was not checked; the symlink-specific cases are Unix-only.
+
+### PR review follow-up
+
+- Replaced four legacy temporary-path assertions with a shared sibling scan
+  for the current unique merge temporary filenames. Success and schema-error
+  cleanup are now guarded alongside missing-input and output-alias cases.
+- Formatting and diff whitespace checks passed on the review host. Bash
+  syntax, ShellCheck and cargo-install pinning gates passed.
+- Local Clippy, type checks and both targeted merge test suites could not
+  compile because the sandbox refused dependency extraction into the Cargo
+  cache. The pinned Rust 1.99 toolchain is also unavailable locally. The full
+  quality gate stopped at temporary-file allocation in the summary-layout
+  check. Existing PR CI checks were all successful before this follow-up.

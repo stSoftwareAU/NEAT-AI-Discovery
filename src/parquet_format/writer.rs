@@ -590,6 +590,25 @@ mod tests {
         dir.path().join(name).to_string_lossy().into_owned()
     }
 
+    fn assert_no_merge_temp_files(dir: &TempDir, destination: &str) {
+        let prefix = format!(
+            "{}.tmp.",
+            Path::new(destination)
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+        );
+        let leftovers = fs::read_dir(dir.path())
+            .expect("read directory")
+            .map(|entry| entry.expect("directory entry").file_name())
+            .filter(|name| name.to_string_lossy().starts_with(&prefix))
+            .collect::<Vec<_>>();
+        assert!(
+            leftovers.is_empty(),
+            "merge temp files remain: {leftovers:?}"
+        );
+    }
+
     #[test]
     fn merge_temp_creation_does_not_open_an_existing_path() {
         let dir = TempDir::new().expect("temp dir");
@@ -761,10 +780,7 @@ mod tests {
             original,
             "destination must be byte-identical after a failed merge"
         );
-        assert!(
-            !Path::new(&format!("{destination}.tmp")).exists(),
-            "temporary file must not be left behind"
-        );
+        assert_no_merge_temp_files(&dir, &destination);
     }
 
     #[test]
@@ -789,10 +805,7 @@ mod tests {
             original,
             "destination must be unchanged after a schema rejection"
         );
-        assert!(
-            !Path::new(&format!("{destination}.tmp")).exists(),
-            "temporary file must not be left behind"
-        );
+        assert_no_merge_temp_files(&dir, &destination);
     }
 
     #[test]
@@ -817,10 +830,7 @@ mod tests {
             original,
             "aliased destination must not be truncated"
         );
-        assert!(
-            !Path::new(&format!("{destination}.tmp")).exists(),
-            "temporary file must not be left behind"
-        );
+        assert_no_merge_temp_files(&dir, &destination);
     }
 
     #[test]
@@ -838,9 +848,6 @@ mod tests {
         let merged = crate::parquet_format::read_all_records_from_parquet(&destination)
             .expect("read merged file");
         assert_eq!(merged.len(), 4, "merged file must contain every input row");
-        assert!(
-            !Path::new(&format!("{destination}.tmp")).exists(),
-            "temporary file must not be left behind"
-        );
+        assert_no_merge_temp_files(&dir, &destination);
     }
 }
