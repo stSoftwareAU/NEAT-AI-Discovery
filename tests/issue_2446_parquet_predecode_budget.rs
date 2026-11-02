@@ -549,7 +549,13 @@ fn extra_column_projection(merge: bool) {
     unsafe { std::env::set_var("NEAT_AI_DISCOVERY_MAX_PARQUET_DECODE_MB", "1") };
     let source_path = source.to_str().unwrap();
     if !merge {
-        let cache = StreamingRecordCache::new(source_path, Some(1), Some(0)).unwrap();
+        let mut cache = None;
+        assert_read_without_large_allocation(
+            || StreamingRecordCache::new(source_path, Some(1), Some(0)),
+            |result| cache = Some(result.expect("streaming index must skip extra columns")),
+            "streaming UUID index extra column",
+        );
+        let cache = cache.expect("streaming index was created");
         assert_read_without_large_allocation(
             || cache.get("neuron-a"),
             |result| {
