@@ -776,6 +776,18 @@ mod tests {
         ];
         assert_eq!(compute_calibration_factor(&observations), 1.0);
 
+        let non_finite = [
+            CalibrationObservation {
+                predicted: f64::NAN,
+                actual: 1.0,
+            },
+            CalibrationObservation {
+                predicted: 1e-11,
+                actual: f64::INFINITY,
+            },
+        ];
+        assert_eq!(compute_calibration_factor(&non_finite), 1.0);
+
         let mixed = [
             observations[0].clone(),
             observations[1].clone(),
