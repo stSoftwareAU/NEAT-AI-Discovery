@@ -26,6 +26,15 @@ const ERRORS_COLUMN: &str = "errors";
 /// Bytes each decoded `f32` error occupies in the record's `Vec<f32>`.
 const ERROR_VALUE_BYTES: u64 = 4;
 
+fn sum_row_group_rows(mut row_counts: impl Iterator<Item = i64>) -> Result<u64> {
+    row_counts.try_fold(0u64, |sum, row_count| {
+        let row_count = u64::try_from(row_count)
+            .with_context(|| format!("Invalid Parquet footer row-group num_rows: {row_count}"))?;
+        sum.checked_add(row_count)
+            .context("Overflow while summing Parquet footer row-group num_rows")
+    })
+}
+
 /// Decompressed shape of a Parquet file, read from its footer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ParquetFooterStats {
@@ -67,8 +76,9 @@ impl ParquetFooterStats {
 /// Read the row count and uncompressed row-group sizes from `file_path`'s
 /// Parquet footer.
 ///
-/// Returns an error when the file cannot be opened or its footer cannot be
-/// parsed — callers decide whether an unknown projection is fatal.
+/// Returns an error when the file cannot be opened, its footer cannot be
+/// parsed, or its signed counts and sizes are negative or inconsistent —
+/// callers decide whether an unknown projection is fatal.
 pub fn read_footer_stats(file_path: &str) -> Result<ParquetFooterStats> {
     let file = std::fs::File::open(file_path)
         .with_context(|| format!("Failed to open Parquet file for footer read: {file_path}"))?;
@@ -76,31 +86,64 @@ pub fn read_footer_stats(file_path: &str) -> Result<ParquetFooterStats> {
         .with_context(|| format!("Failed to read Parquet footer: {file_path}"))?;
     let metadata = builder.metadata();
 
-    let num_rows = u64::try_from(metadata.file_metadata().num_rows()).unwrap_or(0);
-    let uncompressed_bytes = metadata
-        .row_groups()
-        .iter()
-        .map(|rg| u64::try_from(rg.total_byte_size()).unwrap_or(0))
-        .fold(0u64, u64::saturating_add);
+    let file_num_rows = metadata.file_metadata().num_rows();
+    let num_rows = u64::try_from(file_num_rows)
+        .with_context(|| format!("Invalid Parquet footer num_rows: {file_num_rows}"))?;
 
-    // Leaf value count of the `errors` list column: the exact number of f32s
-    // the decode will materialise, however tightly they were encoded.
-    let error_values = metadata
-        .row_groups()
-        .iter()
-        .flat_map(parquet::file::metadata::RowGroupMetaData::columns)
-        .filter(|col| {
-            col.column_path()
+    let mut uncompressed_bytes = 0u64;
+    let mut error_values = 0u64;
+    let row_group_rows =
+        sum_row_group_rows(metadata.row_groups().iter().map(|group| group.num_rows()))?;
+    for row_group in metadata.row_groups() {
+        let byte_size = row_group.total_byte_size();
+        let byte_size = u64::try_from(byte_size)
+            .with_context(|| format!("Invalid Parquet footer total_byte_size: {byte_size}"))?;
+        uncompressed_bytes = uncompressed_bytes.saturating_add(byte_size);
+
+        // Leaf value count of the `errors` list column: the exact number of
+        // f32s the decode will materialise, however tightly they were encoded.
+        for column in row_group.columns().iter().filter(|column| {
+            column
+                .column_path()
                 .parts()
                 .first()
-                .is_some_and(|p| p == ERRORS_COLUMN)
-        })
-        .map(|col| u64::try_from(col.num_values()).unwrap_or(0))
-        .fold(0u64, u64::saturating_add);
+                .is_some_and(|part| part == ERRORS_COLUMN)
+        }) {
+            let value_count = column.num_values();
+            let value_count = u64::try_from(value_count)
+                .with_context(|| format!("Invalid Parquet footer num_values: {value_count}"))?;
+            error_values = error_values.saturating_add(value_count);
+        }
+    }
+
+    anyhow::ensure!(
+        num_rows == row_group_rows,
+        "Parquet footer num_rows ({num_rows}) does not match row-group num_rows sum ({row_group_rows})"
+    );
 
     Ok(ParquetFooterStats {
         num_rows,
         uncompressed_bytes,
         error_values,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::sum_row_group_rows;
+
+    #[test]
+    fn row_group_row_sum_rejects_overflow() {
+        let error = sum_row_group_rows([i64::MAX, i64::MAX, i64::MAX].into_iter())
+            .expect_err("row-group row sum must not wrap");
+        let message = format!("{error:#}");
+        assert!(
+            message.contains("num_rows"),
+            "error names num_rows: {message}"
+        );
+        assert!(
+            message.contains("Overflow"),
+            "error names overflow: {message}"
+        );
+    }
 }
