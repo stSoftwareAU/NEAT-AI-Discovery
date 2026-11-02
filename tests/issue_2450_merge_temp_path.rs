@@ -31,6 +31,8 @@ fn path_string(path: &Path) -> String {
 #[test]
 fn input_at_legacy_temp_path_is_refused_without_changing_bytes() {
     let (_dir, output, input) = fixture();
+    fs::copy(&input, &output).expect("seed destination recording");
+    let original_output = fs::read(&output).expect("read original destination");
     let legacy_temp = PathBuf::from(format!("{}.tmp", output.display()));
     fs::copy(&input, &legacy_temp).expect("copy valid input to legacy temp path");
     let original = fs::read(&legacy_temp).expect("read original bytes");
@@ -43,6 +45,10 @@ fn input_at_legacy_temp_path_is_refused_without_changing_bytes() {
         "error should identify the temporary-path alias: {error:#}"
     );
     assert_eq!(fs::read(&legacy_temp).expect("re-read input"), original);
+    assert_eq!(
+        fs::read(&output).expect("re-read destination"),
+        original_output
+    );
 }
 
 #[cfg(unix)]
@@ -60,6 +66,7 @@ fn pre_existing_temp_symlink_and_target_are_unchanged() {
     merge_parquet_files(&path_string(&output), &[path_string(&input)])
         .expect("merge succeeds without using occupied legacy temp path");
 
+    assert_eq!(fs::read(&victim).expect("re-read victim"), original);
     assert!(
         fs::symlink_metadata(&legacy_temp)
             .expect("inspect legacy temp")
@@ -67,7 +74,6 @@ fn pre_existing_temp_symlink_and_target_are_unchanged() {
             .is_symlink(),
         "legacy temp symlink must remain in place"
     );
-    assert_eq!(fs::read(&victim).expect("re-read victim"), original);
 }
 
 #[test]

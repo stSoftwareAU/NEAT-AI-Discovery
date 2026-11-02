@@ -362,8 +362,10 @@ fn create_temp_file_exclusive(path: &Path) -> std::io::Result<File> {
 }
 
 /// Allocate an exclusive sibling path for a merge, retrying name collisions.
-fn create_merge_temp_file(output_file: &str) -> Result<(PathBuf, File)> {
-    static NEXT_TEMP_ID: AtomicU64 = AtomicU64::new(0);
+fn create_merge_temp_file_with_ids(
+    output_file: &str,
+    mut next_id: impl FnMut() -> u64,
+) -> Result<(PathBuf, File)> {
     const MAX_TEMP_ATTEMPTS: u32 = 128;
 
     let output_path = Path::new(output_file);
@@ -373,7 +375,7 @@ fn create_merge_temp_file(output_file: &str) -> Result<(PathBuf, File)> {
         .ok_or_else(|| anyhow::anyhow!("Merge output path has no file name: {output_file}"))?;
 
     for _ in 0..MAX_TEMP_ATTEMPTS {
-        let id = NEXT_TEMP_ID.fetch_add(1, Ordering::Relaxed);
+        let id = next_id();
         let tmp_name = format!(
             "{}.tmp.{}.{}",
             file_name.to_string_lossy(),
@@ -479,6 +481,17 @@ fn merge_into_temp_file(file: File, input_files: &[String]) -> Result<()> {
 /// missing, unreadable, or carries a non-discovery schema, or if a unique
 /// temporary file cannot be written or renamed.
 pub fn merge_parquet_files(output_file: &str, input_files: &[String]) -> Result<()> {
+    static NEXT_TEMP_ID: AtomicU64 = AtomicU64::new(0);
+    merge_parquet_files_with_ids(output_file, input_files, || {
+        NEXT_TEMP_ID.fetch_add(1, Ordering::Relaxed)
+    })
+}
+
+fn merge_parquet_files_with_ids(
+    output_file: &str,
+    input_files: &[String],
+    next_id: impl FnMut() -> u64,
+) -> Result<()> {
     if input_files.is_empty() {
         return Err(anyhow::anyhow!(
             "No discovery parquet files provided for merge"
@@ -502,13 +515,14 @@ pub fn merge_parquet_files(output_file: &str, input_files: &[String]) -> Result<
         }
     }
 
-    let (tmp_path, file) = create_merge_temp_file(output_file)?;
+    let (tmp_path, file) = create_merge_temp_file_with_ids(output_file, next_id)?;
     let tmp_path_string = tmp_path.to_string_lossy().into_owned();
     let resolved_tmp_path = resolve_for_alias_check(&tmp_path_string);
     if let Some(input_path) = input_files
         .iter()
         .find(|input_path| resolve_for_alias_check(input_path) == resolved_tmp_path)
     {
+        drop(file);
         remove_merge_temp_file(&tmp_path);
         anyhow::bail!(
             "Merge input '{input_path}' aliases the temporary path '{tmp_path_string}'; refusing to merge it"
@@ -520,7 +534,6 @@ pub fn merge_parquet_files(output_file: &str, input_files: &[String]) -> Result<
     }
 
     if let Err(err) = fs::rename(&tmp_path, output_file) {
-        remove_merge_temp_file(&tmp_path);
         return Err(anyhow::Error::new(err).context(format!(
             "Failed to rename temporary file {tmp_path_string} to {output_file}"
         )));
@@ -596,8 +609,13 @@ mod tests {
         let dir = TempDir::new().expect("temp dir");
         let output = path_in(&dir, "merged.parquet");
 
-        let (first_path, first_file) = create_merge_temp_file(&output).expect("first temp file");
-        let (second_path, second_file) = create_merge_temp_file(&output).expect("second temp file");
+        let mut ids = [0, 1].into_iter();
+        let (first_path, first_file) =
+            create_merge_temp_file_with_ids(&output, || ids.next().expect("first candidate"))
+                .expect("first temp file");
+        let (second_path, second_file) =
+            create_merge_temp_file_with_ids(&output, || ids.next().expect("second candidate"))
+                .expect("second temp file");
 
         assert_ne!(first_path, second_path);
         assert_eq!(first_path.parent(), Path::new(&output).parent());
@@ -605,6 +623,118 @@ mod tests {
         drop((first_file, second_file));
         fs::remove_file(first_path).expect("remove first temp file");
         fs::remove_file(second_path).expect("remove second temp file");
+    }
+
+    #[test]
+    fn merge_temp_allocation_retries_collision_without_changing_occupied_file() {
+        let dir = TempDir::new().expect("temp dir");
+        let output = path_in(&dir, "merged.parquet");
+        let occupied = dir
+            .path()
+            .join(format!("merged.parquet.tmp.{}.17", std::process::id()));
+        fs::write(&occupied, b"preserve collision").expect("write occupied candidate");
+        let original = fs::read(&occupied).expect("read occupied candidate");
+        let mut ids = [17, 18].into_iter();
+
+        let (allocated, file) =
+            create_merge_temp_file_with_ids(&output, || ids.next().expect("next candidate"))
+                .expect("retry with the next candidate");
+
+        assert_eq!(
+            allocated.file_name().unwrap().to_string_lossy(),
+            format!("merged.parquet.tmp.{}.18", std::process::id())
+        );
+        assert_eq!(
+            fs::read(&occupied).expect("re-read occupied candidate"),
+            original
+        );
+        drop(file);
+        fs::remove_file(allocated).expect("remove allocated temp file");
+    }
+
+    #[test]
+    fn merge_temp_allocation_fails_after_collision_limit() {
+        let dir = TempDir::new().expect("temp dir");
+        let output = path_in(&dir, "merged.parquet");
+        let occupied = dir
+            .path()
+            .join(format!("merged.parquet.tmp.{}.19", std::process::id()));
+        fs::write(&occupied, b"still occupied").expect("write occupied candidate");
+        let original = fs::read(&occupied).expect("read occupied candidate");
+
+        let error = create_merge_temp_file_with_ids(&output, || 19)
+            .expect_err("exhausted collisions must fail");
+
+        assert!(format!("{error:#}").contains("after 128 attempts"));
+        assert_eq!(
+            fs::read(occupied).expect("re-read occupied candidate"),
+            original
+        );
+    }
+
+    #[test]
+    fn merge_temp_allocation_reports_non_collision_errors() {
+        let dir = TempDir::new().expect("temp dir");
+        let output = dir
+            .path()
+            .join("missing-parent")
+            .join("merged.parquet")
+            .to_string_lossy()
+            .into_owned();
+
+        let error = create_merge_temp_file_with_ids(&output, || 0)
+            .expect_err("missing parent must fail allocation");
+
+        assert!(format!("{error:#}").contains("Failed to create temporary merged Parquet file"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn merge_rejects_input_alias_to_new_temp_path() {
+        use std::os::unix::fs::symlink;
+
+        let dir = TempDir::new().expect("temp dir");
+        let output = path_in(&dir, "merged.parquet");
+        let temp_target = dir
+            .path()
+            .join(format!("merged.parquet.tmp.{}.42", std::process::id()));
+        let input_alias = dir.path().join("input-alias.parquet");
+        symlink(&temp_target, &input_alias).expect("create dangling input symlink");
+
+        let error = merge_parquet_files_with_ids(
+            &output,
+            &[input_alias.to_string_lossy().into_owned()],
+            || 42,
+        )
+        .expect_err("an input resolving to the allocated temp must be refused");
+
+        assert!(format!("{error:#}").contains("aliases the temporary path"));
+        assert!(input_alias.is_symlink());
+        assert!(!temp_target.exists(), "allocated temp must be cleaned up");
+    }
+
+    #[test]
+    fn merge_rename_failure_preserves_destination_and_cleans_created_temp() {
+        let dir = TempDir::new().expect("temp dir");
+        let destination = dir.path().join("destination");
+        fs::create_dir(&destination).expect("create destination directory");
+        let input = path_in(&dir, "input.parquet");
+        write_records_to_parquet(&input, &sample_records(0)).expect("write input");
+
+        let error = merge_parquet_files(&destination.to_string_lossy(), &[input])
+            .expect_err("renaming a file over a directory must fail");
+
+        assert!(format!("{error:#}").contains("Failed to rename temporary file"));
+        assert!(destination.is_dir(), "destination directory must remain");
+        let leftovers = fs::read_dir(dir.path())
+            .expect("read directory")
+            .map(|entry| entry.expect("directory entry").file_name())
+            .filter(|name| name.to_string_lossy().starts_with("destination.tmp."))
+            .collect::<Vec<_>>();
+        assert!(
+            leftovers.is_empty(),
+            "merge temp files remain: {leftovers:?}"
+        );
     }
 
     #[test]
