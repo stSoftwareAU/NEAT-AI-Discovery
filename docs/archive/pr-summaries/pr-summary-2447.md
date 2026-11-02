@@ -20,7 +20,7 @@ Version bump: `Cargo.toml` updated for this change; the merged commit records th
 ### Undiscoverable Facts
 
 - The baseline regression run returned `num_rows: 0` for the negative file count and `num_rows: 1` for the understated count; both files still decoded 50 rows.
-- The isolated fuzz lockfile was refreshed to versions already present in the root lockfile so the fuzz target can run with `--locked`.
+- The isolated fuzz lockfile was refreshed to dependency versions already present in the root lockfile. Keeping its local package version in sync with CI version increments is tracked separately in #2506.
 
 ## Evidence
 
@@ -64,7 +64,7 @@ symlink preservation, the inclusive size bound, and cleanup.
 The footer regression suite now includes groups of 17 and 33 rows, exact combined
 bytes from writer metadata, and rejection of a file count patched to 17. The
 single-group positive test also asserts exact bytes using independent metadata.
-Library version and both lockfiles are updated to 0.74.320.
+CI version increments set the final library version and update the root lockfile. Fuzz lockfile version synchronisation is tracked separately in #2506.
 
 For this revision, formatting, shell syntax, ShellCheck, dependency-install
 pinning, and a standalone compiled smoke test of the actual input helper pass.
@@ -78,3 +78,16 @@ revision.
 ## Remaining Work and Risk
 
 Coverage-guided `cargo-fuzz` under nightly was not run because nightly tooling was unavailable. The bounded stable libFuzzer smoke run completed, but without coverage instrumentation. No other known work remains.
+
+The symlink regression runs in its own integration-test binary with exactly one
+input-writer caller, so its planted id-zero path is always encountered even
+with two test threads.
+
+Validation of the isolated-test revision: stable rustfmt and diff whitespace
+checks passed, as did shell syntax, ShellCheck and install-pinning gates. A
+standalone compiled check of the actual shared helper confirmed the id-zero
+symlink collision, id-one retry, permissions, sentinel preservation and cleanup.
+Cargo Clippy, compile checks and affected integration tests could not run because
+the sandbox cannot populate the dependency cache (adler2 is missing). The full
+quality gate also cannot create its mktemp file on this host. Current PR CI checks
+were all passing before this revision, and CI must validate the new test binary.
