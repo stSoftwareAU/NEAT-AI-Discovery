@@ -92,8 +92,12 @@ pub fn read_footer_stats(file_path: &str) -> Result<ParquetFooterStats> {
 
     let mut uncompressed_bytes = 0u64;
     let mut error_values = 0u64;
-    let row_group_rows =
-        sum_row_group_rows(metadata.row_groups().iter().map(|group| group.num_rows()))?;
+    let row_group_rows = sum_row_group_rows(
+        metadata
+            .row_groups()
+            .iter()
+            .map(parquet::file::metadata::RowGroupMetaData::num_rows),
+    )?;
     for row_group in metadata.row_groups() {
         let byte_size = row_group.total_byte_size();
         let byte_size = u64::try_from(byte_size)
@@ -102,17 +106,18 @@ pub fn read_footer_stats(file_path: &str) -> Result<ParquetFooterStats> {
 
         // Leaf value count of the `errors` list column: the exact number of
         // f32s the decode will materialise, however tightly they were encoded.
-        for column in row_group.columns().iter().filter(|column| {
-            column
+        for column in row_group.columns() {
+            let value_count = column.num_values();
+            let value_count = u64::try_from(value_count)
+                .with_context(|| format!("Invalid Parquet footer num_values: {value_count}"))?;
+            if column
                 .column_path()
                 .parts()
                 .first()
                 .is_some_and(|part| part == ERRORS_COLUMN)
-        }) {
-            let value_count = column.num_values();
-            let value_count = u64::try_from(value_count)
-                .with_context(|| format!("Invalid Parquet footer num_values: {value_count}"))?;
-            error_values = error_values.saturating_add(value_count);
+            {
+                error_values = error_values.saturating_add(value_count);
+            }
         }
     }
 
@@ -130,7 +135,7 @@ pub fn read_footer_stats(file_path: &str) -> Result<ParquetFooterStats> {
 
 #[cfg(test)]
 mod tests {
-    use super::sum_row_group_rows;
+    use super::{read_footer_stats, sum_row_group_rows};
 
     #[test]
     fn row_group_row_sum_rejects_overflow() {
@@ -145,5 +150,24 @@ mod tests {
             message.contains("Overflow"),
             "error names overflow: {message}"
         );
+    }
+
+    #[test]
+    fn empty_footer_stats_remain_valid() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let path = directory.path().join("empty.parquet");
+        let writer = parquet::arrow::ArrowWriter::try_new(
+            std::fs::File::create(&path).expect("create empty Parquet file"),
+            std::sync::Arc::new(crate::parquet_format::create_schema()),
+            None,
+        )
+        .expect("create Parquet writer");
+        writer.close().expect("write empty footer");
+
+        let stats =
+            read_footer_stats(path.to_str().expect("UTF-8 path")).expect("valid empty footer");
+        assert_eq!(stats.num_rows, 0);
+        assert_eq!(stats.uncompressed_bytes, 0);
+        assert_eq!(stats.error_values, 0);
     }
 }

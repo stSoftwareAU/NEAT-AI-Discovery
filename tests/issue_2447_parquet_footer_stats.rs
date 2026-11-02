@@ -1,11 +1,9 @@
 //! Regression coverage for malformed Parquet footer statistics (Issue #2447).
 
 use neat_ai_discovery::parquet_format::footer::read_footer_stats;
-use neat_ai_discovery::parquet_format::{create_schema, write_records_to_parquet};
+use neat_ai_discovery::parquet_format::write_records_to_parquet;
 use neat_ai_discovery::types::DiscoverRecord;
-use parquet::arrow::ArrowWriter;
 use std::fs;
-use std::sync::Arc;
 use tempfile::tempdir;
 
 fn valid_parquet() -> (tempfile::TempDir, std::path::PathBuf) {
@@ -36,13 +34,13 @@ fn footer_start(bytes: &[u8]) -> usize {
 }
 
 fn zigzag_i64(value: i64) -> Vec<u8> {
-    let mut encoded = ((value << 1) ^ (value >> 63)) as u64;
+    let mut encoded = ((value << 1) ^ (value >> 63)).cast_unsigned();
     let mut bytes = Vec::new();
     while encoded >= 0x80 {
-        bytes.push((encoded as u8) | 0x80);
+        bytes.push(u8::try_from(encoded & 0x7f).expect("varint byte fits") | 0x80);
         encoded >>= 7;
     }
-    bytes.push(encoded as u8);
+    bytes.push(u8::try_from(encoded).expect("final varint byte fits"));
     bytes
 }
 
@@ -110,24 +108,6 @@ fn valid_footer_stats_match_written_records() {
 }
 
 #[test]
-fn empty_footer_stats_remain_valid() {
-    let dir = tempdir().expect("temporary directory");
-    let path = dir.path().join("empty.parquet");
-    let writer = ArrowWriter::try_new(
-        fs::File::create(&path).expect("create empty Parquet file"),
-        Arc::new(create_schema()),
-        None,
-    )
-    .expect("create Parquet writer");
-    writer.close().expect("write empty footer");
-
-    let stats = read_footer_stats(path.to_str().expect("UTF-8 path")).expect("valid empty footer");
-    assert_eq!(stats.num_rows, 0);
-    assert_eq!(stats.uncompressed_bytes, 0);
-    assert_eq!(stats.error_values, 0);
-}
-
-#[test]
 fn negative_file_num_rows_is_rejected() {
     let (_dir, path) = valid_parquet();
     let mut bytes = read_bytes(&path);
@@ -189,5 +169,14 @@ fn negative_num_values_is_rejected() {
     let mut bytes = read_bytes(&path);
     // The errors leaf column has 100 values; compact header 0x16 is field 5.
     patch_first_compact_field(&mut bytes, 0x16, 100, -1, 0);
+    expect_footer_error(&bytes, "num_values", "Invalid Parquet footer num_values");
+}
+
+#[test]
+fn negative_non_error_column_num_values_is_rejected() {
+    let (_dir, path) = valid_parquet();
+    let mut bytes = read_bytes(&path);
+    // FileMetaData.num_rows is first; the following num_values belongs to obs_index.
+    patch_first_compact_field(&mut bytes, 0x16, 50, -1, 1);
     expect_footer_error(&bytes, "num_values", "Invalid Parquet footer num_values");
 }
