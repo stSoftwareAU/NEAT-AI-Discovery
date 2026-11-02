@@ -3,8 +3,9 @@
 Parquet readers validate schemas and compare selected-column footer estimates
 with the decode budget before building projected Arrow batches. Cumulative
 per-record charging remains in place, and the streaming UUID index validates
-and projects its column before reading. The regression test demonstrates the
-original allocation and verifies that a legal near-budget file still reads.
+and projects its column before reading. Regression tests demonstrate the
+original allocation, verify that a legal near-budget file still reads, and
+retain separate coverage of streaming block record charging after preflight.
 Closes #2446.
 
 Version bump: `VERSION` updated for this change; the merged commit records the
@@ -102,7 +103,23 @@ flowchart LR
   alone; malformed, nullable and non-`Utf8` UUID schemas are refused; the
   `WithoutErrors` profile skips the oversized list; and merge refusal preserves
   the existing destination.
-- `tests/issue_2005_shared_batch_decoder.rs` — passed, 4 tests;
+- `cargo test --locked --all-features --test issue_2005_shared_batch_decoder --test issue_2446_parquet_predecode_budget -- --test-threads=1`
+  — passed, 13 tests (5 shared-decoder tests and 8 predecode-budget tests).
+  The separate
+  `the_streaming_block_loader_charges_the_decode_budget` regression uses
+  7,000 rows with repeated 100-byte identifiers and empty error lists. It
+  asserts that both index and block footer preflights fit within 1 MB, builds
+  the streaming index successfully, then requires a typed `MemoryExhausted`
+  error from record charging during `.get()`. The index-preflight test remains.
+- Record-charging mutation check — removing only the streaming block's
+  `charge_record` call left all 12 previous Issue #2005/#2446 tests passing.
+  With that same mutation, the restored charging regression failed because
+  all 7,000 records were returned. Restoring the production call made all
+  13 tests pass; no production-source change remains from this check.
+- `cargo clippy --locked --all-features --test issue_2005_shared_batch_decoder -- -D warnings`
+  and `cargo fmt --all -- --check` — passed after restoring the charging
+  regression.
+- Earlier focused validation:
   `tests/issue_1869_parquet_decode_bound.rs` — passed, 11;
   `tests/issue_1901_parquet_schema_nullability.rs` — passed, 7;
   `tests/issue_1923_activation_summary.rs` — passed, 7;
@@ -117,10 +134,10 @@ flowchart LR
   `fuzz/corpus/fuzz_parquet_predecode_budget/oversized-errors.parquet` with
   `cargo run --manifest-path fuzz/Cargo.toml --locked --bin fuzz_parquet_predecode_budget -- fuzz/corpus/fuzz_parquet_predecode_budget -runs=1`
   completed 2 runs over 1 corpus file. The binary was not coverage-instrumented.
-- `timeout 900 ./quality.sh < /dev/null` — exited 124 during the full library
-  test suite. Script checks, dependency audit, debug build, formatting, linter
-  and type checks completed successfully; the full gate did not complete, so
-  its remaining checks are unverified.
+- `timeout 900 ./quality.sh < /dev/null` — passed on the regression-coverage
+  retry. All script checks, dependency audit, debug build, formatting, Clippy,
+  type checks, tests, documentation build and release library build completed.
+  The 291 test suites reported 6,438 passed, 0 failed and 8 ignored.
 - A separate base-branch replay of the malformed-UUID test was not completed:
   the copied test failed to compile with `E0308` / `E0277` because the base
   dependency graph had mismatched Arrow schema `Field` types. The malformed
