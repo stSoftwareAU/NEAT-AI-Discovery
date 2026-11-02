@@ -534,6 +534,7 @@ fn merge_parquet_files_with_ids(
     }
 
     if let Err(err) = fs::rename(&tmp_path, output_file) {
+        remove_merge_temp_file(&tmp_path);
         return Err(anyhow::Error::new(err).context(format!(
             "Failed to rename temporary file {tmp_path_string} to {output_file}"
         )));
