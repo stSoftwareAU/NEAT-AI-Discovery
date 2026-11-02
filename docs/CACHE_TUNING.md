@@ -81,6 +81,9 @@ projected decoded size and a single bound. Since Issue #1869 the projection is
 read from the Parquet **footer** — the exact decompressed row count and error
 value count — with the old `file_size × 3` compression heuristic kept only as a
 floor, because dictionary and RLE encodings routinely beat 3:1 on this schema.
+Negative footer counts or sizes, and a file row count that disagrees with its
+row groups, make the footer unreadable. The estimator logs its existing warning
+and uses the compressed-size projection in that case.
 
 ```text
 projected = max(footer_rows × per_record_bytes + error_values × 4,
