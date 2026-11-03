@@ -37,6 +37,7 @@ The issue states no acceptance-criteria heading; nothing it asks is left undone.
 
 ## Test Plan
 
+- Merge resolution retains the base boolean toggle parser alongside the guard-warning helpers and imports both where observability uses them.
 - Added `tests/issue_2468_guard_opt_out_warnings.rs` (4 tests: `every_opt_out_logs_one_warn_naming_variable_value_and_guard`, `unset_variables_log_nothing`, `valid_and_empty_values_log_no_warn_and_keep_their_value`, `repeated_opt_out_warns_once_and_a_new_value_warns_again`): passed at head (`cargo test --test issue_2468_guard_opt_out_warnings`, 4 passed).
 - Added two dedupe unit tests in `src/config/helpers.rs`.
 - Added their two test-only fixture names to `tests/issue_2096_config_doc_parity.rs`'s allowlist, keeping them out of the operator configuration reference. The parity and stale-allowlist tests cover this classification.

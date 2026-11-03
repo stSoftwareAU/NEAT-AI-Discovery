@@ -17,7 +17,8 @@ use super::{profile::ProfileData, timing_enabled};
 /// RAII-based phase timer that emits a debug event with the duration on drop
 /// when timing is enabled.
 ///
-/// When `NEAT_AI_DISCOVERY_TIMING` is set (any value), dropping a `PhaseTimer`
+/// When `NEAT_AI_DISCOVERY_TIMING` is `1`, `true` or `yes` (any other value,
+/// including `0`, leaves timing off; Issue #2467), dropping a `PhaseTimer`
 /// emits a `tracing::debug!` event (message `phase timing`) with the `phase` and
 /// `duration` fields. It is hidden under the default `RUST_LOG=warn`; use
 /// `RUST_LOG=neat_ai_discovery=debug` to see it.

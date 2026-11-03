@@ -558,9 +558,14 @@ fn the_filed_finding_is_linked_and_has_its_probe() {
     let probe_path = "tests/issue_2463_constant_source_threshold_explicit_default.rs";
     let probe = read(probe_path);
     assert!(
-        probe.contains(r#"#[ignore = "finding: #2463"#),
-        "{probe_path} must carry `#[ignore = \"finding: #2463\"]`, the failing-first probe \
-         the finding links to"
+        probe.contains("fn explicit_default_override_is_honoured_like_its_twin"),
+        "{probe_path} must still carry `fn explicit_default_override_is_honoured_like_its_twin`, \
+         the regression probe for the #2463 finding (fixed by #2472)"
+    );
+    assert!(
+        !probe.contains("#[ignore"),
+        "{probe_path} must not carry `#[ignore`: the #2463 finding is fixed by #2472, so its \
+         probe runs in the normal suite"
     );
 
     let comment_links = issues.matches("issuecomment-").count();

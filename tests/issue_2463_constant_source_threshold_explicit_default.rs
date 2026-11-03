@@ -1,23 +1,21 @@
-//! Finding #2463 — `get_constant_source_threshold` ignores an explicit
-//! `NEAT_AI_DISCOVERY_CONSTANT_SOURCE_EFFECT_THRESHOLD=1e-7`.
+//! Finding #2463 — `get_constant_source_threshold` ignored an explicit
+//! `NEAT_AI_DISCOVERY_CONSTANT_SOURCE_EFFECT_THRESHOLD=1e-7`. Fixed by Issue #2472.
 //!
-//! `analysis::samples::get_constant_source_threshold` only honours the env
-//! override when it differs from `DEFAULT_CONSTANT_SOURCE_EFFECT_THRESHOLD`
+//! `analysis::samples::get_constant_source_threshold` used to honour the env
+//! override only when it differed from `DEFAULT_CONSTANT_SOURCE_EFFECT_THRESHOLD`
 //! (`src/analysis/samples/thresholds.rs`, the `Some(v) if v != DEFAULT` arm). An
-//! explicit `1e-7`, which equals the default, therefore falls through to the
-//! dynamic threshold and returns `DEFAULT x max(1, avg / 0.05)`. With
-//! `source_std_dev_avg = Some(0.5)` that is about `1e-6`, not the `1e-7` the
-//! operator asked for.
+//! explicit `1e-7`, which equals the default, fell through to the dynamic threshold
+//! and returned `DEFAULT x max(1, avg / 0.05)`. With `source_std_dev_avg = Some(0.5)`
+//! that is about `1e-6`, not the `1e-7` the operator asked for.
 //!
-//! Its twin, `config::constant_source_threshold_with_dynamic`
-//! (`src/config/user_facing.rs`), honours an explicit `1e-7` and returns
-//! `Some(1e-7)`. The two functions disagree on the same input.
+//! The production function now delegates to its twin,
+//! `config::constant_source_threshold_with_dynamic` (`src/config/user_facing.rs`),
+//! which honours an explicit `1e-7` and returns `Some(1e-7)`. The two functions
+//! agree on every input in this file.
 //!
-//! The `#[ignore]`d test `explicit_default_override_is_honoured_like_its_twin` is
-//! the failing-first probe: it fails on the production function until #2463 is
-//! fixed. The other tests are green positive controls. They pin the rest of the
-//! behaviour table (unset, empty, unparsable, a non-default override and `0`) for
-//! both functions, so the probe fails only on the default-valued override.
+//! `explicit_default_override_is_honoured_like_its_twin` is the regression test for
+//! the finding. The other tests pin the rest of the behaviour table (unset, empty,
+//! unparsable, whitespace-padded, a non-default override and `0`) for both functions.
 
 use neat_ai_discovery::analysis::samples::get_constant_source_threshold;
 use neat_ai_discovery::config::{
@@ -174,12 +172,11 @@ fn explicit_zero_disables_folding_in_both_functions() {
     );
 }
 
-/// Finding #2463. The twin honours an explicit `1e-7` and returns `Some(1e-7)`.
-/// The production function treats it as the default and returns the dynamic
-/// value (about `1e-6`), so this fails until the production function is fixed.
+/// Finding #2463, fixed by Issue #2472. The twin honours an explicit `1e-7` and
+/// returns `Some(1e-7)`. The production function now delegates to the twin, so it
+/// returns the same explicit value rather than the dynamic value (about `1e-6`).
 #[test]
 #[serial]
-#[ignore = "finding: #2463 get_constant_source_threshold ignores an explicit override equal to the default"]
 fn explicit_default_override_is_honoured_like_its_twin() {
     let expected = Some(DEFAULT_CONSTANT_SOURCE_EFFECT_THRESHOLD);
     let (production, twin) = both_under(Some("1e-7"));
@@ -193,5 +190,22 @@ fn explicit_default_override_is_honoured_like_its_twin() {
          get_constant_source_threshold returned {production:?}, expected Some(1e-7) \
          (its twin constant_source_threshold_with_dynamic returned {twin:?}); the explicit \
          override equal to the default was ignored and the dynamic threshold used instead"
+    );
+}
+
+/// Finding #2463 (whitespace variant): surrounding whitespace is trimmed and an
+/// explicit `1e-7` is honoured by both functions.
+#[test]
+#[serial]
+fn explicit_default_override_with_whitespace_is_honoured() {
+    let expected = Some(1e-7_f32);
+    let (production, twin) = both_under(Some(" 1e-7 "));
+    assert!(
+        close(production, expected),
+        "{VAR}=\" 1e-7 \": get_constant_source_threshold returned {production:?}, expected {expected:?}"
+    );
+    assert!(
+        close(twin, expected),
+        "{VAR}=\" 1e-7 \": constant_source_threshold_with_dynamic returned {twin:?}, expected {expected:?}"
     );
 }

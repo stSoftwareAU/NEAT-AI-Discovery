@@ -17,18 +17,21 @@ use super::helpers::{
 
 /// Check if verbose logging is enabled (cached).
 ///
-/// Presence-only: any set value enables it, `0` included.
+/// Set `NEAT_AI_DISCOVERY_VERBOSE=1` (or `true`/`yes`) to enable. Any other
+/// value, including `0`, `false` and `no`, leaves it off (Issue #2467).
 pub fn verbose() -> bool {
     static VAL: OnceLock<bool> = OnceLock::new();
-    *VAL.get_or_init(|| std::env::var("NEAT_AI_DISCOVERY_VERBOSE").is_ok())
+    *VAL.get_or_init(|| parse_bool_env("NEAT_AI_DISCOVERY_VERBOSE"))
 }
 
 /// Check if GPU kernel timing collection is enabled (cached).
 ///
-/// Presence-only: any set value enables it, `0` included. Adds ~5% overhead.
+/// Set `NEAT_AI_DISCOVERY_GPU_TIMING=1` (or `true`/`yes`) to enable. Any other
+/// value, including `0`, `false` and `no`, leaves it off (Issue #2467). Adds ~5%
+/// overhead.
 pub fn gpu_timing() -> bool {
     static VAL: OnceLock<bool> = OnceLock::new();
-    *VAL.get_or_init(|| std::env::var("NEAT_AI_DISCOVERY_GPU_TIMING").is_ok())
+    *VAL.get_or_init(|| parse_bool_env("NEAT_AI_DISCOVERY_GPU_TIMING"))
 }
 
 /// Get the GPU batch size override (cached).
@@ -285,9 +288,11 @@ pub fn block_size() -> usize {
 
 /// Check if neuron targets should be restricted to output neurons only.
 ///
-/// Presence-only: any set value enables it, `0` included.
+/// Set `NEAT_AI_DISCOVERY_NEURON_TARGETS_OUTPUT_ONLY=1` (or `true`/`yes`) to
+/// enable. Any other value, including `0`, `false` and `no`, leaves it off
+/// (Issue #2467).
 pub fn neuron_targets_output_only() -> bool {
-    std::env::var("NEAT_AI_DISCOVERY_NEURON_TARGETS_OUTPUT_ONLY").is_ok()
+    parse_bool_env("NEAT_AI_DISCOVERY_NEURON_TARGETS_OUTPUT_ONLY")
 }
 
 /// Check if discovery should focus on unused observations.
@@ -573,9 +578,10 @@ pub fn zero_copy_override() -> Option<bool> {
 
 /// Check if Mesa/libEGL warning suppression is requested (Linux only).
 ///
-/// Presence-only: any set value enables it, `0` included.
+/// Set `NEAT_AI_DISCOVERY_QUIET_GPU=1` (or `true`/`yes`) to enable. Any other
+/// value, including `0`, `false` and `no`, leaves it off (Issue #2467).
 pub fn quiet_gpu() -> bool {
-    std::env::var("NEAT_AI_DISCOVERY_QUIET_GPU").is_ok()
+    parse_bool_env("NEAT_AI_DISCOVERY_QUIET_GPU")
 }
 
 /// Default constant source effect threshold.
@@ -1258,12 +1264,37 @@ pub const MAX_WALL_CLOCK_MINUTES: u64 = 120;
 /// recording and analysis budgets are split.
 ///
 /// Default: 20 minutes. Clamped to 1–120. An FFI-supplied
-/// `max_discovery_wall_clock_minutes` takes precedence over this value and is
-/// not clamped here (#2460).
+/// `max_discovery_wall_clock_minutes` takes precedence over this value but is
+/// clamped to the same 1–120 range by [`effective_wall_clock_minutes`]
+/// (Issue #2460).
 pub fn max_wall_clock_minutes() -> u64 {
     parse_env::<u64>("NEAT_AI_DISCOVERY_MAX_WALL_CLOCK_MINUTES")
         .unwrap_or(DEFAULT_MAX_WALL_CLOCK_MINUTES)
         .clamp(MIN_WALL_CLOCK_MINUTES, MAX_WALL_CLOCK_MINUTES)
+}
+
+/// Resolve the effective wall-clock cap in minutes (Issue #2460).
+///
+/// `None` (no FFI value supplied) falls back to [`max_wall_clock_minutes`].
+/// `Some(m)` is clamped to [`MIN_WALL_CLOCK_MINUTES`]–[`MAX_WALL_CLOCK_MINUTES`]
+/// so an out-of-range FFI value cannot overflow the minutes-to-seconds
+/// conversion downstream. When clamping changes the value, one `WARN` names the
+/// value given and the clamped cap.
+pub fn effective_wall_clock_minutes(requested: Option<u64>) -> u64 {
+    let Some(minutes) = requested else {
+        return max_wall_clock_minutes();
+    };
+    let clamped = minutes.clamp(MIN_WALL_CLOCK_MINUTES, MAX_WALL_CLOCK_MINUTES);
+    if clamped != minutes {
+        tracing::warn!(
+            requested_minutes = minutes,
+            clamped_minutes = clamped,
+            min_minutes = MIN_WALL_CLOCK_MINUTES,
+            max_minutes = MAX_WALL_CLOCK_MINUTES,
+            "maxDiscoveryWallClockMinutes {minutes} is outside {MIN_WALL_CLOCK_MINUTES}–{MAX_WALL_CLOCK_MINUTES}; clamping to {clamped}"
+        );
+    }
+    clamped
 }
 
 /// Get the macOS `sample` program path for thread dumps.

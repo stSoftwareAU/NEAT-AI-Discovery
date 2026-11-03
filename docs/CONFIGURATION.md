@@ -11,15 +11,16 @@ variable that tunes `neat_ai_discovery`. The code-side origin is
 
 All discovery variables use the `NEAT_AI_DISCOVERY_` prefix. Boolean toggles
 accept `1`/`true`/`yes` to enable, and any other value leaves them off, unless
-the row says otherwise. The toggles that default on,
+the row says otherwise. This general rule covers
+`NEAT_AI_DISCOVERY_VERBOSE`, `NEAT_AI_DISCOVERY_GPU_TIMING`,
+`NEAT_AI_DISCOVERY_QUIET_GPU`, `NEAT_AI_DISCOVERY_NEURON_TARGETS_OUTPUT_ONLY`,
+`NEAT_AI_DISCOVERY_TIMING` and `NEAT_AI_DISCOVERY_GPU_METRICS`: only
+`1`/`true`/`yes` enable them (trimmed and case-insensitive); any other value,
+including `0`, `false`, `no`, `on` or empty, leaves them off. Before
+Issue #2467, any set value enabled them. The toggles that default on,
 `NEAT_AI_DISCOVERY_CPU_PRE_REJECT` and `NEAT_AI_DISCOVERY_HIDDEN_SQUASH_PRUNE`,
 stay on for any value other than `0`/`false`/`no`. Unset means the documented
 default applies.
-
-Some toggles are **presence-only**: any set value enables them, `0` included.
-These are `NEAT_AI_DISCOVERY_VERBOSE`, `NEAT_AI_DISCOVERY_GPU_TIMING`,
-`NEAT_AI_DISCOVERY_QUIET_GPU`, `NEAT_AI_DISCOVERY_NEURON_TARGETS_OUTPUT_ONLY`,
-`NEAT_AI_DISCOVERY_TIMING` and `NEAT_AI_DISCOVERY_GPU_METRICS`.
 
 For numeric variables, an **unparsable** value is treated as unset, so the
 default applies. An **out-of-range** value either falls back to the default or
@@ -50,7 +51,7 @@ their fallback and range rules are those in the row.
 |----------|---------|-------------|
 | `NEAT_AI_DISCOVERY_LIB_PATH` | host-defined | Host-loader variable: this library never reads it (no reader in `src/`). The host application's loader reads it to locate the compiled library; see [README.md](../README.md) and [GPU_GUIDE.md](GPU_GUIDE.md). |
 | `RUST_LOG` | `warn` | Structured log filter for `tracing` (e.g. `neat_ai_discovery=info`). An invalid filter silently falls back to `warn`. A subscriber the host installed before the library initialises wins, and this library does not apply `RUST_LOG`. |
-| `NEAT_AI_DISCOVERY_VERBOSE` | off | Enable verbose logging. Presence-only: any set value enables it, `0` included. |
+| `NEAT_AI_DISCOVERY_VERBOSE` | off | Enable verbose logging. |
 
 ## GPU
 
@@ -91,7 +92,7 @@ their fallback and range rules are those in the row.
 | `NEAT_AI_DISCOVERY_FOCUS_EXCLUDE_CONSTANT_NEURONS` | off | Exclude functionally-constant hidden neurons (zero activation variance) from focus-slot eligibility so they stop wasting slots on candidates that can never succeed; they remain available to the constant-neuron removal path. Slot-waste is surfaced as `focus_ineligible_constant` (Issue #1624). |
 | `NEAT_AI_DISCOVERY_FOCUS_IMPACT_GATE` | off | Gate out neurons whose structural impact magnitude is below `NEAT_AI_DISCOVERY_FOCUS_IMPACT_GATE_THRESHOLD` from focus-slot eligibility. Complements the constant filter above by catching *non-constant* near-zero-impact neurons (~31.6% of neurons had `\|impact\| < 1e-6` in production, Issue #1631) that no change can move. Gated count is surfaced as `focus_ineligible_low_impact` (Issue #1635). |
 | `NEAT_AI_DISCOVERY_FOCUS_IMPACT_GATE_THRESHOLD` | 1e-6 | Impact-magnitude gate: neurons with `\|impact\| <` this value are gated out when the gate above is enabled (retain-on-equal at the boundary). Positive finite values only; invalid or non-positive values fall back to the default (Issue #1635). |
-| `NEAT_AI_DISCOVERY_CONSTANT_SOURCE_EFFECT_THRESHOLD` | dynamic | Constant-source folding threshold. |
+| `NEAT_AI_DISCOVERY_CONSTANT_SOURCE_EFFECT_THRESHOLD` | dynamic | Constant-source folding threshold. Unset, empty or invalid: dynamic (`1e-7` scaled by source variance). Any finite value `> 0` (including `1e-7`) is used as-is and disables the variance scaling (Issue #2472). `0` disables constant-source folding. |
 | `NEAT_AI_DISCOVERY_FOCUS_RANKING_MEMORY_BUDGET_MB` | unset | Cap focus-ranking eager pre-load size in MB. When set and projected size (file × 3) exceeds the budget, lazy mode is used with a structured `WARN` log (Issue #1172). |
 | `NEAT_AI_DISCOVERY_MAX_PARQUET_DECODE_MB` | half of total RAM | Decode ceiling for a Parquet read. Readers compare selected-column footer estimates with the ceiling before constructing Arrow batches, for the whole eager selection or each row group in filtering, folding and streaming readers, then keep cumulative per-record charging as a second check. The analysis phase's own memory budget takes precedence; this variable bounds paths without a caller budget (visualisation snapshot export, focus gradients, streaming readers and activation summaries) and also caps the exporter's dense neuron × observation grid. A footer that understates decoded sizes is outside this protection. Unset / invalid / `0` falls back to half of total system RAM (Issue #1869). |
 | `NEAT_AI_DISCOVERY_FOCUS_RANKING_MEMORY_MARGIN_MB` | 1024 | Safety margin (MB) reserved from OS-available memory when deciding eager-vs-lazy focus-ranking pre-load. `0` reserves no margin; unset / invalid values fall back to the default. |
@@ -112,7 +113,7 @@ their fallback and range rules are those in the row.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `NEAT_AI_DISCOVERY_MAX_WALL_CLOCK_MINUTES` | 20 | Overall wall-clock cap for discovery time in minutes. The environment value is clamped to 1–120. An FFI-supplied `max_discovery_wall_clock_minutes` takes precedence over it and is not clamped (#2460). |
+| `NEAT_AI_DISCOVERY_MAX_WALL_CLOCK_MINUTES` | 20 | Overall wall-clock cap for discovery time in minutes. The environment value is clamped to 1–120. An FFI-supplied `max_discovery_wall_clock_minutes` takes precedence over it and is clamped to the same 1–120 range, with a warning when clamping changes it (Issue #2460). |
 | `NEAT_AI_DISCOVERY_ANALYSIS_RESERVE_MS` | 60000 | Guaranteed minimum window (ms) reserved for synapse/neuron analysis so focus selection + Parquet loading cannot starve it (Issue #1408). Parquet loading is curtailed at `deadline − reserve`; if less than 1s would remain, `analyze_all` fails fast with an actionable error instead of analysing 0/N targets. `0` disables the reserve; other values clamp to `[1, 3600000]`. |
 | `NEAT_AI_DISCOVERY_ANALYSIS_RESERVE_FRACTION` | 0.5 | Fraction of the remaining discovery window the reserve may claim (Issue #1408). Effective reserve = `min(ANALYSIS_RESERVE_MS, remaining × fraction)`, so tight budgets are split rather than starving loading. Finite values above `0` are honoured up to `0.9`; values above `0.9` clamp to `0.9`. Non-finite, zero, negative or unparsable values fall back to `0.5`. |
 | `NEAT_AI_DISCOVERY_WATCHDOG_STALL_SECS` | off | Abort if no progress for N seconds. Positive values are capped at 86400 seconds (24 hours); larger values clamp to the cap and log a `WARN` with the variable, supplied value and cap (#2405, `MAX_WATCHDOG_STALL_SECS`). `0` and unset leave the watchdog off. An unparsable value also leaves it off, and logs a `WARN` naming the variable and value (#2468). |
@@ -170,9 +171,9 @@ their fallback and range rules are those in the row.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `NEAT_AI_DISCOVERY_TIMING` | off | Phase timing, emitted as `tracing` debug events (message `phase timing`). Presence-only: any set value enables it, `0` included. Hidden under the default `RUST_LOG=warn`; set `RUST_LOG=neat_ai_discovery=debug` to see it. |
+| `NEAT_AI_DISCOVERY_TIMING` | off | Phase timing, emitted as `tracing` debug events (message `phase timing`). Hidden under the default `RUST_LOG=warn`; set `RUST_LOG=neat_ai_discovery=debug` to see it. |
 | `NEAT_AI_DISCOVERY_PROFILE` | off | Emit a structured profile as a `tracing` info event (message `profile data`). The only recognised value is `json` (case-insensitive); anything else disables profiling. Hidden under the default `RUST_LOG=warn`; set `RUST_LOG=neat_ai_discovery=info` to see it. |
-| `NEAT_AI_DISCOVERY_GPU_METRICS` | off | GPU metrics, emitted as a `tracing` info event (message `GPU metrics`). Presence-only: any set value enables it, `0` included. Hidden under the default `RUST_LOG=warn`; set `RUST_LOG=neat_ai_discovery=info` to see it. |
+| `NEAT_AI_DISCOVERY_GPU_METRICS` | off | GPU metrics, emitted as a `tracing` info event (message `GPU metrics`). Hidden under the default `RUST_LOG=warn`; set `RUST_LOG=neat_ai_discovery=info` to see it. |
 | `NEAT_AI_DISCOVERY_CALIBRATION_MISS_THRESHOLD` | 10.0 | `actual/expected` ratio above which prediction-vs-actual calibration mismatches are logged via `tracing::warn!`. Must be finite and `> 1.0`; invalid values fall back to the default so the log channel cannot be silenced by a malformed value. |
 | `NEAT_AI_DISCOVERY_STRICT_CANDIDATE_RECONCILIATION` | on for debug builds, off for release builds | Trip a `debug_assert!` when a discovery pass cannot account for every considered candidate (Issue #1802), so a newly-added silent drop path fails CI. Set to `0` to force warn-only. The `unaccounted_drop` rejection-breakdown entry and the `tracing::warn!` naming the surface and delta are emitted regardless, so a mismatch is never silent. See [docs/analysis/candidate-reconciliation-1802.md](analysis/candidate-reconciliation-1802.md). |
 | `NEAT_AI_DISCOVERY_SAMPLE_PROGRAM` | `sample` on macOS, none elsewhere | Path override for the `sample` binary used for thread-dump diagnostics. Off macOS no sampler is attempted unless this names one (Issue #1934). Diagnostics/tooling only — not a discovery-tuning knob. |

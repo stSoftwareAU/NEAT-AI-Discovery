@@ -10,11 +10,11 @@
 //! `timing`, `profile_mode` and `gpu_metrics` are memoised in a process-wide
 //! `OnceLock`, so whichever test reads them first freezes the value and they
 //! cannot be exercised in-process here. They do not go through `parse_env`:
-//! `timing` and `gpu_metrics` are presence-only `env::var(..).is_ok()` reads,
-//! and `profile_mode` lowercases without trimming. The helper unit tests in
-//! `src/config/helpers.rs` therefore do not cover them either. Their
-//! presence-only and opt-out behaviour is out of scope for this file and is
-//! tracked under #2213.
+//! `timing` and `gpu_metrics` now go through `parse_bool_env` (Issue #2467),
+//! and `profile_mode` lowercases without trimming. Their boolean parsing is
+//! covered by `tests/issue_2467_bool_toggle_env_parsing.rs`. The opt-out
+//! behaviour of these accessors is out of scope for this file and is tracked
+//! under #2213.
 //!
 //! Whitespace cases for `noise_signal_threshold`, `dominance_threshold` and
 //! `gradient_threshold` are not repeated here.
