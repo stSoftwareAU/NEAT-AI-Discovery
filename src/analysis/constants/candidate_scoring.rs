@@ -4,7 +4,7 @@
 //! boosts, pessimism discounts, prediction calibration, coordinated-structural
 //! validation, and NaN-safe comparison helpers.
 
-use crate::config::helpers::parse_env;
+use crate::config::helpers::{env_trimmed, parse_env, warn_guard_disabled};
 
 // =============================================================================
 // Candidate Diversification
@@ -840,16 +840,25 @@ pub const MIN_EXPECTED_CREATURE_SCORE_GAIN_CEILING: f32 = 1e-2;
 /// `[MIN_EXPECTED_CREATURE_SCORE_GAIN_FLOOR,
 /// MIN_EXPECTED_CREATURE_SCORE_GAIN_CEILING]` are clamped. Unparsable,
 /// non-finite, or negative values fall back to
-/// [`MIN_EXPECTED_CREATURE_SCORE_GAIN`].
+/// [`MIN_EXPECTED_CREATURE_SCORE_GAIN`]. An effective `0.0` (the screen
+/// disabled) logs a `WARN` naming the variable and value (once per distinct
+/// value per process, Issue #2468).
 #[must_use]
 pub fn min_expected_creature_score_gain() -> f32 {
-    parse_env::<f32>("NEAT_AI_DISCOVERY_MIN_EXPECTED_GAIN")
+    const ENV: &str = "NEAT_AI_DISCOVERY_MIN_EXPECTED_GAIN";
+    let value = parse_env::<f32>(ENV)
         .filter(|v| v.is_finite() && *v >= 0.0)
         .unwrap_or(MIN_EXPECTED_CREATURE_SCORE_GAIN)
         .clamp(
             MIN_EXPECTED_CREATURE_SCORE_GAIN_FLOOR,
             MIN_EXPECTED_CREATURE_SCORE_GAIN_CEILING,
-        )
+        );
+    // The compile-time default is non-zero, so an effective `0.0` means the
+    // operator set the variable to zero.
+    if value == 0.0 {
+        warn_guard_disabled(ENV, &env_trimmed(ENV), "the minimum expected-gain screen");
+    }
+    value
 }
 
 /// Absolute backstop under the calibrated gain floor (Issue #1778).
@@ -1045,16 +1054,25 @@ pub const MIN_BYPASS_WEIGHT_FOR_COLLAPSE_CEILING: f32 = 0.1;
 /// outside `[MIN_BYPASS_WEIGHT_FOR_COLLAPSE_FLOOR,
 /// MIN_BYPASS_WEIGHT_FOR_COLLAPSE_CEILING]` are clamped. Unparsable,
 /// non-finite, or negative values fall back to
-/// [`MIN_BYPASS_WEIGHT_FOR_COLLAPSE`].
+/// [`MIN_BYPASS_WEIGHT_FOR_COLLAPSE`]. An effective `0.0` (the floor disabled)
+/// logs a `WARN` naming the variable and value (once per distinct value per
+/// process, Issue #2468).
 #[must_use]
 pub fn min_bypass_weight_for_collapse() -> f32 {
-    parse_env::<f32>("NEAT_AI_DISCOVERY_MIN_BYPASS_WEIGHT_FOR_COLLAPSE")
+    const ENV: &str = "NEAT_AI_DISCOVERY_MIN_BYPASS_WEIGHT_FOR_COLLAPSE";
+    let value = parse_env::<f32>(ENV)
         .filter(|v| v.is_finite() && *v >= 0.0)
         .unwrap_or(MIN_BYPASS_WEIGHT_FOR_COLLAPSE)
         .clamp(
             MIN_BYPASS_WEIGHT_FOR_COLLAPSE_FLOOR,
             MIN_BYPASS_WEIGHT_FOR_COLLAPSE_CEILING,
-        )
+        );
+    // The compile-time default is non-zero, so an effective `0.0` means the
+    // operator set the variable to zero.
+    if value == 0.0 {
+        warn_guard_disabled(ENV, &env_trimmed(ENV), "the collapse bypass-weight floor");
+    }
+    value
 }
 
 // =============================================================================
@@ -1503,18 +1521,34 @@ pub const REMOVE_LOW_IMPACT_NOISE_FLOOR_UNITS: f32 = 1.0;
 ///   disables the floor.
 ///
 /// A value that fails to parse, is non-finite, or is negative is ignored and the
-/// compile-time default applies.
+/// compile-time default applies. Either variable set to `0` disables the floor
+/// and logs a `WARN` naming that variable and value (once per distinct value per
+/// process, Issue #2468).
 #[must_use]
 pub fn remove_low_impact_noise_floor(cost_of_growth: f32) -> f32 {
-    if let Some(absolute) = env_f32_non_negative("NEAT_AI_DISCOVERY_REMOVE_LOW_IMPACT_NOISE_FLOOR")
-    {
+    const ABSOLUTE_ENV: &str = "NEAT_AI_DISCOVERY_REMOVE_LOW_IMPACT_NOISE_FLOOR";
+    const UNITS_ENV: &str = "NEAT_AI_DISCOVERY_REMOVE_LOW_IMPACT_NOISE_FLOOR_UNITS";
+    if let Some(absolute) = env_f32_non_negative(ABSOLUTE_ENV) {
+        if absolute == 0.0 {
+            warn_guard_disabled(
+                ABSOLUTE_ENV,
+                &env_trimmed(ABSOLUTE_ENV),
+                "the remove-low-impact noise floor",
+            );
+        }
         return absolute;
     }
 
-    let units = env_f32_non_negative("NEAT_AI_DISCOVERY_REMOVE_LOW_IMPACT_NOISE_FLOOR_UNITS")
-        .unwrap_or(REMOVE_LOW_IMPACT_NOISE_FLOOR_UNITS);
+    let units = env_f32_non_negative(UNITS_ENV).unwrap_or(REMOVE_LOW_IMPACT_NOISE_FLOOR_UNITS);
 
     if units == 0.0 {
+        // The compile-time default is non-zero, so `0.0` here means the operator
+        // set the units variable to zero.
+        warn_guard_disabled(
+            UNITS_ENV,
+            &env_trimmed(UNITS_ENV),
+            "the remove-low-impact noise floor",
+        );
         return 0.0;
     }
     if !cost_of_growth.is_finite() || cost_of_growth <= 0.0 {

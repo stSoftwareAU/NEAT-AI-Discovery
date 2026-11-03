@@ -6,7 +6,10 @@
 use std::sync::OnceLock;
 use std::time::Duration;
 
-use super::helpers::{parse_bool_env, parse_env, parse_optional_bool_env};
+use super::helpers::{
+    env_trimmed, parse_bool_env, parse_env, parse_optional_bool_env, warn_guard_disabled,
+    warn_guard_invalid,
+};
 
 // =============================================================================
 // Core user-facing accessors
@@ -124,8 +127,9 @@ pub fn gpu_retry_limit() -> u32 {
 /// Set `NEAT_AI_DISCOVERY_GPU_STALL_WINDOW_SECS` to the number of seconds a
 /// submitter tolerates with no GPU-thread progress before declaring the device
 /// wedged. Default: 30. Values are clamped to 1–600; `0` disables the guard,
-/// leaving the absolute batch timeout as the only bound. Unparsable values fall
-/// back to the default.
+/// leaving the absolute batch timeout as the only bound, and logs a `WARN`
+/// naming the variable and value (once per distinct value per process, Issue
+/// #2468). Unparsable values fall back to the default.
 pub fn gpu_stall_window() -> Duration {
     use crate::analysis::gpu::heartbeat::{
         DEFAULT_GPU_STALL_WINDOW_SECS, GPU_STALL_WINDOW_ENV, MAX_GPU_STALL_WINDOW_SECS,
@@ -135,6 +139,11 @@ pub fn gpu_stall_window() -> Duration {
     let secs =
         parse_env::<u64>(GPU_STALL_WINDOW_ENV).map_or(DEFAULT_GPU_STALL_WINDOW_SECS, |secs| {
             if secs == 0 {
+                warn_guard_disabled(
+                    GPU_STALL_WINDOW_ENV,
+                    &env_trimmed(GPU_STALL_WINDOW_ENV),
+                    "the GPU stall detector",
+                );
                 0
             } else {
                 secs.clamp(MIN_GPU_STALL_WINDOW_SECS, MAX_GPU_STALL_WINDOW_SECS)
@@ -158,10 +167,20 @@ pub const MAX_WATCHDOG_STALL_SECS: u64 = 86_400;
 /// Set `NEAT_AI_DISCOVERY_WATCHDOG_STALL_SECS` to a positive number to enable.
 /// Values above `MAX_WATCHDOG_STALL_SECS` (24 hours) are clamped and log a
 /// `WARN` naming the variable, supplied value and cap. Returns `None` when
-/// disabled (unset or `0`). A value that does not parse also returns `None`,
-/// and nothing is logged (#2213, #2276).
+/// disabled (unset or `0`). A non-empty value that does not parse also returns
+/// `None`, and logs a `WARN` naming the variable and the value, because the
+/// watchdog stays disabled (Issue #2468; once per distinct value per process).
 pub fn watchdog_stall_timeout() -> Option<Duration> {
-    let secs = parse_env::<u64>(WATCHDOG_STALL_ENV).unwrap_or(0);
+    let secs = match parse_env::<u64>(WATCHDOG_STALL_ENV) {
+        Some(secs) => secs,
+        None => {
+            let raw = env_trimmed(WATCHDOG_STALL_ENV);
+            if !raw.is_empty() {
+                warn_guard_invalid(WATCHDOG_STALL_ENV, &raw, "the watchdog stays disabled");
+            }
+            0
+        }
+    };
 
     if secs == 0 {
         None
@@ -415,9 +434,15 @@ pub fn focus_impact_gate_threshold() -> f32 {
 /// usable outgoing weight, avoiding a wasted GPU round-trip for candidates the
 /// downstream result loop would reject anyway. Enabled by default; set
 /// `NEAT_AI_DISCOVERY_CPU_PRE_REJECT=0` (or `false`/`no`) to disable it (e.g.
-/// for A/B benchmarking). Unset or unrecognised values keep it enabled.
+/// for A/B benchmarking). Unset or unrecognised values keep it enabled. The
+/// falsy opt-out logs a `WARN` (once per distinct value per process, Issue #2468).
 pub fn cpu_pre_reject_enabled() -> bool {
-    parse_optional_bool_env("NEAT_AI_DISCOVERY_CPU_PRE_REJECT").unwrap_or(true)
+    const ENV: &str = "NEAT_AI_DISCOVERY_CPU_PRE_REJECT";
+    let enabled = parse_optional_bool_env(ENV).unwrap_or(true);
+    if !enabled {
+        warn_guard_disabled(ENV, &env_trimmed(ENV), "the CPU pre-reject screen");
+    }
+    enabled
 }
 
 /// Whether squash-aware hidden-target activation scan pruning is enabled
@@ -428,9 +453,15 @@ pub fn cpu_pre_reject_enabled() -> bool {
 /// cross-product, unless the search is escalated (drought / novelty) which
 /// restores the full set. Set `NEAT_AI_DISCOVERY_HIDDEN_SQUASH_PRUNE=0` (or
 /// `false`/`no`) to disable pruning and always scan the full set — e.g. for A/B
-/// benchmarking. Unset or unrecognised values keep pruning enabled.
+/// benchmarking. Unset or unrecognised values keep pruning enabled. The falsy
+/// opt-out logs a `WARN` (once per distinct value per process, Issue #2468).
 pub fn hidden_squash_prune_enabled() -> bool {
-    parse_optional_bool_env("NEAT_AI_DISCOVERY_HIDDEN_SQUASH_PRUNE").unwrap_or(true)
+    const ENV: &str = "NEAT_AI_DISCOVERY_HIDDEN_SQUASH_PRUNE";
+    let enabled = parse_optional_bool_env(ENV).unwrap_or(true);
+    if !enabled {
+        warn_guard_disabled(ENV, &env_trimmed(ENV), "hidden squash-set pruning");
+    }
+    enabled
 }
 
 /// Maximum (orientation × scale) activation configs scanned per (source, target)
@@ -442,9 +473,24 @@ pub fn hidden_squash_prune_enabled() -> bool {
 /// closest to `1.0` (the historically productive band) and drops the numerically
 /// unstable extreme scales first. Set via
 /// `NEAT_AI_DISCOVERY_MAX_ACTIVATION_CONFIGS_PER_TARGET`. Unparsable values fall
-/// back to `0` (uncapped).
+/// back to `0` (uncapped). An explicit `0` or an unparsable value logs a `WARN`
+/// (once per distinct value per process, Issue #2468).
 pub fn max_activation_configs_per_target() -> usize {
-    parse_env::<usize>("NEAT_AI_DISCOVERY_MAX_ACTIVATION_CONFIGS_PER_TARGET").unwrap_or(0)
+    const ENV: &str = "NEAT_AI_DISCOVERY_MAX_ACTIVATION_CONFIGS_PER_TARGET";
+    match parse_env::<usize>(ENV) {
+        Some(0) => {
+            warn_guard_disabled(ENV, &env_trimmed(ENV), "the activation-config cap");
+            0
+        }
+        Some(cap) => cap,
+        None => {
+            let raw = env_trimmed(ENV);
+            if !raw.is_empty() {
+                warn_guard_invalid(ENV, &raw, "the activation-config cap is disabled");
+            }
+            0
+        }
+    }
 }
 
 /// Maximum valid source input index bias.
@@ -489,25 +535,27 @@ pub fn source_input_index_bias() -> Option<f64> {
 /// low-priority tail.
 ///
 /// Returns `None` when unset, empty, `0`, or unparsable — preserving the
-/// pre-#1542 unlimited behaviour for back-compat.
+/// pre-#1542 unlimited behaviour for back-compat. An explicit `0` or an
+/// unparsable value logs a `WARN` naming the variable and value (once per
+/// distinct value per process, Issue #2468); an empty value is silent.
 ///
 /// Not cached: read per call so `#[serial]` tests and A/B benchmark runs can
 /// toggle the budget within a single process (matches `source_input_index_bias`).
 pub fn max_sources_per_target() -> Option<usize> {
-    let raw = std::env::var("NEAT_AI_DISCOVERY_MAX_SOURCES_PER_TARGET").ok()?;
+    const ENV: &str = "NEAT_AI_DISCOVERY_MAX_SOURCES_PER_TARGET";
+    let raw = std::env::var(ENV).ok()?;
     let trimmed = raw.trim();
     if trimmed.is_empty() {
         return None;
     }
     match trimmed.parse::<usize>() {
-        Ok(0) => None,
+        Ok(0) => {
+            warn_guard_disabled(ENV, trimmed, "the per-target source cap");
+            None
+        }
         Ok(v) => Some(v),
         Err(_) => {
-            tracing::debug!(
-                raw_value = trimmed,
-                "Ignoring invalid NEAT_AI_DISCOVERY_MAX_SOURCES_PER_TARGET \
-                 (expected a positive integer)"
-            );
+            warn_guard_invalid(ENV, trimmed, "the per-target source cap is disabled");
             None
         }
     }
@@ -537,10 +585,12 @@ pub const DEFAULT_CONSTANT_SOURCE_EFFECT_THRESHOLD: f32 = 1e-7;
 ///
 /// Set `NEAT_AI_DISCOVERY_CONSTANT_SOURCE_EFFECT_THRESHOLD`:
 /// - Unset / empty: returns `Some(DEFAULT_CONSTANT_SOURCE_EFFECT_THRESHOLD)`
-/// - `0`: returns `None` (folding disabled)
+/// - `0`: returns `None` (folding disabled, logs a `WARN`, Issue #2468)
 /// - Positive finite number: returns `Some(value)`
+/// - Invalid: returns the default and logs a `WARN` (Issue #2468)
 pub fn constant_source_effect_threshold() -> Option<f32> {
-    let raw = std::env::var("NEAT_AI_DISCOVERY_CONSTANT_SOURCE_EFFECT_THRESHOLD").ok();
+    const ENV: &str = "NEAT_AI_DISCOVERY_CONSTANT_SOURCE_EFFECT_THRESHOLD";
+    let raw = std::env::var(ENV).ok();
     let Some(raw) = raw else {
         return Some(DEFAULT_CONSTANT_SOURCE_EFFECT_THRESHOLD);
     };
@@ -549,12 +599,16 @@ pub fn constant_source_effect_threshold() -> Option<f32> {
         return Some(DEFAULT_CONSTANT_SOURCE_EFFECT_THRESHOLD);
     }
     match trimmed.parse::<f32>() {
-        Ok(v) if v.is_finite() && v == 0.0 => None,
+        Ok(v) if v.is_finite() && v == 0.0 => {
+            warn_guard_disabled(ENV, trimmed, "constant-source folding");
+            None
+        }
         Ok(v) if v.is_finite() && v > 0.0 => Some(v),
         _ => {
-            tracing::debug!(
-                raw_value = ?trimmed,
-                "Ignoring invalid NEAT_AI_DISCOVERY_CONSTANT_SOURCE_EFFECT_THRESHOLD (expected 0 or a finite number > 0)"
+            warn_guard_invalid(
+                ENV,
+                trimmed,
+                "constant-source folding uses its default threshold",
             );
             Some(DEFAULT_CONSTANT_SOURCE_EFFECT_THRESHOLD)
         }
@@ -565,20 +619,28 @@ pub fn constant_source_effect_threshold() -> Option<f32> {
 ///
 /// If the environment variable is explicitly set, it takes precedence.
 /// Otherwise, uses the dynamic threshold based on `source_std_dev_avg`.
+///
+/// An explicit `0` logs a `WARN` (folding disabled) and an invalid value logs a
+/// `WARN` before falling through to the dynamic threshold (Issue #2468).
 pub fn constant_source_threshold_with_dynamic(source_std_dev_avg: Option<f32>) -> Option<f32> {
+    const ENV: &str = "NEAT_AI_DISCOVERY_CONSTANT_SOURCE_EFFECT_THRESHOLD";
     // Check for explicit env var override first
-    let raw = std::env::var("NEAT_AI_DISCOVERY_CONSTANT_SOURCE_EFFECT_THRESHOLD").ok();
+    let raw = std::env::var(ENV).ok();
 
     if let Some(raw) = raw {
         let trimmed = raw.trim();
         if !trimmed.is_empty() {
             match trimmed.parse::<f32>() {
-                Ok(v) if v.is_finite() && v == 0.0 => return None,
+                Ok(v) if v.is_finite() && v == 0.0 => {
+                    warn_guard_disabled(ENV, trimmed, "constant-source folding");
+                    return None;
+                }
                 Ok(v) if v.is_finite() && v > 0.0 => return Some(v),
                 _ => {
-                    tracing::debug!(
-                        raw_value = ?trimmed,
-                        "Ignoring invalid NEAT_AI_DISCOVERY_CONSTANT_SOURCE_EFFECT_THRESHOLD"
+                    warn_guard_invalid(
+                        ENV,
+                        trimmed,
+                        "constant-source folding uses the dynamic threshold",
                     );
                 }
             }
@@ -857,9 +919,10 @@ fn focus_ranking_budget_override() -> FocusBudgetOverride {
     }
     match trimmed.parse::<u64>() {
         Ok(0) => {
-            tracing::debug!(
-                "Focus-ranking wall-clock budget disabled via \
-                 NEAT_AI_DISCOVERY_FOCUS_RANKING_BUDGET_MS=0"
+            warn_guard_disabled(
+                "NEAT_AI_DISCOVERY_FOCUS_RANKING_BUDGET_MS",
+                trimmed,
+                "the focus-ranking time budget",
             );
             FocusBudgetOverride::Disabled
         }
@@ -942,7 +1005,8 @@ pub fn scale_default_focus_ranking_budget_ms(is_lazy: bool, projected_mb: u64) -
 /// - An explicit `NEAT_AI_DISCOVERY_FOCUS_RANKING_BUDGET_MS` override **wins**
 ///   verbatim (clamped) and is never scaled — the operator's value is
 ///   authoritative.
-/// - `0` disables the budget (returns `None`, fully unbounded opt-out).
+/// - `0` disables the budget (returns `None`, fully unbounded opt-out) and logs
+///   a `WARN` (once per distinct value per process, Issue #2468).
 /// - Otherwise the default budget is scaled for `is_lazy` + `projected_mb` via
 ///   [`scale_default_focus_ranking_budget_ms`].
 ///
@@ -989,7 +1053,8 @@ pub const ANALYSIS_RESERVE_FRACTION_MAX: f64 = 0.9;
 /// Override with `NEAT_AI_DISCOVERY_ANALYSIS_RESERVE_MS`:
 /// - Unset / empty / non-numeric: returns [`DEFAULT_ANALYSIS_RESERVE_MS`].
 /// - `0`: disables the reserve (opt-out — restores pre-#1408 behaviour where
-///   focus/parquet may consume the whole window).
+///   focus/parquet may consume the whole window). Logs a `WARN` (once per
+///   distinct value per process, Issue #2468).
 /// - Any positive integer: clamped to `[1, ANALYSIS_RESERVE_MAX_MS]` ms.
 pub fn analysis_reserve_ms() -> u64 {
     let Ok(raw) = std::env::var("NEAT_AI_DISCOVERY_ANALYSIS_RESERVE_MS") else {
@@ -1001,8 +1066,10 @@ pub fn analysis_reserve_ms() -> u64 {
     }
     match trimmed.parse::<u64>() {
         Ok(0) => {
-            tracing::debug!(
-                "Analysis reserve disabled via NEAT_AI_DISCOVERY_ANALYSIS_RESERVE_MS=0"
+            warn_guard_disabled(
+                "NEAT_AI_DISCOVERY_ANALYSIS_RESERVE_MS",
+                trimmed,
+                "the analysis wall-clock reserve",
             );
             0
         }
@@ -1069,7 +1136,8 @@ pub const DEFAULT_INSUFFICIENT_RECORDING_FRACTION: f64 = 1.0;
 /// Override with `NEAT_AI_DISCOVERY_INSUFFICIENT_RECORDING_FRACTION`:
 /// - Unset / empty / non-finite / out of range: returns
 ///   `Some(`[`DEFAULT_INSUFFICIENT_RECORDING_FRACTION`]`)`.
-/// - `0`: disables the gate (opt-out — analysis always runs).
+/// - `0`: disables the gate (opt-out — analysis always runs) and logs a `WARN`
+///   (once per distinct value per process, Issue #2468).
 /// - Any finite value in `(0.0, 1.0]`: that fraction.
 #[must_use]
 pub fn insufficient_recording_fraction() -> Option<f64> {
@@ -1084,12 +1152,14 @@ pub fn insufficient_recording_fraction() -> Option<f64> {
 /// (Issue #1444).
 ///
 /// Pure function for testability (no environment access). Returns:
-/// - `None` when `raw` parses to `0` — the explicit operator opt-out.
+/// - `None` when `raw` parses to `0` — the explicit operator opt-out, which
+///   logs a `WARN` (Issue #2468).
 /// - `Some(v)` for any finite value in `(0.0, 1.0]`.
 /// - `Some(`[`DEFAULT_INSUFFICIENT_RECORDING_FRACTION`]`)` when `raw` is `None`,
 ///   empty, non-finite, or out of range.
 #[must_use]
 pub fn resolve_insufficient_recording_fraction(raw: Option<&str>) -> Option<f64> {
+    const ENV: &str = "NEAT_AI_DISCOVERY_INSUFFICIENT_RECORDING_FRACTION";
     let Some(value) = raw else {
         return Some(DEFAULT_INSUFFICIENT_RECORDING_FRACTION);
     };
@@ -1101,7 +1171,10 @@ pub fn resolve_insufficient_recording_fraction(raw: Option<&str>) -> Option<f64>
         // A valid in-range fraction is honoured.
         Ok(v) if v.is_finite() && v > 0.0 && v <= 1.0 => Some(v),
         // Exactly `0` is the explicit opt-out (disable the gate).
-        Ok(v) if v.is_finite() && v == 0.0 => None,
+        Ok(v) if v.is_finite() && v == 0.0 => {
+            warn_guard_disabled(ENV, trimmed, "the insufficient-recording fail-fast gate");
+            None
+        }
         _ => Some(DEFAULT_INSUFFICIENT_RECORDING_FRACTION),
     }
 }
@@ -1282,14 +1355,19 @@ pub fn drought_log_threshold() -> u32 {
 /// (Issue #1424).
 ///
 /// Pure function for testability (no environment access). Returns:
-/// - `None` when `raw` parses to `0` — the explicit operator opt-out.
+/// - `None` when `raw` parses to `0` — the explicit operator opt-out, which logs
+///   a `WARN` (Issue #2468).
 /// - `Some(n)` for any other positive integer.
 /// - `Some(default)` when `raw` is `None`, empty, or unparsable.
 #[must_use]
 pub fn resolve_drought_alarm_epochs(raw: Option<&str>, default: u32) -> Option<u32> {
+    const ENV: &str = "NEAT_AI_DISCOVERY_DROUGHT_ALARM_EPOCHS";
     match raw {
         Some(value) => match value.trim().parse::<u32>() {
-            Ok(0) => None,
+            Ok(0) => {
+                warn_guard_disabled(ENV, value.trim(), "the creature drought alarm");
+                None
+            }
             Ok(n) => Some(n),
             Err(_) => Some(default),
         },
@@ -1303,8 +1381,9 @@ pub fn resolve_drought_alarm_epochs(raw: Option<&str>, default: u32) -> Option<u
 /// Set `NEAT_AI_DISCOVERY_DROUGHT_ALARM_EPOCHS` to a positive integer to
 /// override the default
 /// ([`crate::analysis::creature_drought_alarm::DEFAULT_DROUGHT_ALARM_EPOCHS`],
-/// 100). Set it to `0` to disable the alarm entirely. Unparsable values fall
-/// back to the default.
+/// 100). Set it to `0` to disable the alarm entirely; that logs a `WARN` (once
+/// per distinct value per process, Issue #2468). Unparsable values fall back to
+/// the default.
 #[must_use]
 pub fn drought_alarm_epochs() -> Option<u32> {
     resolve_drought_alarm_epochs(
@@ -1411,6 +1490,7 @@ pub const MAX_MIN_AVAILABLE_MEMORY_GB: f64 = 64.0;
 /// effectively disables the available-memory gate for a small-but-capable host.
 #[must_use]
 pub fn resolve_min_available_memory_gb(raw: Option<&str>, default_gb: f64) -> f64 {
+    const ENV: &str = "NEAT_AI_DISCOVERY_MIN_AVAILABLE_MEMORY_GB";
     let Some(raw) = raw else {
         return default_gb;
     };
@@ -1419,7 +1499,12 @@ pub fn resolve_min_available_memory_gb(raw: Option<&str>, default_gb: f64) -> f6
         return default_gb;
     }
     match trimmed.parse::<f64>() {
-        Ok(v) if v.is_finite() && (0.0..=MAX_MIN_AVAILABLE_MEMORY_GB).contains(&v) => v,
+        Ok(v) if v.is_finite() && (0.0..=MAX_MIN_AVAILABLE_MEMORY_GB).contains(&v) => {
+            if v == 0.0 {
+                warn_guard_disabled(ENV, trimmed, "the available-memory gate");
+            }
+            v
+        }
         _ => {
             tracing::debug!(
                 raw_value = trimmed,
@@ -1440,7 +1525,8 @@ pub fn resolve_min_available_memory_gb(raw: Option<&str>, default_gb: f64) -> f6
 /// macOS / 1GB Linux) gates discovery off almost every pass. Operators can
 /// raise or lower the floor at runtime via
 /// `NEAT_AI_DISCOVERY_MIN_AVAILABLE_MEMORY_GB` without recompiling. A value of
-/// `0` effectively disables the available-memory gate.
+/// `0` effectively disables the available-memory gate and logs a `WARN` (once
+/// per distinct value per process, Issue #2468).
 ///
 /// Falls back to the platform default when unset, empty, non-numeric, or out of
 /// the accepted range (`0.0–64.0`).
@@ -1476,7 +1562,8 @@ pub const DEFAULT_DROUGHT_RESET_AFTER_EPOCHS: u32 = 50;
 /// returns [`DEFAULT_DROUGHT_RESET_AFTER_EPOCHS`] (50) so the escape hatch
 /// fires without any operator action. Set the env var to a positive integer to
 /// override the threshold, or to `0` to deliberately disable the lever
-/// (returns `None`).
+/// (returns `None`), which logs a `WARN` (once per distinct value per process,
+/// Issue #2468).
 ///
 /// The reset clears all `TargetFailureTracker` entries currently in cooldown
 /// (below-threshold tracking is preserved). The reset fires at most once per
@@ -1491,7 +1578,14 @@ pub fn drought_reset_after_epochs() -> Option<u32> {
         // Explicit, parseable override: `0` disables the lever, any positive
         // integer sets the threshold.
         Ok(raw) => match raw.trim().parse::<u32>() {
-            Ok(0) => None,
+            Ok(0) => {
+                warn_guard_disabled(
+                    "NEAT_AI_DISCOVERY_DROUGHT_RESET_AFTER_EPOCHS",
+                    raw.trim(),
+                    "the drought-reset escape hatch",
+                );
+                None
+            }
             Ok(n) => Some(n),
             // Unparsable value — fall back to the armed default rather than
             // silently disabling the escape hatch.

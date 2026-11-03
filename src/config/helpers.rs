@@ -1,5 +1,61 @@
 //! Environment variable parsing utilities shared by every config accessor.
 
+use std::collections::HashSet;
+use std::sync::{Mutex, OnceLock, PoisonError};
+
+/// Opt-outs already logged in this process, keyed by `(env, raw value)`
+/// (Issue #2468).
+///
+/// Readers run several times per discovery pass, so each distinct opt-out is
+/// logged once per process rather than on every call.
+static WARNED_OPT_OUTS: OnceLock<Mutex<HashSet<(String, String)>>> = OnceLock::new();
+
+/// Returns `true` the first time `(env, raw)` is seen in this process.
+fn first_opt_out_sighting(env: &str, raw: &str) -> bool {
+    WARNED_OPT_OUTS
+        .get_or_init(|| Mutex::new(HashSet::new()))
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .insert((env.to_string(), raw.to_string()))
+}
+
+/// Log a `WARN` that an explicitly set environment value disables a guard
+/// (Issue #2468).
+///
+/// Emitted at most once per distinct `(env, raw)` per process. `raw` is the
+/// trimmed value as the operator wrote it, and `guard` names what is switched
+/// off, e.g. `"the analysis wall-clock reserve"`.
+pub(crate) fn warn_guard_disabled(env: &str, raw: &str, guard: &str) {
+    if first_opt_out_sighting(env, raw) {
+        tracing::warn!(env, value = raw, guard, "{env}={raw:?} disables {guard}");
+    }
+}
+
+/// Log a `WARN` that an environment value does not parse, so the guard named
+/// by `guard` is left off or uncapped (Issue #2468).
+///
+/// Emitted at most once per distinct `(env, raw)` per process. `guard` is the
+/// clause that follows the value, e.g. `"the watchdog stays disabled"`.
+pub(crate) fn warn_guard_invalid(env: &str, raw: &str, guard: &str) {
+    if first_opt_out_sighting(env, raw) {
+        tracing::warn!(
+            env,
+            value = raw,
+            guard,
+            "{env}={raw:?} is not a valid value; {guard}"
+        );
+    }
+}
+
+/// The trimmed raw value of `name`, or an empty string when unset (Issue #2468).
+///
+/// Used only on the opt-out path, to name the value the operator actually set.
+pub(crate) fn env_trimmed(name: &str) -> String {
+    std::env::var(name)
+        .map(|v| v.trim().to_string())
+        .unwrap_or_default()
+}
+
 /// Parse a boolean-style environment variable.
 ///
 /// Truthy values: `"1"`, `"true"`, `"yes"` (case-insensitive, surrounding
@@ -40,8 +96,56 @@ pub(crate) fn parse_env<T: std::str::FromStr>(name: &str) -> Option<T> {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_env;
+    use super::{parse_env, warn_guard_disabled, warn_guard_invalid};
     use serial_test::serial;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use tracing_subscriber::layer::{Context, Layer, SubscriberExt};
+    use tracing_subscriber::registry::Registry;
+
+    /// Counts `WARN` events emitted while it is the active subscriber.
+    struct WarnCounter(Arc<AtomicUsize>);
+
+    impl<S: tracing::Subscriber> Layer<S> for WarnCounter {
+        fn on_event(&self, event: &tracing::Event<'_>, _ctx: Context<'_, S>) {
+            if *event.metadata().level() == tracing::Level::WARN {
+                self.0.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+    }
+
+    /// Run `body` and return how many `WARN` events it emitted on this thread.
+    fn count_warns(body: impl FnOnce()) -> usize {
+        let warns = Arc::new(AtomicUsize::new(0));
+        let subscriber = Registry::default().with(WarnCounter(Arc::clone(&warns)));
+        tracing::subscriber::with_default(subscriber, body);
+        warns.load(Ordering::SeqCst)
+    }
+
+    #[test]
+    fn opt_out_warns_once_per_distinct_env_and_value() {
+        // Unique to this test: the dedupe set is process-wide.
+        const DEDUPE_ENV: &str = "NEAT_AI_DISCOVERY_HELPER_DEDUPE_DISABLED_TEST";
+        let warns = count_warns(|| {
+            warn_guard_disabled(DEDUPE_ENV, "0", "the helper test guard");
+            // Same (env, value): suppressed.
+            warn_guard_disabled(DEDUPE_ENV, "0", "the helper test guard");
+            // Different value for the same env: warns again.
+            warn_guard_disabled(DEDUPE_ENV, "00", "the helper test guard");
+        });
+        assert_eq!(warns, 2);
+    }
+
+    #[test]
+    fn invalid_value_warns_once_per_distinct_env_and_value() {
+        const DEDUPE_ENV: &str = "NEAT_AI_DISCOVERY_HELPER_DEDUPE_INVALID_TEST";
+        let warns = count_warns(|| {
+            warn_guard_invalid(DEDUPE_ENV, "3O", "the helper test guard");
+            warn_guard_invalid(DEDUPE_ENV, "3O", "the helper test guard");
+            warn_guard_invalid(DEDUPE_ENV, "3o", "the helper test guard");
+        });
+        assert_eq!(warns, 2);
+    }
 
     const ENV: &str = "NEAT_AI_DISCOVERY_PARSE_ENV_HELPER_TEST";
 
