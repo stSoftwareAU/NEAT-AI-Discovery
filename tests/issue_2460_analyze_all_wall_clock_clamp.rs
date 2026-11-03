@@ -109,10 +109,9 @@ fn analyze_all_reports_clamped_cap_for_oversized_values() {
             let _ = analyze_all(&input);
         });
         assert!(
-            events.iter().any(|e| e
-                .fields
-                .get("wall_clock_cap_minutes")
-                .is_some_and(|v| v == "120")),
+            events.iter().any(|e| e.level == tracing::Level::WARN
+                && e.fields.get("requested_minutes") == Some(&requested.to_string())
+                && e.fields.get("clamped_minutes").is_some_and(|v| v == "120")),
             "requested {requested}: {events:?}"
         );
     }
