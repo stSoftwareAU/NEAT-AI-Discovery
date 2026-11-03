@@ -6,8 +6,8 @@ exclusively created, unique sibling file, cleaning up only its own file. The
 FFI merge documentation describes the updated behaviour. `Cargo.toml` and
 `Cargo.lock` carry the required version bump. Closes #2450.
 
-Version bump: `Cargo.toml` updated for this change; the merged commit records
-the final version.
+Version bump: the merge resolves the base and PR versions to 0.74.327 in
+`Cargo.toml` and `Cargo.lock`, keeping the merged code ahead of the base.
 
 ## Spec
 
