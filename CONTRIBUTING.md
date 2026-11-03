@@ -543,8 +543,8 @@ These are repository-level settings that cannot be committed as files.
 ### 🔢 Version Management
 
 CI auto-increments the `Cargo.toml` patch version on **every pull request**
-(unless the PR branch already carries a bump), not only when `src/` changes — so
-in the normal PR workflow you do not need to bump it yourself. If you commit
+(unless the PR's version is already ahead of `origin/Develop`), not only when
+`src/` changes — so in the normal PR workflow you do not need to bump it yourself. If you commit
 **directly** (outside the PR workflow, where CI does not run), you must manually
 increment the patch version. A PR version that is **strictly behind**
 `origin/Develop` fails CI rather than being treated as “already bumped”
