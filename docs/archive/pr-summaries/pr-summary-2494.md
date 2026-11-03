@@ -3,6 +3,7 @@
 `tests/test_gitleaks_workflow_verification.sh` was run by no gate, so nothing enforced the SHA-256 check on the downloaded gitleaks binary in `.github/workflows/gitleaks.yml`. Its assertions now live in a Rust integration test that runs under `cargo test`, and the script is deleted. The other four unrun `tests/test_*.sh` scripts were each checked and removed or ported. Closes #2494.
 
 Version bump: `Cargo.toml` and `Cargo.lock` updated for this change; the merged commit records the final version.
+The merge with Develop retains its newer 0.74.337 version in both files.
 
 ## Spec
 

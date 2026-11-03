@@ -7,10 +7,13 @@ use std::time::{Duration, SystemTime};
 use crate::analysis::shared;
 use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson};
 
-use super::super::diagnostics::rejection_reasons::REJECTION_MODULE_SKIPPED_QUALITY_SATISFIED;
+use super::super::diagnostics::rejection_reasons::{
+    REJECTION_BUDGET_TRUNCATED, REJECTION_COORDINATED_TARGET_CAP_EXCEEDED,
+    REJECTION_MODULE_SKIPPED_QUALITY_SATISFIED, REJECTION_NON_FINITE_GAIN,
+};
 use super::{
     DiscoveryDetectionResult, DiscoveryModuleSpec, ModuleOutcomeTracker,
-    detect_discovery_modules_parallel, run_discovery_modules_parallel,
+    detect_discovery_modules_parallel, run_discovery_module, run_discovery_modules_parallel,
 };
 
 fn empty_synapse_result() -> shared::AnalyzeSynapsesResult {
@@ -958,4 +961,171 @@ fn detection_applies_no_per_creature_starvation_cooldown() {
         "the module_starved rejection reason was removed with the tracker"
     );
     assert_eq!(syn.coordinated_structural_candidates.len(), 1);
+}
+
+/// Single-module spec with an explicit per-module budget (Issue #2486).
+/// `make_module` pins `max_candidates` to 0, which disables the budget.
+fn make_module_with_budget(
+    name: &str,
+    max_candidates: usize,
+    candidates: Vec<CoordinatedStructuralCandidateJson>,
+) -> DiscoveryModuleSpec {
+    let detected_count = candidates.len();
+    DiscoveryModuleSpec {
+        module_name: name.to_string(),
+        phase_name: "test_phase",
+        max_candidates,
+        detect_fn: Box::new(move || {
+            Some(DiscoveryDetectionResult {
+                detected_count,
+                candidates,
+            })
+        }),
+    }
+}
+
+/// Issue #2486: a +∞ gain sorts first and passes the expected-gain floor, so
+/// without the pre-truncation gate it takes the only budget slot and the finite
+/// candidate is truncated and charged as a soft failure.
+#[test]
+fn non_finite_gain_does_not_displace_finite_candidate_under_module_budget() {
+    let _lock = crate::watchdog::lock_for_test_serialisation();
+    let _wd = crate::watchdog::Watchdog::start(crate::watchdog::WatchdogConfig {
+        stall_timeout: std::time::Duration::from_secs(60),
+        abort_delay: std::time::Duration::from_secs(1),
+    });
+
+    let mut syn = empty_synapse_result();
+    let modules = vec![make_module_with_budget(
+        "module",
+        1,
+        vec![
+            make_candidate_to("t_inf", f32::INFINITY),
+            make_candidate_to("t_ok", 1.0),
+        ],
+    )];
+
+    let mut tracker = ModuleOutcomeTracker::new();
+    run_discovery_modules_parallel(&mut syn, modules, None, false, &mut tracker);
+
+    assert_eq!(
+        syn.coordinated_structural_candidates.len(),
+        1,
+        "the finite candidate must survive the module budget"
+    );
+    assert_eq!(
+        syn.coordinated_structural_candidates[0].expected_creature_score_gain,
+        1.0
+    );
+    let counts = syn.metadata.rejection_breakdown.counts();
+    assert_eq!(counts.get(REJECTION_NON_FINITE_GAIN), Some(&1));
+    assert!(
+        !counts.contains_key(REJECTION_BUDGET_TRUNCATED),
+        "the non-finite candidate must not be charged as budget truncation"
+    );
+    assert_eq!(
+        tracker.stats("module").soft_failures,
+        0.0,
+        "a non-finite candidate is not a soft failure"
+    );
+}
+
+/// Issue #2486: a +∞ gain must not take a per-final-target cap slot. The cap
+/// keeps 3 per target (`MAX_COORDINATED_PER_TARGET_OUTPUT`). Without the
+/// pre-cap gate, +∞ takes one of the three slots and the gain-1.0 candidate is
+/// capped away. A NaN gain would not exercise this path: the expected-gain floor
+/// already drops NaN (`NaN >= floor` is false) before the cap runs.
+#[test]
+fn non_finite_gain_does_not_take_a_per_target_cap_slot() {
+    let _lock = crate::watchdog::lock_for_test_serialisation();
+    let _wd = crate::watchdog::Watchdog::start(crate::watchdog::WatchdogConfig {
+        stall_timeout: std::time::Duration::from_secs(60),
+        abort_delay: std::time::Duration::from_secs(1),
+    });
+
+    let mut syn = empty_synapse_result();
+    let modules = vec![make_module_with_budget(
+        "module",
+        0,
+        vec![
+            make_candidate_to("t_shared", f32::INFINITY),
+            make_candidate_to("t_shared", 3.0),
+            make_candidate_to("t_shared", 2.0),
+            make_candidate_to("t_shared", 1.0),
+        ],
+    )];
+
+    let mut tracker = ModuleOutcomeTracker::new();
+    run_discovery_modules_parallel(&mut syn, modules, None, false, &mut tracker);
+
+    let gains: Vec<f32> = syn
+        .coordinated_structural_candidates
+        .iter()
+        .map(|c| c.expected_creature_score_gain)
+        .collect();
+    assert_eq!(
+        gains.len(),
+        3,
+        "all three finite candidates must survive the per-target cap, got {gains:?}"
+    );
+    for expected in [3.0_f32, 2.0, 1.0] {
+        assert!(
+            gains.contains(&expected),
+            "finite gain {expected} was dropped, got {gains:?}"
+        );
+    }
+    let counts = syn.metadata.rejection_breakdown.counts();
+    assert_eq!(counts.get(REJECTION_NON_FINITE_GAIN), Some(&1));
+    assert!(
+        !counts.contains_key(REJECTION_COORDINATED_TARGET_CAP_EXCEEDED),
+        "no finite candidate should be cap-dropped when the +∞ candidate is gated first"
+    );
+}
+
+/// Issue #2486: the same per-target cap scenario through `run_discovery_module`
+/// (the sequential path), which applies the floor and cap before merging.
+#[test]
+fn run_discovery_module_non_finite_gain_does_not_take_a_per_target_cap_slot() {
+    let _lock = crate::watchdog::lock_for_test_serialisation();
+    let _wd = crate::watchdog::Watchdog::start(crate::watchdog::WatchdogConfig {
+        stall_timeout: std::time::Duration::from_secs(60),
+        abort_delay: std::time::Duration::from_secs(1),
+    });
+
+    let mut syn = empty_synapse_result();
+    run_discovery_module(&mut syn, "module", "test_phase", None, false, || {
+        Some(DiscoveryDetectionResult {
+            detected_count: 4,
+            candidates: vec![
+                make_candidate_to("t_shared", f32::INFINITY),
+                make_candidate_to("t_shared", 3.0),
+                make_candidate_to("t_shared", 2.0),
+                make_candidate_to("t_shared", 1.0),
+            ],
+        })
+    });
+
+    let gains: Vec<f32> = syn
+        .coordinated_structural_candidates
+        .iter()
+        .map(|c| c.expected_creature_score_gain)
+        .collect();
+    assert_eq!(
+        gains.len(),
+        3,
+        "all three finite candidates must survive the per-target cap, got {gains:?}"
+    );
+    for expected in [3.0_f32, 2.0, 1.0] {
+        assert!(
+            gains.contains(&expected),
+            "finite gain {expected} was dropped, got {gains:?}"
+        );
+    }
+    assert_eq!(
+        syn.metadata
+            .rejection_breakdown
+            .counts()
+            .get(REJECTION_NON_FINITE_GAIN),
+        Some(&1)
+    );
 }

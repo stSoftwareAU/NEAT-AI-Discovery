@@ -442,6 +442,13 @@ pub struct DiscoveryDetectionResult {
 ///
 /// The `detect_fn` closure encapsulates all module-specific logic (record
 /// collection, detection, and conversion to coordinated candidates).
+///
+/// Candidates with a non-finite operation parameter or a non-finite
+/// expected gain are dropped **before** the expected-gain floor and the
+/// per-target cap (Issue #2486). Each is counted under its own rejection reason
+/// (`REJECTION_NON_FINITE_OPERATION` / `REJECTION_NON_FINITE_GAIN`) and is not
+/// counted as a soft failure, so a non-finite candidate cannot take a cap slot
+/// from a finite one.
 #[tracing::instrument(skip_all, fields(module = module_name, phase = phase_name))]
 pub fn run_discovery_module(
     syn: &mut shared::AnalyzeSynapsesResult,
@@ -466,6 +473,14 @@ pub fn run_discovery_module(
         syn.metadata.rejection_breakdown.record_many_u32(
             super::diagnostics::rejection_reasons::REJECTION_NON_FINITE_OPERATION,
             invalid,
+        );
+        // Issue #2486: drop non-finite gains before the floor and the per-target
+        // cap, so they cannot take a cap slot from a finite candidate.
+        let non_finite_gain =
+            super::candidate_aggregation::reject_non_finite_gains(&mut result.candidates);
+        syn.metadata.rejection_breakdown.record_many_u32(
+            super::diagnostics::rejection_reasons::REJECTION_NON_FINITE_GAIN,
+            non_finite_gain,
         );
         // Issue #1110: Filter coordinated candidates below the minimum
         // expected-gain floor. Gains at 1e-8 to 1e-7 are indistinguishable
@@ -778,6 +793,15 @@ fn count_high_quality_candidates(syn: &shared::AnalyzeSynapsesResult, threshold:
 /// discarded candidates are counted under
 /// [`REJECTION_MODULE_SKIPPED_QUALITY_SATISFIED`] so the drop is visible in the
 /// breakdown and classified as abundance rather than starvation (Issue #1799).
+///
+/// ## Non-finite candidates (Issue #2486)
+///
+/// Candidates with a non-finite operation parameter or a non-finite expected
+/// gain are dropped **before** the per-module budget, the expected-gain floor
+/// and the per-target cap. Each is counted under its own rejection reason
+/// (`REJECTION_NON_FINITE_OPERATION` / `REJECTION_NON_FINITE_GAIN`) and is not
+/// counted as a soft failure, so a non-finite candidate cannot take a budget or
+/// cap slot from a finite one.
 pub fn merge_discovery_module_results(
     syn: &mut shared::AnalyzeSynapsesResult,
     detection_results: DiscoveryModuleDetectionResults,
@@ -839,7 +863,6 @@ pub fn merge_discovery_module_results(
         if let Some(mut result) = entry.result
             && !result.candidates.is_empty()
         {
-            let initial_count = result.candidates.len();
             // Invalid candidates must not consume a module budget or target cap.
             let invalid =
                 super::candidate_aggregation::reject_non_finite_operations(&mut result.candidates);
@@ -847,6 +870,19 @@ pub fn merge_discovery_module_results(
                 super::diagnostics::rejection_reasons::REJECTION_NON_FINITE_OPERATION,
                 invalid,
             );
+            // Issue #2486: a non-finite gain (+∞ passes the floor) must not take a
+            // budget or per-target cap slot either. Rejected here, before the
+            // truncation below, rather than only later in
+            // `merge_coordinated_structural_replacements`.
+            let non_finite_gain =
+                super::candidate_aggregation::reject_non_finite_gains(&mut result.candidates);
+            syn.metadata.rejection_breakdown.record_many_u32(
+                super::diagnostics::rejection_reasons::REJECTION_NON_FINITE_GAIN,
+                non_finite_gain,
+            );
+            // Computed after both non-finite rejections so invalid candidates are
+            // not reported as soft failures (Issue #2486).
+            let initial_count = result.candidates.len();
             let valid_count = result.candidates.len();
 
             // Issue #967: Truncate to per-module candidate budget if set.
