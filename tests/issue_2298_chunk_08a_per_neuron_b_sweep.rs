@@ -494,6 +494,36 @@ fn every_traversal_symbol_has_a_bounded_and_cancellation_checked_row() {
     }
 }
 
+/// The five per-neuron-b converter files that Issue #2479 gave a
+/// once-per-candidate `deadline_passed` check (their per-candidate `creature`
+/// scans became maps built once). They carry no pairwise or traversal row, so
+/// the ledger's claim about them is prose; this test pins the code side.
+const CHECKED_SINCE_AUDIT: &[&str] = &[
+    "src/analysis/detection/operating_point.rs",
+    "src/analysis/detection/output_range_compression.rs",
+    "src/analysis/detection/restricted_range.rs",
+    "src/analysis/detection/sentinel_gating.rs",
+    "src/analysis/detection/squash_weight_rescale.rs",
+];
+
+#[test]
+fn converter_files_checked_since_audit_really_check_the_deadline() {
+    // Issue #2479: the ledger's prose now says these converters check
+    // `deadline_passed` once per candidate. Each file must carry the check in
+    // its production half, so the prose cannot outlive the code.
+    for file in CHECKED_SINCE_AUDIT {
+        assert!(
+            SWEPT.contains(file),
+            "{file} is listed in CHECKED_SINCE_AUDIT but is not a per-neuron-b SWEPT file"
+        );
+        assert!(
+            production_source(file).contains("deadline_passed"),
+            "{file} is listed in CHECKED_SINCE_AUDIT but no longer checks `deadline_passed` in \
+             its production code — restore the check or correct the ledger prose"
+        );
+    }
+}
+
 #[test]
 fn every_issue_linked_from_a_swept_row_appears_under_issues_filed() {
     let doc = read(RECORD);
