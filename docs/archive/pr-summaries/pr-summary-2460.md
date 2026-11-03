@@ -33,3 +33,9 @@
 - `src/config/mod.rs::effective_wall_clock_minutes_clamps_ffi_value` — unit test for the clamp bounds and the `None` fallback.
 - Existing `cap_deadline` unit tests and `issue_1098_wall_clock_cap` (8 tests) pass unchanged.
 - Callers checked: `analyze_all` (src/analysis/orchestration.rs) is the only production reader of `max_discovery_wall_clock_minutes` and now passes it through the clamp.
+
+## Quality gate
+
+`./quality.sh < /dev/null` was started on the final code head but cut off by the 595 s foreground cap before it reported; no failure was seen. Targeted checks passed (rustfmt, clippy `-D warnings`, the new tests, `cap_deadline` unit tests, `issue_1098_wall_clock_cap`). CI runs the full gate.
+
+<!-- vibe-quality-gate-skipped reason="full gate exceeds the 600 s foreground command cap; left to CI" -->
