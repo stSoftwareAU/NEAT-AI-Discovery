@@ -22,6 +22,8 @@ The fuzzing CI template `docs/ci-fuzzing-workflow.yml` now carries the hardening
 
 Backend/CI-template change, no UI. Tests: `tests/issue_2478_fuzzing_template_hardening.rs` (8 tests, all passed); `tests/issue_1939_documented_commands.rs` (references the template, 11 passed); `cargo fmt --check` and `cargo clippy --test issue_2478_fuzzing_template_hardening -- -D warnings` clean.
 
+Review correction: restored the historical version in `pr-summary-2363.md` to the Develop record, removing an unrelated merge edit.
+
 ## Acceptance Criteria
 
 The issue has no acceptance-criteria heading; every requested item is done (permissions, persist-credentials, optional timeout and concurrency, optional drift test).
