@@ -724,7 +724,7 @@ then aborts the process (so logs/crash reports are captured).
 Enable it with:
 
 ```bash
-# Abort if discovery makes no progress for 30 minutes
+# Abort if discovery makes no progress for 30 minutes (maximum: 24 hours)
 export NEAT_AI_DISCOVERY_WATCHDOG_STALL_SECS=1800
 
 # Optional: delay between SIGUSR1 dump and abort (default: 2 seconds, maximum 60)
