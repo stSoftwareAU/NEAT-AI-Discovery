@@ -1191,12 +1191,37 @@ pub const MAX_WALL_CLOCK_MINUTES: u64 = 120;
 /// recording and analysis budgets are split.
 ///
 /// Default: 20 minutes. Clamped to 1–120. An FFI-supplied
-/// `max_discovery_wall_clock_minutes` takes precedence over this value and is
-/// not clamped here (#2460).
+/// `max_discovery_wall_clock_minutes` takes precedence over this value but is
+/// clamped to the same 1–120 range by [`effective_wall_clock_minutes`]
+/// (Issue #2460).
 pub fn max_wall_clock_minutes() -> u64 {
     parse_env::<u64>("NEAT_AI_DISCOVERY_MAX_WALL_CLOCK_MINUTES")
         .unwrap_or(DEFAULT_MAX_WALL_CLOCK_MINUTES)
         .clamp(MIN_WALL_CLOCK_MINUTES, MAX_WALL_CLOCK_MINUTES)
+}
+
+/// Resolve the effective wall-clock cap in minutes (Issue #2460).
+///
+/// `None` (no FFI value supplied) falls back to [`max_wall_clock_minutes`].
+/// `Some(m)` is clamped to [`MIN_WALL_CLOCK_MINUTES`]–[`MAX_WALL_CLOCK_MINUTES`]
+/// so an out-of-range FFI value cannot overflow the minutes-to-seconds
+/// conversion downstream. When clamping changes the value, one `WARN` names the
+/// value given and the clamped cap.
+pub fn effective_wall_clock_minutes(requested: Option<u64>) -> u64 {
+    let Some(minutes) = requested else {
+        return max_wall_clock_minutes();
+    };
+    let clamped = minutes.clamp(MIN_WALL_CLOCK_MINUTES, MAX_WALL_CLOCK_MINUTES);
+    if clamped != minutes {
+        tracing::warn!(
+            requested_minutes = minutes,
+            clamped_minutes = clamped,
+            min_minutes = MIN_WALL_CLOCK_MINUTES,
+            max_minutes = MAX_WALL_CLOCK_MINUTES,
+            "maxDiscoveryWallClockMinutes {minutes} is outside {MIN_WALL_CLOCK_MINUTES}–{MAX_WALL_CLOCK_MINUTES}; clamping to {clamped}"
+        );
+    }
+    clamped
 }
 
 /// Get the macOS `sample` program path for thread dumps.
