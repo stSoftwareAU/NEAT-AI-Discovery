@@ -4,11 +4,9 @@
 //! `u64` minutes value (from the FFI `max_discovery_wall_clock_minutes`) used to
 //! overflow in `minutes * 60`: it wrapped to a short cap in release builds and
 //! panicked in debug builds. An unrepresentable cap now yields no wall-clock
-//! deadline, and the FFI value is clamped to 1–120 before it reaches this
-//! function.
+//! deadline. (The 1–120 clamp of the FFI value is unit-tested in `config`.)
 
 use neat_ai_discovery::analysis::utils::cap_deadline_to_wall_clock;
-use neat_ai_discovery::config::{MAX_WALL_CLOCK_MINUTES, effective_wall_clock_minutes};
 use std::time::{Duration, SystemTime};
 
 /// `307445734561825861 * 60` is `u64::MAX + 45`, so the unchecked product wraps
@@ -73,19 +71,4 @@ fn boundary_minutes_still_cap_normally() {
         cap_deadline_to_wall_clock(Some(analysis_deadline), start, Some(1)),
         Some(start + Duration::from_secs(60))
     );
-}
-
-#[test]
-fn effective_wall_clock_minutes_bounds_ffi_value() {
-    let start = fixed_start();
-    let expected = start + Duration::from_secs(120 * 60);
-
-    for raw in [WRAPPING_MINUTES, u64::MAX] {
-        let minutes = effective_wall_clock_minutes(Some(raw));
-        assert_eq!(minutes, MAX_WALL_CLOCK_MINUTES);
-        assert_eq!(
-            cap_deadline_to_wall_clock(None, start, Some(minutes)),
-            Some(expected)
-        );
-    }
 }

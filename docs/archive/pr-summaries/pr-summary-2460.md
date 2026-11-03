@@ -20,7 +20,7 @@
 ## Evidence
 
 - Regression tests in `tests/issue_2460_wall_clock_cap_overflow.rs` and a unit test in `src/config/mod.rs`.
-- Against the base `src/analysis/utils/deadline.rs` (all else unchanged), `tests/issue_2460_wall_clock_cap_overflow.rs` fails 3 of 5 with `attempt to multiply with overflow` (`deadline.rs:215`); with the fix all 5 pass. The two passing on base are the in-range boundary test and the clamp test (clamp is new code).
+- Against the base `src/analysis/utils/deadline.rs` (all else unchanged), `tests/issue_2460_wall_clock_cap_overflow.rs` fails 3 of 4 with `attempt to multiply with overflow` (`deadline.rs:215`); with the fix all 4 pass (the file compiles on the base: it only uses `cap_deadline_to_wall_clock`, which exists there). The one passing on base is the in-range boundary test.
 - Original trigger closed: `307445734561825861` and `u64::MAX` are clamped to 120 by `effective_wall_clock_minutes` in `analyze_all` (the only reader of the field), and even if passed directly to `cap_deadline_to_wall_clock` the `checked_mul` yields `None` for the cap, so there is no wrap and no panic. No equivalent bypass exists: `cap_deadline_to_wall_clock`'s only production caller is `analyze_all`.
 - Docs updated: `docs/CONFIGURATION.md`, `docs/FFI_API.md`, doc comments in `src/ffi_types/requests.rs`, `src/config/user_facing.rs`, `src/analysis/utils/deadline.rs`. Historical records in `docs/audits/security-sweep-chunk-13-config-env.md` left as written.
 
@@ -29,8 +29,8 @@
 - `tests/issue_2460_wall_clock_cap_overflow.rs::wrapping_multiplier_does_not_produce_short_cap` — red on base, green at head.
 - `tests/issue_2460_wall_clock_cap_overflow.rs::u64_max_minutes_yields_no_wall_clock_deadline` — red on base, green at head.
 - `tests/issue_2460_wall_clock_cap_overflow.rs::unrepresentable_cap_preserves_analysis_deadline` — red on base, green at head.
-- `tests/issue_2460_wall_clock_cap_overflow.rs::boundary_minutes_still_cap_normally` and `::effective_wall_clock_minutes_bounds_ffi_value` — green; the latter covers the clamp (new function, does not exist on base).
-- `src/config/mod.rs::effective_wall_clock_minutes_clamps_ffi_value` — unit test for the clamp bounds and the `None` fallback.
+- `tests/issue_2460_wall_clock_cap_overflow.rs::boundary_minutes_still_cap_normally` — green on base and head (in-range guard).
+- `src/config/mod.rs::effective_wall_clock_minutes_clamps_ffi_value` — unit test for the clamp bounds and the `None` fallback (new function, so it lives in the crate and is not cited as a base/head discriminator).
 - Existing `cap_deadline` unit tests and `issue_1098_wall_clock_cap` (8 tests) pass unchanged.
 - Callers checked: `analyze_all` (src/analysis/orchestration.rs) is the only production reader of `max_discovery_wall_clock_minutes` and now passes it through the clamp.
 
