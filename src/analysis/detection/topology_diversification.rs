@@ -191,7 +191,7 @@ fn best_source_input<'a>(
     records_map: &HashMap<&str, &[DiscoverRecord]>,
 ) -> Option<&'a str> {
     // Pick the input with the highest activation variance
-    direct_inputs.iter().copied().min_by(|&a, &b| {
+    direct_inputs.iter().copied().max_by(|&a, &b| {
         let var_a = activation_variance(records_map.get(a).copied());
         let var_b = activation_variance(records_map.get(b).copied());
         var_a.total_cmp(&var_b)

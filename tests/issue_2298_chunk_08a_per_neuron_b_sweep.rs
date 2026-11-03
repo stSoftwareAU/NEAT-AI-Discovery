@@ -525,8 +525,8 @@ fn converter_files_checked_since_audit_really_check_the_deadline() {
 }
 
 #[test]
-fn topology_diversification_unhealthy_intermediates_row_is_checked_and_the_code_checks_the_deadline(
-) {
+fn topology_diversification_unhealthy_intermediates_row_is_checked_and_the_code_checks_the_deadline()
+ {
     // Issue #2489: the per-output loop checks `deadline_passed` once per output,
     // before `has_unhealthy_intermediates` walks. Its traversal row must cite
     // that check, and the file must really carry it, so the `yes` cannot
