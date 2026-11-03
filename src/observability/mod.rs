@@ -75,8 +75,9 @@ pub fn init_tracing() {
 
 /// Check if phase timing is enabled via `NEAT_AI_DISCOVERY_TIMING`.
 ///
-/// Presence-only: any set value enables it, `0` included. The output is a
-/// `tracing` event, hidden under the default `RUST_LOG=warn`.
+/// Enabled by `1`, `true` or `yes` (Issue #2467); any other value, including `0`,
+/// leaves it off. The output is a `tracing` event, hidden under the default
+/// `RUST_LOG=warn`.
 ///
 /// Delegates to [`crate::config::timing()`].
 pub fn timing_enabled() -> bool {
@@ -85,8 +86,9 @@ pub fn timing_enabled() -> bool {
 
 /// Check if GPU metrics output is enabled via `NEAT_AI_DISCOVERY_GPU_METRICS`.
 ///
-/// Presence-only: any set value enables it, `0` included. The output is a
-/// `tracing` event, hidden under the default `RUST_LOG=warn`.
+/// Enabled by `1`, `true` or `yes` (Issue #2467); any other value, including `0`,
+/// leaves it off. The output is a `tracing` event, hidden under the default
+/// `RUST_LOG=warn`.
 ///
 /// Delegates to [`crate::config::gpu_metrics()`].
 pub fn gpu_metrics_enabled() -> bool {
