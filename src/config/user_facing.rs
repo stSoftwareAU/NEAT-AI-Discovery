@@ -14,18 +14,21 @@ use super::helpers::{parse_bool_env, parse_env, parse_optional_bool_env};
 
 /// Check if verbose logging is enabled (cached).
 ///
-/// Presence-only: any set value enables it, `0` included.
+/// Set `NEAT_AI_DISCOVERY_VERBOSE=1` (or `true`/`yes`) to enable. Any other
+/// value, including `0`, `false` and `no`, leaves it off (Issue #2467).
 pub fn verbose() -> bool {
     static VAL: OnceLock<bool> = OnceLock::new();
-    *VAL.get_or_init(|| std::env::var("NEAT_AI_DISCOVERY_VERBOSE").is_ok())
+    *VAL.get_or_init(|| parse_bool_env("NEAT_AI_DISCOVERY_VERBOSE"))
 }
 
 /// Check if GPU kernel timing collection is enabled (cached).
 ///
-/// Presence-only: any set value enables it, `0` included. Adds ~5% overhead.
+/// Set `NEAT_AI_DISCOVERY_GPU_TIMING=1` (or `true`/`yes`) to enable. Any other
+/// value, including `0`, `false` and `no`, leaves it off (Issue #2467). Adds ~5%
+/// overhead.
 pub fn gpu_timing() -> bool {
     static VAL: OnceLock<bool> = OnceLock::new();
-    *VAL.get_or_init(|| std::env::var("NEAT_AI_DISCOVERY_GPU_TIMING").is_ok())
+    *VAL.get_or_init(|| parse_bool_env("NEAT_AI_DISCOVERY_GPU_TIMING"))
 }
 
 /// Get the GPU batch size override (cached).
@@ -266,9 +269,11 @@ pub fn block_size() -> usize {
 
 /// Check if neuron targets should be restricted to output neurons only.
 ///
-/// Presence-only: any set value enables it, `0` included.
+/// Set `NEAT_AI_DISCOVERY_NEURON_TARGETS_OUTPUT_ONLY=1` (or `true`/`yes`) to
+/// enable. Any other value, including `0`, `false` and `no`, leaves it off
+/// (Issue #2467).
 pub fn neuron_targets_output_only() -> bool {
-    std::env::var("NEAT_AI_DISCOVERY_NEURON_TARGETS_OUTPUT_ONLY").is_ok()
+    parse_bool_env("NEAT_AI_DISCOVERY_NEURON_TARGETS_OUTPUT_ONLY")
 }
 
 /// Check if discovery should focus on unused observations.
@@ -525,9 +530,10 @@ pub fn zero_copy_override() -> Option<bool> {
 
 /// Check if Mesa/libEGL warning suppression is requested (Linux only).
 ///
-/// Presence-only: any set value enables it, `0` included.
+/// Set `NEAT_AI_DISCOVERY_QUIET_GPU=1` (or `true`/`yes`) to enable. Any other
+/// value, including `0`, `false` and `no`, leaves it off (Issue #2467).
 pub fn quiet_gpu() -> bool {
-    std::env::var("NEAT_AI_DISCOVERY_QUIET_GPU").is_ok()
+    parse_bool_env("NEAT_AI_DISCOVERY_QUIET_GPU")
 }
 
 /// Default constant source effect threshold.

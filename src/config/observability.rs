@@ -2,15 +2,16 @@
 
 use std::sync::OnceLock;
 
-use super::helpers::parse_env;
+use super::helpers::{parse_bool_env, parse_env};
 
 /// Check if phase timing output is enabled (cached).
 ///
-/// Presence-only: any set value enables it, `0` included. The output is
+/// Set `NEAT_AI_DISCOVERY_TIMING=1` (or `true`/`yes`) to enable. Any other value,
+/// including `0`, `false` and `no`, leaves it off (Issue #2467). The output is
 /// `tracing::debug!` events, so it is hidden under the default `RUST_LOG=warn`.
 pub fn timing() -> bool {
     static VAL: OnceLock<bool> = OnceLock::new();
-    *VAL.get_or_init(|| std::env::var("NEAT_AI_DISCOVERY_TIMING").is_ok())
+    *VAL.get_or_init(|| parse_bool_env("NEAT_AI_DISCOVERY_TIMING"))
 }
 
 /// Profile output mode.
@@ -45,11 +46,13 @@ pub fn profile_mode() -> ProfileMode {
 
 /// Check if GPU metrics output is enabled (cached).
 ///
-/// Presence-only: any set value enables it, `0` included. The output is a
-/// `tracing::info!` event, so it is hidden under the default `RUST_LOG=warn`.
+/// Set `NEAT_AI_DISCOVERY_GPU_METRICS=1` (or `true`/`yes`) to enable. Any other
+/// value, including `0`, `false` and `no`, leaves it off (Issue #2467). The
+/// output is a `tracing::info!` event, so it is hidden under the default
+/// `RUST_LOG=warn`.
 pub fn gpu_metrics() -> bool {
     static VAL: OnceLock<bool> = OnceLock::new();
-    *VAL.get_or_init(|| std::env::var("NEAT_AI_DISCOVERY_GPU_METRICS").is_ok())
+    *VAL.get_or_init(|| parse_bool_env("NEAT_AI_DISCOVERY_GPU_METRICS"))
 }
 
 /// Whether a candidate-reconciliation mismatch should trip a `debug_assert!`

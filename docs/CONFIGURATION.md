@@ -13,13 +13,12 @@ All discovery variables use the `NEAT_AI_DISCOVERY_` prefix. Boolean toggles
 accept `1`/`true`/`yes` to enable, and any other value leaves them off, unless
 the row says otherwise. The toggles that default on,
 `NEAT_AI_DISCOVERY_CPU_PRE_REJECT` and `NEAT_AI_DISCOVERY_HIDDEN_SQUASH_PRUNE`,
-stay on for any value other than `0`/`false`/`no`. Unset means the documented
-default applies.
-
-Some toggles are **presence-only**: any set value enables them, `0` included.
-These are `NEAT_AI_DISCOVERY_VERBOSE`, `NEAT_AI_DISCOVERY_GPU_TIMING`,
+stay on for any value other than `0`/`false`/`no`. This rule also covers
+`NEAT_AI_DISCOVERY_VERBOSE`, `NEAT_AI_DISCOVERY_GPU_TIMING`,
 `NEAT_AI_DISCOVERY_QUIET_GPU`, `NEAT_AI_DISCOVERY_NEURON_TARGETS_OUTPUT_ONLY`,
-`NEAT_AI_DISCOVERY_TIMING` and `NEAT_AI_DISCOVERY_GPU_METRICS`.
+`NEAT_AI_DISCOVERY_TIMING` and `NEAT_AI_DISCOVERY_GPU_METRICS`, which before
+Issue #2467 enabled on any set value, `0` included. Unset means the documented
+default applies.
 
 For numeric variables, an **unparsable** value is treated as unset, so the
 default applies. An **out-of-range** value either falls back to the default or
@@ -42,7 +41,7 @@ their fallback and range rules are those in the row.
 |----------|---------|-------------|
 | `NEAT_AI_DISCOVERY_LIB_PATH` | host-defined | Host-loader variable: this library never reads it (no reader in `src/`). The host application's loader reads it to locate the compiled library; see [README.md](../README.md) and [GPU_GUIDE.md](GPU_GUIDE.md). |
 | `RUST_LOG` | `warn` | Structured log filter for `tracing` (e.g. `neat_ai_discovery=info`). An invalid filter silently falls back to `warn`. A subscriber the host installed before the library initialises wins, and this library does not apply `RUST_LOG`. |
-| `NEAT_AI_DISCOVERY_VERBOSE` | off | Enable verbose logging. Presence-only: any set value enables it, `0` included. |
+| `NEAT_AI_DISCOVERY_VERBOSE` | off | Enable verbose logging. |
 
 ## GPU
 
@@ -162,9 +161,9 @@ their fallback and range rules are those in the row.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `NEAT_AI_DISCOVERY_TIMING` | off | Phase timing, emitted as `tracing` debug events (message `phase timing`). Presence-only: any set value enables it, `0` included. Hidden under the default `RUST_LOG=warn`; set `RUST_LOG=neat_ai_discovery=debug` to see it. |
+| `NEAT_AI_DISCOVERY_TIMING` | off | Phase timing, emitted as `tracing` debug events (message `phase timing`). Hidden under the default `RUST_LOG=warn`; set `RUST_LOG=neat_ai_discovery=debug` to see it. |
 | `NEAT_AI_DISCOVERY_PROFILE` | off | Emit a structured profile as a `tracing` info event (message `profile data`). The only recognised value is `json` (case-insensitive); anything else disables profiling. Hidden under the default `RUST_LOG=warn`; set `RUST_LOG=neat_ai_discovery=info` to see it. |
-| `NEAT_AI_DISCOVERY_GPU_METRICS` | off | GPU metrics, emitted as a `tracing` info event (message `GPU metrics`). Presence-only: any set value enables it, `0` included. Hidden under the default `RUST_LOG=warn`; set `RUST_LOG=neat_ai_discovery=info` to see it. |
+| `NEAT_AI_DISCOVERY_GPU_METRICS` | off | GPU metrics, emitted as a `tracing` info event (message `GPU metrics`). Hidden under the default `RUST_LOG=warn`; set `RUST_LOG=neat_ai_discovery=info` to see it. |
 | `NEAT_AI_DISCOVERY_CALIBRATION_MISS_THRESHOLD` | 10.0 | `actual/expected` ratio above which prediction-vs-actual calibration mismatches are logged via `tracing::warn!`. Must be finite and `> 1.0`; invalid values fall back to the default so the log channel cannot be silenced by a malformed value. |
 | `NEAT_AI_DISCOVERY_STRICT_CANDIDATE_RECONCILIATION` | on for debug builds, off for release builds | Trip a `debug_assert!` when a discovery pass cannot account for every considered candidate (Issue #1802), so a newly-added silent drop path fails CI. Set to `0` to force warn-only. The `unaccounted_drop` rejection-breakdown entry and the `tracing::warn!` naming the surface and delta are emitted regardless, so a mismatch is never silent. See [docs/analysis/candidate-reconciliation-1802.md](analysis/candidate-reconciliation-1802.md). |
 | `NEAT_AI_DISCOVERY_SAMPLE_PROGRAM` | `sample` on macOS, none elsewhere | Path override for the `sample` binary used for thread-dump diagnostics. Off macOS no sampler is attempted unless this names one (Issue #1934). Diagnostics/tooling only — not a discovery-tuning knob. |
