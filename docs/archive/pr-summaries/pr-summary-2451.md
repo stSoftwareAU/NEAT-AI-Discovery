@@ -77,7 +77,9 @@ Parquet readability, the processing error, and absence of the `.tmp` file.
   `tests/issue_2067_record_module_docs.rs` — passed (5 tests).
 - `rustfmt --edition 2024 --check src/record/mod.rs src/record/processing.rs tests/issue_2451_record_atomic_write.rs` — passed.
 - `cargo clippy --lib --test issue_2451_record_atomic_write -- -D warnings` — passed.
-- `timeout 900 ./quality.sh < /dev/null` — passed all quality checks.
+- `./quality.sh < /dev/null` — passed on the pre-merge head. After merging `origin/Develop`, a re-run was cut off by the 590s foreground cap while still in the lib unit tests (no failure seen); the final-head gate is left to CI.
+
+<!-- vibe-quality-gate-skipped reason="foreground command cap (600s) is shorter than the ~15m gate; formatter, clippy and the targeted tests passed on the final head; CI runs the full gate" -->
 
 The original trigger is closed: `record_discovery_data` writes only to the
 temporary sibling and the final path is touched only by the rename after
