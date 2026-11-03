@@ -25,6 +25,8 @@ Version bump: `Cargo.toml` is not edited by hand here; CI's `version-increment` 
 
 ## Evidence
 
+- Updated `docs/ci-doc-build-step.md` to point to the relocated validation step;
+  `ci_doc_build_step_cites_the_real_check_documentation_lines` checks the range.
 - Docs sweep: `README.md` (Distributed Build & Versioning, first bullet) and `CONTRIBUTING.md` (Version Management) said CI bumps "unless the PR branch already carries a bump"; both now say "unless the PR's version is already ahead of `origin/Develop`". Greps for `auto-increment`, `increment commit`, `already carries` found no other hit outside `docs/archive/`.
 - Regression tests run the real `run:` script extracted from `ci.yml` in a throwaway git repo with a stubbed `cargo` and an `origin/Develop` ref.
 
