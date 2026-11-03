@@ -167,7 +167,7 @@ impl ParquetRecordWriter {
             self.write_chunk(chunk).with_context(|| {
                 format!("Failed to write chunk covering records {start}..{end}")
             })?;
-            start = end;
+            start = if end < records.len() { end + 1 } else { end };
         }
 
         self.remaining_capacity -= records.len();
