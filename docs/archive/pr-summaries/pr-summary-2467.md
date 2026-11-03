@@ -39,3 +39,5 @@ Each child prints a marker the parent asserts on, so a skipped probe cannot pass
 - `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test --lib config::` and the `issue_1611`, `issue_2096`, `issue_2272` tests passed.
 
 Original trigger closed: `NEAT_AI_DISCOVERY_QUIET_GPU=0` (and `false`/`no`) now yields `quiet_gpu() == false`, so no Mesa variable is written; the same holds for the other five toggles, and every site uses the one helper, so no equivalent bypass remains.
+
+<!-- vibe-quality-gate-skipped reason="full ./quality.sh takes about 15 minutes, beyond the 600 s foreground cap; targeted fmt, clippy and tests listed in the Test Plan were run; CI runs the full gate" -->
