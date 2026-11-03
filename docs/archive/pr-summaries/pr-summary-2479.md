@@ -35,7 +35,9 @@ flowchart LR
 
 Backend-only change; no UI. Original trigger (per-candidate scans, no deadline) is closed with no trivial bypass: the seven converters no longer contain any per-candidate `iter().find` or `filter` over `creature.neurons` or `creature.synapses`, every candidate iteration checks the deadline, and every production call site (`neuron_specs.rs`, `scoring_specs.rs`) now passes the dispatch deadline. The old non-deadline functions delegate with `&None`, so they stay callable but no dispatch path uses them.
 
-Regression tests (all red before the change, because the `_with_deadline` entry points do not exist on the base):
+Regression tests that build and run on the base and fail there by assertion (the discrimination tests): `tests/issue_2479_cancellation_stops_converters.rs::bottleneck_stops_when_cancelled` and its six siblings for monotonicity, operating_point, restricted_range, output_range_compression, sentinel_gating and squash_weight_rescale. They call only the long-standing legacy converter functions with the global cancellation flag set (which `deadline_passed` honours): the base returns the full candidate set (red, e.g. 9 vs 0), the head returns none (green). Verified by running the file against a clean `Develop` checkout.
+
+Further regression tests (these need the new `_with_deadline` entry points, so they cannot build on the base):
 
 - `tests/issue_2479_converter_deadline.rs::bottleneck_conversion_stops_at_an_elapsed_deadline`, and the sibling `*_stops_at_an_elapsed_deadline` tests for monotonicity, operating_point, restricted_range, output_range_compression, sentinel_gating and squash_weight_rescale.
 - `src/analysis/detection/bottleneck.rs::deadline_mid_conversion_returns_the_candidates_built_so_far` and its six siblings (a `[false, true]` scripted deadline keeps only the first of three candidates).
@@ -43,6 +45,7 @@ Regression tests (all red before the change, because the `_with_deadline` entry 
 
 ## Test Plan
 
+- `tests/issue_2479_cancellation_stops_converters.rs` (new): 7 tests, one per converter (full set, then empty once cancellation is requested). Passed on the head, failed on the base.
 - `tests/issue_2479_converter_deadline.rs` (new): 21 tests, three per converter (full set with `&None`, empty with an elapsed deadline, legacy function equals `_with_deadline(.., &None)`). Passed.
 - In-file `issue_2479_tests` modules in the seven detection files: a work-count test at N and 4N and a `#[serial]` `DeadlineOverrideGuard::with_sequence(vec![false, true])` test with a positive control. Passed.
 - `src/analysis/module_dispatch_specs/mod.rs`: seven `*_spec_threads_deadline_*` tests (live deadline gives candidates, elapsed deadline gives fewer). Passed.
