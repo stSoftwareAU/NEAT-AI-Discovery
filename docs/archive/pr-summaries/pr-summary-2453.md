@@ -19,7 +19,7 @@ The Parquet writer tests in `src/parquet_format/mod.rs` could not go red when th
 ### Undiscoverable Facts
 
 - The audit (#2144) found the chunk arithmetic correct, but `new()` documented validating the batch limits and did not bound them: a limit above `i32::MAX` let one chunk overflow Arrow's `i32` offsets, which panics in `StringArray`/`OffsetBuffer` rather than returning an error. All in-tree callers pass `i32::MAX`, so none changes behaviour. The other red evidence is mutation of production code (below).
-- The worker's periodic WIP checkpoint snapshotted one of my mutation probes into commit `762b8f8`; the following commit restores the source. The branch head's `src/parquet_format/writer.rs` production code is identical to the base.
+- The worker's periodic WIP checkpoint snapshotted one of my mutation probes into commit `762b8f8`; the following commit (`94e18b8`) restores the source, so `determine_chunk_end`, `write_records` and `write_chunk` match the base. The only production change at the head is in `ParquetRecordWriter::new`, which now also rejects a per-batch UUID byte or error-value limit above `i32::MAX` (commit `545055c`).
 - `bump-deps.sh` added a `chore: bump dependencies` commit (`cc` 1.10.0 → 1.11.0 in `Cargo.lock`); it is unrelated to the tests. Unit tests: `cargo test --lib parquet_format` 45 passed after merging `origin/Develop` (which added further `writer.rs` tests).
 
 ## Evidence
@@ -33,7 +33,7 @@ Backend-only change; no UI. Tests were run on the final head.
 ## Reproduction
 
 - **symptom** — the writer tests stay green when `determine_chunk_end` never splits, drops a record, or the capacity ceiling moves, because they assert vacuous conditions
-- **status** — `reproduced` — `uuid_byte_limit_chunking_round_trips_every_record` fails against the base `writer.rs` (the oversized UUID byte limit is accepted: "a UUID byte limit above i32::MAX must be rejected") and passes at the head. The vacuous-assertion half is shown red under deliberate production mutations (Test Plan).
+- **status** — `verified` — `uuid_byte_limit_chunking_round_trips_every_record` fails against the base `writer.rs` (the oversized UUID byte limit is accepted: "a UUID byte limit above i32::MAX must be rejected") and passes at the head (re-observed on the final head by swapping in the base `writer.rs`, running the test, then restoring). The vacuous-assertion half is shown red under deliberate production mutations (Test Plan).
 - **regression test** — `tests/issue_2453_parquet_writer_chunking.rs::uuid_byte_limit_chunking_round_trips_every_record`
 
 The original trigger (assertions that cannot fail) is closed: the vacuous `exists()`/`is_ok()` checks are replaced by per-row read-back and specific-message assertions, and each is shown red under mutation. No equivalent bypass remains for the chunk-boundary logic, since the boundary vectors are asserted exactly, including exact-fit (`>` vs `>=`) and each limit operand independently.
