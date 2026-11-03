@@ -6,8 +6,7 @@ finalisation, and rename failures clean up the temporary file while retaining
 the original error and reporting any cleanup failure. Closes #2451.
 
 Version bump: the `Cargo.toml` patch version was bumped manually above Develop,
-with `Cargo.lock` updated to match. The merge with Develop retains version
-`0.74.329` in both files, ahead of Develop’s `0.74.328`.
+with `Cargo.lock` updated to match.
 
 ## Spec
 
