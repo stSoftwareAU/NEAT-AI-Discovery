@@ -20,13 +20,14 @@ The Parquet writer tests in `src/parquet_format/mod.rs` could not go red when th
 
 - The audit (#2144) found no production defect; this is test quality only, so there is no unfixed-code red run. The red evidence is mutation of production code (below).
 - The worker's periodic WIP checkpoint snapshotted one of my mutation probes into commit `762b8f8`; the following commit restores the source. The branch head's `src/parquet_format/writer.rs` production code is identical to the base.
+- `bump-deps.sh` added a `chore: bump dependencies` commit (`cc` 1.10.0 → 1.11.0 in `Cargo.lock`); it is unrelated to the tests. Unit tests: `cargo test --lib parquet_format` 45 passed after merging `origin/Develop` (which added further `writer.rs` tests).
 
 ## Evidence
 
 Backend-only change; no UI. Tests were run on the final head.
 
 - `cargo test --test issue_2453_parquet_writer_chunking`: 12 passed.
-- `cargo test --lib parquet_format`: 38 passed (includes the 5 strengthened `mod.rs` tests and 8 new `determine_chunk_end` tests).
+- `cargo test --lib parquet_format`: 45 passed (after merging `origin/Develop`) (includes the 5 strengthened `mod.rs` tests and 8 new `determine_chunk_end` tests).
 - `cargo clippy --all-targets -- -D warnings`: clean. `cargo fmt --all --check`: clean.
 
 ## Reproduction
