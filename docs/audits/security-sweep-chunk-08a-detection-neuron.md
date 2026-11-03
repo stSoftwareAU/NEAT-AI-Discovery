@@ -279,7 +279,7 @@ rows added by the section sub-issues.
 **Regex reconciliation.** Both regex sweeps were re-run at finalisation (#2302)
 against HEAD `6e3ca6f`:
 
-- **Capacity** — `grep -rnE 'with_capacity\(|vec!\[[^\]]*;|\.reserve\(' src/analysis/detection/ src/analysis/neuron/`
+- **Capacity** — `grep -rnE 'with_capacity\(|vec!\[[^]]*;|\.reserve\(' src/analysis/detection/ src/analysis/neuron/`
   returns 76 hits (72 in `src/analysis/detection/`, 4 in
   `src/analysis/neuron/`) across 39 files. That matches the 76-hit checkpoint
   at `8f5f560`. Every hit is production code, and each of the 39 files has
@@ -329,22 +329,38 @@ against HEAD `6e3ca6f`:
   `is_capacity_site` in `tests/issue_2154_chunk_08a_finalisation.rs`, which is the binding contract.
   The capacity ERE quoted at the start of this bullet under-counts: `[^\]]` is the bracket `[^\]`
   followed by a literal `]`, so it misses `vec![false; …]` forms and the shell command prints
-  fewer hits than this record states.
+  fewer hits than this record states. Issue #2480 corrected the quoted command to `[^]]*`.
 
   **Post-finalisation reconciliation (#2383).** #2383 added three production sites
   to `topology_diversification.rs::input_reachable_hidden_depths` (`reverse_adj`,
   `input_reachable` and `depths`), each marked "Added after the audit HEAD" above.
-  The live totals are 84 production capacity rows and 87 capacity hits, including
+  At that checkpoint the totals were 84 production capacity rows and 87 capacity hits, including
   the three test-only hits named above (see the #2347 reconciliation below).
 
   **Post-finalisation reconciliation (#2347).** #2347 removed the
   `weight_coherence.rs::detect_symmetric_cancellation` `candidates` site
   (`Vec::with_capacity(creature.synapses.len())`) and deleted its row, so the
-  merged production capacity rows total 84 (82 after #2368, #2370 and
+  merged production capacity rows totalled 84 at that checkpoint (82 after #2368, #2370 and
   #2367, plus the three #2383 sites, minus this one) and `weight_coherence.rs`
   carries two sites. Its new tests live
   under `tests/` or in the file's own inline `mod tests`, outside this grep's
   production count, so the file count is unchanged.
+
+  **Post-finalisation reconciliation (#2480).** The capacity ERE above used `[^\]]*`, which
+  does not match what it reads as. In POSIX ERE a backslash inside a bracket expression is
+  literal, so `[^\]` is a bracket excluding only `\`, and the trailing `]*` then matches any
+  run of `]` characters. The command therefore missed `vec![value; n]` whenever the value was
+  longer than one character, and it also matched unrelated literals such as `vec![i];` and
+  `vec![];`. The command now uses the portable form `[^]]*`. The corrected command prints 102
+  on the live tree: 89 production capacity rows (each with a `capacity` row above) plus 13
+  test-only hits with no row. Those 13 are: 3 in the test-only module files
+  `symmetry_breaking_deadline_tests.rs`, `redundant_path_deadline_tests.rs` and
+  `compound_degradation_tests.rs` (one each); 5 `vec![false; N]` deadline-override sequences in
+  the inline `#[cfg(test)]` module of `correlated_error.rs`; 2 `Vec::with_capacity` calls in the
+  inline tests of `fanin_polarity_conflict.rs`; and 3 `Vec::with_capacity` calls in the inline
+  tests of `input_sensitivity.rs`. The hit counts in the earlier reconciliation paragraphs are
+  checkpoint figures, counted by `is_capacity_site` in
+  `tests/issue_2154_chunk_08a_finalisation.rs`, which remains the binding contract.
 
 - **Traversal** — `grep -rnE 'fn .*\(.*\) .*\{' src/analysis/detection/ src/analysis/neuron/ | grep -E 'depth|visited|frontier|queue'`
   returns one hit, `skip_connection.rs::compute_depths_from_inputs`, which is
@@ -393,8 +409,8 @@ files, including the test-only `symmetry_breaking_deadline_tests.rs` (#2400),
 `redundant_path_deadline_tests.rs` (#2374), `dead_neuron_deadline_tests.rs`
 (#2370) and `compound_degradation_tests.rs` (#2367). Per class:
 
-- **Unbounded allocation** — 84 capacity sites after the post-finalisation
-  changes (76 at the audit HEAD), all in the table above. One is
+- **Unbounded allocation** — 89 capacity sites at the live HEAD (76 at the
+  audit HEAD), all in the table above. One is
   unbounded: the dense `n_outputs × n_outputs` `correlation_matrix` in
   `correlated_error.rs::detect_correlated_error_patterns` (#2346). The rest
   are sized from a live `Vec` or from `creature.input` / `creature.output`,
@@ -792,7 +808,7 @@ sweep and never justify a non-null `last_swept`.
 git diff b85a551ed2521ed327469b20eb88aeda828357d2..HEAD -- \
   src/analysis/detection src/analysis/neuron
 grep -c 'p[e]nding' docs/audits/security-sweep-chunk-08a-detection-neuron.md
-grep -rnE 'with_capacity\(|vec!\[[^\]]*;|\.reserve\(' \
+grep -rnE 'with_capacity\(|vec!\[[^]]*;|\.reserve\(' \
   src/analysis/detection/ src/analysis/neuron/ | wc -l
 grep -rnE 'fn .*\(.*\) .*\{' src/analysis/detection/ src/analysis/neuron/ \
   | grep -E 'depth|visited|frontier|queue'
@@ -810,12 +826,9 @@ files, and the sweep read every change:
 - `src/analysis/detection/operating_point.rs` (#2316, `638ec0a`) changed only
   a doc comment.
 
-The `p[e]nding` count must print `0`. The recorded capacity figure is `87`:
-the ledger's 84 production capacity rows plus the three named test-only hits
-(after #2347, #2368, #2370, #2374, #2367 and #2383; `76` at finalisation, before #2400). It is the
-ledger's arithmetic, not this grep's output: the ERE `[^\]]*` misses
-multi-character `vec![…; n]` sites, so the grep under-counts (#2480). The Rust
-capacity scanner in `tests/issue_2282_chunk_08a_graph_sweep.rs` is the binding
-contract. The
+The `p[e]nding` count must print `0`. The recorded capacity figure is `102`: the ledger's
+89 production capacity rows plus the 13 test-only hits (named in the #2480 reconciliation
+above). The corrected command now agrees with `is_capacity_site` in
+`tests/issue_2154_chunk_08a_finalisation.rs`, which is the binding contract. The
 traversal grep must print only `compute_depths_from_inputs`. Any further diff under these
 paths means the chunk needs re-sweeping, whatever the index says.
