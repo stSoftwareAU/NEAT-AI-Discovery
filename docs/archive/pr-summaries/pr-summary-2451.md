@@ -88,3 +88,9 @@ successful finalisation. There is no direct-write fallback in this function.
 Documentation updated in `docs/FFI_API.md` under the discovery output format;
 recording publication comments updated in `src/record/mod.rs` and
 `src/record/processing.rs`.
+
+The merge with Issue #2452 retains shared-decode cache invalidation after the
+finished temporary file is successfully published. Failed writes and failed
+renames leave the existing recording and its cache intact. The successful
+re-recording path is covered by
+`tests/issue_2452_shared_cache_inplace_rewrite.rs::record_discovery_data_invalidates_the_shared_decode_cache`.

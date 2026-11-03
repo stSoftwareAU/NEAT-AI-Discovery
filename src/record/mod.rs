@@ -39,6 +39,10 @@ pub struct RecordResult {
 /// The completed file is published only after Parquet finalisation succeeds.
 /// Since the training dataset is already randomized, parallelization is allowed,
 /// but each training record must be processed atomically (all neurons written together).
+///
+/// Once the Parquet file is published the shared-decode cache is invalidated
+/// (Issue #2452), so a re-recording into the same directory never serves the
+/// previous decode of that file.
 pub fn record_discovery_data(input: &RecordDiscoveryInput) -> Result<RecordResult> {
     // Create temp directory
     let temp_dir = Path::new(&input.temp_dir);
@@ -93,6 +97,8 @@ pub fn record_discovery_data(input: &RecordDiscoveryInput) -> Result<RecordResul
         let error = anyhow::Error::new(error).context("Failed to publish discovery Parquet file");
         return Err(cleanup_temporary_file(&parquet_tmp_file, error));
     }
+    // Issue #2452: drop any shared decode of the file just published.
+    crate::parquet_format::shared_records::invalidate();
 
     Ok(RecordResult {
         temp_dir: input.temp_dir.clone(),

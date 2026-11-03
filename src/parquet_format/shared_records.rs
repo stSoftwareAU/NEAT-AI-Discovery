@@ -7,12 +7,21 @@
 //!
 //! This module decodes the grouped discovery records **once per discovery
 //! cycle** and shares them across both phases. The cache holds a single entry
-//! keyed by the parquet file's path, device/inode, byte length, and
-//! modification time. When the second phase requests the same file, the
-//! already-decoded records are returned without touching disk. A changed file (a
-//! new recording produces a new mtime / size, a replacement produces a new
-//! inode) invalidates the entry automatically, and back-to-back cycles on
-//! different files reuse the single slot.
+//! keyed by the parquet file's path, device/inode, byte length, modification
+//! time, and status-change time (`ctime`, Issue #2452). When the second phase
+//! requests the same file, the already-decoded records are returned without
+//! touching disk. A changed file (a new recording produces a new mtime / size, a
+//! replacement produces a new inode) invalidates the entry automatically, and
+//! back-to-back cycles on different files reuse the single slot.
+//!
+//! `ctime` closes the restored-mtime case (Issue #2452). A user cannot set
+//! `ctime`, so a same-inode, same-length rewrite followed by an mtime restore
+//! (`cp -p`, `rsync --inplace -t`, `touch -r`) still moves the key. The residual
+//! case is a same-length rewrite that lands inside one coarse filesystem
+//! timestamp tick, which is not distinguished. That is accepted: truncating and
+//! rewriting a recording takes far longer than a tick on supported filesystems.
+//! `record_discovery_data` also calls [`invalidate`] after finalising the file,
+//! so the re-recording cycle never serves its previous decode.
 //!
 //! The stored key describes the bytes actually in the cache (Issue #1907): the
 //! file is `stat`ed again **after** the decode and the records are cached only
@@ -39,8 +48,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 pub type SharedGroupedRecords = HashMap<String, Arc<Vec<DiscoverRecord>>>;
 
 /// Identity of a cached parquet decode. Two requests share the cached records
-/// only when the path, device/inode, byte length, and modification time all
-/// match.
+/// only when the path, device/inode, byte length, modification time, and
+/// status-change time all match.
 #[derive(Clone, PartialEq, Eq)]
 struct CacheKey {
     path: String,
@@ -50,6 +59,11 @@ struct CacheKey {
     dev_ino: Option<(u64, u64)>,
     len: u64,
     mtime_nanos: u128,
+    /// `(secs, nsec)` of the status-change time on unix (Issue #2452). A user
+    /// cannot set `ctime`, so an in-place rewrite that restores the mtime still
+    /// changes this component. `None` on platforms without the unix metadata
+    /// extension.
+    ctime: Option<(i64, i64)>,
 }
 
 impl CacheKey {
@@ -72,6 +86,7 @@ impl CacheKey {
             dev_ino: dev_ino(&meta),
             len: meta.len(),
             mtime_nanos,
+            ctime: ctime(&meta),
         })
     }
 }
@@ -87,6 +102,20 @@ fn dev_ino(_meta: &std::fs::Metadata) -> Option<(u64, u64)> {
     None
 }
 
+/// `(secs, nsec)` of the status-change time on unix (Issue #2452). Unlike mtime,
+/// `ctime` cannot be set by a user, so it survives an mtime restore after an
+/// in-place rewrite.
+#[cfg(unix)]
+fn ctime(meta: &std::fs::Metadata) -> Option<(i64, i64)> {
+    use std::os::unix::fs::MetadataExt;
+    Some((meta.ctime(), meta.ctime_nsec()))
+}
+
+#[cfg(not(unix))]
+fn ctime(_meta: &std::fs::Metadata) -> Option<(i64, i64)> {
+    None
+}
+
 /// The single cached decode plus a count of how many times the currently
 /// resident file has been decoded. The count resets whenever a different file
 /// takes the slot, keeping it bounded to the active cycle.
@@ -99,8 +128,8 @@ struct CacheSlot {
 static CACHE: LazyLock<Mutex<Option<CacheSlot>>> = LazyLock::new(|| Mutex::new(None));
 
 /// Load the grouped discovery records for `path`, reusing a prior decode when
-/// the same file (path + device/inode + length + mtime) was already loaded this
-/// cycle.
+/// the same file (path + device/inode + length + mtime + ctime) was already
+/// loaded this cycle.
 ///
 /// On a cache hit the records are returned without any disk access, so a
 /// discovery cycle that runs focus selection then analysis on the same parquet
@@ -211,7 +240,9 @@ pub fn decodes_for_path(path: &str) -> u64 {
         .map_or(0, |s| s.decodes)
 }
 
-/// Drop any cached records. Exposed for explicit invalidation and tests.
+/// Drop any cached records. Called by `record_discovery_data` after it finalises
+/// the parquet file (Issue #2452), and exposed for explicit invalidation and
+/// tests.
 pub fn invalidate() {
     *CACHE.lock() = None;
 }
