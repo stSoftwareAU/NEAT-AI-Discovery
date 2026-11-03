@@ -260,3 +260,61 @@ fn test_cache_construction_correctness() {
     assert_eq!(cache.synapse_weight("i1", "h1"), Some(0.5));
     assert_eq!(cache.synapse_weight("h1", "o1"), Some(0.9));
 }
+
+fn sparse_count_creature(
+    input_count: usize,
+    output_count: usize,
+) -> neat_ai_discovery::CreatureJson {
+    let mut creature = make_creature(
+        vec![
+            NeuronJson {
+                uuid: "listed-input".to_string(),
+                neuron_type: "input".to_string(),
+                squash: "IDENTITY".to_string(),
+                bias: 0.0,
+            },
+            hidden("hidden", "TANH"),
+            output("listed-output", "LOGISTIC"),
+        ],
+        vec![],
+    );
+    creature.input = input_count;
+    creature.output = output_count;
+    creature
+}
+
+#[test]
+fn declared_input_count_does_not_size_cached_input_uuid_set() {
+    let ordinary = sparse_count_creature(1, 1);
+    let wide = sparse_count_creature(1_000_000, 1);
+    let mut empty = make_creature(vec![hidden("hidden", "TANH")], vec![]);
+    empty.input = 1_000_000;
+
+    let ordinary_cache = CreatureTopologyCache::new(&ordinary);
+    let wide_cache = CreatureTopologyCache::new(&wide);
+    let empty_cache = CreatureTopologyCache::new(&empty);
+
+    assert_eq!(wide_cache.input_uuids, ordinary_cache.input_uuids);
+    assert!(wide_cache.input_uuids.contains("listed-input"));
+    assert!(wide_cache.input_uuids.capacity() <= 16);
+    assert!(empty_cache.input_uuids.is_empty());
+    assert_eq!(empty_cache.input_uuids.capacity(), 0);
+}
+
+#[test]
+fn declared_output_count_does_not_size_cached_output_uuid_set() {
+    let ordinary = sparse_count_creature(1, 1);
+    let wide = sparse_count_creature(1, 1_000_000);
+    let mut empty = make_creature(vec![hidden("hidden", "TANH")], vec![]);
+    empty.output = 1_000_000;
+
+    let ordinary_cache = CreatureTopologyCache::new(&ordinary);
+    let wide_cache = CreatureTopologyCache::new(&wide);
+    let empty_cache = CreatureTopologyCache::new(&empty);
+
+    assert_eq!(wide_cache.output_uuids, ordinary_cache.output_uuids);
+    assert!(wide_cache.output_uuids.contains("listed-output"));
+    assert!(wide_cache.output_uuids.capacity() <= 16);
+    assert!(empty_cache.output_uuids.is_empty());
+    assert_eq!(empty_cache.output_uuids.capacity(), 0);
+}
