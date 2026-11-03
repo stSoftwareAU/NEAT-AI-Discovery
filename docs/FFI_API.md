@@ -33,22 +33,28 @@ The most commonly used entry points are:
 The merge is atomic and validating: nothing touches `output_file` until every
 input has been read successfully.
 
-- Inputs are read into a sibling temporary file (`{output_file}.tmp`), which is
+- Inputs are read into a uniquely named sibling temporary file, created with
+  exclusive creation so an existing file or symlink is left alone. The file is
   renamed onto `output_file` only after the merged writer closes cleanly.
 - Every input's schema is validated against the discovery schema before any of
   its batches are appended; a foreign schema fails the merge.
 - Listing `output_file` among `input_files` is rejected with an error rather
   than truncating an input.
-- On any failure the temporary file is removed and an existing `output_file`
-  keeps its original bytes; the FFI response reports `success: false`.
+- An input that resolves to the reserved `{output_file}.tmp` path is also
+  rejected before writing, preserving recordings retained at that path.
+- On any failure only the temporary file created by this merge call is
+  removed, and an existing `output_file` keeps its original bytes; the FFI
+  response reports `success: false`.
 
 ```mermaid
 flowchart TD
-    A[merge_discovery_parquet] --> B{output aliases an input?}
+    A[merge_discovery_parquet] --> B{input aliases output or reserved output.tmp?}
     B -- yes --> E[Error: destination untouched]
-    B -- no --> C[Write inputs to output.tmp<br/>validate each schema]
-    C -- any failure --> D[Remove output.tmp] --> E
-    C -- all inputs read --> F[rename output.tmp → output_file]
+    B -- no --> C[Create unique sibling with create_new]
+    C -- collision --> C
+    C -- created --> D[Write inputs and validate each schema]
+    D -- any failure --> F[Remove only this call's temp] --> E
+    D -- all inputs read --> G[Rename temp to output_file]
 ```
 
 ---
