@@ -163,7 +163,7 @@ pub struct AnalyzeParallelInput {
     /// When set, the total elapsed time from discovery start (recording +
     /// analysis) is capped to this value. The analysis deadline is clamped
     /// to `min(analysis_deadline, discovery_start + wall_clock_cap)`. A supplied
-    /// value is not clamped to 1–120 (#2460).
+    /// value is clamped to 1–120 with a warning (Issue #2460).
     /// When `None`, the environment value `NEAT_AI_DISCOVERY_MAX_WALL_CLOCK_MINUTES`
     /// applies (clamped to 1–120); if that is unset, the cap is 20 minutes. There
     /// is no "no cap" case.

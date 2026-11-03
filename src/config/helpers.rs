@@ -1,14 +1,23 @@
 //! Environment variable parsing utilities shared by every config accessor.
 
+/// Parse a raw boolean-style value (the pure seam behind [`parse_bool_env`]).
+///
+/// Truthy values: `"1"`, `"true"`, `"yes"` (case-insensitive, surrounding
+/// whitespace trimmed). `None` and every other value are false: `"0"`,
+/// `"false"`, `"no"`, empty, and any unrecognised value such as `"on"`, `"y"`
+/// or `"enabled"`.
+pub(crate) fn parse_bool_value(raw: Option<&str>) -> bool {
+    raw.is_some_and(|v| matches!(v.trim().to_lowercase().as_str(), "1" | "true" | "yes"))
+}
+
 /// Parse a boolean-style environment variable.
 ///
 /// Truthy values: `"1"`, `"true"`, `"yes"` (case-insensitive, surrounding
 /// whitespace trimmed). Every other value is false: `"0"`, `"false"`, `"no"`,
 /// unset, empty, and any unrecognised value such as `"on"`, `"y"` or `"enabled"`.
+/// Delegates the parsing to [`parse_bool_value`].
 pub(crate) fn parse_bool_env(name: &str) -> bool {
-    std::env::var(name)
-        .ok()
-        .is_some_and(|v| matches!(v.trim().to_lowercase().as_str(), "1" | "true" | "yes"))
+    parse_bool_value(std::env::var(name).ok().as_deref())
 }
 
 /// Parse an optional boolean-style environment variable.
@@ -40,7 +49,7 @@ pub(crate) fn parse_env<T: std::str::FromStr>(name: &str) -> Option<T> {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_env;
+    use super::{parse_bool_value, parse_env};
     use serial_test::serial;
 
     const ENV: &str = "NEAT_AI_DISCOVERY_PARSE_ENV_HELPER_TEST";
@@ -99,5 +108,29 @@ mod tests {
     fn interior_whitespace_is_not_stripped() {
         // Only the ends are trimmed — `4 2` is a typo, not the number 42.
         assert_eq!(with_env(" 4 2 ", || parse_env::<u64>(ENV)), None);
+    }
+
+    #[test]
+    fn parse_bool_value_accepts_one_true_yes() {
+        // Issue #2467: `1`/`true`/`yes` enable, case-insensitively, with
+        // surrounding whitespace trimmed.
+        assert!(parse_bool_value(Some("1")));
+        assert!(parse_bool_value(Some("true")));
+        assert!(parse_bool_value(Some("TRUE")));
+        assert!(parse_bool_value(Some(" yes ")));
+    }
+
+    #[test]
+    fn parse_bool_value_rejects_everything_else() {
+        // Issue #2467: `0`/`false`/`no` used to enable (presence-only); they
+        // must now leave the toggle off, as must unset, empty and unrecognised
+        // values.
+        assert!(!parse_bool_value(Some("0")));
+        assert!(!parse_bool_value(Some("false")));
+        assert!(!parse_bool_value(Some("no")));
+        assert!(!parse_bool_value(Some("")));
+        assert!(!parse_bool_value(Some("on")));
+        assert!(!parse_bool_value(Some("y")));
+        assert!(!parse_bool_value(None));
     }
 }
