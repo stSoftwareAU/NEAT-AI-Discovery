@@ -1,6 +1,6 @@
 ## Summary
 
-The Parquet writer tests in `src/parquet_format/mod.rs` could not go red when the behaviour they are named for broke. They asserted `Path::exists()` on a `NamedTempFile` (which exists before the writer runs), asserted only `is_ok()`, and never read the file back. This PR makes them read every row back, adds a round-trip and rejection suite in `tests/issue_2453_parquet_writer_chunking.rs`, and pins the exact chunk boundaries of the private `determine_chunk_end` with unit tests in `src/parquet_format/writer.rs`. No production code changes. Version bump: `Cargo.toml` (and the matching `Cargo.lock` entry) updated for this change; the merged commit records the final version. Closes #2453.
+The Parquet writer tests in `src/parquet_format/mod.rs` could not go red when the behaviour they are named for broke. They asserted `Path::exists()` on a `NamedTempFile` (which exists before the writer runs), asserted only `is_ok()`, and never read the file back. This PR makes them read every row back, adds a round-trip and rejection suite in `tests/issue_2453_parquet_writer_chunking.rs`, and pins the exact chunk boundaries of the private `determine_chunk_end` with unit tests in `src/parquet_format/writer.rs`. One small production hardening: `ParquetRecordWriter::new` now rejects a per-batch UUID byte or error-value limit above `i32::MAX` (Arrow's offset ceiling) up front, before creating the file. Version bump: `Cargo.toml` (and the matching `Cargo.lock` entry) updated for this change; the merged commit records the final version. Closes #2453.
 
 ## Spec
 
@@ -18,7 +18,7 @@ The Parquet writer tests in `src/parquet_format/mod.rs` could not go red when th
 
 ### Undiscoverable Facts
 
-- The audit (#2144) found no production defect; this is test quality only, so there is no unfixed-code red run. The red evidence is mutation of production code (below).
+- The audit (#2144) found the chunk arithmetic correct, but `new()` documented validating the batch limits and did not bound them: a limit above `i32::MAX` let one chunk overflow Arrow's `i32` offsets, which panics in `StringArray`/`OffsetBuffer` rather than returning an error. All in-tree callers pass `i32::MAX`, so none changes behaviour. The other red evidence is mutation of production code (below).
 - The worker's periodic WIP checkpoint snapshotted one of my mutation probes into commit `762b8f8`; the following commit restores the source. The branch head's `src/parquet_format/writer.rs` production code is identical to the base.
 - `bump-deps.sh` added a `chore: bump dependencies` commit (`cc` 1.10.0 → 1.11.0 in `Cargo.lock`); it is unrelated to the tests. Unit tests: `cargo test --lib parquet_format` 45 passed after merging `origin/Develop` (which added further `writer.rs` tests).
 
@@ -26,14 +26,14 @@ The Parquet writer tests in `src/parquet_format/mod.rs` could not go red when th
 
 Backend-only change; no UI. Tests were run on the final head.
 
-- `cargo test --test issue_2453_parquet_writer_chunking`: 12 passed.
+- `cargo test --test issue_2453_parquet_writer_chunking`: 13 passed.
 - `cargo test --lib parquet_format`: 45 passed (after merging `origin/Develop`) (includes the 5 strengthened `mod.rs` tests and 8 new `determine_chunk_end` tests).
 - `cargo clippy --all-targets -- -D warnings`: clean. `cargo fmt --all --check`: clean.
 
 ## Reproduction
 
 - **symptom** — the writer tests stay green when `determine_chunk_end` never splits, drops a record, or the capacity ceiling moves, because they assert vacuous conditions
-- **status** — `partial` — reason: there is no unfixed production code to run against (test-quality defect, no production change). The tests were instead observed going red under deliberate production mutations (Test Plan), and green on the unmutated head.
+- **status** — `reproduced` — `uuid_byte_limit_chunking_round_trips_every_record` fails against the base `writer.rs` (the oversized UUID byte limit is accepted: "a UUID byte limit above i32::MAX must be rejected") and passes at the head. The vacuous-assertion half is shown red under deliberate production mutations (Test Plan).
 - **regression test** — `tests/issue_2453_parquet_writer_chunking.rs::uuid_byte_limit_chunking_round_trips_every_record`
 
 The original trigger (assertions that cannot fail) is closed: the vacuous `exists()`/`is_ok()` checks are replaced by per-row read-back and specific-message assertions, and each is shown red under mutation. No equivalent bypass remains for the chunk-boundary logic, since the boundary vectors are asserted exactly, including exact-fit (`>` vs `>=`) and each limit operand independently.
@@ -42,7 +42,7 @@ The original trigger (assertions that cannot fail) is closed: the vacuous `exist
 
 Added (all exist at head):
 
-- `tests/issue_2453_parquet_writer_chunking.rs`: `uuid_byte_limit_chunking_round_trips_every_record`, `uuid_byte_limit_chunking_round_trips_across_write_calls`, `error_value_limit_chunking_round_trips_every_record`, `both_batch_limits_small_round_trips_every_record`, `exact_boundary_uuid_and_error_counts_are_accepted_and_round_trip`, `uuid_longer_than_limit_is_rejected_and_accepted_once_limit_is_raised`, `error_list_longer_than_limit_is_rejected_and_accepted_once_limit_is_raised`, `zero_uuid_byte_limit_is_rejected_and_accepted_at_one`, `zero_error_value_limit_is_rejected_and_accepted_at_one`, `zero_capacity_is_rejected_before_file_creation_and_accepted_at_record_count`, `writing_more_records_than_capacity_is_rejected_and_accepted_at_capacity`, `capacity_above_arrow_row_limit_is_rejected_before_file_creation`.
+- `tests/issue_2453_parquet_writer_chunking.rs`: `uuid_byte_limit_chunking_round_trips_every_record` (also asserts the over-ceiling UUID limit is rejected), `error_value_limit_above_arrow_offset_ceiling_is_rejected`, `uuid_byte_limit_chunking_round_trips_across_write_calls`, `error_value_limit_chunking_round_trips_every_record`, `both_batch_limits_small_round_trips_every_record`, `exact_boundary_uuid_and_error_counts_are_accepted_and_round_trip`, `uuid_longer_than_limit_is_rejected_and_accepted_once_limit_is_raised`, `error_list_longer_than_limit_is_rejected_and_accepted_once_limit_is_raised`, `zero_uuid_byte_limit_is_rejected_and_accepted_at_one`, `zero_error_value_limit_is_rejected_and_accepted_at_one`, `zero_capacity_is_rejected_before_file_creation_and_accepted_at_record_count`, `writing_more_records_than_capacity_is_rejected_and_accepted_at_capacity`, `capacity_above_arrow_row_limit_is_rejected_before_file_creation`.
 - `src/parquet_format/writer.rs`: `determine_chunk_end_uuid_limit_binds_only`, `determine_chunk_end_error_limit_binds_only`, `determine_chunk_end_mixed_error_counts_exact_vector`, `determine_chunk_end_both_limits_bind_at_different_records`, `determine_chunk_end_oversized_first_uuid_still_makes_progress`, `determine_chunk_end_oversized_first_error_count_still_makes_progress`, `determine_chunk_end_respects_nonzero_start`, `determine_chunk_end_unlimited_limits_yield_single_chunk`.
 
 Edited in `src/parquet_format/mod.rs` (names unchanged): `test_write_records_to_parquet`, `test_write_records_prevents_i32_overflow`, `test_write_records_validates_error_count_overflow`, `test_write_records_chunks_when_uuid_bytes_exceed_limit`, `test_write_records_chunks_when_error_value_count_exceeds_limit`.

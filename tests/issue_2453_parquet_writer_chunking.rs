@@ -102,6 +102,51 @@ fn uuid_byte_limit_chunking_round_trips_every_record() {
     write_in_one_call(&path, 8, UNLIMITED, &records).expect("chunked write should succeed");
 
     assert_round_trip(&path, &records);
+
+    // A UUID byte limit above Arrow's `i32` offset ceiling would let one chunk
+    // overflow the offsets (a panic, not an error), so it is rejected up front
+    // and before the file is created. The ceiling itself (`UNLIMITED`, used
+    // above) is the accepted sibling.
+    #[cfg(target_pointer_width = "64")]
+    {
+        let rejected = fresh_path(&dir, "uuid_limit_over_ceiling.parquet");
+        let err = ParquetRecordWriter::new(&rejected, UNLIMITED + 1, UNLIMITED, records.len())
+            .err()
+            .expect("a UUID byte limit above i32::MAX must be rejected");
+        assert!(
+            err.to_string().contains("byte limit per batch"),
+            "unexpected error: {err}"
+        );
+        assert!(
+            !Path::new(&rejected).exists(),
+            "a rejected writer must not create the file"
+        );
+    }
+}
+
+#[cfg(target_pointer_width = "64")]
+#[test]
+fn error_value_limit_above_arrow_offset_ceiling_is_rejected() {
+    let dir = TempDir::new().expect("temp dir");
+    let records = fixture(3);
+
+    let rejected = fresh_path(&dir, "error_limit_over_ceiling.parquet");
+    let err = ParquetRecordWriter::new(&rejected, UNLIMITED, UNLIMITED + 1, records.len())
+        .err()
+        .expect("an error value limit above i32::MAX must be rejected");
+    assert!(
+        err.to_string().contains("error value limit per batch"),
+        "unexpected error: {err}"
+    );
+    assert!(
+        !Path::new(&rejected).exists(),
+        "a rejected writer must not create the file"
+    );
+
+    let accepted = fresh_path(&dir, "error_limit_at_ceiling.parquet");
+    write_in_one_call(&accepted, UNLIMITED, UNLIMITED, &records)
+        .expect("the same input must be accepted with the limit at i32::MAX");
+    assert_round_trip(&accepted, &records);
 }
 
 #[test]

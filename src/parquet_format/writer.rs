@@ -80,8 +80,9 @@ impl ParquetRecordWriter {
     /// Create a new writer targeting `file_path`.
     ///
     /// Validates the byte/value batch limits and `total_capacity` (must be
-    /// non-zero and within Arrow's `i32::MAX` offset budget) before creating
-    /// the underlying Parquet file. Returns an error if the file cannot be
+    /// non-zero and within Arrow's `i32::MAX` offset budget; both batch limits
+    /// must also be within that budget) before creating the underlying Parquet
+    /// file. Returns an error if the file cannot be
     /// created or the limits are invalid.
     pub fn new(
         file_path: &str,
@@ -99,6 +100,21 @@ impl ParquetRecordWriter {
 
         if max_error_values_per_batch == 0 {
             anyhow::bail!("Configured error value limit per batch must be greater than zero");
+        }
+
+        // A per-batch limit above `i32::MAX` would let a single chunk overflow
+        // Arrow's `i32` offsets, which panics inside `StringArray`/`OffsetBuffer`
+        // instead of returning an error (Issue #2453).
+        if max_uuid_bytes_per_batch > MAX_ARROW_OFFSET {
+            anyhow::bail!(
+                "Configured neuron UUID byte limit per batch ({max_uuid_bytes_per_batch}) exceeds the Arrow offset ceiling ({MAX_ARROW_OFFSET})"
+            );
+        }
+
+        if max_error_values_per_batch > MAX_ARROW_OFFSET {
+            anyhow::bail!(
+                "Configured error value limit per batch ({max_error_values_per_batch}) exceeds the Arrow offset ceiling ({MAX_ARROW_OFFSET})"
+            );
         }
 
         if total_capacity > MAX_ARROW_OFFSET {
