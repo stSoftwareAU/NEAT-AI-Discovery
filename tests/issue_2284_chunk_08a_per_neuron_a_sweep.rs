@@ -453,6 +453,15 @@ fn monotonicity_row_checked_since_audit_is_yes_and_the_code_checks_the_deadline(
              `yes — `deadline_passed``, because Issue #2479 added the once-per-candidate check"
         );
     }
+
+    let doc = read(RECORD);
+    let rows = table_rows(section(&doc, "## Capacity and traversal table"));
+    assert!(rows.iter().any(|row| {
+        row.first().is_some_and(|symbol| {
+            symbol.contains("`monotonicity.rs::non_monotonic_neurons_to_coordinated_candidates_with_observer` (`results`)")
+        }) && row.get(1).is_some_and(|kind| kind == "capacity")
+            && row.get(4).is_some_and(|cell| cell.starts_with("yes — `deadline_passed`"))
+    }), "the monotonicity results capacity row must record its per-candidate deadline check");
 }
 
 #[test]

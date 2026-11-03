@@ -2,7 +2,9 @@
 
 use std::sync::OnceLock;
 
-use super::helpers::{parse_bool_env, parse_env};
+use super::helpers::{
+    env_trimmed, parse_bool_env, parse_env, parse_optional_bool_env, warn_guard_disabled,
+};
 
 /// Check if phase timing output is enabled (cached).
 ///
@@ -66,15 +68,28 @@ pub fn gpu_metrics() -> bool {
 ///
 /// Set `NEAT_AI_DISCOVERY_STRICT_CANDIDATE_RECONCILIATION=0` (or `false`/`no`)
 /// to force warn-only, or `=1` (or `true`/`yes`) to force the check on. The
-/// default is on for debug builds and off for release builds.
+/// default is on for debug builds and off for release builds. The explicit
+/// falsy opt-out logs a `WARN` (once per distinct value per process, Issue
+/// #2468).
 ///
 /// Deliberately **not** cached in a `OnceLock`: it is read twice per discovery
 /// pass, and caching would stop tests toggling it. Prefer
 /// [`crate::analysis::candidate_reconciliation::StrictModeGuard`] over mutating
 /// the environment.
 pub fn strict_candidate_reconciliation() -> bool {
-    super::helpers::parse_optional_bool_env("NEAT_AI_DISCOVERY_STRICT_CANDIDATE_RECONCILIATION")
-        .unwrap_or(cfg!(debug_assertions))
+    const ENV: &str = "NEAT_AI_DISCOVERY_STRICT_CANDIDATE_RECONCILIATION";
+    match parse_optional_bool_env(ENV) {
+        Some(false) => {
+            warn_guard_disabled(
+                ENV,
+                &env_trimmed(ENV),
+                "the strict candidate-reconciliation debug assertion",
+            );
+            false
+        }
+        Some(true) => true,
+        None => cfg!(debug_assertions),
+    }
 }
 
 /// Threshold for prediction-vs-actual calibration mismatch logging
