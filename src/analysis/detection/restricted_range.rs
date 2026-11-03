@@ -39,6 +39,7 @@ use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson, Cre
 
 // MIN_SAMPLES moved to constants.rs (Issue #424)
 use crate::analysis::constants::MIN_DISCOVERY_SAMPLE_COUNT as MIN_SAMPLES;
+use crate::analysis::utils::deadline_passed;
 
 /// Minimum observed range (`activation_max` - `activation_min`) to distinguish
 /// from dead neurons. Below this, the neuron is considered dead, not restricted.
@@ -212,13 +213,62 @@ pub fn detect_restricted_range_neurons(
 ///
 /// Bias and weight adjustments are combined into a `coordinatedStructural`
 /// candidate for atomic application.
+///
+/// Issue #2479: no deadline — equivalent to calling
+/// [`restricted_range_to_coordinated_candidates_with_deadline`] with a `None`
+/// deadline.
 pub fn restricted_range_to_coordinated_candidates(
     detected: &[RestrictedRangeNeuron],
     creature: &CreatureJson,
 ) -> Vec<CoordinatedStructuralCandidateJson> {
+    restricted_range_to_coordinated_candidates_with_deadline(detected, creature, &None)
+}
+
+/// Deadline-aware variant of [`restricted_range_to_coordinated_candidates`]
+/// (Issue #2479).
+///
+/// Builds the target-uuid → incoming-synapses lookup once up front (rather than
+/// scanning `creature.synapses` per neuron, which was O(C·S)) and checks
+/// `deadline` once per candidate neuron so a hung or oversized conversion can be
+/// stopped mid-flight, returning the coordinated candidates built so far.
+pub fn restricted_range_to_coordinated_candidates_with_deadline(
+    detected: &[RestrictedRangeNeuron],
+    creature: &CreatureJson,
+    deadline: &Option<std::time::SystemTime>,
+) -> Vec<CoordinatedStructuralCandidateJson> {
+    restricted_range_to_coordinated_candidates_with_observer(
+        detected,
+        creature,
+        deadline,
+        &mut || {},
+    )
+}
+
+fn restricted_range_to_coordinated_candidates_with_observer(
+    detected: &[RestrictedRangeNeuron],
+    creature: &CreatureJson,
+    deadline: &Option<std::time::SystemTime>,
+    work_observer: &mut impl FnMut(),
+) -> Vec<CoordinatedStructuralCandidateJson> {
+    // Issue #2479: build the to_uuid -> incoming synapses lookup once, in synapse
+    // order, so each candidate's list keeps the order of the former per-candidate filter.
+    let mut incoming_by_target: std::collections::HashMap<&str, Vec<&crate::SynapseJson>> =
+        std::collections::HashMap::new();
+    for synapse in &creature.synapses {
+        work_observer();
+        incoming_by_target
+            .entry(synapse.to_uuid.as_str())
+            .or_default()
+            .push(synapse);
+    }
+
     let mut results = Vec::new();
 
     for n in detected {
+        if deadline_passed(deadline) {
+            break;
+        }
+
         let base_improvement = (1.0 - n.range_utilisation) * 0.005;
 
         // Candidate 1: Change squash to IDENTITY (removes bounding)
@@ -270,11 +320,11 @@ pub fn restricted_range_to_coordinated_candidates(
 
         // Candidate 3: Scale incoming weights to expand the operating range
         // Find all synapses targeting this neuron and compute a scale factor
-        let incoming_synapses: Vec<&crate::SynapseJson> = creature
-            .synapses
-            .iter()
-            .filter(|s| s.to_uuid == n.neuron_uuid)
-            .collect();
+        work_observer();
+        let incoming_synapses: Vec<&crate::SynapseJson> = incoming_by_target
+            .get(n.neuron_uuid.as_str())
+            .cloned()
+            .unwrap_or_default();
 
         if !incoming_synapses.is_empty() {
             // Scale factor: we want the observed range to expand to fill more of the
@@ -317,4 +367,138 @@ pub fn restricted_range_to_coordinated_candidates(
     sort_candidates_by_score_gain(&mut results);
 
     results
+}
+
+#[cfg(test)]
+mod issue_2479_tests {
+    use super::*;
+
+    fn neuron(uuid: &str) -> RestrictedRangeNeuron {
+        RestrictedRangeNeuron {
+            neuron_uuid: uuid.to_string(),
+            squash: "TANH".to_string(),
+            bias: 0.0,
+            activation_min: -0.2,
+            activation_max: 0.2,
+            theoretical_range: 2.0,
+            range_utilisation: 0.1,
+            sample_count: 30,
+        }
+    }
+
+    /// One hidden neuron per uuid, each fed by two incoming synapses.
+    fn creature_with_hidden(uuids: &[String]) -> CreatureJson {
+        let mut neurons = vec![
+            crate::NeuronJson {
+                uuid: "input-a".to_string(),
+                neuron_type: "input".to_string(),
+                squash: "IDENTITY".to_string(),
+                bias: 0.0,
+            },
+            crate::NeuronJson {
+                uuid: "input-b".to_string(),
+                neuron_type: "input".to_string(),
+                squash: "IDENTITY".to_string(),
+                bias: 0.0,
+            },
+        ];
+        let mut synapses = Vec::new();
+        for uuid in uuids {
+            neurons.push(crate::NeuronJson {
+                uuid: uuid.clone(),
+                neuron_type: "hidden".to_string(),
+                squash: "TANH".to_string(),
+                bias: 0.0,
+            });
+            for from in ["input-a", "input-b"] {
+                synapses.push(crate::SynapseJson {
+                    from_uuid: from.to_string(),
+                    to_uuid: uuid.clone(),
+                    weight: 1.0,
+                    synapse_type: None,
+                });
+            }
+        }
+        CreatureJson {
+            neurons,
+            synapses,
+            input: 2,
+            output: 1,
+        }
+    }
+
+    #[test]
+    fn incoming_synapse_work_scales_linearly_at_n_and_4n() {
+        const N: usize = 128;
+
+        let measured_work = |count: usize| {
+            let uuids: Vec<String> = (0..count).map(|i| format!("h{i}")).collect();
+            let creature = creature_with_hidden(&uuids);
+            let detected: Vec<RestrictedRangeNeuron> =
+                uuids.iter().map(|u| neuron(u.as_str())).collect();
+            let mut work = 0;
+            let result = restricted_range_to_coordinated_candidates_with_observer(
+                &detected,
+                &creature,
+                &None,
+                &mut || work += 1,
+            );
+            assert_eq!(result.len(), 3 * count);
+            work
+        };
+
+        // Index build: one step per synapse (two per hidden neuron), then one
+        // lookup per neuron.
+        let small_work = measured_work(N);
+        let large_work = measured_work(N * 4);
+        assert_eq!(small_work, 2 * N + N);
+        assert_eq!(large_work, 2 * (N * 4) + N * 4);
+        assert_eq!(large_work, small_work * 4);
+    }
+
+    /// The deadline is checked once per neuron, and on expiry the candidates
+    /// already built are returned rather than discarded. The scripted sequence lets
+    /// the first neuron through and stops at the second, so hoisting the check out of
+    /// the loop (all nine built) or replacing `break` with an empty return (none
+    /// built) both fail this test.
+    #[test]
+    #[serial_test::serial]
+    fn deadline_mid_conversion_returns_the_candidates_built_so_far() {
+        use crate::analysis::utils::deadline_override::DeadlineOverrideGuard;
+
+        let uuids = [
+            "hidden-alpha".to_string(),
+            "hidden-beta".to_string(),
+            "hidden-gamma".to_string(),
+        ];
+        let creature = creature_with_hidden(&uuids);
+        let detected: Vec<RestrictedRangeNeuron> =
+            uuids.iter().map(|u| neuron(u.as_str())).collect();
+
+        // Positive control: with no override every neuron converts to three candidates.
+        let control =
+            restricted_range_to_coordinated_candidates_with_deadline(&detected, &creature, &None);
+        assert_eq!(
+            control.len(),
+            9,
+            "fixture must yield three candidates per neuron"
+        );
+
+        let _guard = DeadlineOverrideGuard::with_sequence(vec![false, true]);
+        let partial =
+            restricted_range_to_coordinated_candidates_with_deadline(&detected, &creature, &None);
+
+        assert_eq!(
+            partial.len(),
+            3,
+            "the deadline must stop the conversion at the second neuron and keep the first's three candidates"
+        );
+        for candidate in &partial {
+            let comment = candidate.comment.as_deref().unwrap_or_default();
+            assert!(
+                comment.contains("hidden-alpha"),
+                "every kept candidate must belong to the first neuron, got: {comment}"
+            );
+        }
+    }
 }
