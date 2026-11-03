@@ -342,6 +342,25 @@ fn dispatch_analyses(
     }
 }
 
+/// Resolve the effective wall-clock cap (Issue #2460) and apply it to the
+/// analysis deadline. The caller-supplied minutes (or the environment fallback)
+/// are clamped to 1–120 before the minutes-to-seconds conversion, so an
+/// out-of-range FFI value cannot overflow. Returns the capped deadline and the
+/// effective cap in minutes.
+pub fn resolve_wall_clock_deadline(
+    analysis_deadline: Option<std::time::SystemTime>,
+    discovery_start: std::time::SystemTime,
+    requested_minutes: Option<u64>,
+) -> (Option<std::time::SystemTime>, u64) {
+    let wall_clock_minutes = crate::config::effective_wall_clock_minutes(requested_minutes);
+    let deadline = utils::cap_deadline_to_wall_clock(
+        analysis_deadline,
+        discovery_start,
+        Some(wall_clock_minutes),
+    );
+    (deadline, wall_clock_minutes)
+}
+
 /// Combined analysis function that runs both synapse and neuron analysis.
 ///
 /// # Concurrent execution (Issue #1002)
@@ -605,13 +624,11 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
     // NEAT_AI_DISCOVERY_MAX_WALL_CLOCK_MINUTES (default 20 min). Both the FFI and
     // env values are clamped to 1–120 (Issue #2460), so the downstream
     // minutes-to-seconds conversion cannot overflow.
-    let wall_clock_minutes =
-        crate::config::effective_wall_clock_minutes(input.max_discovery_wall_clock_minutes);
     let discovery_start = std::time::SystemTime::now();
-    let overall_deadline = utils::cap_deadline_to_wall_clock(
+    let (overall_deadline, wall_clock_minutes) = resolve_wall_clock_deadline(
         analysis_deadline,
         discovery_start,
-        Some(wall_clock_minutes),
+        input.max_discovery_wall_clock_minutes,
     );
     if analysis_deadline != overall_deadline {
         tracing::info!(
