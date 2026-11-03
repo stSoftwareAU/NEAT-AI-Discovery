@@ -78,15 +78,23 @@ the step budget. The phase is skipped with a structured WARN
 
 The decision is made by `plan_cache_preload` (`src/analysis/cache/mod.rs`) from a
 projected decoded size and a single bound. Since Issue #1869 the projection is
-read from the Parquet **footer** — the exact decompressed row count and error
-value count — with the old `file_size × 3` compression heuristic kept only as a
-floor, because dictionary and RLE encodings routinely beat 3:1 on this schema.
-Negative footer counts or sizes, and a file row count that disagrees with its
-row groups, make the footer unreadable. The estimator logs its existing warning
-and uses the compressed-size projection in that case.
+read from the Parquet **footer** — the exact decompressed row count, the error
+value count and the decoded `neuron_uuid` string bytes — with the old
+`file_size × 3` compression heuristic kept only as a floor, because dictionary
+and RLE encodings routinely beat 3:1 on this schema. Negative footer counts or
+sizes, and a file row count that disagrees with its row groups, make the footer
+unreadable. The estimator logs its existing warning and uses the
+compressed-size projection in that case.
+
+`uuid_heap_bytes` is the `neuron_uuid` column's footer size statistic (the exact
+total of its decoded value bytes) when the footer carries one. When the
+statistic is absent, a dictionary-encoded column is bounded by
+`min(rows, 1024) × uncompressed size`, because Arrow copies each value into
+every row of a batch, and a plain column by its uncompressed size. Each row keeps
+at least 36 bytes (Issue #2507).
 
 ```text
-projected = max(footer_rows × per_record_bytes + error_values × 4,
+projected = max(footer_rows × per_record_bytes + uuid_heap_bytes + error_values × 4,
                 file_size_bytes × 3)
 
 if max_analysis_memory_mb was supplied:
@@ -138,7 +146,7 @@ single authoritative reference,
 |-------|-----------|---------------------|
 | `max_analysis_memory_mb` | `analyze_parallel` input JSON | The budget the projection is compared against. Lower it to force lazy mode; raise it to permit eager pre-load. |
 | `NEAT_AI_DISCOVERY_FOCUS_RANKING_MEMORY_MARGIN_MB` | environment | Safety margin reserved from OS-available memory on the auto-detect path. Raise it to bias towards lazy. |
-| `NEAT_AI_DISCOVERY_MAX_PARQUET_DECODE_MB` | environment | Decode ceiling for a Parquet read. Selected-column footer estimates are checked for the whole eager selection or each row group in filtering, folding and streaming readers before Arrow builds batches, then decoded records are cumulatively charged. Bounds paths without a caller budget, including streaming readers and activation summaries. A footer that understates decoded sizes is outside this protection. |
+| `NEAT_AI_DISCOVERY_MAX_PARQUET_DECODE_MB` | environment | Decode ceiling for a Parquet read. Selected-column footer estimates are checked for the whole eager selection or each row group in filtering, folding and streaming readers before Arrow builds batches, then decoded records are cumulatively charged. Bounds paths without a caller budget, including streaming readers and activation summaries. Footer estimates include the decoded `neuron_uuid` strings (Issue #2507). A footer which misstates its own statistics is outside this protection. |
 
 ### Levers that do **not** reach it
 

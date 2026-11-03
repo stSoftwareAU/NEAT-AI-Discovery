@@ -297,7 +297,7 @@ mod tests {
     use parquet::schema::types::{SchemaDescriptor, Type};
     use std::sync::Arc;
 
-    /// One row group holding a single `neuron_uuid` BYTE_ARRAY column chunk.
+    /// One row group holding a single `neuron_uuid` `BYTE_ARRAY` column chunk.
     fn neuron_uuid_row_group(
         rows: i64,
         encodings: Vec<Encoding>,

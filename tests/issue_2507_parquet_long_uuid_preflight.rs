@@ -198,9 +198,7 @@ fn eager_grouped_read_refuses_long_identifiers_before_arrow_batches() {
     let _limit = DecodeLimitGuard::set("1");
 
     assert_read_without_large_allocation(
-        || {
-            read_all_records_grouped_by_neuron_bounded(path_str, None, ColumnProfile::Full, Some(1))
-        },
+        || read_all_records_grouped_by_neuron_bounded(path_str, None, ColumnProfile::Full, Some(1)),
         |result| assert_memory_exhausted!(result, "eager grouped read"),
         "eager grouped read",
     );
@@ -282,7 +280,12 @@ fn merge_refuses_long_identifiers_before_arrow_batches() {
     let _limit = DecodeLimitGuard::set("1");
 
     assert_read_without_large_allocation(
-        || merge_parquet_files(output.to_str().expect("output path"), &[path_str.to_owned()]),
+        || {
+            merge_parquet_files(
+                output.to_str().expect("output path"),
+                &[path_str.to_owned()],
+            )
+        },
         |result| assert_memory_exhausted!(result, "merge input read"),
         "merge input read",
     );
@@ -326,8 +329,11 @@ fn short_repeated_identifier_of_the_same_shape_is_accepted_under_the_same_budget
     assert_eq!(block.len(), ROWS);
 
     let output = dir.path().join("merged.parquet");
-    merge_parquet_files(output.to_str().expect("output path"), &[path_str.to_owned()])
-        .expect("36-character identifiers fit the 1 MB ceiling in the merge");
+    merge_parquet_files(
+        output.to_str().expect("output path"),
+        &[path_str.to_owned()],
+    )
+    .expect("36-character identifiers fit the 1 MB ceiling in the merge");
     let merged = read_footer_stats(output.to_str().expect("output path")).expect("merged footer");
     assert_eq!(merged.num_rows, u64::try_from(ROWS).unwrap());
 }

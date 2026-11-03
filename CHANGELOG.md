@@ -60,6 +60,21 @@ detection behaviour are unchanged.
 
 ### Fixed
 
+#### The Parquet decode preflight charges decoded `neuron_uuid` strings (Issue #2507)
+
+The decode preflight charged every `neuron_uuid` a fixed 36 bytes per row. A
+dictionary-encoded column stores each distinct string once, so a small file
+with a long repeated identifier passed every footer check, while Arrow copied
+the value into every row of a batch. The footer's
+`unencoded_byte_array_data_bytes` size statistic now supplies the exact decoded
+total. When that statistic is absent, a dictionary-encoded column is bounded by
+`min(rows, 1024) × uncompressed size`, and a plain column by its uncompressed
+size, with the 36-byte-per-row floor kept. The eager, lazy, streaming index and
+block-load, activation-summary and merge readers now refuse such a file before
+Arrow builds a batch. Files with 36-character UUIDs are accepted under the same
+budgets as before. A footer that misstates its own statistics is still outside
+the protection.
+
 #### `creature.output` is bounded at the FFI boundary (Issue #2078)
 
 `MAX_CREATURE_INPUT_NEURONS` (Issue #1867) capped `creature.input`, but its
