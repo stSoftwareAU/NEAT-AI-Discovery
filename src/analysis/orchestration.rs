@@ -602,10 +602,11 @@ pub fn analyze_all(input: &AnalyzeAllInput) -> Result<AnalyzeAllResult> {
     // cap. The wall-clock cap ensures total elapsed time never exceeds the
     // configured limit, even if recording consumed some of the budget.
     // If the caller does not pass a cap, fall back to the environment variable
-    // NEAT_AI_DISCOVERY_MAX_WALL_CLOCK_MINUTES (default 20 min).
-    let wall_clock_minutes = input
-        .max_discovery_wall_clock_minutes
-        .unwrap_or_else(crate::config::max_wall_clock_minutes);
+    // NEAT_AI_DISCOVERY_MAX_WALL_CLOCK_MINUTES (default 20 min). Both the FFI and
+    // env values are clamped to 1–120 (Issue #2460), so the downstream
+    // minutes-to-seconds conversion cannot overflow.
+    let wall_clock_minutes =
+        crate::config::effective_wall_clock_minutes(input.max_discovery_wall_clock_minutes);
     let discovery_start = std::time::SystemTime::now();
     let overall_deadline = utils::cap_deadline_to_wall_clock(
         analysis_deadline,
