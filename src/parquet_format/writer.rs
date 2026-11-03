@@ -619,4 +619,229 @@ mod tests {
             "temporary file must not be left behind"
         );
     }
+
+    /// Build a record whose UUID is `uuid_len` valid bytes and which carries
+    /// `error_count` error values.
+    fn shaped_record(uuid_len: usize, error_count: usize) -> DiscoverRecord {
+        DiscoverRecord {
+            obs_index: 0,
+            neuron_uuid: "a".repeat(uuid_len),
+            value: None,
+            activation: 0.0,
+            errors: vec![0.0; error_count],
+        }
+    }
+
+    /// Build records from `(uuid_len, error_count)` pairs.
+    fn shaped_records(shape: &[(usize, usize)]) -> Vec<DiscoverRecord> {
+        shape
+            .iter()
+            .map(|&(uuid_len, error_count)| shaped_record(uuid_len, error_count))
+            .collect()
+    }
+
+    /// Mirror of the chunking loop in `write_records`, returning each chunk's
+    /// end index. Panics instead of spinning if a chunk makes no progress
+    /// (Issue #2453).
+    fn chunk_ends(records: &[DiscoverRecord], uuid_limit: usize, err_limit: usize) -> Vec<usize> {
+        let mut ends = Vec::new();
+        let mut start = 0;
+        while start < records.len() {
+            let end = determine_chunk_end(records, start, uuid_limit, err_limit);
+            assert!(
+                end > start,
+                "Issue #2453: chunk starting at record {start} made no progress"
+            );
+            ends.push(end);
+            start = end;
+        }
+        ends
+    }
+
+    /// Issue #2453: pins the chunk boundaries of `determine_chunk_end` when only
+    /// the UUID byte budget binds. Five 8-byte UUIDs, unlimited error budget.
+    /// A chunk may hold a total of exactly `limit` UUID bytes.
+    #[test]
+    fn determine_chunk_end_uuid_limit_binds_only() {
+        let records = shaped_records(&[(8, 0); 5]);
+        assert_eq!(
+            chunk_ends(&records, 20, usize::MAX),
+            vec![2, 4, 5],
+            "limit 20: 8+8=16 fits, third UUID would reach 24"
+        );
+        assert_eq!(
+            chunk_ends(&records, 16, usize::MAX),
+            vec![2, 4, 5],
+            "limit 16: exact fit (8+8=16) must stay in the chunk"
+        );
+        assert_eq!(
+            chunk_ends(&records, 15, usize::MAX),
+            vec![1, 2, 3, 4, 5],
+            "limit 15: second UUID would reach 16 and must split"
+        );
+        assert_eq!(
+            chunk_ends(&records, 8, usize::MAX),
+            vec![1, 2, 3, 4, 5],
+            "limit 8: exactly one record per chunk"
+        );
+        assert_eq!(
+            chunk_ends(&records, 40, usize::MAX),
+            vec![5],
+            "limit 40: all five UUIDs (40 bytes) fit exactly"
+        );
+    }
+
+    /// Issue #2453: pins the chunk boundaries of `determine_chunk_end` when only
+    /// the error-value budget binds. Five records with 2 error values each,
+    /// unlimited UUID budget. A chunk may hold exactly `limit` error values.
+    #[test]
+    fn determine_chunk_end_error_limit_binds_only() {
+        let records = shaped_records(&[(1, 2); 5]);
+        assert_eq!(
+            chunk_ends(&records, usize::MAX, 5),
+            vec![2, 4, 5],
+            "limit 5: 2+2=4 fits, third record would reach 6"
+        );
+        assert_eq!(
+            chunk_ends(&records, usize::MAX, 4),
+            vec![2, 4, 5],
+            "limit 4: exact fit (2+2=4) must stay in the chunk"
+        );
+        assert_eq!(
+            chunk_ends(&records, usize::MAX, 3),
+            vec![1, 2, 3, 4, 5],
+            "limit 3: second record would reach 4 and must split"
+        );
+    }
+
+    /// Issue #2453: pins the exact chunk vector for mixed error-value counts
+    /// under the error budget only. Chunks are [2,3], [1,4], [5,0] and [2].
+    #[test]
+    fn determine_chunk_end_mixed_error_counts_exact_vector() {
+        let records = shaped_records(&[(1, 2), (1, 3), (1, 1), (1, 4), (1, 5), (1, 0), (1, 2)]);
+        assert_eq!(
+            chunk_ends(&records, usize::MAX, 5),
+            vec![2, 4, 6, 7],
+            "error budget 5 over counts [2,3,1,4,5,0,2]"
+        );
+    }
+
+    /// Issue #2453: pins chunks where the two budgets bind at different
+    /// records. The first chunk ends on the UUID byte budget (4+4 fits in 10,
+    /// a further 4 would reach 12), the second on the error budget (1+2 fits
+    /// in 3 error values, a further 2 would reach 5), and the last two on the
+    /// error budget again.
+    #[test]
+    fn determine_chunk_end_both_limits_bind_at_different_records() {
+        let records = shaped_records(&[(4, 1), (4, 1), (4, 1), (1, 2), (1, 2), (1, 2)]);
+        assert_eq!(
+            chunk_ends(&records, 10, 3),
+            vec![2, 4, 5, 6],
+            "uuid limit 10 and error limit 3 with mixed binding operands"
+        );
+    }
+
+    /// Issue #2453: progress guarantee. A first record whose UUID alone exceeds
+    /// the per-batch UUID limit must still yield `start + 1`, so the loop in
+    /// `write_records` advances. `validate_records` rejects such records on the
+    /// real path, so this pins the helper directly. Also checked with
+    /// `start > 0`.
+    #[test]
+    fn determine_chunk_end_oversized_first_uuid_still_makes_progress() {
+        let records = shaped_records(&[(10, 0), (1, 0), (1, 0)]);
+        assert_eq!(
+            determine_chunk_end(&records, 0, 5, usize::MAX),
+            1,
+            "oversized first UUID (10 > 5) must yield end == start + 1"
+        );
+        assert_eq!(
+            chunk_ends(&records, 5, usize::MAX),
+            vec![1, 3],
+            "oversized record isolated, the two 1-byte followers share a chunk (2 <= 5)"
+        );
+
+        let offset_records = shaped_records(&[(1, 0), (10, 0), (1, 0)]);
+        assert_eq!(
+            determine_chunk_end(&offset_records, 1, 5, usize::MAX),
+            2,
+            "oversized UUID at start 1 must yield end == 2"
+        );
+        assert_eq!(
+            determine_chunk_end(&offset_records, 2, 5, usize::MAX),
+            3,
+            "trailing record at start 2 must yield end == 3"
+        );
+    }
+
+    /// Issue #2453: progress guarantee for the error budget. A first record
+    /// whose error count alone exceeds the limit must yield `start + 1`. Also
+    /// checked with `start > 0`.
+    #[test]
+    fn determine_chunk_end_oversized_first_error_count_still_makes_progress() {
+        let records = shaped_records(&[(1, 5), (1, 0)]);
+        assert_eq!(
+            determine_chunk_end(&records, 0, usize::MAX, 3),
+            1,
+            "oversized first error count (5 > 3) must yield end == start + 1"
+        );
+        assert_eq!(
+            chunk_ends(&records, usize::MAX, 3),
+            vec![1, 2],
+            "oversized record isolated, follower in its own chunk"
+        );
+
+        let offset_records = shaped_records(&[(1, 0), (1, 5), (1, 0)]);
+        assert_eq!(
+            determine_chunk_end(&offset_records, 1, usize::MAX, 3),
+            2,
+            "oversized error count at start 1 must yield end == 2"
+        );
+    }
+
+    /// Issue #2453: pins that `determine_chunk_end` honours a non-zero `start`:
+    /// budgets are counted from `start`, not from record 0, and the returned
+    /// index is always greater than `start`.
+    #[test]
+    fn determine_chunk_end_respects_nonzero_start() {
+        let uuid_records = shaped_records(&[(8, 0); 5]);
+        assert_eq!(
+            determine_chunk_end(&uuid_records, 1, 20, usize::MAX),
+            3,
+            "start 1: records 1 and 2 fit (16 bytes), record 3 would reach 24"
+        );
+        assert_eq!(
+            determine_chunk_end(&uuid_records, 2, 20, usize::MAX),
+            4,
+            "start 2: records 2 and 3 fit, record 4 would reach 24"
+        );
+        assert_eq!(
+            determine_chunk_end(&uuid_records, 4, 20, usize::MAX),
+            5,
+            "start 4: single trailing record"
+        );
+
+        let error_records = shaped_records(&[(1, 2); 5]);
+        assert_eq!(
+            determine_chunk_end(&error_records, 1, usize::MAX, 5),
+            3,
+            "start 1: records 1 and 2 fit (4 error values), record 3 would reach 6"
+        );
+    }
+
+    /// Issue #2453: pins that unlimited budgets (`usize::MAX`) produce a single
+    /// chunk covering every record.
+    #[test]
+    fn determine_chunk_end_unlimited_limits_yield_single_chunk() {
+        let records = shaped_records(&[(8, 2); 5]);
+        assert_eq!(
+            chunk_ends(&records, usize::MAX, usize::MAX),
+            vec![5],
+            "unlimited budgets must cover all records in one chunk"
+        );
+        assert_eq!(
+            determine_chunk_end(&records, 0, usize::MAX, usize::MAX),
+            5,
+            "unlimited budgets must return records.len() from start 0"
+        );
+    }
 }
