@@ -15,6 +15,7 @@ Version bump: `Cargo.toml` (and the `Cargo.lock` entry) bumped from 0.74.328 to 
 - Added `parse_bool_value(raw: Option<&str>) -> bool` in `src/config/helpers.rs` as the pure seam; `parse_bool_env` delegates to it, so no second copy of the truthy set exists.
 - The four `OnceLock` accessors stay cached. Their wiring is tested through child processes, because a cached value cannot be re-read in-process.
 - Behaviour change for operators: a variable set to anything other than `1`/`true`/`yes` (for example `=on`) no longer enables these six toggles. `docs/CONFIGURATION.md` states this.
+- Review clarification: the configuration reference places this default-off rule before the separate default-on exception and explicitly lists rejected examples, including `on` and empty.
 
 ### Undiscoverable Facts
 

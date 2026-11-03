@@ -11,13 +11,15 @@ variable that tunes `neat_ai_discovery`. The code-side origin is
 
 All discovery variables use the `NEAT_AI_DISCOVERY_` prefix. Boolean toggles
 accept `1`/`true`/`yes` to enable, and any other value leaves them off, unless
-the row says otherwise. The toggles that default on,
-`NEAT_AI_DISCOVERY_CPU_PRE_REJECT` and `NEAT_AI_DISCOVERY_HIDDEN_SQUASH_PRUNE`,
-stay on for any value other than `0`/`false`/`no`. This rule also covers
+the row says otherwise. This general rule covers
 `NEAT_AI_DISCOVERY_VERBOSE`, `NEAT_AI_DISCOVERY_GPU_TIMING`,
 `NEAT_AI_DISCOVERY_QUIET_GPU`, `NEAT_AI_DISCOVERY_NEURON_TARGETS_OUTPUT_ONLY`,
-`NEAT_AI_DISCOVERY_TIMING` and `NEAT_AI_DISCOVERY_GPU_METRICS`, which before
-Issue #2467 enabled on any set value, `0` included. Unset means the documented
+`NEAT_AI_DISCOVERY_TIMING` and `NEAT_AI_DISCOVERY_GPU_METRICS`: only
+`1`/`true`/`yes` enable them (trimmed and case-insensitive); any other value,
+including `0`, `false`, `no`, `on` or empty, leaves them off. Before Issue
+#2467, any set value enabled them. The toggles that default on,
+`NEAT_AI_DISCOVERY_CPU_PRE_REJECT` and `NEAT_AI_DISCOVERY_HIDDEN_SQUASH_PRUNE`,
+stay on for any value other than `0`/`false`/`no`. Unset means the documented
 default applies.
 
 For numeric variables, an **unparsable** value is treated as unset, so the
