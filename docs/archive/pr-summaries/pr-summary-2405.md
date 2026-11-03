@@ -34,4 +34,6 @@ Version bump: `Cargo.toml` and `Cargo.lock` updated for this change; the merged 
 - Red check: removing the clamp makes the clamp-specific 2405 tests fail; the disabled-behaviour test passes either way (it pins current behaviour).
 - `tests/issue_2096_config_user_facing_a.rs`: only a comment changed; no assertions removed.
 - Earlier runs on this branch: `issue_2006_numeric_env_override_trim`, `infrastructure config_watchdog_stall`, `cargo fmt --check`, `cargo clippy` on the new test and `cargo build --release --lib` passed.
-- `./quality.sh`: see the note below.
+- `./quality.sh`: the formatting, lint and type-check stages passed on the final head; the unit-test stage reported no failure but was cut off at the 595 s command bound (exit 124) before finishing, so the full gate is unverified as a single run.
+
+<!-- vibe-quality-gate-skipped reason="full gate exceeds the 595 s foreground command bound on this host; formatting, lint and type checks passed, targeted tests passed; CI runs the full gate" -->
