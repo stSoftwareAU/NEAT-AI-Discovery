@@ -53,6 +53,11 @@ pub fn get_gpu_retry_limit() -> u32 {
 ///
 /// This inspects the error message chain for patterns known to indicate device
 /// loss in wgpu (Metal, Vulkan, and DX12 backends).
+///
+/// Issue #2363: this is a text heuristic and is only a fallback. wgpu 30 reports
+/// a lost device through the device-lost callback, which the analyser records
+/// as a flag; callers route on that flag as well as on this text match. The
+/// "not enough memory left" pattern covers the Metal out-of-memory wording.
 pub fn is_device_lost_error(error: &anyhow::Error) -> bool {
     let msg = format!("{error:#}").to_lowercase();
 
@@ -63,6 +68,7 @@ pub fn is_device_lost_error(error: &anyhow::Error) -> bool {
         || msg.contains("gpu device poll error")
         || msg.contains("internal error")
         || msg.contains("out of memory")
+        || msg.contains("not enough memory left")
         || msg.contains("allocation failed")
         || msg.contains("command buffer")
         || msg.contains("too many command buffers")
@@ -74,11 +80,15 @@ pub fn is_device_lost_error(error: &anyhow::Error) -> bool {
 /// Check whether an error specifically indicates GPU memory exhaustion.
 ///
 /// This is a subset of `is_device_lost_error` — it matches only memory-related
-/// patterns ("out of memory", "allocation failed"). Used by the retry loop
-/// (Issue #1083) to decide whether to reduce batch size before retrying.
+/// patterns ("out of memory", "not enough memory left", "allocation failed").
+/// Used by the retry loop (Issue #1083) to decide whether to reduce batch size
+/// before retrying. The "not enough memory left" wording was added for Issue
+/// #2363, where wgpu 30 surfaces Metal out-of-memory as that phrase.
 pub fn is_memory_exhaustion_error(error: &anyhow::Error) -> bool {
     let msg = format!("{error:#}").to_lowercase();
-    msg.contains("out of memory") || msg.contains("allocation failed")
+    msg.contains("out of memory")
+        || msg.contains("not enough memory left")
+        || msg.contains("allocation failed")
 }
 
 /// Check whether an error is one of the crate's own GPU wait-timeout messages
@@ -292,5 +302,39 @@ mod tests {
                 "Should not detect a wait timeout for: {msg}"
             );
         }
+    }
+
+    /// Issue #2363: wgpu 30 on Metal reports exhaustion as "Not enough memory
+    /// left". Both matchers must recognise it so the worker treats it as a lost
+    /// device and halves the batch.
+    #[test]
+    fn test_not_enough_memory_left_is_device_lost_and_memory_exhaustion() {
+        let err = anyhow::anyhow!("Not enough memory left.");
+        assert!(
+            is_device_lost_error(&err),
+            "Expected device-lost detection for 'Not enough memory left.'"
+        );
+        assert!(
+            is_memory_exhaustion_error(&err),
+            "Expected memory exhaustion detection for 'Not enough memory left.'"
+        );
+    }
+
+    /// Issue #2363: the wgpu `OutOfMemory` display text is "Out of Memory".
+    /// Both matchers must recognise it case-insensitively.
+    #[test]
+    fn test_out_of_memory_display_is_device_lost_and_memory_exhaustion() {
+        let err = anyhow::anyhow!("Out of Memory");
+        assert!(is_device_lost_error(&err));
+        assert!(is_memory_exhaustion_error(&err));
+    }
+
+    /// Issue #2363: an unrelated error must not be classed as either device loss
+    /// or memory exhaustion by the new pattern.
+    #[test]
+    fn test_unrelated_error_is_neither_device_lost_nor_memory_exhaustion() {
+        let err = anyhow::anyhow!("Buffer 0 mapping failed: Helpful batch rejected input");
+        assert!(!is_device_lost_error(&err));
+        assert!(!is_memory_exhaustion_error(&err));
     }
 }
