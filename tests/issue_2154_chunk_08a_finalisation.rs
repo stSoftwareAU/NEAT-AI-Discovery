@@ -22,7 +22,7 @@
 //!   on-disk `.rs` files of `src/analysis/detection` and `src/analysis/neuron`;
 //! * the six `<!-- section: … -->` markers are present, in order;
 //! * every production capacity site the capacity regex sweep
-//!   (`with_capacity\(|vec!\[[^\]]*;|\.reserve\(`) finds is cited by symbol
+//!   (`with_capacity\(|vec!\[[^]]*;|\.reserve\(`) finds is cited by symbol
 //!   in a `capacity`-kind row of `## Capacity and traversal table`;
 //! * every traversal-shaped function (`fn (...) {` whose signature mentions
 //!   depth/visited/frontier/queue) is cited by a `traversal`-kind row;
@@ -216,7 +216,9 @@ fn production_source(rel: &str) -> String {
 
 /// `true` when the line allocates a collection whose size is an expression —
 /// `with_capacity(…)`, `.reserve(…)`, or the `vec![value; count]` form.
-/// Equivalent to the regex `with_capacity\(|vec!\[[^\]]*;|\.reserve\(`.
+/// Equivalent to the regex `with_capacity\(|vec!\[[^]]*;|\.reserve\(`. The bracket
+/// is written portably: in POSIX ERE a backslash inside a bracket expression is
+/// literal, so `[^\]]*` would not mean "any run of characters up to `]`".
 fn is_capacity_site(line: &str) -> bool {
     if line.contains("with_capacity(") || line.contains(".reserve(") {
         return true;
@@ -589,5 +591,85 @@ fn the_index_entry_equals_the_record_date_baseline_and_path() {
         entry["record"].as_str(),
         Some(RECORD),
         "index `8a` record must equal {RECORD}"
+    );
+}
+
+#[test]
+fn verify_this_record_capacity_command_is_portable_and_its_figure_reproducible() {
+    // Detector preconditions: a sized `vec![value; n]` is a capacity site whatever the
+    // value's length, and a literal `vec![i];` is not.
+    assert!(
+        is_capacity_site("let v = vec![Vec::new(); n];"),
+        "detector precondition: `let v = vec![Vec::new(); n];` must be a sized allocation"
+    );
+    assert!(
+        is_capacity_site("let v = vec![0.0f32; n];"),
+        "detector precondition: `let v = vec![0.0f32; n];` must be a sized allocation"
+    );
+    assert!(
+        !is_capacity_site("vec![i];"),
+        "detector precondition: a literal `vec![i];` is not a sized allocation"
+    );
+
+    let doc = read(RECORD);
+    let verify = section(&doc, "## Verify this record");
+    assert!(
+        verify.contains("[^]]*"),
+        "`## Verify this record` must quote the portable capacity ERE `[^]]*`, got: {verify}"
+    );
+    assert!(
+        !verify.contains(r"[^\]]"),
+        "`## Verify this record` must not quote `[^\\]]`: in POSIX ERE a backslash inside a \
+         bracket is literal, so that form misses sized `vec![value; n]` sites, got: {verify}"
+    );
+
+    // Every `.rs` file under the scope, test modules and `*_tests.rs` included.
+    let total_hits: usize = SCOPE_DIRS
+        .iter()
+        .flat_map(|root| rust_files_under(root))
+        .map(|rel| {
+            read(&rel)
+                .lines()
+                .filter(|line| is_capacity_site(line))
+                .count()
+        })
+        .sum();
+    let production: usize = scope_capacity_site_counts()
+        .iter()
+        .map(|(_, count)| *count)
+        .sum();
+    assert!(
+        total_hits >= production,
+        "every production capacity site is also a hit in the scope, got {total_hits} hits \
+         against {production} production sites"
+    );
+    let test_only = total_hits - production;
+    assert!(
+        production > 0,
+        "precondition: at least one production capacity site must be counted"
+    );
+    assert!(
+        test_only > 0,
+        "precondition: test-only capacity hits must exist, e.g. correlated_error.rs's inline \
+         `vec![false; N]` deadline-override sequences"
+    );
+
+    let figure = format!("The recorded capacity figure is `{total_hits}`");
+    assert!(
+        verify.contains(&figure),
+        "`## Verify this record` must carry `{figure}`: the record's figure must be what the \
+         corrected command prints, which is {total_hits} hits, got: {verify}"
+    );
+    let production_phrase = format!("{production} production capacity rows");
+    assert!(
+        verify.contains(&production_phrase),
+        "`## Verify this record` must carry `{production_phrase}`: the record's figure must be \
+         what the corrected command prints, got: {verify}"
+    );
+    let test_only_phrase = format!("{test_only} test-only hits");
+    assert!(
+        verify.contains(&test_only_phrase),
+        "`## Verify this record` must carry `{test_only_phrase}`: the record's figure must be \
+         what the corrected command prints, got: {verify}"
     );
 }
