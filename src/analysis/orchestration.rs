@@ -347,7 +347,7 @@ fn dispatch_analyses(
 /// are clamped to 1–120 before the minutes-to-seconds conversion, so an
 /// out-of-range FFI value cannot overflow. Returns the capped deadline and the
 /// effective cap in minutes.
-pub fn resolve_wall_clock_deadline(
+fn resolve_wall_clock_deadline(
     analysis_deadline: Option<std::time::SystemTime>,
     discovery_start: std::time::SystemTime,
     requested_minutes: Option<u64>,

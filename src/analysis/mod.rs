@@ -107,7 +107,7 @@ pub(crate) mod module_dispatch_specs;
 mod orchestration;
 
 // Re-export analyze_all from orchestration sub-module
-pub use orchestration::{analyze_all, resolve_wall_clock_deadline};
+pub use orchestration::analyze_all;
 
 // Re-export candidate aggregation functions used by discovery_dispatch and sub-modules
 pub(crate) use candidate_aggregation::merge_coordinated_structural_replacements;
