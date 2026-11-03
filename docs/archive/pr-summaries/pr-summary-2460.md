@@ -41,3 +41,6 @@
 ## Quality gate
 
 See the latest validation results on the PR head.
+
+The Develop merge retains version 0.74.330 in both the manifest and lockfile,
+above Develop's 0.74.329.
