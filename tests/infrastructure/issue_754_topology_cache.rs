@@ -84,6 +84,7 @@ fn long_path_creature() -> neat_ai_discovery::CreatureJson {
 }
 
 #[test]
+#[serial]
 fn test_dead_neuron_cache_vs_no_cache() {
     let creature = make_creature(
         vec![
@@ -120,6 +121,7 @@ fn test_dead_neuron_cache_vs_no_cache() {
 }
 
 #[test]
+#[serial]
 fn test_bottleneck_cache_vs_no_cache() {
     let creature = bottleneck_creature();
 
@@ -148,6 +150,7 @@ fn test_bottleneck_cache_vs_no_cache() {
 }
 
 #[test]
+#[serial]
 fn test_bottleneck_conversion_cache_vs_no_cache() {
     let creature = bottleneck_creature();
 
