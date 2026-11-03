@@ -27,6 +27,8 @@
 //! `AddSynapse` operations.
 
 #![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
+use std::collections::HashMap;
+
 use super::helpers::{
     build_record_map, existing_neuron_uuids, first_free_neuron_uuid, sort_candidates_by_score_gain,
 };
@@ -35,6 +37,8 @@ use crate::types::DiscoverRecord;
 use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson, CreatureJson};
 
 use super::topology_cache::CreatureTopologyCache;
+
+use crate::analysis::utils::deadline_passed;
 
 // MIN_SAMPLES_FOR_BOTTLENECK moved to constants.rs (Issue #424)
 use crate::analysis::constants::MIN_DISCOVERY_SAMPLE_COUNT as MIN_SAMPLES_FOR_BOTTLENECK;
@@ -232,10 +236,46 @@ fn bottleneck_parallel_neuron_uuid(bottleneck_uuid: &str, index: usize, salt: u3
 /// * `creature` - The creature topology (needed for existing synapse weights).
 ///
 /// The parallel neuron UUID avoids every UUID already in `creature` (Issue #2359).
+///
+/// Issue #2479: no deadline — equivalent to calling
+/// [`bottleneck_neurons_to_coordinated_candidates_with_deadline`] with a `None`
+/// deadline.
 pub fn bottleneck_neurons_to_coordinated_candidates(
     candidates: &[BottleneckNeuronCandidate],
     creature: &CreatureJson,
     topo: Option<&CreatureTopologyCache>,
+) -> Vec<CoordinatedStructuralCandidateJson> {
+    bottleneck_neurons_to_coordinated_candidates_with_deadline(candidates, creature, topo, &None)
+}
+
+/// Deadline-aware variant of [`bottleneck_neurons_to_coordinated_candidates`]
+/// (Issue #2479).
+///
+/// Builds the uuid → squash lookup once up front (rather than scanning
+/// `creature.neurons` per candidate) and checks `deadline` once per candidate,
+/// so a hung or oversized conversion can be stopped mid-flight, returning the
+/// coordinated candidates built so far.
+pub fn bottleneck_neurons_to_coordinated_candidates_with_deadline(
+    candidates: &[BottleneckNeuronCandidate],
+    creature: &CreatureJson,
+    topo: Option<&CreatureTopologyCache>,
+    deadline: &Option<std::time::SystemTime>,
+) -> Vec<CoordinatedStructuralCandidateJson> {
+    bottleneck_neurons_to_coordinated_candidates_with_observer(
+        candidates,
+        creature,
+        topo,
+        deadline,
+        &mut || {},
+    )
+}
+
+fn bottleneck_neurons_to_coordinated_candidates_with_observer(
+    candidates: &[BottleneckNeuronCandidate],
+    creature: &CreatureJson,
+    topo: Option<&CreatureTopologyCache>,
+    deadline: &Option<std::time::SystemTime>,
+    work_observer: &mut impl FnMut(),
 ) -> Vec<CoordinatedStructuralCandidateJson> {
     // Use pre-computed cache or build locally.
     let local_cache;
@@ -249,9 +289,25 @@ pub fn bottleneck_neurons_to_coordinated_candidates(
 
     let existing = existing_neuron_uuids(creature);
 
+    // Issue #2479: build the uuid -> squash lookup once rather than scanning
+    // `creature.neurons` per candidate (was O(C·N)). `entry(..).or_insert(..)`
+    // preserves the original `find`'s first-match semantics when several
+    // neurons share a uuid.
+    let mut squash_by_uuid: HashMap<&str, &str> = HashMap::new();
+    for n in &creature.neurons {
+        work_observer();
+        squash_by_uuid
+            .entry(n.uuid.as_str())
+            .or_insert(n.squash.as_str());
+    }
+
     let mut results = Vec::with_capacity(candidates.len() * 2);
 
     for c in candidates {
+        if deadline_passed(deadline) {
+            break;
+        }
+
         // Candidate 1: Add parallel neuron
         // Create a new hidden neuron that receives a subset of the bottleneck's inputs
         // and feeds the same outputs. This widens the information channel.
@@ -263,12 +319,10 @@ pub fn bottleneck_neurons_to_coordinated_candidates(
                 bottleneck_parallel_neuron_uuid(&c.neuron_uuid, 0, salt)
             });
 
-            // Find the bottleneck neuron's squash function (borrow, not clone)
-            let squash_ref = creature
-                .neurons
-                .iter()
-                .find(|n| n.uuid == c.neuron_uuid)
-                .map_or("TANH", |n| n.squash.as_str());
+            // Find the bottleneck neuron's squash function (Issue #2479: O(1) map
+            // lookup rather than a per-candidate linear scan of `creature.neurons`).
+            let squash_ref = lookup_squash(&squash_by_uuid, c.neuron_uuid.as_str(), work_observer)
+                .unwrap_or("TANH");
 
             // Build comment before moving squash into operations
             let comment = format!(
@@ -389,4 +443,156 @@ pub fn bottleneck_neurons_to_coordinated_candidates(
     sort_candidates_by_score_gain(&mut results);
 
     results
+}
+
+fn lookup_squash<'a>(
+    squash_by_uuid: &'a HashMap<&'a str, &'a str>,
+    neuron_uuid: &str,
+    work_observer: &mut impl FnMut(),
+) -> Option<&'a str> {
+    work_observer();
+    squash_by_uuid.get(neuron_uuid).copied()
+}
+
+#[cfg(test)]
+mod issue_2479_tests {
+    use super::*;
+
+    /// An input `in`, `count` hidden neurons `h{i}` each fed by `in` and feeding
+    /// `out`, and an output `out`. Every hidden neuron is a parallel-neuron
+    /// candidate, so each yields exactly one coordinated candidate.
+    fn parallel_candidate_fixture(count: usize) -> (CreatureJson, Vec<BottleneckNeuronCandidate>) {
+        let mut neurons = vec![crate::NeuronJson {
+            uuid: "in".to_string(),
+            neuron_type: "input".to_string(),
+            squash: "IDENTITY".to_string(),
+            bias: 0.0,
+        }];
+        let mut synapses = Vec::new();
+        let mut candidates = Vec::new();
+        for i in 0..count {
+            let uuid = format!("h{i}");
+            neurons.push(crate::NeuronJson {
+                uuid: uuid.clone(),
+                neuron_type: "hidden".to_string(),
+                squash: "RELU".to_string(),
+                bias: 0.0,
+            });
+            synapses.push(crate::SynapseJson {
+                from_uuid: "in".to_string(),
+                to_uuid: uuid.clone(),
+                weight: 0.5,
+                synapse_type: None,
+            });
+            synapses.push(crate::SynapseJson {
+                from_uuid: uuid.clone(),
+                to_uuid: "out".to_string(),
+                weight: 1.0,
+                synapse_type: None,
+            });
+            candidates.push(BottleneckNeuronCandidate {
+                neuron_uuid: uuid,
+                fan_in: 1,
+                fan_out: 1,
+                error_contribution_ratio: 0.0,
+                bottleneck_score: 0.1,
+                estimated_improvement: 0.001,
+                recommended_actions: vec!["addParallelNeuron".to_string()],
+                upstream_uuids: vec!["in".to_string()],
+                downstream_uuids: vec!["out".to_string()],
+            });
+        }
+        neurons.push(crate::NeuronJson {
+            uuid: "out".to_string(),
+            neuron_type: "output".to_string(),
+            squash: "IDENTITY".to_string(),
+            bias: 0.0,
+        });
+        let creature = CreatureJson {
+            neurons,
+            synapses,
+            input: 1,
+            output: 1,
+        };
+        (creature, candidates)
+    }
+
+    #[test]
+    fn squash_lookup_work_scales_linearly_at_n_and_4n() {
+        const N: usize = 128;
+
+        let measured_work = |count: usize| {
+            let (creature, candidates) = parallel_candidate_fixture(count);
+            let mut work = 0;
+            let result = bottleneck_neurons_to_coordinated_candidates_with_observer(
+                &candidates,
+                &creature,
+                None,
+                &None,
+                &mut || work += 1,
+            );
+            assert_eq!(result.len(), count);
+            work
+        };
+
+        // Index build visits every neuron (count + 2) once; each candidate
+        // performs one squash lookup.
+        let small_work = measured_work(N);
+        let large_work = measured_work(N * 4);
+        assert_eq!(small_work, (N + 2) + N);
+        assert_eq!(large_work, (N * 4 + 2) + N * 4);
+        assert_eq!(large_work - 2, (small_work - 2) * 4);
+    }
+
+    /// The deadline is checked once per candidate, and on expiry the candidates
+    /// already built are returned rather than discarded. The scripted sequence lets
+    /// the first candidate through and stops at the second, so hoisting the check
+    /// out of the loop (all three built) or replacing `break` with an empty return
+    /// (none built) both fail this test.
+    #[test]
+    #[serial_test::serial]
+    fn deadline_mid_conversion_returns_the_candidates_built_so_far() {
+        use crate::analysis::utils::deadline_override::DeadlineOverrideGuard;
+
+        let (creature, candidates) = parallel_candidate_fixture(3);
+
+        // Positive control: with no override every candidate converts.
+        let control = bottleneck_neurons_to_coordinated_candidates_with_deadline(
+            &candidates,
+            &creature,
+            None,
+            &None,
+        );
+        assert_eq!(
+            control.len(),
+            3,
+            "fixture must yield one candidate per bottleneck"
+        );
+
+        let _guard = DeadlineOverrideGuard::with_sequence(vec![false, true]);
+        let partial = bottleneck_neurons_to_coordinated_candidates_with_deadline(
+            &candidates,
+            &creature,
+            None,
+            &None,
+        );
+
+        assert_eq!(
+            partial.len(),
+            1,
+            "the deadline must stop the conversion at the second candidate and keep the first"
+        );
+        let split_target = partial[0].operations.iter().find_map(|op| match op {
+            CoordinatedStructuralOpJson::AddNeuron {
+                insert_before_neuron_uuid,
+                ..
+            } => insert_before_neuron_uuid.clone(),
+            _ => None,
+        });
+        assert_eq!(
+            split_target.as_deref(),
+            Some("h0"),
+            "the kept candidate must be the first bottleneck's"
+        );
+    }
 }

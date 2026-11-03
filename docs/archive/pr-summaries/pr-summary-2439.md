@@ -5,8 +5,8 @@ than declared widths, preventing sparse creatures from paying for oversized
 HashSet capacity during scans. Preserved width validation and implicit-input
 semantics. Closes #2439.
 
-Version bump: `Cargo.toml` updated for this change; the merged commit records the
-final version.
+Version bump: `Cargo.toml` and `Cargo.lock` use 0.74.334, above the merged
+Develop version 0.74.333.
 
 ## Spec
 

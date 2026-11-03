@@ -23,9 +23,12 @@
 //! is approximately preserved.
 
 #![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
+use std::collections::HashMap;
+
 use super::helpers::build_record_map;
 use crate::activations::{apply_scalar_squash, is_aggregate_squash};
 use crate::analysis::constants::MIN_DISCOVERY_SAMPLE_COUNT as MIN_SAMPLES;
+use crate::analysis::utils::deadline_passed;
 use crate::types::DiscoverRecord;
 use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson, CreatureJson};
 
@@ -79,17 +82,24 @@ const COORDINATED_BOOST: f32 = 1.5;
 /// systematically mispredicts the gain (e.g. SELU→ABSOLUTE predicted `+4.2e-10`
 /// but measured `−8.7e-4`). Until a proper propagation model exists, gate such
 /// candidates out rather than emit a misleading estimate.
-fn feeds_downstream_aggregate(creature: &CreatureJson, neuron_uuid: &str) -> bool {
-    creature
-        .synapses
-        .iter()
-        .filter(|s| s.from_uuid == neuron_uuid)
-        .any(|s| {
-            creature
-                .neurons
-                .iter()
-                .any(|n| n.uuid == s.to_uuid && is_aggregate_squash(&n.squash))
+///
+/// Issue #2479: takes prebuilt lookups so the check costs O(out-degree) per
+/// neuron rather than rescanning every synapse and neuron. `outgoing_targets`
+/// maps a source uuid to its target uuids, and `aggregate_by_uuid` maps a uuid
+/// to whether ANY neuron carrying that uuid has an aggregate squash, matching
+/// the original `any` over duplicate uuids.
+fn feeds_downstream_aggregate(
+    outgoing_targets: &HashMap<&str, Vec<&str>>,
+    aggregate_by_uuid: &HashMap<&str, bool>,
+    neuron_uuid: &str,
+    work_observer: &mut impl FnMut(),
+) -> bool {
+    outgoing_targets.get(neuron_uuid).is_some_and(|targets| {
+        targets.iter().any(|target| {
+            work_observer();
+            aggregate_by_uuid.get(*target).copied().unwrap_or(false)
         })
+    })
 }
 
 /// A detected squash + weight rescale candidate.
@@ -198,15 +208,85 @@ fn find_best_rescale_factor(
 ///
 /// # Returns
 /// Vector of detected candidates, sorted by estimated improvement (best first).
+///
+/// Issue #2479: no deadline — equivalent to calling
+/// [`detect_squash_weight_rescale_candidates_with_deadline`] with a `None`
+/// deadline.
 pub fn detect_squash_weight_rescale_candidates(
     creature: &CreatureJson,
     hidden_neurons: &[(String, String, f32)],
     neuron_records: &[(String, impl AsRef<[DiscoverRecord]>)],
 ) -> Vec<SquashWeightRescaleCandidate> {
+    detect_squash_weight_rescale_candidates_with_deadline(
+        creature,
+        hidden_neurons,
+        neuron_records,
+        &None,
+    )
+}
+
+/// Deadline-aware variant of [`detect_squash_weight_rescale_candidates`]
+/// (Issue #2479).
+///
+/// Builds the synapse adjacency and the aggregate-squash lookup once up front
+/// (the per-neuron scans of `creature.synapses` and `creature.neurons` were
+/// O(H·(S+N))) and checks `deadline` once per hidden neuron, so a hung or
+/// oversized detection can be stopped mid-flight. On expiry the candidates
+/// collected so far are returned, still sorted best first.
+pub fn detect_squash_weight_rescale_candidates_with_deadline(
+    creature: &CreatureJson,
+    hidden_neurons: &[(String, String, f32)],
+    neuron_records: &[(String, impl AsRef<[DiscoverRecord]>)],
+    deadline: &Option<std::time::SystemTime>,
+) -> Vec<SquashWeightRescaleCandidate> {
+    detect_squash_weight_rescale_candidates_with_observer(
+        creature,
+        hidden_neurons,
+        neuron_records,
+        deadline,
+        &mut || {},
+    )
+}
+
+fn detect_squash_weight_rescale_candidates_with_observer(
+    creature: &CreatureJson,
+    hidden_neurons: &[(String, String, f32)],
+    neuron_records: &[(String, impl AsRef<[DiscoverRecord]>)],
+    deadline: &Option<std::time::SystemTime>,
+    work_observer: &mut impl FnMut(),
+) -> Vec<SquashWeightRescaleCandidate> {
     let mut candidates = Vec::with_capacity(hidden_neurons.len());
     let records_map = build_record_map(neuron_records);
 
+    // Issue #2479: build the lookups once, in synapse order so per-neuron
+    // results keep the original ordering.
+    let mut incoming_by_target: HashMap<&str, Vec<(&str, f32)>> = HashMap::new();
+    let mut outgoing_targets: HashMap<&str, Vec<&str>> = HashMap::new();
+    for s in &creature.synapses {
+        work_observer();
+        incoming_by_target
+            .entry(s.to_uuid.as_str())
+            .or_default()
+            .push((s.from_uuid.as_str(), s.weight));
+        outgoing_targets
+            .entry(s.from_uuid.as_str())
+            .or_default()
+            .push(s.to_uuid.as_str());
+    }
+
+    // uuid -> whether ANY neuron carrying that uuid is an aggregate squash.
+    let mut aggregate_by_uuid: HashMap<&str, bool> = HashMap::new();
+    for n in &creature.neurons {
+        work_observer();
+        let is_aggregate = is_aggregate_squash(&n.squash);
+        *aggregate_by_uuid.entry(n.uuid.as_str()).or_insert(false) |= is_aggregate;
+    }
+
     for (uuid, current_squash, _bias) in hidden_neurons {
+        if deadline_passed(deadline) {
+            break;
+        }
+
         // Skip aggregate squashes — they cannot be simulated as f(x)
         if is_aggregate_squash(current_squash) {
             continue;
@@ -216,7 +296,7 @@ pub fn detect_squash_weight_rescale_candidates(
         // selection (MAX/MIN/IF/…). The local f(x) estimate cannot model how a
         // changed activation range alters which branch the aggregate selects,
         // so it systematically mispredicts the whole-creature gain (Issue #1713).
-        if feeds_downstream_aggregate(creature, uuid) {
+        if feeds_downstream_aggregate(&outgoing_targets, &aggregate_by_uuid, uuid, work_observer) {
             continue;
         }
 
@@ -246,13 +326,12 @@ pub fn detect_squash_weight_rescale_candidates(
             continue;
         }
 
-        // Find incoming synapses for this neuron
-        let incoming_synapses: Vec<(&str, f32)> = creature
-            .synapses
-            .iter()
-            .filter(|s| s.to_uuid == *uuid)
-            .map(|s| (s.from_uuid.as_str(), s.weight))
-            .collect();
+        // Find incoming synapses for this neuron (Issue #2479: O(1) adjacency lookup)
+        work_observer();
+        let incoming_synapses: Vec<(&str, f32)> = incoming_by_target
+            .get(uuid.as_str())
+            .cloned()
+            .unwrap_or_default();
 
         if incoming_synapses.is_empty() {
             continue;
@@ -372,4 +451,153 @@ pub fn squash_weight_rescale_to_coordinated_candidates(
             }
         })
         .collect()
+}
+
+#[cfg(test)]
+mod issue_2479_tests {
+    use super::*;
+
+    /// 40 records for a RELU neuron with predominantly negative pre-activations and
+    /// a consistent error, as in the Issue #548 fixture. Each hidden neuron built
+    /// from these records qualifies for a candidate.
+    fn qualifying_records(uuid: &str) -> Vec<DiscoverRecord> {
+        (0..40u32)
+            .map(|i| {
+                let value = (i as f32 - 20.0) / 10.0;
+                DiscoverRecord {
+                    obs_index: i,
+                    neuron_uuid: uuid.to_string(),
+                    value: Some(value),
+                    activation: value.max(0.0),
+                    errors: vec![0.15 + (i as f32 * 0.002).sin() * 0.02],
+                }
+            })
+            .collect()
+    }
+
+    type Fixture = (
+        CreatureJson,
+        Vec<(String, String, f32)>,
+        Vec<(String, Vec<DiscoverRecord>)>,
+    );
+
+    /// `count` RELU hidden neurons `h0..`. Each has two incoming synapses and feeds
+    /// two non-aggregate outputs, so every hidden neuron performs the aggregate-feed
+    /// check across two outgoing synapses.
+    fn fixture(count: usize) -> Fixture {
+        let input = |uuid: &str| crate::NeuronJson {
+            uuid: uuid.to_string(),
+            neuron_type: "input".to_string(),
+            squash: "IDENTITY".to_string(),
+            bias: 0.0,
+        };
+        let synapse = |from: &str, to: &str, weight: f32| crate::SynapseJson {
+            from_uuid: from.to_string(),
+            to_uuid: to.to_string(),
+            weight,
+            synapse_type: None,
+        };
+        let mut neurons = vec![input("in-a"), input("in-b")];
+        let mut synapses = Vec::new();
+        let mut hidden = Vec::new();
+        let mut records = Vec::new();
+        for i in 0..count {
+            let uuid = format!("h{i}");
+            neurons.push(crate::NeuronJson {
+                uuid: uuid.clone(),
+                neuron_type: "hidden".to_string(),
+                squash: "RELU".to_string(),
+                bias: 0.0,
+            });
+            synapses.push(synapse("in-a", &uuid, 1.5));
+            synapses.push(synapse("in-b", &uuid, -0.8));
+            synapses.push(synapse(&uuid, "out-a", 1.0));
+            synapses.push(synapse(&uuid, "out-b", 1.0));
+            hidden.push((uuid.clone(), "RELU".to_string(), 0.0));
+            records.push((uuid.clone(), qualifying_records(&uuid)));
+        }
+        for (uuid, squash) in [("out-a", "TANH"), ("out-b", "IDENTITY")] {
+            neurons.push(crate::NeuronJson {
+                uuid: uuid.to_string(),
+                neuron_type: "output".to_string(),
+                squash: squash.to_string(),
+                bias: 0.0,
+            });
+        }
+        let creature = CreatureJson {
+            neurons,
+            synapses,
+            input: 2,
+            output: 2,
+        };
+        (creature, hidden, records)
+    }
+
+    /// Work is one step per synapse and per neuron to build the lookups, then per
+    /// hidden neuron two aggregate-feed lookups (two outgoing synapses) and one
+    /// incoming-adjacency lookup. That is 8N + 4 at N and 8 * 4N + 4 at 4N.
+    #[test]
+    fn lookup_work_scales_linearly_at_n_and_4n() {
+        const N: usize = 128;
+
+        let measured_work = |count: usize| {
+            let (creature, hidden, records) = fixture(count);
+            let mut work = 0;
+            let result = detect_squash_weight_rescale_candidates_with_observer(
+                &creature,
+                &hidden,
+                &records,
+                &None,
+                &mut || work += 1,
+            );
+            assert_eq!(result.len(), count, "every hidden neuron must qualify");
+            work
+        };
+
+        let small_work = measured_work(N);
+        let large_work = measured_work(4 * N);
+        assert_eq!(small_work, 8 * N + 4);
+        assert_eq!(large_work, 8 * 4 * N + 4);
+        assert_eq!(large_work - 4, (small_work - 4) * 4);
+    }
+
+    /// The deadline is checked once per hidden neuron, and on expiry the candidates
+    /// already collected are returned rather than discarded. The scripted sequence
+    /// lets the first neuron through and stops at the second, so hoisting the check
+    /// out of the loop (all three returned) or replacing `break` with an empty
+    /// return (none returned) both fail this test.
+    #[test]
+    #[serial_test::serial]
+    fn deadline_mid_detection_returns_the_candidates_built_so_far() {
+        use crate::analysis::utils::deadline_override::DeadlineOverrideGuard;
+
+        let (creature, hidden, records) = fixture(3);
+
+        // Positive control: with no override every qualifying neuron is returned.
+        let control = detect_squash_weight_rescale_candidates_with_deadline(
+            &creature, &hidden, &records, &None,
+        );
+        let mut control_uuids: Vec<&str> = control.iter().map(|c| c.neuron_uuid.as_str()).collect();
+        control_uuids.sort_unstable();
+        assert_eq!(
+            control_uuids,
+            ["h0", "h1", "h2"],
+            "positive control: fixture must yield one candidate per hidden neuron"
+        );
+
+        let _guard = DeadlineOverrideGuard::with_sequence(vec![false, true]);
+        let partial = detect_squash_weight_rescale_candidates_with_deadline(
+            &creature, &hidden, &records, &None,
+        );
+
+        assert_eq!(
+            partial.len(),
+            1,
+            "the deadline must stop the detection at the second hidden neuron and keep the first"
+        );
+        assert_eq!(
+            partial[0].neuron_uuid, "h0",
+            "the kept candidate must be the first hidden neuron's"
+        );
+    }
 }

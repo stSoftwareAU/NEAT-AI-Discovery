@@ -69,7 +69,7 @@ pub(crate) fn append_scoring_specs(
         records: cache.load_records_for_neuron_types(&creature, &["input"]),
         guard_records,
         detect: |records| sentinel_gating::detect_sentinel_gating_candidates(&creature, &records),
-        convert: |detected| sentinel_gating::sentinel_gating_to_coordinated_candidates(&detected, &creature),
+        convert: |detected| sentinel_gating::sentinel_gating_to_coordinated_candidates_with_deadline(&detected, &creature, &deadline),
     );
 
     // Issue #543: Observation utilisation detection
@@ -161,7 +161,7 @@ pub(crate) fn append_scoring_specs(
             let config = output_range_compression::OutputRangeCompressionConfig::default();
             output_range_compression::detect_output_range_compression(&creature, &records, &config)
         },
-        convert: |detected| output_range_compression::output_range_compression_to_coordinated_candidates(&detected, &creature),
+        convert: |detected| output_range_compression::output_range_compression_to_coordinated_candidates_with_deadline(&detected, &creature, &deadline),
     );
 
     // Issue #545: Output squash mismatch detection (local minimum escape, custom logic)

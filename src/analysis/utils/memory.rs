@@ -408,8 +408,9 @@ pub const PARQUET_MEMORY_MULTIPLIER: u64 = 3;
 /// ratio: dictionary and RLE encodings routinely beat 3:1 on this schema's
 /// repeated UUIDs, so a compressed-size projection under-reports badly.
 ///
-/// This remains an *estimate*, not a bound — the enforced bound is the
-/// cumulative decode budget the reader charges per record
+/// This remains an *estimate*, not a bound. The reader's decode budget checks
+/// selected-column footer estimates before building Arrow batches, then charges
+/// materialised records as a second check
 /// ([`crate::parquet_format::decode_budget::DecodeBudget`]). Returns `0` when
 /// neither the file's metadata nor its footer can be read, so the caller can
 /// treat the projection as unknown rather than aborting.
@@ -425,7 +426,7 @@ pub fn estimate_parquet_in_memory_bytes(parquet_file: &str) -> u64 {
                 parquet_file,
                 error = %e,
                 "parquet footer unreadable — falling back to the compressed-size \
-                 projection; the decode budget remains the enforced bound",
+                 projection; reader decode-budget checks remain enabled",
             );
             compressed_projection
         }

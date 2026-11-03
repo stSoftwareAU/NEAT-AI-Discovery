@@ -35,6 +35,7 @@ use crate::types::DiscoverRecord;
 use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson, CreatureJson};
 
 use crate::analysis::constants::MIN_DISCOVERY_SAMPLE_COUNT as MIN_SAMPLES;
+use crate::analysis::utils::deadline_passed;
 
 /// Minimum observed range (`activation_max` - `activation_min`) to distinguish
 /// from dead neurons. Below this, the neuron is considered dead, not compressed.
@@ -204,13 +205,62 @@ pub fn detect_output_range_compression(
 ///    the observed output distribution (e.g., LOGISTIC for [0, 1] targets).
 /// 2. **setBias + setWeight** — coordinated rescaling to recentre and expand
 ///    the output pathway through the activation function.
+///
+/// Issue #2479: no deadline — equivalent to calling
+/// [`output_range_compression_to_coordinated_candidates_with_deadline`] with a
+/// `None` deadline.
 pub fn output_range_compression_to_coordinated_candidates(
     detected: &[OutputRangeCompressionNeuron],
     creature: &CreatureJson,
 ) -> Vec<CoordinatedStructuralCandidateJson> {
+    output_range_compression_to_coordinated_candidates_with_deadline(detected, creature, &None)
+}
+
+/// Deadline-aware variant of [`output_range_compression_to_coordinated_candidates`]
+/// (Issue #2479).
+///
+/// Builds the target-uuid → incoming-synapses lookup once up front (rather than
+/// scanning `creature.synapses` per output neuron, which was O(C·S)) and checks
+/// `deadline` once per candidate neuron so a hung or oversized conversion can be
+/// stopped mid-flight, returning the coordinated candidates built so far.
+pub fn output_range_compression_to_coordinated_candidates_with_deadline(
+    detected: &[OutputRangeCompressionNeuron],
+    creature: &CreatureJson,
+    deadline: &Option<std::time::SystemTime>,
+) -> Vec<CoordinatedStructuralCandidateJson> {
+    output_range_compression_to_coordinated_candidates_with_observer(
+        detected,
+        creature,
+        deadline,
+        &mut || {},
+    )
+}
+
+fn output_range_compression_to_coordinated_candidates_with_observer(
+    detected: &[OutputRangeCompressionNeuron],
+    creature: &CreatureJson,
+    deadline: &Option<std::time::SystemTime>,
+    work_observer: &mut impl FnMut(),
+) -> Vec<CoordinatedStructuralCandidateJson> {
+    // Issue #2479: build the to_uuid -> incoming synapses lookup once, in synapse
+    // order, so each candidate's list keeps the order of the former per-candidate filter.
+    let mut incoming_by_target: std::collections::HashMap<&str, Vec<&crate::SynapseJson>> =
+        std::collections::HashMap::new();
+    for synapse in &creature.synapses {
+        work_observer();
+        incoming_by_target
+            .entry(synapse.to_uuid.as_str())
+            .or_default()
+            .push(synapse);
+    }
+
     let mut results = Vec::new();
 
     for n in detected {
+        if deadline_passed(deadline) {
+            break;
+        }
+
         let base_improvement = (1.0 - n.range_utilisation) * 0.005;
 
         // Candidate 1: Change squash to a better-fitting function
@@ -234,11 +284,11 @@ pub fn output_range_compression_to_coordinated_candidates(
         });
 
         // Candidate 2: Coordinated setBias + setWeight to recentre and rescale
-        let incoming_synapses: Vec<&crate::SynapseJson> = creature
-            .synapses
-            .iter()
-            .filter(|s| s.to_uuid == n.neuron_uuid)
-            .collect();
+        work_observer();
+        let incoming_synapses: Vec<&crate::SynapseJson> = incoming_by_target
+            .get(n.neuron_uuid.as_str())
+            .cloned()
+            .unwrap_or_default();
 
         if !incoming_synapses.is_empty() {
             let observed_centre = (n.activation_min + n.activation_max) / 2.0;
@@ -310,5 +360,142 @@ fn recommend_squash(n: &OutputRangeCompressionNeuron) -> String {
     } else {
         // Activations span both positive and negative — TANH is standard
         "TANH".to_string()
+    }
+}
+
+#[cfg(test)]
+mod issue_2479_tests {
+    use super::*;
+
+    fn neuron(uuid: &str) -> OutputRangeCompressionNeuron {
+        OutputRangeCompressionNeuron {
+            neuron_uuid: uuid.to_string(),
+            squash: "TANH".to_string(),
+            bias: 0.0,
+            activation_min: -0.2,
+            activation_max: 0.2,
+            theoretical_range: 2.0,
+            range_utilisation: 0.1,
+            sample_count: 30,
+        }
+    }
+
+    /// One output neuron per uuid, each fed by two incoming synapses.
+    fn creature_with_outputs(uuids: &[String]) -> CreatureJson {
+        let mut neurons = vec![
+            crate::NeuronJson {
+                uuid: "input-a".to_string(),
+                neuron_type: "input".to_string(),
+                squash: "IDENTITY".to_string(),
+                bias: 0.0,
+            },
+            crate::NeuronJson {
+                uuid: "input-b".to_string(),
+                neuron_type: "input".to_string(),
+                squash: "IDENTITY".to_string(),
+                bias: 0.0,
+            },
+        ];
+        let mut synapses = Vec::new();
+        for uuid in uuids {
+            neurons.push(crate::NeuronJson {
+                uuid: uuid.clone(),
+                neuron_type: "output".to_string(),
+                squash: "TANH".to_string(),
+                bias: 0.0,
+            });
+            for from in ["input-a", "input-b"] {
+                synapses.push(crate::SynapseJson {
+                    from_uuid: from.to_string(),
+                    to_uuid: uuid.clone(),
+                    weight: 1.0,
+                    synapse_type: None,
+                });
+            }
+        }
+        CreatureJson {
+            neurons,
+            synapses,
+            input: 2,
+            output: uuids.len(),
+        }
+    }
+
+    #[test]
+    fn incoming_synapse_work_scales_linearly_at_n_and_4n() {
+        const N: usize = 128;
+
+        let measured_work = |count: usize| {
+            let uuids: Vec<String> = (0..count).map(|i| format!("o{i}")).collect();
+            let creature = creature_with_outputs(&uuids);
+            let detected: Vec<OutputRangeCompressionNeuron> =
+                uuids.iter().map(|u| neuron(u.as_str())).collect();
+            let mut work = 0;
+            let result = output_range_compression_to_coordinated_candidates_with_observer(
+                &detected,
+                &creature,
+                &None,
+                &mut || work += 1,
+            );
+            // Each neuron yields a changeSquash candidate plus a setBias/setWeight one.
+            assert_eq!(result.len(), 2 * count);
+            work
+        };
+
+        // Index build: one step per synapse (two per output neuron), then one
+        // lookup per neuron.
+        let small_work = measured_work(N);
+        let large_work = measured_work(N * 4);
+        assert_eq!(small_work, 2 * N + N);
+        assert_eq!(large_work, 2 * (N * 4) + N * 4);
+        assert_eq!(large_work, small_work * 4);
+    }
+
+    /// The deadline is checked once per neuron, and on expiry the candidates
+    /// already built are returned rather than discarded. The scripted sequence lets
+    /// the first neuron through and stops at the second, so hoisting the check out of
+    /// the loop (all six built) or replacing `break` with an empty return (none
+    /// built) both fail this test.
+    #[test]
+    #[serial_test::serial]
+    fn deadline_mid_conversion_returns_the_candidates_built_so_far() {
+        use crate::analysis::utils::deadline_override::DeadlineOverrideGuard;
+
+        let uuids = [
+            "out-alpha".to_string(),
+            "out-beta".to_string(),
+            "out-gamma".to_string(),
+        ];
+        let creature = creature_with_outputs(&uuids);
+        let detected: Vec<OutputRangeCompressionNeuron> =
+            uuids.iter().map(|u| neuron(u.as_str())).collect();
+
+        // Positive control: with no override every neuron converts to two candidates.
+        let control = output_range_compression_to_coordinated_candidates_with_deadline(
+            &detected, &creature, &None,
+        );
+        assert_eq!(
+            control.len(),
+            6,
+            "fixture must yield two candidates per neuron"
+        );
+
+        let _guard = DeadlineOverrideGuard::with_sequence(vec![false, true]);
+        let partial = output_range_compression_to_coordinated_candidates_with_deadline(
+            &detected, &creature, &None,
+        );
+
+        assert_eq!(
+            partial.len(),
+            2,
+            "the deadline must stop the conversion at the second neuron and keep the first's two candidates"
+        );
+        for candidate in &partial {
+            let comment = candidate.comment.as_deref().unwrap_or_default();
+            assert!(
+                comment.contains("out-alpha"),
+                "every kept candidate must belong to the first neuron, got: {comment}"
+            );
+        }
     }
 }

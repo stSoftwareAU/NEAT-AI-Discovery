@@ -11,9 +11,9 @@
 //! This reader instead:
 //! - projects **two** columns (`neuron_uuid`, `activation`) via
 //!   [`ColumnProfile::ActivationOnly`], skipping `errors` I/O entirely;
-//! - materialises **nothing** — each row folds straight into a running sum, so
-//!   memory is `O(wanted neurons)` rather than `O(rows)`, and the decode budget
-//!   that bounds record reads has nothing to bound; and
+//! - folds each row into a running sum, while Arrow still materialises selected
+//!   column batches; footer estimates preflight those batches against the decode
+//!   budget; and
 //! - honours the caller's deadline at every record-batch boundary.
 
 // Activations are f32; the running mean is accumulated in f64 for precision and
@@ -27,6 +27,7 @@ use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
 use std::collections::{HashMap, HashSet};
 use std::time::SystemTime;
 
+use super::decode_budget::DecodeBudget;
 use super::reader::{ColumnProfile, open_parquet_file, validate_parquet_schema};
 
 /// Recorded activation statistics for one neuron.
@@ -83,17 +84,20 @@ pub fn read_mean_abs_activation_by_neuron(
     }
 
     let file = open_parquet_file(file_path)?;
-    let builder = ParquetRecordBatchReaderBuilder::try_new(file)
+    let builder = ParquetRecordBatchReaderBuilder::try_new(file.try_clone()?)
         .context("Failed to create Parquet reader builder")?;
 
     let profile = ColumnProfile::ActivationOnly;
     validate_parquet_schema(&builder, file_path, profile)?;
 
+    let budget = DecodeBudget::resolve(None);
+    budget.preflight_row_groups(builder.metadata(), &profile.root_names(), file_path)?;
     let mask = ProjectionMask::roots(builder.parquet_schema(), profile.root_indices());
-    let reader = builder
-        .with_projection(mask)
-        .build()
-        .context("Failed to build Parquet reader")?;
+    let reader = crate::parquet_format::decode_budget::row_group_batches(
+        file,
+        builder.metadata().clone(),
+        mask,
+    )?;
 
     let mut accumulators: HashMap<&str, Accumulator> = HashMap::with_capacity(wanted.len());
 

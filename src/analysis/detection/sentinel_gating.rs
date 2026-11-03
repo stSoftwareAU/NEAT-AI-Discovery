@@ -36,7 +36,7 @@
 //! (Issue #2042).
 
 #![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use crate::types::DiscoverRecord;
 use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson, CreatureJson};
@@ -48,6 +48,7 @@ use crate::analysis::constants::{
 // Shared sentinel-cluster rule (Issue #2042)
 use crate::analysis::detection::helpers::{existing_neuron_uuids, first_free_neuron_uuid};
 use crate::analysis::detection::sentinel_cluster::assess_sentinel_cluster;
+use crate::analysis::utils::deadline_passed;
 
 /// Result of detecting a sentinel gating candidate on an observation.
 #[derive(Debug, Clone)]
@@ -223,21 +224,68 @@ fn estimate_gating_improvement(
 /// 2. **`AddSynapse`** (obs → gate) — weight 1.0 feeding the observation into the gate.
 /// 3. **`AddSynapse`** (gate → `t_i`) — for each downstream target, a synapse carrying
 ///    the gated signal with the original connection weight.
+///
+/// Issue #2479: no deadline — equivalent to calling
+/// [`sentinel_gating_to_coordinated_candidates_with_deadline`] with a `None`
+/// deadline.
 pub fn sentinel_gating_to_coordinated_candidates(
     candidates: &[SentinelGatingCandidate],
     creature: &CreatureJson,
 ) -> Vec<CoordinatedStructuralCandidateJson> {
+    sentinel_gating_to_coordinated_candidates_with_deadline(candidates, creature, &None)
+}
+
+/// Deadline-aware variant of [`sentinel_gating_to_coordinated_candidates`]
+/// (Issue #2479).
+///
+/// Builds the from-uuid → downstream adjacency once up front (rather than
+/// rescanning `creature.synapses` per candidate, which was O(C·S)) and checks
+/// `deadline` once per candidate, so a hung or oversized conversion can be
+/// stopped mid-flight, returning the coordinated candidates built so far.
+pub fn sentinel_gating_to_coordinated_candidates_with_deadline(
+    candidates: &[SentinelGatingCandidate],
+    creature: &CreatureJson,
+    deadline: &Option<std::time::SystemTime>,
+) -> Vec<CoordinatedStructuralCandidateJson> {
+    sentinel_gating_to_coordinated_candidates_with_observer(
+        candidates,
+        creature,
+        deadline,
+        &mut || {},
+    )
+}
+
+fn sentinel_gating_to_coordinated_candidates_with_observer(
+    candidates: &[SentinelGatingCandidate],
+    creature: &CreatureJson,
+    deadline: &Option<std::time::SystemTime>,
+    work_observer: &mut impl FnMut(),
+) -> Vec<CoordinatedStructuralCandidateJson> {
     let existing = existing_neuron_uuids(creature);
+
+    // Issue #2479: from_uuid -> [(to_uuid, weight)], in synapse order, built once.
+    let mut downstream_by_source: HashMap<&str, Vec<(&str, f32)>> = HashMap::new();
+    for s in &creature.synapses {
+        work_observer();
+        downstream_by_source
+            .entry(s.from_uuid.as_str())
+            .or_default()
+            .push((s.to_uuid.as_str(), s.weight));
+    }
+
     let mut results = Vec::with_capacity(candidates.len());
 
     for c in candidates {
+        if deadline_passed(deadline) {
+            break;
+        }
+
         // Find downstream targets: neurons that receive a synapse from this observation
-        let downstream_targets: Vec<(&str, f32)> = creature
-            .synapses
-            .iter()
-            .filter(|s| s.from_uuid == c.neuron_uuid)
-            .map(|s| (s.to_uuid.as_str(), s.weight))
-            .collect();
+        work_observer();
+        let downstream_targets: Vec<(&str, f32)> = downstream_by_source
+            .get(c.neuron_uuid.as_str())
+            .cloned()
+            .unwrap_or_default();
 
         if downstream_targets.is_empty() {
             continue;
@@ -313,4 +361,140 @@ pub fn sentinel_gating_to_coordinated_candidates(
     });
 
     results
+}
+
+#[cfg(test)]
+mod issue_2479_tests {
+    use super::*;
+
+    fn candidate(uuid: &str) -> SentinelGatingCandidate {
+        SentinelGatingCandidate {
+            neuron_uuid: uuid.to_string(),
+            sentinel_value: -1.0,
+            sentinel_fraction: 0.3,
+            useful_range_min: 0.0,
+            useful_range_max: 1.0,
+            sample_count: 30,
+            estimated_improvement: 0.01,
+        }
+    }
+
+    /// `count` observations `in-0..`, each feeding two targets, so every candidate
+    /// has downstream synapses and converts to exactly one coordinated candidate.
+    fn fixture(count: usize) -> (CreatureJson, Vec<SentinelGatingCandidate>) {
+        let mut neurons = Vec::new();
+        let mut synapses = Vec::new();
+        let mut candidates = Vec::new();
+        for i in 0..count {
+            let uuid = format!("in-{i}");
+            neurons.push(crate::NeuronJson {
+                uuid: uuid.clone(),
+                neuron_type: "input".to_string(),
+                squash: "IDENTITY".to_string(),
+                bias: 0.0,
+            });
+            for target in ["out-a", "out-b"] {
+                synapses.push(crate::SynapseJson {
+                    from_uuid: uuid.clone(),
+                    to_uuid: target.to_string(),
+                    weight: 0.5,
+                    synapse_type: None,
+                });
+            }
+            candidates.push(candidate(&uuid));
+        }
+        for target in ["out-a", "out-b"] {
+            neurons.push(crate::NeuronJson {
+                uuid: target.to_string(),
+                neuron_type: "output".to_string(),
+                squash: "IDENTITY".to_string(),
+                bias: 0.0,
+            });
+        }
+        let creature = CreatureJson {
+            neurons,
+            synapses,
+            input: count,
+            output: 2,
+        };
+        (creature, candidates)
+    }
+
+    fn gate_uuid(c: &CoordinatedStructuralCandidateJson) -> Option<&str> {
+        c.operations.iter().find_map(|op| match op {
+            CoordinatedStructuralOpJson::AddNeuron { neuron_uuid, .. } => {
+                Some(neuron_uuid.as_str())
+            }
+            _ => None,
+        })
+    }
+
+    /// Work is one step per synapse (adjacency build) plus one per candidate
+    /// (adjacency lookup), so it must scale exactly linearly: 3N at N and 12N at 4N.
+    #[test]
+    fn adjacency_work_scales_linearly_at_n_and_4n() {
+        const N: usize = 128;
+
+        let measured_work = |count: usize| {
+            let (creature, candidates) = fixture(count);
+            let mut work = 0;
+            let result = sentinel_gating_to_coordinated_candidates_with_observer(
+                &candidates,
+                &creature,
+                &None,
+                &mut || work += 1,
+            );
+            assert_eq!(result.len(), count);
+            work
+        };
+
+        let small_work = measured_work(N);
+        let large_work = measured_work(4 * N);
+        assert_eq!(small_work, 3 * N);
+        assert_eq!(large_work, 3 * 4 * N);
+        assert_eq!(large_work, small_work * 4);
+    }
+
+    /// The deadline is checked once per candidate, and on expiry the candidates
+    /// already built are returned rather than discarded. The scripted sequence lets
+    /// the first candidate through and stops at the second, so hoisting the check
+    /// out of the loop (all three built) or replacing `break` with an empty return
+    /// (none built) both fail this test.
+    #[test]
+    #[serial_test::serial]
+    fn deadline_mid_conversion_returns_the_candidates_built_so_far() {
+        use crate::analysis::utils::deadline_override::DeadlineOverrideGuard;
+
+        let (creature, candidates) = fixture(3);
+
+        // Positive control: with no override every candidate converts.
+        let control =
+            sentinel_gating_to_coordinated_candidates_with_deadline(&candidates, &creature, &None);
+        let mut control_gates: Vec<&str> = control.iter().filter_map(gate_uuid).collect();
+        control_gates.sort_unstable();
+        assert_eq!(
+            control_gates,
+            [
+                "gate-sentinel-in-0",
+                "gate-sentinel-in-1",
+                "gate-sentinel-in-2"
+            ],
+            "positive control: fixture must yield one candidate per observation"
+        );
+
+        let _guard = DeadlineOverrideGuard::with_sequence(vec![false, true]);
+        let partial =
+            sentinel_gating_to_coordinated_candidates_with_deadline(&candidates, &creature, &None);
+
+        assert_eq!(
+            partial.len(),
+            1,
+            "the deadline must stop the conversion at the second candidate and keep the first"
+        );
+        assert_eq!(
+            gate_uuid(&partial[0]),
+            Some("gate-sentinel-in-0"),
+            "the kept candidate must be the first observation's"
+        );
+    }
 }

@@ -156,12 +156,14 @@ pub fn compute_source_std_dev(records: &[DiscoverRecord]) -> f32 {
 
 /// Get the constant source effect threshold, considering both env var override and dynamic calculation.
 ///
-/// Issue #199: This function checks for an explicit env var override first. If no override is set,
-/// it uses the dynamic threshold based on the source variance profile.
+/// Issue #2472: delegates to `crate::config::constant_source_threshold_with_dynamic`, the single
+/// rule for this resolution. An explicit `NEAT_AI_DISCOVERY_CONSTANT_SOURCE_EFFECT_THRESHOLD`
+/// value, including one equal to the default (`1e-7`), takes precedence over the dynamic value.
+/// An empty or invalid value falls back to the dynamic value. `0` disables folding.
 ///
 /// # Arguments
 /// * `source_std_dev_avg` - Average standard deviation across all source activations.
-///   Pass `None` to use only env var or default threshold.
+///   Pass `None` to use only the env var or the default threshold.
 ///
 /// # Returns
 /// * `Some(threshold)` - The threshold to use for constant source detection
@@ -169,31 +171,20 @@ pub fn compute_source_std_dev(records: &[DiscoverRecord]) -> f32 {
 pub fn get_constant_source_threshold(source_std_dev_avg: Option<f32>) -> Option<f32> {
     use crate::analysis::utils::verbose_enabled;
 
-    // Check for explicit env var override via central config
-    let env_threshold = crate::config::constant_source_effect_threshold();
+    let threshold = crate::config::constant_source_threshold_with_dynamic(source_std_dev_avg);
 
-    // If env var explicitly set to 0 (disabled), respect that
-    if std::env::var("NEAT_AI_DISCOVERY_CONSTANT_SOURCE_EFFECT_THRESHOLD").is_ok() {
-        match env_threshold {
-            None => return None, // Disabled
-            Some(v) if v != DEFAULT_CONSTANT_SOURCE_EFFECT_THRESHOLD => return Some(v), // Explicit override
-            _ => {} // Default or invalid — fall through
-        }
+    if verbose_enabled()
+        && let Some(threshold) = threshold
+        && let Some(avg) = source_std_dev_avg
+        && avg.is_finite()
+        && avg > 0.0
+    {
+        tracing::debug!(
+            threshold = format_args!("{threshold:.2e}"),
+            source_std_dev_avg = format_args!("{avg:.4}"),
+            "Resolved constant-source threshold"
+        );
     }
 
-    // No valid env var override — use dynamic threshold if source variance is provided
-    match source_std_dev_avg {
-        Some(avg) if avg.is_finite() && avg > 0.0 => {
-            let threshold = compute_dynamic_constant_source_threshold(avg);
-            if verbose_enabled() {
-                tracing::debug!(
-                    threshold = format_args!("{threshold:.2e}"),
-                    source_std_dev_avg = format_args!("{avg:.4}"),
-                    "Using dynamic constant-source threshold"
-                );
-            }
-            Some(threshold)
-        }
-        _ => Some(DEFAULT_CONSTANT_SOURCE_EFFECT_THRESHOLD),
-    }
+    threshold
 }

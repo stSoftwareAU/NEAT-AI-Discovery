@@ -483,6 +483,7 @@ mod tests {
     use super::*;
     use crate::types::DiscoverRecord;
     use crate::{CreatureJson, NeuronJson, SynapseJson};
+    use std::time::{Duration, SystemTime};
 
     fn test_creature() -> CreatureJson {
         CreatureJson {
@@ -1139,6 +1140,276 @@ mod tests {
         assert!(
             (spec.detect_fn)().is_none(),
             "an elapsed deadline must stop the conversion before any candidate is produced"
+        );
+    }
+
+    /// Issue #2479: a forward-only creature with `fan_in` inputs `in-0..`, one
+    /// hidden neuron `h0` (squash `hidden_squash`) fed by all of them, and one
+    /// output `o0` (squash `output_squash`) fed by `h0`. Each deadline-aware
+    /// site below is driven through this shape with a small record fixture.
+    fn deadline_site_creature(
+        hidden_squash: &str,
+        output_squash: &str,
+        fan_in: usize,
+    ) -> CreatureJson {
+        let mut neurons: Vec<NeuronJson> = (0..fan_in)
+            .map(|i| NeuronJson {
+                uuid: format!("in-{i}"),
+                neuron_type: "input".to_string(),
+                squash: "IDENTITY".to_string(),
+                bias: 0.0,
+            })
+            .collect();
+        neurons.push(NeuronJson {
+            uuid: "h0".to_string(),
+            neuron_type: "hidden".to_string(),
+            squash: hidden_squash.to_string(),
+            bias: 0.0,
+        });
+        neurons.push(NeuronJson {
+            uuid: "o0".to_string(),
+            neuron_type: "output".to_string(),
+            squash: output_squash.to_string(),
+            bias: 0.0,
+        });
+        let mut synapses: Vec<SynapseJson> = (0..fan_in)
+            .map(|i| SynapseJson {
+                from_uuid: format!("in-{i}"),
+                to_uuid: "h0".to_string(),
+                weight: 1.0,
+                synapse_type: None,
+            })
+            .collect();
+        synapses.push(SynapseJson {
+            from_uuid: "h0".to_string(),
+            to_uuid: "o0".to_string(),
+            weight: 1.0,
+            synapse_type: None,
+        });
+        CreatureJson {
+            neurons,
+            synapses,
+            input: fan_in,
+            output: 1,
+        }
+    }
+
+    /// Issue #2479: 40 records with activation and pre-activation rising across
+    /// [0.1, 0.3] (far below the threshold for TANH range, dynamic-range and
+    /// output-compression checks) and errors alternating 0.8 / 0.2, so |error| is
+    /// uncorrelated with activation (rank correlation near 0).
+    #[allow(clippy::cast_precision_loss)]
+    fn narrow_range_records(uuid: &str) -> Vec<DiscoverRecord> {
+        (0..40u32)
+            .map(|i| {
+                let activation = 0.1 + 0.2 * (i as f32) / 39.0;
+                let error = if i % 2 == 0 { 0.8 } else { 0.2 };
+                DiscoverRecord::new(
+                    i,
+                    uuid.to_string(),
+                    Some(activation),
+                    activation,
+                    vec![error],
+                )
+            })
+            .collect()
+    }
+
+    /// Issue #2479: 40 records for an observation with half its samples at the
+    /// sentinel `-1.0` (constant error, zero variance) and half in [0.5, 0.9]
+    /// with varying error, which the sentinel-cluster rule accepts.
+    #[allow(clippy::cast_precision_loss)]
+    fn sentinel_records(uuid: &str) -> Vec<DiscoverRecord> {
+        (0..40u32)
+            .map(|i| {
+                if i < 20 {
+                    DiscoverRecord::new(i, uuid.to_string(), Some(-1.0), -1.0, vec![0.1])
+                } else {
+                    let activation = 0.5 + 0.4 * ((i - 20) as f32) / 19.0;
+                    let error = if i % 2 == 0 { 0.0 } else { 0.5 };
+                    DiscoverRecord::new(
+                        i,
+                        uuid.to_string(),
+                        Some(activation),
+                        activation,
+                        vec![error],
+                    )
+                }
+            })
+            .collect()
+    }
+
+    /// Issue #2479: 40 RELU records with pre-activation `(i - 20) / 10`,
+    /// activation `max(0, value)` and a consistent error near 0.15, the shape
+    /// the squash-rescale detector is known to qualify (Issue #548 fixture).
+    #[allow(clippy::cast_precision_loss)]
+    fn squash_rescale_records(uuid: &str) -> Vec<DiscoverRecord> {
+        (0..40u32)
+            .map(|i| {
+                let value = (i as f32 - 20.0) / 10.0;
+                DiscoverRecord::new(
+                    i,
+                    uuid.to_string(),
+                    Some(value),
+                    value.max(0.0),
+                    vec![0.15 + (i as f32 * 0.002).sin() * 0.02],
+                )
+            })
+            .collect()
+    }
+
+    /// Issue #2479: a record cache whose loader serves `records(uuid)` for any
+    /// neuron the spec asks about.
+    fn deadline_site_cache(records: fn(&str) -> Vec<DiscoverRecord>) -> cache::RecordCache {
+        cache::RecordCache::with_loader(
+            "test.parquet",
+            Arc::new(
+                move |_file: &str, uuid: &str| -> anyhow::Result<Vec<DiscoverRecord>> {
+                    Ok(records(uuid))
+                },
+            ),
+        )
+    }
+
+    /// Issue #2479: build the dispatch specs for `creature` with `deadline` and
+    /// run the detect closure registered under `phase`.
+    fn run_deadline_site(
+        creature: &CreatureJson,
+        records: fn(&str) -> Vec<DiscoverRecord>,
+        phase: &str,
+        deadline: Option<SystemTime>,
+    ) -> Option<discovery_dispatch::DiscoveryDetectionResult> {
+        let creature = Arc::new(creature.clone());
+        let hidden_squash = creature
+            .neurons
+            .iter()
+            .find(|n| n.neuron_type == "hidden")
+            .expect("the site creature has one hidden neuron")
+            .squash
+            .clone();
+        let hidden: Arc<Vec<(String, String, f32)>> =
+            Arc::new(vec![("h0".to_string(), hidden_squash, 0.0)]);
+        let cache = Arc::new(deadline_site_cache(records));
+        let topo = Arc::new(
+            super::super::detection::topology_cache::CreatureTopologyCache::new(&creature),
+        );
+        let specs = build_discovery_module_specs(
+            &creature,
+            &hidden,
+            &cache,
+            &topo,
+            CostFunctionHint::Unknown,
+            TaskDescriptor::neutral(),
+            deadline,
+        );
+        let spec = specs
+            .into_iter()
+            .find(|s| s.phase_name == phase)
+            .unwrap_or_else(|| panic!("{phase} must be registered as a discovery module"));
+        (spec.detect_fn)()
+    }
+
+    /// Issue #2479: a live deadline must let the site emit at least one candidate
+    /// (positive control), and an already-elapsed deadline must leave it with
+    /// fewer. A site that drops its `deadline` keeps the full candidate set under
+    /// an elapsed deadline and fails the second assertion.
+    fn assert_site_threads_deadline(
+        phase: &str,
+        creature: &CreatureJson,
+        records: fn(&str) -> Vec<DiscoverRecord>,
+    ) {
+        let live_deadline = Some(SystemTime::now() + Duration::from_secs(3_600));
+        let live = run_deadline_site(creature, records, phase, live_deadline)
+            .unwrap_or_else(|| panic!("{phase}: a live deadline must produce a detection"));
+        assert!(
+            !live.candidates.is_empty(),
+            "{phase}: positive control must emit at least one candidate under a live deadline"
+        );
+
+        let elapsed = run_deadline_site(creature, records, phase, Some(SystemTime::UNIX_EPOCH));
+        let elapsed_count = elapsed.map_or(0, |result| result.candidates.len());
+        assert!(
+            elapsed_count < live.candidates.len(),
+            "{phase}: an elapsed deadline must leave fewer candidates ({elapsed_count}) than a live deadline ({}); the dispatch closure is not threading its deadline",
+            live.candidates.len(),
+        );
+    }
+
+    /// Issue #2479: `bottleneck_detection` must convert through
+    /// `bottleneck_neurons_to_coordinated_candidates_with_deadline`.
+    #[test]
+    fn bottleneck_spec_threads_deadline_to_conversion() {
+        assert_site_threads_deadline(
+            "bottleneck_detection",
+            &deadline_site_creature("TANH", "IDENTITY", 3),
+            narrow_range_records,
+        );
+    }
+
+    /// Issue #2479: `restricted_range_detection` must convert through
+    /// `restricted_range_to_coordinated_candidates_with_deadline`.
+    #[test]
+    fn restricted_range_spec_threads_deadline_to_conversion() {
+        assert_site_threads_deadline(
+            "restricted_range_detection",
+            &deadline_site_creature("TANH", "IDENTITY", 1),
+            narrow_range_records,
+        );
+    }
+
+    /// Issue #2479: `operating_point_analysis` must convert through
+    /// `operating_point_to_coordinated_candidates_with_deadline`.
+    #[test]
+    fn operating_point_spec_threads_deadline_to_conversion() {
+        assert_site_threads_deadline(
+            "operating_point_analysis",
+            &deadline_site_creature("TANH", "IDENTITY", 1),
+            narrow_range_records,
+        );
+    }
+
+    /// Issue #2479: `monotonicity_detection` must convert through
+    /// `non_monotonic_neurons_to_coordinated_candidates_with_deadline`.
+    #[test]
+    fn monotonicity_spec_threads_deadline_to_conversion() {
+        assert_site_threads_deadline(
+            "monotonicity_detection",
+            &deadline_site_creature("TANH", "IDENTITY", 1),
+            narrow_range_records,
+        );
+    }
+
+    /// Issue #2479: `squash_weight_rescale_detection` must detect through
+    /// `detect_squash_weight_rescale_candidates_with_deadline`, so an elapsed
+    /// deadline stops the detection before any hidden neuron is evaluated.
+    #[test]
+    fn squash_weight_rescale_spec_threads_deadline_to_detection() {
+        assert_site_threads_deadline(
+            "squash_weight_rescale_detection",
+            &deadline_site_creature("RELU", "IDENTITY", 1),
+            squash_rescale_records,
+        );
+    }
+
+    /// Issue #2479: `sentinel_value_gating` must convert through
+    /// `sentinel_gating_to_coordinated_candidates_with_deadline`.
+    #[test]
+    fn sentinel_gating_spec_threads_deadline_to_conversion() {
+        assert_site_threads_deadline(
+            "sentinel_value_gating",
+            &deadline_site_creature("TANH", "IDENTITY", 1),
+            sentinel_records,
+        );
+    }
+
+    /// Issue #2479: `output_range_compression_detection` must convert through
+    /// `output_range_compression_to_coordinated_candidates_with_deadline`.
+    #[test]
+    fn output_range_compression_spec_threads_deadline_to_conversion() {
+        assert_site_threads_deadline(
+            "output_range_compression_detection",
+            &deadline_site_creature("TANH", "TANH", 1),
+            narrow_range_records,
         );
     }
 }

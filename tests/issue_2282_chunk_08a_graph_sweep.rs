@@ -35,6 +35,23 @@ const TEST_ONLY_ROWS: &[&str] = &[
     "src/analysis/detection/redundant_path_deadline_tests.rs",
 ];
 
+/// `(source path, function, qualifier)` of the `bottleneck.rs` pairwise-loop
+/// rows whose per-candidate loop now checks `deadline_passed` (Issue #2479), so
+/// their Cancellation-checked? cell reads `yes — …`. Both loops sit in
+/// `bottleneck_neurons_to_coordinated_candidates_with_observer`.
+const CHECKED_SINCE_AUDIT: &[(&str, &str, &str)] = &[
+    (
+        "bottleneck.rs",
+        "bottleneck_neurons_to_coordinated_candidates_with_observer",
+        "`creature.neurons.iter().find` per candidate",
+    ),
+    (
+        "bottleneck.rs",
+        "bottleneck_neurons_to_coordinated_candidates_with_observer",
+        "per-candidate upstream sort and downstream fan-out",
+    ),
+];
+
 /// One graph traversal or pair scan cited per file that has one, as
 /// `<basename>::<fn>` — not every swept file carries a traversal.
 const TRAVERSAL: &[&str] = &[
@@ -367,10 +384,13 @@ fn every_capacity_site_in_a_swept_file_is_cited_by_symbol() {
     let bottleneck_source = production_source("src/analysis/detection/bottleneck.rs");
     assert!(
         bottleneck_source.contains("Vec::with_capacity(candidates.len() * 2)")
-            && bottleneck_source.contains("fn bottleneck_neurons_to_coordinated_candidates"),
+            && bottleneck_source
+                .contains("fn bottleneck_neurons_to_coordinated_candidates_with_observer"),
         "precondition: src/analysis/detection/bottleneck.rs must still carry a \
          `Vec::with_capacity(candidates.len() * 2)` site inside \
-         `bottleneck_neurons_to_coordinated_candidates`, otherwise this test checks nothing"
+         `bottleneck_neurons_to_coordinated_candidates_with_observer` (Issue #2479 moved it \
+         there from `bottleneck_neurons_to_coordinated_candidates`), otherwise this test \
+         checks nothing"
     );
 
     let mut all_sites: Vec<(&str, String, String)> = Vec::new();
@@ -472,6 +492,42 @@ fn every_traversal_symbol_has_a_bounded_and_cancellation_checked_row() {
         assert!(
             !cancellation.is_empty(),
             "`{symbol}` traversal row's Cancellation-checked? cell must not be empty"
+        );
+    }
+}
+
+#[test]
+fn bottleneck_rows_checked_since_audit_are_yes_and_the_code_checks_the_deadline() {
+    // Issue #2479: the bottleneck converter checks `deadline_passed` once per
+    // candidate. Its pairwise rows must now read `yes — …`, and the source must
+    // really carry the check, so a ledger `yes` cannot outlive the code.
+    let source = production_source("src/analysis/detection/bottleneck.rs");
+    assert!(
+        source.contains("deadline_passed"),
+        "src/analysis/detection/bottleneck.rs has rows in CHECKED_SINCE_AUDIT but no longer \
+         checks `deadline_passed` — move those rows back to `no (module-level only)` and \
+         empty the constant"
+    );
+
+    let doc = read(RECORD);
+    let rows = table_rows(section(&doc, "## Capacity and traversal table"));
+    for (base, name, qualifier) in CHECKED_SINCE_AUDIT {
+        let symbol_needle = format!("`{base}::{name}`");
+        let qualifier_needle = format!("({qualifier})");
+        let found = rows.iter().any(|row| {
+            let symbol = row.first().map(String::as_str).unwrap_or_default();
+            let kind = row.get(1).map(String::as_str).unwrap_or_default();
+            let cancellation = row.get(4).map(String::as_str).unwrap_or_default();
+            symbol.contains(&symbol_needle)
+                && symbol.contains(&qualifier_needle)
+                && kind == "pairwise loop"
+                && cancellation.starts_with("yes — `deadline_passed`")
+        });
+        assert!(
+            found,
+            "`## Capacity and traversal table` must carry a `pairwise loop` row for \
+             `{base}::{name}` ({qualifier}) whose Cancellation-checked? cell starts with \
+             `yes — `deadline_passed``, because Issue #2479 added the once-per-candidate check"
         );
     }
 }
