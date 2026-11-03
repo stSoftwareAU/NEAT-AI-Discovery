@@ -20,6 +20,15 @@ on:
     - cron: '0 2 * * *'
   workflow_dispatch:
 
+# Cancel superseded runs on the same ref (Issue #1288, Issue #2478).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# Read-only GITHUB_TOKEN scope (Issue #1286, Issue #2478).
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
 
@@ -27,10 +36,17 @@ jobs:
   fuzzing:
     name: Fuzz Targets
     runs-on: ubuntu-latest
+    # Cap the fuzzing job so a wedged step fails fast (Issue #1287).
+    timeout-minutes: 30
 
     steps:
+    # persist-credentials: false — this job only reads the tree to fuzz it;
+    # the GITHUB_TOKEN must not be written to .git/config (Issues #1648,
+    # #1868, #2478).
     - name: Checkout code
       uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      with:
+        persist-credentials: false
 
     - name: Free up runner disk space
       run: |
