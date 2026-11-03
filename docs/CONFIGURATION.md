@@ -16,8 +16,8 @@ the row says otherwise. This general rule covers
 `NEAT_AI_DISCOVERY_QUIET_GPU`, `NEAT_AI_DISCOVERY_NEURON_TARGETS_OUTPUT_ONLY`,
 `NEAT_AI_DISCOVERY_TIMING` and `NEAT_AI_DISCOVERY_GPU_METRICS`: only
 `1`/`true`/`yes` enable them (trimmed and case-insensitive); any other value,
-including `0`, `false`, `no`, `on` or empty, leaves them off. Before Issue
-#2467, any set value enabled them. The toggles that default on,
+including `0`, `false`, `no`, `on` or empty, leaves them off. Before
+Issue #2467, any set value enabled them. The toggles that default on,
 `NEAT_AI_DISCOVERY_CPU_PRE_REJECT` and `NEAT_AI_DISCOVERY_HIDDEN_SQUASH_PRUNE`,
 stay on for any value other than `0`/`false`/`no`. Unset means the documented
 default applies.
