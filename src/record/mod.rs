@@ -36,10 +36,11 @@ pub struct RecordResult {
 ///
 /// This function processes training data and records neuron activations and errors.
 /// For each training record, it collects all neuron data atomically and writes to Parquet.
+/// The completed file is published only after Parquet finalisation succeeds.
 /// Since the training dataset is already randomized, parallelization is allowed,
 /// but each training record must be processed atomically (all neurons written together).
 ///
-/// Once the Parquet file is finalised the shared-decode cache is invalidated
+/// Once the Parquet file is published the shared-decode cache is invalidated
 /// (Issue #2452), so a re-recording into the same directory never serves the
 /// previous decode of that file.
 pub fn record_discovery_data(input: &RecordDiscoveryInput) -> Result<RecordResult> {
@@ -60,29 +61,58 @@ pub fn record_discovery_data(input: &RecordDiscoveryInput) -> Result<RecordResul
         .ok_or_else(|| anyhow::anyhow!("Discovery record count would overflow usize"))?;
 
     let parquet_file = temp_dir.join("discovery_data.parquet");
-    let parquet_path = parquet_file
+    let parquet_tmp_file = temp_dir.join("discovery_data.parquet.tmp");
+    let parquet_tmp_path = parquet_tmp_file
         .to_str()
         .ok_or_else(|| anyhow::anyhow!("Invalid file path"))?;
 
     let max_arrow_offset = i32::MAX as usize;
-    let mut writer = ParquetRecordWriter::new(
-        parquet_path,
-        max_arrow_offset,
-        max_arrow_offset,
-        estimated_total_records,
-    )
-    .context("Failed to initialise Parquet writer")?;
+    let write_result = (|| -> Result<()> {
+        let mut writer = ParquetRecordWriter::new(
+            parquet_tmp_path,
+            max_arrow_offset,
+            max_arrow_offset,
+            estimated_total_records,
+        )
+        .context("Failed to initialise Parquet writer")?;
 
-    processing::process_training_data(input, &obs_indices, non_input_neuron_count, &mut writer)?;
+        processing::process_training_data(
+            input,
+            &obs_indices,
+            non_input_neuron_count,
+            &mut writer,
+        )?;
 
-    writer
-        .finish()
-        .context("Failed to finalise Parquet writer")?;
-    // Issue #2452: drop any shared decode of the file this call just rewrote.
+        writer
+            .finish()
+            .context("Failed to finalise Parquet writer")?;
+        Ok(())
+    })();
+
+    if let Err(error) = write_result {
+        return Err(cleanup_temporary_file(&parquet_tmp_file, error));
+    }
+
+    if let Err(error) = fs::rename(&parquet_tmp_file, &parquet_file) {
+        let error = anyhow::Error::new(error).context("Failed to publish discovery Parquet file");
+        return Err(cleanup_temporary_file(&parquet_tmp_file, error));
+    }
+    // Issue #2452: drop any shared decode of the file just published.
     crate::parquet_format::shared_records::invalidate();
 
     Ok(RecordResult {
         temp_dir: input.temp_dir.clone(),
         file: "discovery_data.parquet".to_string(),
     })
+}
+
+fn cleanup_temporary_file(path: &Path, error: anyhow::Error) -> anyhow::Error {
+    match fs::remove_file(path) {
+        Ok(()) => error,
+        Err(cleanup_error) if cleanup_error.kind() == std::io::ErrorKind::NotFound => error,
+        Err(cleanup_error) => error.context(format!(
+            "Failed to remove temporary Parquet file {}: {cleanup_error}",
+            path.display()
+        )),
+    }
 }
