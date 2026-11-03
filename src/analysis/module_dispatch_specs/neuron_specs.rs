@@ -51,7 +51,7 @@ pub(crate) fn append_neuron_specs(
         guard: hidden,
         records: cache.load_records_for_hidden(&hidden),
         detect: |records| bottleneck::detect_bottleneck_neurons(&creature, &records, Some(&topo)),
-        convert: |detected| bottleneck::bottleneck_neurons_to_coordinated_candidates(&detected, &creature, Some(&topo)),
+        convert: |detected| bottleneck::bottleneck_neurons_to_coordinated_candidates_with_deadline(&detected, &creature, Some(&topo), &deadline),
     );
 
     // Issue #341: Dead neuron detection
@@ -97,7 +97,7 @@ pub(crate) fn append_neuron_specs(
             let config = restricted_range::RestrictedRangeConfig::default();
             restricted_range::detect_restricted_range_neurons(&creature, &records, &config)
         },
-        convert: |detected| restricted_range::restricted_range_to_coordinated_candidates(&detected, &creature),
+        convert: |detected| restricted_range::restricted_range_to_coordinated_candidates_with_deadline(&detected, &creature, &deadline),
     );
 
     // Issue #401: Hidden neuron operating-point analysis
@@ -109,7 +109,7 @@ pub(crate) fn append_neuron_specs(
             let config = operating_point::OperatingPointConfig::default();
             operating_point::detect_operating_point_issues(&creature, &records, &config)
         },
-        convert: |detected| operating_point::operating_point_to_coordinated_candidates(&detected, &creature),
+        convert: |detected| operating_point::operating_point_to_coordinated_candidates_with_deadline(&detected, &creature, &deadline),
     );
 
     // Issue #441: Unbounded activation capping detection
@@ -270,7 +270,7 @@ pub(crate) fn append_neuron_specs(
         cache = shared_cache, hidden = hidden_neurons, creature = creature =>
         guard: hidden,
         records: cache.load_records_for_hidden(&hidden),
-        detect: |records| squash_weight_rescale::detect_squash_weight_rescale_candidates(&creature, &hidden, &records),
+        detect: |records| squash_weight_rescale::detect_squash_weight_rescale_candidates_with_deadline(&creature, &hidden, &records, &deadline),
         convert: |detected| squash_weight_rescale::squash_weight_rescale_to_coordinated_candidates(&detected),
     );
 
@@ -280,7 +280,7 @@ pub(crate) fn append_neuron_specs(
         guard: hidden,
         records: cache.load_records_for_hidden(&hidden),
         detect: |records| monotonicity::detect_non_monotonic_neurons(&creature, &records),
-        convert: |detected| monotonicity::non_monotonic_neurons_to_coordinated_candidates(&detected, &creature),
+        convert: |detected| monotonicity::non_monotonic_neurons_to_coordinated_candidates_with_deadline(&detected, &creature, &deadline),
     );
 
     // Issue #640: Bimodal neuron detection (pre-activation distribution shape)
