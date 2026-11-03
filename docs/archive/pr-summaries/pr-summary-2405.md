@@ -2,7 +2,7 @@
 
 Capped positive `NEAT_AI_DISCOVERY_WATCHDOG_STALL_SECS` values at 24 hours (`MAX_WATCHDOG_STALL_SECS = 86_400` in `src/config/user_facing.rs`), logged a warning naming the variable, supplied value and cap when clamping, documented the cap, and added regression coverage for the millisecond truncation inputs. Closes #2405.
 
-Version bump: `Cargo.toml` and `Cargo.lock` updated for this change; the merged commit records the final version.
+Version bump: patch version `0.74.324` → `0.74.325` in `Cargo.toml` and the `neat_ai_discovery` entry of `Cargo.lock`, per AGENTS.md.
 
 ## Spec
 
@@ -37,3 +37,5 @@ Version bump: `Cargo.toml` and `Cargo.lock` updated for this change; the merged 
 - `./quality.sh`: the formatting, lint and type-check stages passed on the final head; the unit-test stage reported no failure but was cut off at the 595 s command bound (exit 124) before finishing, so the full gate is unverified as a single run.
 
 <!-- vibe-quality-gate-skipped reason="full gate exceeds the 595 s foreground command bound on this host; formatting, lint and type checks passed, targeted tests passed; CI runs the full gate" -->
+
+- Mutation check: it reported "baseline tests fail before mutation"; at the head the targeted suites (`issue_2405_watchdog_stall_timeout_truncation`, `issue_2096_config_user_facing_a`) pass (20 tests) after the version bump, so the baseline failure is not reproducible here and is likely the checker's own environment (the full unit stage exceeds the host's command bound).
