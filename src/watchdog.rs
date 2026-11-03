@@ -58,6 +58,11 @@ impl WatchdogConfig {
 /// This is intentionally a no-op when watchdog is disabled, so call sites can keep
 /// instrumentation cheap and simple.
 pub(crate) fn beat(stage: impl Into<String>) {
+    #[cfg(test)]
+    if let Some(state) = TEST_BEAT_STATE.with(|slot| slot.borrow().clone()) {
+        state.beat(stage.into());
+        return;
+    }
     let guard = ACTIVE.lock();
     let Some(state) = guard.as_ref() else {
         return;
@@ -120,6 +125,28 @@ pub(crate) fn heartbeat_snapshot() -> HeartbeatSnapshot {
 static TEST_SERIAL: LazyLock<parking_lot::Mutex<()>> =
     LazyLock::new(|| parking_lot::Mutex::new(()));
 
+#[cfg(test)]
+thread_local! {
+    static TEST_BEAT_STATE: std::cell::RefCell<Option<Arc<BeatState>>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Route this thread's beats to an isolated state for the duration of a test.
+#[cfg(test)]
+pub(crate) fn with_test_beat_state<T>(f: impl FnOnce() -> T) -> T {
+    struct Reset;
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            TEST_BEAT_STATE.with(|slot| *slot.borrow_mut() = None);
+        }
+    }
+    TEST_BEAT_STATE.with(|slot| {
+        assert!(slot.borrow().is_none(), "test beat state already installed");
+        *slot.borrow_mut() = Some(Arc::new(BeatState::new("initialising")));
+    });
+    let _reset = Reset;
+    f()
+}
+
 /// Acquire the test-only serialisation lock (used by tests that touch global watchdog state).
 #[cfg(test)]
 pub(crate) fn lock_for_test_serialisation() -> parking_lot::MutexGuard<'static, ()> {
@@ -132,6 +159,9 @@ pub(crate) fn lock_for_test_serialisation() -> parking_lot::MutexGuard<'static, 
 /// watchdog internals as part of the public API.
 #[cfg(test)]
 pub(crate) fn active_stage_for_test() -> Option<String> {
+    if let Some(state) = TEST_BEAT_STATE.with(|slot| slot.borrow().clone()) {
+        return Some(state.stage.lock().clone());
+    }
     let guard = ACTIVE.lock();
     guard.as_ref().map(|state| state.stage.lock().clone())
 }

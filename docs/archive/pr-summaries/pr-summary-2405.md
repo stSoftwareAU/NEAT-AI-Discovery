@@ -29,6 +29,7 @@ Version bump: patch version `0.74.324` → `0.74.325` in `Cargo.toml` and the `n
 - Review correction: restored `live` as the stall-timeout accessor read mode in the 13b audit table and retained the current guard-weakening finding (a typo silently disables the watchdog), alongside the historical truncation finding and its 24-hour cap fix.
 - Review correction: marked #2405 fixed in the 13b findings list and updated the documentation-reconciliation row to record both watchdog caps.
 - Review correction: updated the chunk-11 watchdog audit row and finding to record the stall-timeout cap and preserve the historical truncation finding.
+- CI repair: isolate the optional-analysis watchdog stage test from concurrent process-wide heartbeats, while retaining its skipped and finished stage assertions.
 - Backend-only change; no browser evidence applies.
 
 ## Test Plan
