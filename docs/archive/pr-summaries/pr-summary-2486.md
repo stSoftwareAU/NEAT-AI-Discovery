@@ -2,7 +2,7 @@
 
 `merge_discovery_module_results` truncated each module's candidates to `max_candidates`, applied the gain floor and the per-target cap, and recorded soft failures before any non-finite gain was dropped (that only happened later, in `merge_coordinated_structural_replacements`). A `+∞` or NaN gain therefore took a budget or cap slot from a finite candidate, and the displaced finite candidates were charged to the module as soft failures. The non-finite-gain gate now runs first, in both `merge_discovery_module_results` and the twin `run_discovery_module`. Closes #2486.
 
-Version bump: `Cargo.toml` updated for this change; the merged commit records the final version.
+Version bump: `Cargo.toml` and `Cargo.lock` patch version incremented 0.74.335 → 0.74.336.
 
 ```mermaid
 flowchart LR
