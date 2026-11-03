@@ -2,7 +2,7 @@
 
 The shared-decode cache key `(path, dev/ino, len, mtime_nanos)` did not change when a file was rewritten in place (same inode, same length) and its mtime restored, so a stale decode was served. The key now also carries `ctime` on unix, and `record_discovery_data` calls `invalidate()` once the Parquet file is finalised. Closes #2452.
 
-Version bump: `Cargo.toml` updated for this change; the merged commit records the final version.
+Version bump: `Cargo.toml` and the `neat_ai_discovery` entry in `Cargo.lock` bumped from `0.74.325` to `0.74.326`.
 
 ## Spec
 
