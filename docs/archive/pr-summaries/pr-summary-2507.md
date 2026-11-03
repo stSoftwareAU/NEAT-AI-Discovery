@@ -36,3 +36,5 @@ Library change; no UI. Readers covered, all via `DecodeBudget::preflight_columns
 - Docs: `docs/CONFIGURATION.md`, `docs/CACHE_TUNING.md`, `CHANGELOG.md` updated; doc comments in `footer.rs`, `decode_budget.rs`, `memory.rs`.
 
 Not done / risk: `read_records_from_parquet_with_limit_and_budget` shares `preflight_row_groups` but has no dedicated 2507 test; the fallback bound can over-refuse a foreign dictionary-encoded file with a large dictionary and no size statistic.
+
+<!-- vibe-quality-gate-skipped reason="full ./quality.sh exceeded the 590 s foreground cap while compiling (exit 124); fmt, clippy -D warnings and the targeted tests above were run; CI runs the full gate" -->
