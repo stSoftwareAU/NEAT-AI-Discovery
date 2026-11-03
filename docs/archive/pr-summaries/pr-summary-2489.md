@@ -33,4 +33,8 @@ Backend-only change; no UI. Step counts are exact and host-independent (`on_step
 - No new capacity sites (`with_capacity(`, `vec![..;`, `.reserve(`) were added, so the #2480 capacity figure is unchanged.
 - Docs sweep: `docs/discoveries/topology-diversification.md` and `CHANGELOG.md` checked; neither states the per-output rescan or a per-PR entry for comparable issues.
 
-Final test results are recorded in the PR conversation after CI runs; see the line below for what was run locally.
+Run locally on the final head: `cargo test --lib -- topology_diversification structural_specs` (11 passed); `cargo test --test issue_2383_topology_diversification_dfs_path_explosion` (4 passed); `cargo test --test recommendation issue_549` (9 passed); eight chunk 8a ledger suites (`issue_2298`, `issue_2154`, `issue_2280`, `issue_2088`, `issue_2282`, `issue_2284`, `issue_2294`, `issue_2300`: 61 passed); `cargo clippy --all-targets -- -D warnings` clean; `cargo fmt --check` clean. The new ledger test goes red when the `has_unhealthy_intermediates` Cancellation cell is changed from `yes` to `no`.
+
+<!-- vibe-quality-gate-skipped reason="./quality.sh hit the 595s foreground cap twice (exit 124) while compiling; targeted checks above were run instead; CI runs the full gate" -->
+
+Not done / risk: full `./quality.sh` not completed locally. The one-off O(N+S) setup and a single output's backwards walk are still uninterrupted by the deadline. The ledger's per-file `Lines` column (472) was not refreshed.
