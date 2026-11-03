@@ -5,8 +5,8 @@ it only after Parquet finalisation succeeds. Processing, construction,
 finalisation, and rename failures clean up the temporary file while retaining
 the original error and reporting any cleanup failure. Closes #2451.
 
-Version bump: the `Cargo.toml` patch version was bumped by the CI version-increment
-job, with `Cargo.lock` updated to match.
+Version bump: the `Cargo.toml` patch version was bumped manually above Develop,
+with `Cargo.lock` updated to match.
 
 ## Spec
 
