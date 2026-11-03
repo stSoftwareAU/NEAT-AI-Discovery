@@ -37,7 +37,31 @@ mod tests {
     use super::*;
     use crate::types::DiscoverRecord;
     use arrow::datatypes::DataType;
-    use tempfile::NamedTempFile;
+    use tempfile::{NamedTempFile, TempDir};
+
+    /// A path inside `dir` for a file the writer has not created yet.
+    fn fresh_parquet_path(dir: &TempDir, name: &str) -> String {
+        let path = dir.path().join(name).to_string_lossy().into_owned();
+        assert!(
+            !std::path::Path::new(&path).exists(),
+            "{path} must not exist before the writer runs"
+        );
+        path
+    }
+
+    /// Read `file_path` back and compare every field of every row against `expected`.
+    fn assert_records_round_trip(file_path: &str, expected: &[DiscoverRecord]) {
+        let actual =
+            read_all_records_from_parquet(file_path).expect("read back written Parquet file");
+        assert_eq!(actual.len(), expected.len(), "row count mismatch");
+        for (row, (got, want)) in actual.iter().zip(expected).enumerate() {
+            assert_eq!(got.obs_index, want.obs_index, "row {row}: obs_index");
+            assert_eq!(got.neuron_uuid, want.neuron_uuid, "row {row}: neuron_uuid");
+            assert_eq!(got.value, want.value, "row {row}: value");
+            assert_eq!(got.activation, want.activation, "row {row}: activation");
+            assert_eq!(got.errors, want.errors, "row {row}: errors");
+        }
+    }
 
     #[test]
     fn test_create_schema() {
@@ -62,18 +86,21 @@ mod tests {
 
     #[test]
     fn test_write_records_to_parquet() {
-        let temp_file = NamedTempFile::new().unwrap();
-        let file_path = temp_file.path().to_str().unwrap();
+        let dir = TempDir::new().unwrap();
+        let file_path = fresh_parquet_path(&dir, "records.parquet");
 
         let records = vec![
             DiscoverRecord::new(0, "hidden-1".to_string(), Some(0.5), 0.7, vec![0.1, 0.2]),
             DiscoverRecord::new(1, "hidden-1".to_string(), Some(0.6), 0.8, vec![0.15]),
         ];
 
-        write_records_to_parquet(file_path, &records).unwrap();
+        write_records_to_parquet(&file_path, &records).unwrap();
 
-        // Verify file was created
-        assert!(std::path::Path::new(file_path).exists());
+        assert!(
+            std::path::Path::new(&file_path).exists(),
+            "Parquet file should exist after write"
+        );
+        assert_records_round_trip(&file_path, &records);
     }
 
     #[test]
@@ -88,56 +115,123 @@ mod tests {
 
     #[test]
     fn test_write_records_prevents_i32_overflow() {
-        let temp_file = NamedTempFile::new().unwrap();
-        let file_path = temp_file.path().to_str().unwrap();
+        let dir = TempDir::new().unwrap();
+        let file_path = fresh_parquet_path(&dir, "overflow.parquet");
 
         let records = vec![
             DiscoverRecord::new(0, "hidden-1".to_string(), Some(0.5), 0.7, vec![0.1; 1000]),
             DiscoverRecord::new(1, "hidden-2".to_string(), Some(0.6), 0.8, vec![0.2; 1000]),
         ];
 
-        let result = write_records_to_parquet(file_path, &records);
+        let result = write_records_to_parquet(&file_path, &records);
         assert!(
             result.is_ok(),
             "Should handle valid error counts within i32::MAX"
         );
+        assert_records_round_trip(&file_path, &records);
 
-        assert!(std::path::Path::new(file_path).exists());
+        // A capacity equal to the record count is accepted.
+        let exact_path = fresh_parquet_path(&dir, "exact_capacity.parquet");
+        let mut writer = ParquetRecordWriter::new(
+            &exact_path,
+            schema::MAX_ARROW_OFFSET,
+            schema::MAX_ARROW_OFFSET,
+            records.len(),
+        )
+        .expect("capacity equal to the record count should be accepted");
+        writer.write_records(&records).unwrap();
+        writer.finish().unwrap();
+        assert_records_round_trip(&exact_path, &records);
+
+        #[cfg(target_pointer_width = "64")]
+        {
+            // A capacity one above Arrow's row budget is rejected before the file is created.
+            let over_path = fresh_parquet_path(&dir, "over_row_limit.parquet");
+            let err = ParquetRecordWriter::new(
+                &over_path,
+                schema::MAX_ARROW_OFFSET,
+                schema::MAX_ARROW_OFFSET,
+                schema::MAX_ARROW_OFFSET + 1,
+            )
+            .err()
+            .expect("a capacity above i32::MAX should be rejected");
+            assert!(
+                err.to_string()
+                    .contains("exceeds maximum supported row count"),
+                "unexpected error: {err}"
+            );
+            assert!(
+                !std::path::Path::new(&over_path).exists(),
+                "a rejected writer must not create the file"
+            );
+        }
     }
 
     #[test]
     fn test_write_records_validates_error_count_overflow() {
-        let temp_file = NamedTempFile::new().unwrap();
-        let file_path = temp_file.path().to_str().unwrap();
+        let dir = TempDir::new().unwrap();
+        let file_path = fresh_parquet_path(&dir, "error_counts.parquet");
 
         let records: Vec<DiscoverRecord> = (0..100)
             .map(|i| DiscoverRecord::new(i, format!("neuron-{i}"), Some(0.5), 0.7, vec![0.1; 10]))
             .collect();
 
-        let result = write_records_to_parquet(file_path, &records);
+        let result = write_records_to_parquet(&file_path, &records);
         assert!(result.is_ok(), "Validation should allow valid error counts");
+        assert_records_round_trip(&file_path, &records);
+
+        // Each record carries ten error values: a limit of 9 rejects, a limit of 10 accepts.
+        let tight_path = fresh_parquet_path(&dir, "tight_error_limit.parquet");
+        let mut tight =
+            ParquetRecordWriter::new(&tight_path, schema::MAX_ARROW_OFFSET, 9, records.len())
+                .expect("writer with error limit 9 should construct");
+        let err = tight
+            .write_records(&records)
+            .expect_err("ten error values must exceed a limit of 9");
+        assert!(
+            err.to_string().contains("error value(s)"),
+            "unexpected error: {err}"
+        );
+
+        let exact_path = fresh_parquet_path(&dir, "exact_error_limit.parquet");
+        let mut exact =
+            ParquetRecordWriter::new(&exact_path, schema::MAX_ARROW_OFFSET, 10, records.len())
+                .expect("writer with error limit 10 should construct");
+        exact
+            .write_records(&records)
+            .expect("ten error values must fit a limit of 10");
+        exact.finish().unwrap();
+        assert_records_round_trip(&exact_path, &records);
     }
 
     #[test]
+    #[allow(clippy::cast_precision_loss)] // Fixture indices are tiny, exact in f32.
     fn test_write_records_chunks_when_uuid_bytes_exceed_limit() {
-        let temp_file = NamedTempFile::new().unwrap();
-        let file_path = temp_file.path().to_str().unwrap();
+        let dir = TempDir::new().unwrap();
+        let file_path = fresh_parquet_path(&dir, "uuid_chunks.parquet");
 
-        let records = vec![
-            DiscoverRecord::new(0, "hidden-0000".to_string(), Some(0.5), 0.7, vec![0.1]),
-            DiscoverRecord::new(1, "hidden-1111".to_string(), Some(0.6), 0.8, vec![0.2]),
-        ];
+        // Each 11-byte UUID exceeds half the 16-byte limit, so every record is its own chunk.
+        let records: Vec<DiscoverRecord> = (0..5_u32)
+            .map(|i| {
+                DiscoverRecord::new(
+                    i * 3,
+                    format!("hidden-{i:04}"),
+                    Some(0.5 + i as f32),
+                    0.7 + i as f32,
+                    vec![0.1 * i as f32],
+                )
+            })
+            .collect();
 
-        let result = write_records_to_parquet_with_limit(file_path, &records, 16);
-        assert!(
-            result.is_ok(),
-            "Writer should chunk records when total neuron UUID bytes exceed the configured per-batch limit"
+        write_records_to_parquet_with_limit(&file_path, &records, 16).expect(
+            "Writer should chunk records when total neuron UUID bytes exceed the configured per-batch limit",
         );
 
         assert!(
-            std::path::Path::new(file_path).exists(),
+            std::path::Path::new(&file_path).exists(),
             "Parquet file should exist after chunked write"
         );
+        assert_records_round_trip(&file_path, &records);
     }
 
     #[test]
@@ -300,28 +394,35 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)] // Fixture indices are tiny, exact in u32 and f32.
     fn test_write_records_chunks_when_error_value_count_exceeds_limit() {
-        let temp_file = NamedTempFile::new().unwrap();
-        let file_path = temp_file.path().to_str().unwrap();
+        let dir = TempDir::new().unwrap();
+        let file_path = fresh_parquet_path(&dir, "error_chunks.parquet");
 
-        let records = vec![
-            DiscoverRecord::new(0, "hidden-0000".to_string(), Some(0.5), 0.7, vec![0.1, 0.2]),
-            DiscoverRecord::new(1, "hidden-1111".to_string(), Some(0.6), 0.8, vec![0.3, 0.4]),
-        ];
+        // Error lengths 2,2,3,1,2 under a limit of 3 give the chunks [2], [2], [3], [1,2].
+        let error_lens = [2_usize, 2, 3, 1, 2];
+        let records: Vec<DiscoverRecord> = error_lens
+            .iter()
+            .enumerate()
+            .map(|(i, &len)| {
+                let errors = (0..len).map(|j| (i * 10 + j) as f32 * 0.5).collect();
+                DiscoverRecord::new(i as u32, format!("hidden-{i:04}"), Some(0.5), 0.7, errors)
+            })
+            .collect();
 
         let mut writer =
-            ParquetRecordWriter::new(file_path, schema::MAX_ARROW_OFFSET, 3, records.len())
+            ParquetRecordWriter::new(&file_path, schema::MAX_ARROW_OFFSET, 3, records.len())
                 .expect("Writer should construct successfully");
-        assert!(
-            writer.write_records(&records).is_ok(),
-            "Writer should chunk records when total error values exceed the configured per-batch limit"
+        writer.write_records(&records).expect(
+            "Writer should chunk records when total error values exceed the configured per-batch limit",
         );
         writer.finish().unwrap();
 
         assert!(
-            std::path::Path::new(file_path).exists(),
+            std::path::Path::new(&file_path).exists(),
             "Parquet file should exist after chunked write"
         );
+        assert_records_round_trip(&file_path, &records);
     }
 
     #[test]
