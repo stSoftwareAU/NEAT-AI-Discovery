@@ -167,7 +167,7 @@ Probe dispositions (Issue #2251):
 
 | Path | Lines | Outcome |
 | --- | --- | --- |
-| `src/watchdog.rs` | 364 | audited — no PID, process-spawn or filesystem surface (it only raises SIGUSR1 at its own process and aborts); the abort delay was uncapped (fixed by #2404, cap 60 seconds, `MAX_WATCHDOG_ABORT_DELAY_SECS`) and the stall-timeout truncation is still tracked by open #2259 under #2122, so nothing new is filed |
+| `src/watchdog.rs` | 364 | audited — no PID, process-spawn or filesystem surface (it only raises SIGUSR1 at its own process and aborts); the abort delay was uncapped (fixed by #2404, cap 60 seconds, `MAX_WATCHDOG_ABORT_DELAY_SECS`) and the stall-timeout truncation was fixed by #2405 (cap 86400 seconds, `MAX_WATCHDOG_STALL_SECS`), so nothing new is filed |
 | `src/tracking_alloc.rs` | 234 | audited — the `GlobalAlloc` hooks cannot panic, allocate or recurse; the counter wraps only on a caller layout mismatch, which is undefined behaviour; neither consumer of `tracking_alloc.rs::TrackingAlloc::allocated` can spuriously cancel or return early |
 | `src/discovery_history.rs` | 626 | audited — no filesystem I/O, and its JSON arrives only as the `get_calibration_summary` FFI string; #1906 holds on that path; two findings filed: #2391 (`record_attempt` overflows `u32` at the ceiling, Rust API only) and #2392 (finite observations yield non-finite calibration metrics, returned as `null` under `success: true`) |
 
@@ -208,10 +208,12 @@ Probe dispositions (Issue #2252):
   by #2259 as its finding A. #2404 fixed it in the accessor: the value is
   clamped to `0..=MAX_WATCHDOG_ABORT_DELAY_SECS` (60) with a `WARN`, so
   `watchdog.rs` is unchanged.
-- **Stall-timeout truncation — cross-referenced, not refiled.**
+- **Stall-timeout truncation — fixed by #2405.**
   `watchdog_loop` compares against `config.stall_timeout.as_millis() as u64`;
-  a stall of `18446744073709552` seconds truncates to about 384 ms and fires
-  on a healthy run (CWE-197). Tracked by open #2259 as its finding B.
+  at the sweep HEAD, a stall of `18446744073709552` seconds truncated to about
+  384 ms and fired on a healthy run (CWE-197). This was tracked by #2259 as its
+  finding B. #2405 fixed it in the accessor: positive values are clamped to
+  `MAX_WATCHDOG_STALL_SECS` (86400) with a `WARN`, so `watchdog.rs` is unchanged.
 - **Lifecycle — no finding.** `watchdog.rs::WatchdogConfig::from_env` returns
   `None` unless the stall timeout is positive. `watchdog.rs::Watchdog::start`
   publishes its state in `ACTIVE` (the last start wins) and spawns the
