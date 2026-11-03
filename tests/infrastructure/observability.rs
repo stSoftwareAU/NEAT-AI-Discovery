@@ -6,9 +6,9 @@
 //! - Structured JSON profiling output
 //!
 //! Environment variables:
-//! - `NEAT_AI_DISCOVERY_TIMING`: Emit phase timing as a `tracing` event (presence-only)
+//! - `NEAT_AI_DISCOVERY_TIMING`: Emit phase timing as a `tracing` event (`1`/`true`/`yes`)
 //! - `NEAT_AI_DISCOVERY_PROFILE=json`: Output structured profile as JSON
-//! - `NEAT_AI_DISCOVERY_GPU_METRICS`: Emit GPU metrics as a `tracing` event (presence-only)
+//! - `NEAT_AI_DISCOVERY_GPU_METRICS`: Emit GPU metrics as a `tracing` event (`1`/`true`/`yes`)
 
 #![allow(clippy::cast_precision_loss, clippy::cast_sign_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use neat_ai_discovery::analysis::GpuAnalyzer;

@@ -449,9 +449,9 @@ for the add-neuron ranking change those findings produced.
 ### 🔀 Fuzz Testing
 
 The `fuzz/` directory contains [cargo-fuzz](https://rust-fuzz.github.io/book/cargo-fuzz.html)
-targets that exercise the FFI JSON boundary with arbitrary inputs. This helps
-catch panics from malformed, truncated, or adversarial JSON before they reach
-production.
+targets that exercise the FFI JSON boundary and Parquet footer parser with
+arbitrary inputs. This helps catch panics from malformed, truncated, or
+adversarial data before it reaches production.
 
 **Prerequisites:**
 
@@ -483,6 +483,7 @@ supply-chain risk the tool pin closes does not apply to it. A future
 |--------|-------------|
 | `fuzz_ffi_deserialisation` | Fuzzes `serde_json::from_str` for all FFI input types |
 | `fuzz_ffi_entry_points` | Fuzzes the `*_internal` business-logic functions |
+| `fuzz_parquet_footer_stats` | Fuzzes Parquet footer parsing, including the patched negative-row-count seed in `fuzz/seeds/parquet_footer_stats/` |
 
 **Running:**
 
@@ -498,6 +499,10 @@ cargo +nightly fuzz run --locked fuzz_ffi_deserialisation -- -max_total_time=60
 
 # Run with a maximum input length of 4096 bytes
 cargo +nightly fuzz run --locked fuzz_ffi_entry_points -- -max_total_time=60 -max_len=4096
+
+# Fuzz footer parsing with input size bounded to 64 KiB
+mkdir -p fuzz/corpus/fuzz_parquet_footer_stats
+cargo +nightly fuzz run --locked fuzz_parquet_footer_stats fuzz/corpus/fuzz_parquet_footer_stats fuzz/seeds/parquet_footer_stats -- -max_total_time=60 -max_len=65536
 
 # List all available fuzz targets
 cargo +nightly fuzz list
@@ -566,9 +571,10 @@ All dependencies build automatically on remote, unattended machines.
 ## 📦 Distributed Build & Versioning
 
 - Versions are managed in `Cargo.toml`. The `version-increment` CI job
-  auto-bumps the patch version on **every pull request** (unless the PR branch
-  already carries a bump), not only when `src/` changes — see
-  `.github/workflows/ci.yml`.
+  auto-bumps the patch version on **every pull request** (unless the PR's version
+  is already ahead of `origin/Develop`), not only when `src/` changes — see
+  `.github/workflows/ci.yml`. An earlier auto-increment commit on the branch does
+  not suppress this: a PR level with `origin/Develop` is bumped again (Issue #2476).
 - A PR whose `Cargo.toml` version is **strictly behind** `origin/Develop` fails
   CI (Issue #2015 / `scripts/check-version-no-downgrade.sh`). Equal versions may
   still auto-patch-bump; versions already ahead are accepted without a second

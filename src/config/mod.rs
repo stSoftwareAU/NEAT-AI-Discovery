@@ -157,6 +157,38 @@ mod tests {
         assert!((MIN_WALL_CLOCK_MINUTES..=MAX_WALL_CLOCK_MINUTES).contains(&result));
     }
 
+    #[test]
+    fn effective_wall_clock_minutes_clamps_ffi_value() {
+        // Issue #2460: an FFI-supplied cap is clamped to 1–120 so the downstream
+        // minutes-to-seconds conversion cannot overflow.
+        assert_eq!(
+            effective_wall_clock_minutes(Some(u64::MAX)),
+            MAX_WALL_CLOCK_MINUTES
+        );
+        assert_eq!(
+            effective_wall_clock_minutes(Some(307_445_734_561_825_861)),
+            MAX_WALL_CLOCK_MINUTES
+        );
+        assert_eq!(
+            effective_wall_clock_minutes(Some(0)),
+            MIN_WALL_CLOCK_MINUTES
+        );
+        assert_eq!(effective_wall_clock_minutes(Some(45)), 45);
+        assert_eq!(
+            effective_wall_clock_minutes(Some(MAX_WALL_CLOCK_MINUTES)),
+            MAX_WALL_CLOCK_MINUTES
+        );
+        assert_eq!(
+            effective_wall_clock_minutes(Some(MIN_WALL_CLOCK_MINUTES)),
+            MIN_WALL_CLOCK_MINUTES
+        );
+
+        // No FFI value falls back to the environment-derived getter, which is
+        // always within the valid range.
+        let fallback = effective_wall_clock_minutes(None);
+        assert!((MIN_WALL_CLOCK_MINUTES..=MAX_WALL_CLOCK_MINUTES).contains(&fallback));
+    }
+
     // -------------------------------------------------------------------
     // Issue #1202 — drought diagnostic threshold parsing
     // -------------------------------------------------------------------

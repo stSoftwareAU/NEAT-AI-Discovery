@@ -7,45 +7,39 @@ use anyhow::Result;
 
 #[test]
 fn watchdog_beats_do_not_claim_finished_when_analysis_is_skipped() {
-    let _lock = crate::watchdog::lock_for_test_serialisation();
-    // Ensure a watchdog is active so `beat()` is observable in tests.
-    let wd = crate::watchdog::Watchdog::start(crate::watchdog::WatchdogConfig {
-        stall_timeout: std::time::Duration::from_secs(60),
-        abort_delay: std::time::Duration::from_secs(1),
-    });
+    // Other tests may beat the process-wide watchdog without taking its test lock.
+    crate::watchdog::with_test_beat_state(|| {
+        let skipped = "analysis::analyze_all → neuron analysis skipped";
+        let finished = "analysis::analyze_all → neuron analysis finished";
 
-    let skipped = "analysis::analyze_all → neuron analysis skipped";
-    let finished = "analysis::analyze_all → neuron analysis finished";
-
-    // When disabled, we should record "skipped" and never execute the closure.
-    let result: Option<()> = run_optional_analysis(
-        false,
-        "starting",
-        finished,
-        skipped,
-        "test_phase",
-        || -> Result<()> { unreachable!("disabled analysis closure must not run") },
-    )
-    .expect("should not error");
-    assert!(result.is_none());
-    assert_eq!(
-        crate::watchdog::active_stage_for_test().as_deref(),
-        Some(skipped)
-    );
-
-    // When enabled, we should end on "finished".
-    let result: Option<()> =
-        run_optional_analysis(true, "starting", finished, "skipped", "test_phase", || {
-            Ok(())
-        })
+        // When disabled, we should record "skipped" and never execute the closure.
+        let result: Option<()> = run_optional_analysis(
+            false,
+            "starting",
+            finished,
+            skipped,
+            "test_phase",
+            || -> Result<()> { unreachable!("disabled analysis closure must not run") },
+        )
         .expect("should not error");
-    assert!(result.is_some());
-    assert_eq!(
-        crate::watchdog::active_stage_for_test().as_deref(),
-        Some(finished)
-    );
+        assert!(result.is_none());
+        assert_eq!(
+            crate::watchdog::active_stage_for_test().as_deref(),
+            Some(skipped)
+        );
 
-    drop(wd);
+        // When enabled, we should end on "finished".
+        let result: Option<()> =
+            run_optional_analysis(true, "starting", finished, "skipped", "test_phase", || {
+                Ok(())
+            })
+            .expect("should not error");
+        assert!(result.is_some());
+        assert_eq!(
+            crate::watchdog::active_stage_for_test().as_deref(),
+            Some(finished)
+        );
+    });
 }
 
 #[test]

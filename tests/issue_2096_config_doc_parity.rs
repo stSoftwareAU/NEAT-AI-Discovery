@@ -35,6 +35,9 @@ const TEST_ONLY_ALLOWLIST: &[&str] = &[
     "NEAT_AI_DISCOVERY_TEST_PLATFORM_PRESET",
     // Set in `src/config/helpers.rs` as a unit-test fixture for the parse helper.
     "NEAT_AI_DISCOVERY_PARSE_ENV_HELPER_TEST",
+    // Used only as distinct warning-deduplication fixtures in helper unit tests.
+    "NEAT_AI_DISCOVERY_HELPER_DEDUPE_DISABLED_TEST",
+    "NEAT_AI_DISCOVERY_HELPER_DEDUPE_INVALID_TEST",
 ];
 
 /// Variables the host application's loader reads, not this library. They are

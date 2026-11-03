@@ -206,13 +206,19 @@ pub fn deadline_to_absolute_ms(deadline: &Option<SystemTime>) -> Option<u64> {
 /// Returns `min(analysis_deadline, discovery_start + wall_clock_cap)`, or
 /// just the wall-clock cap if no analysis deadline is provided. Returns `None`
 /// only when both the analysis deadline and the wall-clock cap are `None`.
+///
+/// An unrepresentable cap (the minutes-to-seconds multiply overflows, or the
+/// `SystemTime` addition overflows) yields no wall-clock deadline rather than a
+/// wrapped one, so the analysis deadline is returned unchanged (Issue #2460).
+/// Callers should clamp the cap to a sane range before calling this function.
 pub fn cap_deadline_to_wall_clock(
     analysis_deadline: Option<SystemTime>,
     discovery_start: SystemTime,
     wall_clock_cap_minutes: Option<u64>,
 ) -> Option<SystemTime> {
     let wall_clock_deadline = wall_clock_cap_minutes
-        .and_then(|minutes| discovery_start.checked_add(Duration::from_secs(minutes * 60)));
+        .and_then(|minutes| minutes.checked_mul(60))
+        .and_then(|secs| discovery_start.checked_add(Duration::from_secs(secs)));
 
     match (analysis_deadline, wall_clock_deadline) {
         (Some(ad), Some(wd)) => Some(ad.min(wd)),

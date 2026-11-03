@@ -409,6 +409,61 @@ fn every_capacity_site_in_a_swept_file_is_cited_by_symbol() {
     );
 }
 
+/// `(source path, function, qualifier)` of the `monotonicity.rs` pairwise-loop
+/// row whose per-candidate loop now checks `deadline_passed` (Issue #2479), so
+/// its Cancellation-checked? cell reads `yes — …`. The loop sits in
+/// `non_monotonic_neurons_to_coordinated_candidates_with_observer`.
+const CHECKED_SINCE_AUDIT: &[(&str, &str, &str)] = &[(
+    "monotonicity.rs",
+    "non_monotonic_neurons_to_coordinated_candidates_with_observer",
+    "`creature.neurons.iter().find` + two `creature.synapses` filters per candidate",
+)];
+
+#[test]
+fn monotonicity_row_checked_since_audit_is_yes_and_the_code_checks_the_deadline() {
+    // Issue #2479: the monotonicity converter checks `deadline_passed` once per
+    // candidate. Its pairwise row must now read `yes — …`, and the source must
+    // really carry the check, so a ledger `yes` cannot outlive the code.
+    for (base, name, qualifier) in CHECKED_SINCE_AUDIT {
+        let source = production_source(&format!("src/analysis/detection/{base}"));
+        assert!(
+            source.contains("deadline_passed"),
+            "src/analysis/detection/{base} has rows in CHECKED_SINCE_AUDIT but no longer checks \
+             `deadline_passed` — move those rows back to `no (module-level only)` and empty the \
+             constant"
+        );
+
+        let doc = read(RECORD);
+        let rows = table_rows(section(&doc, "## Capacity and traversal table"));
+        let symbol_needle = format!("`{base}::{name}`");
+        let qualifier_needle = format!("({qualifier})");
+        let found = rows.iter().any(|row| {
+            let symbol = row.first().map(String::as_str).unwrap_or_default();
+            let kind = row.get(1).map(String::as_str).unwrap_or_default();
+            let cancellation = row.get(4).map(String::as_str).unwrap_or_default();
+            symbol.contains(&symbol_needle)
+                && symbol.contains(&qualifier_needle)
+                && kind == "pairwise loop"
+                && cancellation.starts_with("yes — `deadline_passed`")
+        });
+        assert!(
+            found,
+            "`## Capacity and traversal table` must carry a `pairwise loop` row for \
+             `{base}::{name}` ({qualifier}) whose Cancellation-checked? cell starts with \
+             `yes — `deadline_passed``, because Issue #2479 added the once-per-candidate check"
+        );
+    }
+
+    let doc = read(RECORD);
+    let rows = table_rows(section(&doc, "## Capacity and traversal table"));
+    assert!(rows.iter().any(|row| {
+        row.first().is_some_and(|symbol| {
+            symbol.contains("`monotonicity.rs::non_monotonic_neurons_to_coordinated_candidates_with_observer` (`results`)")
+        }) && row.get(1).is_some_and(|kind| kind == "capacity")
+            && row.get(4).is_some_and(|cell| cell.starts_with("yes — `deadline_passed`"))
+    }), "the monotonicity results capacity row must record its per-candidate deadline check");
+}
+
 #[test]
 fn every_issue_linked_from_a_swept_row_appears_under_issues_filed() {
     let doc = read(RECORD);
