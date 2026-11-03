@@ -27,6 +27,7 @@ Version bump: patch version `0.74.324` → `0.74.325` in `Cargo.toml` and the `n
 - Original trigger closed, no trivial bypass: the only production path from the environment variable to `watchdog_loop` is `WatchdogConfig::from_env` → `watchdog_stall_timeout`. Every parsed positive value above 86,400 is clamped to 86,400 before `Duration::from_secs`, so the threshold is at most 86,400,000 ms, which fits in `u64`; no value, including `u64::MAX`, can wrap to a short threshold, and no other path builds a stall timeout.
 - Docs updated: `docs/CONFIGURATION.md`, `docs/GPU_GUIDE.md`, the module doc in `src/watchdog.rs`, and the Issue #2405 row in `docs/audits/security-sweep-chunk-13-config-env.md` (historical finding preserved).
 - Review correction: restored `live` as the stall-timeout accessor read mode in the 13b audit table and retained the current guard-weakening finding (a typo silently disables the watchdog), alongside the historical truncation finding and its 24-hour cap fix.
+- Review correction: marked #2405 fixed in the 13b findings list and updated the documentation-reconciliation row to record both watchdog caps.
 - Backend-only change; no browser evidence applies.
 
 ## Test Plan
