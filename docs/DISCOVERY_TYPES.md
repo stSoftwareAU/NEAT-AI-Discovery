@@ -1372,18 +1372,24 @@ provides a shorter gradient path.
 
 **Detection criteria**:
 
-1. **Deep topology**: The neuron is several hops away from the nearest
-   output neuron.
-2. **Gradient attenuation**: The effective gradient reaching the neuron is
-   significantly reduced by the depth of the path.
-3. **Positive error**: The neuron carries meaningful error worth improving.
-4. **No existing shortcut**: A direct connection to the output does not
-   already exist.
+1. **Depth from the inputs**: Each neuron's topological depth is the longest
+   path from any input. A neuron is deep when its depth is at least 3
+   (`MIN_DEEP_DEPTH`). Only hidden neurons with at least
+   `MIN_DISCOVERY_SAMPLE_COUNT` recorded samples are considered.
+2. **Gradient attenuation**: The deep neuron's mean absolute error divided by
+   the mean error of the shallow hidden neurons (depth 2 or less, ignoring
+   those with zero error) is below `ATTENUATION_THRESHOLD` (0.5).
+3. **Shallow source available**: At least one input or depth-1 hidden neuron
+   is not already connected to the deep neuron, and the estimated improvement
+   (depth gap × attenuation severity × 0.005) is positive.
 
 **Recommended actions**:
 
-1. **Add skip synapse**: Connect the deep hidden neuron directly to an
-   output, providing an unattenuated gradient path.
+1. **Add skip synapse**: `addSynapse` **from** the first unconnected depth-0
+   source (an input), else the first unconnected depth-1 source (a hidden
+   neuron), **to** the deep neuron. The synapse never targets an output
+   neuron. The initial weight is `0.01 × min(mean error, 1)`, close to zero so
+   existing behaviour is not disrupted.
 
 **Cost and cancellation** (Issue #2368): The depth pass is a Kahn topological
 pass, O(V + E). A cyclic synapse graph returns no candidates, reported as
