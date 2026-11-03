@@ -6,7 +6,9 @@
 //! Reading it is metadata-only: no column data is decoded.
 
 use anyhow::{Context, Result};
-use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
+use parquet::arrow::arrow_reader::{DEFAULT_BATCH_SIZE, ParquetRecordBatchReaderBuilder};
+use parquet::basic::Encoding;
+use parquet::file::metadata::{ColumnChunkMetaData, RowGroupMetaData};
 
 use crate::types::DiscoverRecord;
 
@@ -15,13 +17,17 @@ use crate::types::DiscoverRecord;
 /// and `activation`).
 pub const RECORD_STRUCT_BYTES: u64 = size_of::<DiscoverRecord>() as u64;
 
-/// Heap bytes assumed for a neuron UUID when only the footer is available.
-/// An RFC 4122 UUID is 36 characters; shorter identifiers (`input-N`) cost
-/// less, so this is a representative rather than a worst case.
+/// Per-row heap floor for a neuron UUID when the footer carries no size
+/// statistic for its column. An RFC 4122 UUID is 36 characters. The footer's
+/// `unencoded_byte_array_data_bytes` statistic, when present, supersedes this
+/// figure, so it is not a bound on the decoded identifier length.
 pub const ASSUMED_UUID_HEAP_BYTES: u64 = 36;
 
 /// Root column name of the per-record error list.
 const ERRORS_COLUMN: &str = "errors";
+
+/// Root column name of the neuron identifier.
+const NEURON_UUID_COLUMN: &str = "neuron_uuid";
 
 /// Bytes each decoded `f32` error occupies in the record's `Vec<f32>`.
 const ERROR_VALUE_BYTES: u64 = 4;
@@ -47,24 +53,28 @@ pub struct ParquetFooterStats {
     /// Total decoded `f32` values in the `errors` list column across all rows
     /// (exact, from the leaf column chunks' value counts).
     pub error_values: u64,
+    /// Decoded `neuron_uuid` string bytes across all row groups, from the
+    /// footer's size statistic or the dictionary-aware bound described on
+    /// [`neuron_uuid_heap_bytes`]. Excludes the per-row Arrow offset word.
+    pub uuid_heap_bytes: u64,
 }
 
 impl ParquetFooterStats {
     /// Project the in-memory bytes needed to materialise every row as a
     /// [`DiscoverRecord`].
     ///
-    /// Each row costs its struct plus a heap `String` for the UUID, and each
-    /// decoded error costs four bytes in the record's `Vec<f32>`. Both counts
-    /// come from the footer and are independent of how well the file
+    /// Each row costs its struct, each decoded error costs four bytes in the
+    /// record's `Vec<f32>`, and the UUID strings cost `uuid_heap_bytes`. All
+    /// three come from the footer and are independent of how well the file
     /// compressed. The uncompressed row-group size acts as a floor for any
-    /// payload the two counts miss.
+    /// payload the three counts miss.
     #[must_use]
     pub const fn projected_in_memory_bytes(&self) -> u64 {
-        let records = self
-            .num_rows
-            .saturating_mul(RECORD_STRUCT_BYTES + ASSUMED_UUID_HEAP_BYTES);
+        let records = self.num_rows.saturating_mul(RECORD_STRUCT_BYTES);
         let errors = self.error_values.saturating_mul(ERROR_VALUE_BYTES);
-        let projected = records.saturating_add(errors);
+        let projected = records
+            .saturating_add(self.uuid_heap_bytes)
+            .saturating_add(errors);
         if projected > self.uncompressed_bytes {
             projected
         } else {
@@ -92,8 +102,12 @@ pub(crate) fn projected_bytes_for_columns(
 }
 
 /// Estimate the selected columns of the supplied decode units.
+///
+/// When `neuron_uuid` is selected, its decoded string heap from
+/// [`neuron_uuid_heap_bytes`] is added to the per-row overhead term. Callers
+/// therefore pass only the per-row overhead of the other selected columns.
 pub(crate) fn projected_bytes_for_row_groups(
-    row_groups: &[parquet::file::metadata::RowGroupMetaData],
+    row_groups: &[RowGroupMetaData],
     selected_roots: &[&str],
     record_overhead: u64,
     include_errors: bool,
@@ -104,7 +118,7 @@ pub(crate) fn projected_bytes_for_row_groups(
         .fold(0_u64, u64::saturating_add);
     let selected_uncompressed = row_groups
         .iter()
-        .flat_map(parquet::file::metadata::RowGroupMetaData::columns)
+        .flat_map(RowGroupMetaData::columns)
         .filter(|column| {
             column
                 .column_path()
@@ -117,7 +131,7 @@ pub(crate) fn projected_bytes_for_row_groups(
     let selected_errors = if include_errors {
         row_groups
             .iter()
-            .flat_map(parquet::file::metadata::RowGroupMetaData::columns)
+            .flat_map(RowGroupMetaData::columns)
             .filter(|column| {
                 column
                     .column_path()
@@ -131,10 +145,83 @@ pub(crate) fn projected_bytes_for_row_groups(
     } else {
         0
     };
+    let selected_uuid_heap = if selected_roots.contains(&NEURON_UUID_COLUMN) {
+        neuron_uuid_heap_bytes(row_groups)
+    } else {
+        0
+    };
 
     rows.saturating_mul(record_overhead)
         .saturating_add(selected_errors)
+        .saturating_add(selected_uuid_heap)
         .max(selected_uncompressed)
+}
+
+/// Decoded `neuron_uuid` string bytes across the supplied row groups (Issue #2507).
+///
+/// Arrow copies every value into its batch, so a dictionary-encoded column
+/// costs its decoded length once per row even though the file stores each
+/// distinct string once. A footer can therefore be tiny while the decode is
+/// large. The per-chunk value is chosen as follows:
+///
+/// 1. The `unencoded_byte_array_data_bytes` size statistic is the exact total
+///    of the decoded value bytes, so it is used when present and non-negative.
+///    A negative statistic is malformed and is treated as absent.
+/// 2. Otherwise, a dictionary-encoded chunk is bounded by
+///    `min(rows, DEFAULT_BATCH_SIZE) * uncompressed`: one batch holds at most
+///    that many copies, and the longest value cannot exceed the chunk's
+///    uncompressed size.
+/// 3. Otherwise, a plain chunk stores every value, so its uncompressed size is
+///    already the decoded total.
+///
+/// Fallbacks 2 and 3 are raised to `rows * ASSUMED_UUID_HEAP_BYTES`, the
+/// per-row floor. Arithmetic saturates.
+pub(crate) fn neuron_uuid_heap_bytes(row_groups: &[RowGroupMetaData]) -> u64 {
+    row_groups
+        .iter()
+        .map(|group| {
+            let rows = u64::try_from(group.num_rows()).unwrap_or(0);
+            group
+                .columns()
+                .iter()
+                .filter(|column| {
+                    column
+                        .column_path()
+                        .parts()
+                        .first()
+                        .is_some_and(|root| root == NEURON_UUID_COLUMN)
+                })
+                .map(|column| column_uuid_heap_bytes(column, rows))
+                .fold(0_u64, u64::saturating_add)
+        })
+        .fold(0_u64, u64::saturating_add)
+}
+
+/// Decoded `neuron_uuid` string bytes for one column chunk of `rows` rows.
+/// See [`neuron_uuid_heap_bytes`] for the rules.
+fn column_uuid_heap_bytes(column: &ColumnChunkMetaData, rows: u64) -> u64 {
+    if let Some(bytes) = column
+        .unencoded_byte_array_data_bytes()
+        .and_then(|bytes| u64::try_from(bytes).ok())
+    {
+        return bytes;
+    }
+
+    let floor = rows.saturating_mul(ASSUMED_UUID_HEAP_BYTES);
+    let uncompressed = u64::try_from(column.uncompressed_size()).unwrap_or(0);
+    let dictionary = column.encodings().any(|encoding| {
+        matches!(
+            encoding,
+            Encoding::RLE_DICTIONARY | Encoding::PLAIN_DICTIONARY
+        )
+    });
+    let decoded = if dictionary {
+        rows.min(DEFAULT_BATCH_SIZE as u64)
+            .saturating_mul(uncompressed)
+    } else {
+        uncompressed
+    };
+    decoded.max(floor)
 }
 
 /// Read the row count and uncompressed row-group sizes from `file_path`'s
@@ -190,16 +277,108 @@ pub fn read_footer_stats(file_path: &str) -> Result<ParquetFooterStats> {
         "Parquet footer num_rows ({num_rows}) does not match row-group num_rows sum ({row_group_rows})"
     );
 
+    let uuid_heap_bytes = neuron_uuid_heap_bytes(metadata.row_groups());
+
     Ok(ParquetFooterStats {
         num_rows,
         uncompressed_bytes,
         error_values,
+        uuid_heap_bytes,
     })
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{read_footer_stats, sum_row_group_rows};
+    use super::{
+        ASSUMED_UUID_HEAP_BYTES, neuron_uuid_heap_bytes, read_footer_stats, sum_row_group_rows,
+    };
+    use parquet::basic::{Encoding, Repetition, Type as PhysicalType};
+    use parquet::file::metadata::{ColumnChunkMetaData, RowGroupMetaData};
+    use parquet::schema::types::{SchemaDescriptor, Type};
+    use std::sync::Arc;
+
+    /// One row group holding a single `neuron_uuid` BYTE_ARRAY column chunk.
+    fn neuron_uuid_row_group(
+        rows: i64,
+        encodings: Vec<Encoding>,
+        uncompressed: i64,
+        size_statistic: Option<i64>,
+    ) -> RowGroupMetaData {
+        let field = Type::primitive_type_builder("neuron_uuid", PhysicalType::BYTE_ARRAY)
+            .with_repetition(Repetition::REQUIRED)
+            .build()
+            .expect("neuron_uuid field");
+        let schema = Type::group_type_builder("schema")
+            .with_fields(vec![Arc::new(field)])
+            .build()
+            .expect("schema");
+        let descr = Arc::new(SchemaDescriptor::new(Arc::new(schema)));
+        let column = ColumnChunkMetaData::builder(descr.column(0))
+            .set_encodings(encodings)
+            .set_num_values(rows)
+            .set_total_uncompressed_size(uncompressed)
+            .set_unencoded_byte_array_data_bytes(size_statistic)
+            .build()
+            .expect("neuron_uuid column chunk");
+        RowGroupMetaData::builder(Arc::clone(&descr))
+            .set_num_rows(rows)
+            .set_column_metadata(vec![column])
+            .build()
+            .expect("neuron_uuid row group")
+    }
+
+    fn heap_bytes(group: RowGroupMetaData) -> u64 {
+        neuron_uuid_heap_bytes(&[group])
+    }
+
+    #[test]
+    fn size_statistic_is_trusted_exactly_when_present() {
+        // Distinct from rows * 36 (72_000) and from the uncompressed size (5_000),
+        // and the dictionary fallback would give 1_024 * 5_000 instead.
+        let group = neuron_uuid_row_group(
+            2_000,
+            vec![Encoding::PLAIN, Encoding::RLE_DICTIONARY],
+            5_000,
+            Some(123_457),
+        );
+        assert_eq!(heap_bytes(group), 123_457);
+    }
+
+    #[test]
+    fn absent_statistic_on_dictionary_chunk_bounds_one_batch_of_copies() {
+        for encoding in [Encoding::RLE_DICTIONARY, Encoding::PLAIN_DICTIONARY] {
+            // Fewer rows than one batch: every row is copied.
+            let small = neuron_uuid_row_group(300, vec![encoding], 10_000, None);
+            assert_eq!(heap_bytes(small), 300 * 10_000);
+
+            // More rows than one batch: only one batch of copies is bounded.
+            let large = neuron_uuid_row_group(3_000, vec![encoding], 10_000, None);
+            assert_eq!(heap_bytes(large), 1_024 * 10_000);
+        }
+    }
+
+    #[test]
+    fn absent_statistic_on_plain_chunk_uses_uncompressed_size_with_row_floor() {
+        // Plain pages store each value once, so the uncompressed size is the
+        // decoded total, raised to the per-row floor when that is larger.
+        let floored = neuron_uuid_row_group(3_000, vec![Encoding::PLAIN], 50_000, None);
+        assert_eq!(heap_bytes(floored), 3_000 * ASSUMED_UUID_HEAP_BYTES);
+
+        let uncompressed = neuron_uuid_row_group(10, vec![Encoding::PLAIN], 1_000_000, None);
+        assert_eq!(heap_bytes(uncompressed), 1_000_000);
+    }
+
+    #[test]
+    fn negative_statistic_is_not_trusted() {
+        // A negative size statistic is malformed. It falls back to the same
+        // bounds as an absent one rather than being read as zero or wrapped.
+        let plain = neuron_uuid_row_group(10, vec![Encoding::PLAIN], 1_000, Some(-1));
+        assert_eq!(heap_bytes(plain), 1_000);
+
+        let dictionary =
+            neuron_uuid_row_group(2_000, vec![Encoding::RLE_DICTIONARY], 10_000, Some(-5));
+        assert_eq!(heap_bytes(dictionary), 1_024 * 10_000);
+    }
 
     #[test]
     fn row_group_row_sum_rejects_overflow() {
@@ -233,5 +412,6 @@ mod tests {
         assert_eq!(stats.num_rows, 0);
         assert_eq!(stats.uncompressed_bytes, 0);
         assert_eq!(stats.error_values, 0);
+        assert_eq!(stats.uuid_heap_bytes, 0);
     }
 }

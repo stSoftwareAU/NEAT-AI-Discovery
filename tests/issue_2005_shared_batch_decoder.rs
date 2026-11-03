@@ -194,11 +194,14 @@ fn the_streaming_block_loader_charges_the_decode_budget() {
     )
     .expect("fixture metadata");
     let budget = DecodeBudget::new(Some(limit_bytes));
+    // The streaming readers preflight per row group (Issue #2507). The eager
+    // `preflight_columns` also charges the record struct per row, so it would
+    // reject this fixture before per-record charging is reached.
     budget
-        .preflight_columns(builder.metadata(), &["neuron_uuid"], path)
+        .preflight_row_groups(builder.metadata(), &["neuron_uuid"], path)
         .expect("the index preflight must fit within 1 MB");
     budget
-        .preflight_columns(
+        .preflight_row_groups(
             builder.metadata(),
             &["obs_index", "neuron_uuid", "value", "activation", "errors"],
             path,
