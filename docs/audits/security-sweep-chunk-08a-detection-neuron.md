@@ -351,8 +351,8 @@ against HEAD `6e3ca6f`:
   literal, so `[^\]` is a bracket excluding only `\`, and the trailing `]*` then matches any
   run of `]` characters. The command therefore missed `vec![value; n]` whenever the value was
   longer than one character, and it also matched unrelated literals such as `vec![i];` and
-  `vec![];`. The command now uses the portable form `[^]]*`. The corrected command prints 102
-  on the live tree: 89 production capacity rows (each with a `capacity` row above) plus 13
+  `vec![];`. The command now uses the portable form `[^]]*`. At the #2480 reconciliation the
+  corrected command printed 102: 89 production capacity rows plus 13
   test-only hits with no row. Those 13 are: 3 in the test-only module files
   `symmetry_breaking_deadline_tests.rs`, `redundant_path_deadline_tests.rs` and
   `compound_degradation_tests.rs` (one each); 5 `vec![false; N]` deadline-override sequences in
@@ -361,6 +361,8 @@ against HEAD `6e3ca6f`:
   tests of `input_sensitivity.rs`. The hit counts in the earlier reconciliation paragraphs are
   checkpoint figures, counted by `is_capacity_site` in
   `tests/issue_2154_chunk_08a_finalisation.rs`, which remains the binding contract.
+  Issue #2439 subsequently removed two topology-cache capacity sites and their ledger rows,
+  bringing the current count to 100: 87 production rows and 13 test-only hits.
 
 - **Traversal** — `grep -rnE 'fn .*\(.*\) .*\{' src/analysis/detection/ src/analysis/neuron/ | grep -E 'depth|visited|frontier|queue'`
   returns one hit, `skip_connection.rs::compute_depths_from_inputs`, which is
@@ -826,8 +828,8 @@ files, and the sweep read every change:
 - `src/analysis/detection/operating_point.rs` (#2316, `638ec0a`) changed only
   a doc comment.
 
-The `p[e]nding` count must print `0`. The recorded capacity figure is `102`: the ledger's
-89 production capacity rows plus the 13 test-only hits (named in the #2480 reconciliation
+The `p[e]nding` count must print `0`. The recorded capacity figure is `100`: the ledger's
+87 production capacity rows plus the 13 test-only hits (named in the #2480 reconciliation
 above). The corrected command now agrees with `is_capacity_site` in
 `tests/issue_2154_chunk_08a_finalisation.rs`, which is the binding contract. The
 traversal grep must print only `compute_depths_from_inputs`. Any further diff under these

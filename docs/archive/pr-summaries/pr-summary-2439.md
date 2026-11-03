@@ -64,6 +64,10 @@ rejects unsupported counts, and the cache no longer reserves from those counts.
   `HashSet::with_capacity(creature.output/input)` sites were removed, along
   with their rows in `docs/audits/security-sweep-chunk-08a-detection-neuron.md`.
   The remaining capacity sites are still cross-checked against the ledger.
+- The audit's verification figure now records 100 hits (87 production and 13
+  test-only), reflecting those two removed sites. The existing
+  `tests/issue_2154_chunk_08a_finalisation.rs::verify_this_record_capacity_command_is_portable_and_its_figure_reproducible`
+  checks the figure against the live tree.
 
 ## Security
 
