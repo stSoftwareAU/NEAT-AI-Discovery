@@ -292,22 +292,28 @@ Probe dispositions (Issue #2253):
   `tests/issue_2391_record_attempt_saturates.rs`. No FFI path reaches
   it: nothing in `src/` calls `DiscoveryHistory::record`, and the FFI entry
   above never records.
-- **Calibration NaN/inf — reaches the FFI summary, finding filed (#2392).**
+- **Calibration NaN/inf — reached the FFI summary, fixed (#2392).**
   JSON carries no NaN or inf literal, and serde_json refuses an out-of-range
   number such as `1e400` (pinned by the passing unit test
   `test_deserialise_rejects_non_finite_json_numbers`), but finite values
-  overflow in the arithmetic. `predicted = 1.7e308, actual = -1.7e308` makes
-  the mean absolute error in `CalibrationTracker::calibration_summary` `inf`,
-  and adding the opposite pair makes its bias NaN. Two ratios of
-  `±1e308 / 1e-9` make `discovery_history.rs::compute_calibration_factor` sum
-  `+inf` and `-inf` to NaN, which `f64::clamp` passes through, so
-  `DiscoveryHistory::calibration_factor` and the summary's factor leave the
+  previously overflowed in the arithmetic. A prediction of `1.7e308` and an
+  actual value of `-1.7e308` made the mean absolute error in
+  `CalibrationTracker::calibration_summary` `inf`, and adding the opposite pair
+  made its bias NaN. Two ratios of `±1e308 / 1e-9` made
+  `discovery_history.rs::compute_calibration_factor` sum `+inf` and `-inf` to
+  NaN, which `f64::clamp` passes through, so
+  `DiscoveryHistory::calibration_factor` and the summary's factor left the
   documented `[0.1, 10.0]`. serde_json writes a non-finite `f64` as `null`, so
-  the FFI answers `success: true` with `null` metrics.
-  `DiscoveryHistory::record_calibration` also stores NaN or inf from a Rust
-  caller unchecked. Pinned by the ignored failing-first unit tests
+  the FFI answered `success: true` with `null` metrics.
+  `DiscoveryHistory::record_calibration` also accepted NaN or inf from a Rust
+  caller unchecked. `CalibrationTracker::record_prediction` now skips
+  non-finite inputs, `calibration_errors` uses scaled sums and saturates
+  unrepresentable results, and `compute_calibration_factor` filters non-finite
+  ratios and falls back to a neutral factor when none are usable. Pinned by the
+  passing unit tests
   `test_calibration_summary_stays_finite_for_extreme_finite_observations` and
-  `test_calibration_factor_is_never_nan_for_finite_observations`.
+  `test_calibration_factor_is_never_nan_for_finite_observations` and
+  `tests/issue_2392_calibration_metrics_finite.rs`.
 - **`record_calibration` bound — unbounded, no finding.**
   `CalibrationTracker::record_prediction` pushes onto a `Vec` with no cap,
   and `DiscoveryHistory::prune` never trims calibration. Nothing in `src/`
@@ -459,10 +465,10 @@ findings were filed:
   predictable `/tmp/sample.txt` path.
 - #2391 (CLOSED, fixed by Issue #2391) — `record_attempt` could overflow `u32`
   at the ceiling #1906 accepts; it now saturates.
-- #2392 (OPEN) — non-finite calibration metrics can reach the FFI under
-  `success: true`.
+- #2392 (CLOSED, fixed by Issue #2392) — non-finite calibration metrics could
+  reach the FFI under `success: true`.
 
-One of the five findings remains open.
+None of the five findings remains open.
 
 ## Issues filed
 
@@ -481,7 +487,7 @@ One of the five findings remains open.
   (CLOSED, fixed by Issue #2391)
 - #2392 — Calibration metrics go non-finite from finite inputs and reach the
   get_calibration_summary FFI as null under success: true
-  (src/discovery_history.rs::compute_calibration_factor) (OPEN)
+  (src/discovery_history.rs::compute_calibration_factor) (CLOSED, fixed by Issue #2392)
 
 ## Related remediations (not sweep coverage)
 
