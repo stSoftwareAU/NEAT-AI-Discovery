@@ -56,4 +56,4 @@ Further regression tests (these need the new `_with_deadline` entry points, so t
 
 <!-- vibe-quality-gate-skipped reason="full ./quality.sh exceeded the 580 s foreground cap during compilation; fmt, clippy --all-targets and the targeted tests listed in the Test Plan were run on the final head; CI runs the full gate" -->
 
-Not done / risk: the full `./quality.sh` was not completed; `origin/Develop` was not re-merged; the work-count tests assert exact counts, so a later change to lookup structure needs them updated.
+Not done / risk: the full `./quality.sh` was not completed; the work-count tests assert exact counts, so a later change to lookup structure needs them updated.
