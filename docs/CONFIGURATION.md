@@ -11,20 +11,29 @@ variable that tunes `neat_ai_discovery`. The code-side origin is
 
 All discovery variables use the `NEAT_AI_DISCOVERY_` prefix. Boolean toggles
 accept `1`/`true`/`yes` to enable, and any other value leaves them off, unless
-the row says otherwise. The toggles that default on,
+the row says otherwise. This general rule covers
+`NEAT_AI_DISCOVERY_VERBOSE`, `NEAT_AI_DISCOVERY_GPU_TIMING`,
+`NEAT_AI_DISCOVERY_QUIET_GPU`, `NEAT_AI_DISCOVERY_NEURON_TARGETS_OUTPUT_ONLY`,
+`NEAT_AI_DISCOVERY_TIMING` and `NEAT_AI_DISCOVERY_GPU_METRICS`: only
+`1`/`true`/`yes` enable them (trimmed and case-insensitive); any other value,
+including `0`, `false`, `no`, `on` or empty, leaves them off. Before
+Issue #2467, any set value enabled them. The toggles that default on,
 `NEAT_AI_DISCOVERY_CPU_PRE_REJECT` and `NEAT_AI_DISCOVERY_HIDDEN_SQUASH_PRUNE`,
 stay on for any value other than `0`/`false`/`no`. Unset means the documented
 default applies.
-
-Some toggles are **presence-only**: any set value enables them, `0` included.
-These are `NEAT_AI_DISCOVERY_VERBOSE`, `NEAT_AI_DISCOVERY_GPU_TIMING`,
-`NEAT_AI_DISCOVERY_QUIET_GPU`, `NEAT_AI_DISCOVERY_NEURON_TARGETS_OUTPUT_ONLY`,
-`NEAT_AI_DISCOVERY_TIMING` and `NEAT_AI_DISCOVERY_GPU_METRICS`.
 
 For numeric variables, an **unparsable** value is treated as unset, so the
 default applies. An **out-of-range** value either falls back to the default or
 is clamped, depending on the variable. Each row says which, and the row is
 authoritative for its variable.
+
+**Guard opt-outs log a `WARN`** (Issue #2468). When an explicitly set value
+switches a guard off (for example `0`, or `false`/`no` on a toggle that defaults
+on), or an unparsable value leaves a guard off or uncapped, the reader logs one
+`tracing::warn!` at the read site. The event names the variable, the raw value
+and the guard it disables. Each distinct value is logged once per process, not
+on every read. An unset variable logs nothing. The rows below keep their own
+rules for everything else.
 
 **Surrounding whitespace is always tolerated** on numeric variables
 (Issue #2006) — `" 5 "` and `"5\n"` tune the knob exactly as `"5"` does, so a
@@ -42,7 +51,7 @@ their fallback and range rules are those in the row.
 |----------|---------|-------------|
 | `NEAT_AI_DISCOVERY_LIB_PATH` | host-defined | Host-loader variable: this library never reads it (no reader in `src/`). The host application's loader reads it to locate the compiled library; see [README.md](../README.md) and [GPU_GUIDE.md](GPU_GUIDE.md). |
 | `RUST_LOG` | `warn` | Structured log filter for `tracing` (e.g. `neat_ai_discovery=info`). An invalid filter silently falls back to `warn`. A subscriber the host installed before the library initialises wins, and this library does not apply `RUST_LOG`. |
-| `NEAT_AI_DISCOVERY_VERBOSE` | off | Enable verbose logging. Presence-only: any set value enables it, `0` included. |
+| `NEAT_AI_DISCOVERY_VERBOSE` | off | Enable verbose logging. |
 
 ## GPU
 
@@ -104,10 +113,10 @@ their fallback and range rules are those in the row.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `NEAT_AI_DISCOVERY_MAX_WALL_CLOCK_MINUTES` | 20 | Overall wall-clock cap for discovery time in minutes. The environment value is clamped to 1–120. An FFI-supplied `max_discovery_wall_clock_minutes` takes precedence over it and is not clamped (#2460). |
+| `NEAT_AI_DISCOVERY_MAX_WALL_CLOCK_MINUTES` | 20 | Overall wall-clock cap for discovery time in minutes. The environment value is clamped to 1–120. An FFI-supplied `max_discovery_wall_clock_minutes` takes precedence over it and is clamped to the same 1–120 range, with a warning when clamping changes it (Issue #2460). |
 | `NEAT_AI_DISCOVERY_ANALYSIS_RESERVE_MS` | 60000 | Guaranteed minimum window (ms) reserved for synapse/neuron analysis so focus selection + Parquet loading cannot starve it (Issue #1408). Parquet loading is curtailed at `deadline − reserve`; if less than 1s would remain, `analyze_all` fails fast with an actionable error instead of analysing 0/N targets. `0` disables the reserve; other values clamp to `[1, 3600000]`. |
 | `NEAT_AI_DISCOVERY_ANALYSIS_RESERVE_FRACTION` | 0.5 | Fraction of the remaining discovery window the reserve may claim (Issue #1408). Effective reserve = `min(ANALYSIS_RESERVE_MS, remaining × fraction)`, so tight budgets are split rather than starving loading. Finite values above `0` are honoured up to `0.9`; values above `0.9` clamp to `0.9`. Non-finite, zero, negative or unparsable values fall back to `0.5`. |
-| `NEAT_AI_DISCOVERY_WATCHDOG_STALL_SECS` | off | Abort if no progress for N seconds. Positive values are capped at 86400 seconds (24 hours); larger values clamp to the cap and log a `WARN` with the variable, supplied value and cap (#2405, `MAX_WATCHDOG_STALL_SECS`). `0` and unset leave the watchdog off. An unparsable value also leaves it off, with no log (#2213, #2276). |
+| `NEAT_AI_DISCOVERY_WATCHDOG_STALL_SECS` | off | Abort if no progress for N seconds. Positive values are capped at 86400 seconds (24 hours); larger values clamp to the cap and log a `WARN` with the variable, supplied value and cap (#2405, `MAX_WATCHDOG_STALL_SECS`). `0` and unset leave the watchdog off. An unparsable value also leaves it off, and logs a `WARN` naming the variable and value (#2468). |
 | `NEAT_AI_DISCOVERY_WATCHDOG_ABORT_DELAY_SECS` | 2 | Delay between the diagnostic dump and abort, in seconds. Accepted range `0..=60`: a value above 60 is clamped to 60 with a `WARN` naming the variable, the value given and the cap (#2404, `MAX_WATCHDOG_ABORT_DELAY_SECS`); an unparsable value falls back to `2`; `0` aborts immediately after the dump. |
 
 ## Candidate generation & pruning
@@ -162,9 +171,9 @@ their fallback and range rules are those in the row.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `NEAT_AI_DISCOVERY_TIMING` | off | Phase timing, emitted as `tracing` debug events (message `phase timing`). Presence-only: any set value enables it, `0` included. Hidden under the default `RUST_LOG=warn`; set `RUST_LOG=neat_ai_discovery=debug` to see it. |
+| `NEAT_AI_DISCOVERY_TIMING` | off | Phase timing, emitted as `tracing` debug events (message `phase timing`). Hidden under the default `RUST_LOG=warn`; set `RUST_LOG=neat_ai_discovery=debug` to see it. |
 | `NEAT_AI_DISCOVERY_PROFILE` | off | Emit a structured profile as a `tracing` info event (message `profile data`). The only recognised value is `json` (case-insensitive); anything else disables profiling. Hidden under the default `RUST_LOG=warn`; set `RUST_LOG=neat_ai_discovery=info` to see it. |
-| `NEAT_AI_DISCOVERY_GPU_METRICS` | off | GPU metrics, emitted as a `tracing` info event (message `GPU metrics`). Presence-only: any set value enables it, `0` included. Hidden under the default `RUST_LOG=warn`; set `RUST_LOG=neat_ai_discovery=info` to see it. |
+| `NEAT_AI_DISCOVERY_GPU_METRICS` | off | GPU metrics, emitted as a `tracing` info event (message `GPU metrics`). Hidden under the default `RUST_LOG=warn`; set `RUST_LOG=neat_ai_discovery=info` to see it. |
 | `NEAT_AI_DISCOVERY_CALIBRATION_MISS_THRESHOLD` | 10.0 | `actual/expected` ratio above which prediction-vs-actual calibration mismatches are logged via `tracing::warn!`. Must be finite and `> 1.0`; invalid values fall back to the default so the log channel cannot be silenced by a malformed value. |
 | `NEAT_AI_DISCOVERY_STRICT_CANDIDATE_RECONCILIATION` | on for debug builds, off for release builds | Trip a `debug_assert!` when a discovery pass cannot account for every considered candidate (Issue #1802), so a newly-added silent drop path fails CI. Set to `0` to force warn-only. The `unaccounted_drop` rejection-breakdown entry and the `tracing::warn!` naming the surface and delta are emitted regardless, so a mismatch is never silent. See [docs/analysis/candidate-reconciliation-1802.md](analysis/candidate-reconciliation-1802.md). |
 | `NEAT_AI_DISCOVERY_SAMPLE_PROGRAM` | `sample` on macOS, none elsewhere | Path override for the `sample` binary used for thread-dump diagnostics. Off macOS no sampler is attempted unless this names one (Issue #1934). Diagnostics/tooling only — not a discovery-tuning knob. |
