@@ -39,6 +39,7 @@ The issue states no acceptance-criteria heading; nothing it asks is left undone.
 
 - Added `tests/issue_2468_guard_opt_out_warnings.rs` (4 tests: `every_opt_out_logs_one_warn_naming_variable_value_and_guard`, `unset_variables_log_nothing`, `valid_and_empty_values_log_no_warn_and_keep_their_value`, `repeated_opt_out_warns_once_and_a_new_value_warns_again`): passed at head (`cargo test --test issue_2468_guard_opt_out_warnings`, 4 passed).
 - Added two dedupe unit tests in `src/config/helpers.rs`.
+- Added their two test-only fixture names to `tests/issue_2096_config_doc_parity.rs`'s allowlist, keeping them out of the operator configuration reference. The parity and stale-allowlist tests cover this classification.
 - Red check: base `src/` restored, new test run: 2 of 4 failed as above (the other two are negative controls, expected green on base).
 - Negative controls (`unset_variables_log_nothing`, `valid_and_empty_values_log_no_warn_and_keep_their_value`) were not mutation-checked against a deliberately over-eager warning.
 - No existing test was edited or removed. Existing config tests (`issue_2006_numeric_env_override_trim`, `issue_2096_config_user_facing_a`/`_b`, `issue_2096_env_readers_outside_config`, `issue_2272_config_small_modules`, `issue_2405_watchdog_stall_timeout_truncation`) pass.
