@@ -534,7 +534,7 @@ fn topology_diversification_unhealthy_intermediates_row_is_checked_and_the_code_
     let base = "topology_diversification.rs";
     let source = production_source(&format!("src/analysis/detection/{base}"));
     assert!(
-        source.contains("deadline_passed"),
+        source.contains("deadline_passed(deadline)"),
         "src/analysis/detection/{base} must check `deadline_passed` in its production code, \
          because the `has_unhealthy_intermediates` traversal row reads `yes — \
          `deadline_passed`` — restore the check or correct the ledger prose"
