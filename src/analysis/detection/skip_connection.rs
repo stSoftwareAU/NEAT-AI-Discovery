@@ -22,6 +22,14 @@
 //! - **Attenuated gradient → addSynapse** (skip connection): Connect a shallow
 //!   neuron directly to a deep neuron to restore gradient signal flow.
 //!
+//! ## Inputs (Issue #2523)
+//!
+//! Input neurons are synthesised from the `CreatureJson::input` count as
+//! `input-0 .. input-{input - 1}` and need not be listed in `neurons`. Production
+//! creatures do not list their inputs, so an input-typed entry in `neurons` is
+//! accepted but never required. Synthesised inputs seed depth 0 and are the first
+//! shallow sources offered to each deep target.
+//!
 //! ## Bounds (Issue #2368)
 //!
 //! The depth pass is a Kahn topological sort, O(V + E): each neuron is popped
@@ -133,10 +141,19 @@ fn intern_uuid<'a>(
     })
 }
 
+/// Synthesised input neuron UUIDs, `input-0 .. input-{creature.input - 1}` (Issue #2523).
+///
+/// Production creatures give only the `input` count and do not list their input neurons in
+/// `neurons`. The names match `synapse/preparation.rs`.
+fn synthesised_input_uuids(creature: &CreatureJson) -> Vec<String> {
+    (0..creature.input).map(|i| format!("input-{i}")).collect()
+}
+
 /// Compute topological depth of each neuron from inputs using a Kahn topological pass.
 ///
-/// Input neurons have depth 0. A neuron's depth is the longest path from any input,
-/// so each layer increments by 1 from the deepest predecessor. Neurons not reachable
+/// Input neurons have depth 0: the inputs synthesised from `creature.input` (Issue #2523)
+/// and any neuron listed with type `input`. A neuron's depth is the longest path from any
+/// input, so each layer increments by 1 from the deepest predecessor. Neurons not reachable
 /// from an input have no depth and are absent from the returned map.
 ///
 /// Nodes are every neuron UUID plus every synapse endpoint. The pass runs in O(V + E)
@@ -147,15 +164,23 @@ fn compute_depths_from_inputs(creature: &CreatureJson, budget: &mut DepthBudget)
     let deadline = budget.deadline;
     let on_step = &mut *budget.on_step;
 
+    // Owned synthesised input UUIDs; they must outlive `index`, which borrows them.
+    let synthesised_inputs = synthesised_input_uuids(creature);
+
     // Densely index every node: neuron UUIDs first, then any synapse endpoint.
     let mut index: HashMap<&str, usize> = HashMap::new();
     let mut names: Vec<&str> = Vec::new();
-    let mut input_indices: Vec<usize> = Vec::new();
+    // A set, so a synthesised input also listed in `neurons` seeds only once.
+    let mut input_indices: HashSet<usize> = HashSet::new();
     for n in &creature.neurons {
         let i = intern_uuid(n.uuid.as_str(), &mut index, &mut names);
         if n.neuron_type == "input" {
-            input_indices.push(i);
+            input_indices.insert(i);
         }
+    }
+    for uuid in &synthesised_inputs {
+        let i = intern_uuid(uuid.as_str(), &mut index, &mut names);
+        input_indices.insert(i);
     }
     let mut edges: Vec<(usize, usize)> = Vec::with_capacity(creature.synapses.len());
     for s in &creature.synapses {
@@ -260,6 +285,10 @@ pub fn detect_skip_connection_candidates_with_deadline(
 /// `on_step` is the deterministic work counter used by step-count tests. It is called once per
 /// neuron popped in the depth pass, once per synapse relaxed in the depth pass, and once per
 /// candidate source examined in the target loop.
+///
+/// Input neurons are synthesised from `creature.input` (Issue #2523), so they need not be
+/// listed in `creature.neurons`. Synthesised inputs are offered as depth-0 sources ahead of the
+/// listed neurons.
 ///
 /// # Arguments
 /// * `creature` - The creature's network topology.
@@ -382,12 +411,26 @@ pub fn detect_skip_connection_candidates_observed(
         .map(|s| (s.from_uuid.as_str(), s.to_uuid.as_str()))
         .collect();
 
-    // Split shallow sources (inputs and hidden at depth <= 1) by depth, in creature order.
+    // Split shallow sources (inputs and hidden at depth <= 1) by depth.
     // Issue #2368: a depth-0 source always gives a larger gap than a depth-1 source for a
     // deep target (depth >= MIN_DEEP_DEPTH), so each target takes the first unconnected
     // depth-0 source, else the first unconnected depth-1 source.
+    // Issue #2523: synthesised inputs come first, then `neurons` in creature order. A
+    // synthesised uuid also listed in `neurons` is left to the listed loop, so it appears once.
+    let synthesised_inputs = synthesised_input_uuids(creature);
+    let listed_uuids: HashSet<&str> = creature.neurons.iter().map(|n| n.uuid.as_str()).collect();
     let mut depth0: Vec<&str> = Vec::new();
     let mut depth1: Vec<&str> = Vec::new();
+    for uuid in &synthesised_inputs {
+        if listed_uuids.contains(uuid.as_str()) {
+            continue;
+        }
+        match depths.get(uuid.as_str()).copied().unwrap_or(0) {
+            0 => depth0.push(uuid.as_str()),
+            1 => depth1.push(uuid.as_str()),
+            _ => {}
+        }
+    }
     for n in &creature.neurons {
         if n.neuron_type != "input" && n.neuron_type != "hidden" {
             continue;

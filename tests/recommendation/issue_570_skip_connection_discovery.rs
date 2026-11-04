@@ -653,3 +653,52 @@ fn test_uniform_error_no_attenuation_no_candidates() {
         candidates.len()
     );
 }
+
+/// Issue #2523: production creatures do not list their input neurons in `neurons`; the
+/// `input` count alone defines `input-0`. With the `input`-typed entries removed from the
+/// deep network, the detector must still seed depth 0 from `input-0` and emit a skip
+/// connection sourced from it.
+#[test]
+fn test_deep_network_without_listed_input_neurons_emits_skip_from_input_0() {
+    let mut creature = deep_network_creature();
+    creature.neurons.retain(|n| n.neuron_type != "input");
+    assert_eq!(creature.input, 1, "Creature still declares one input");
+    assert!(
+        creature.neurons.iter().all(|n| n.uuid != "input-0"),
+        "input-0 must not be listed in neurons for this test"
+    );
+
+    let neuron_records: Vec<(String, Vec<DiscoverRecord>)> = vec![
+        ("h0".into(), make_records("h0", 30, 0.8, 0.50)),
+        ("h1".into(), make_records("h1", 30, 0.6, 0.35)),
+        ("h2".into(), make_records("h2", 30, 0.4, 0.08)),
+        ("h3".into(), make_records("h3", 30, 0.3, 0.05)),
+        ("h4".into(), make_records("h4", 30, 0.2, 0.03)),
+    ];
+
+    let candidates = detect_skip_connection_candidates(&creature, &neuron_records);
+
+    assert!(
+        !candidates.is_empty(),
+        "Issue #2523: unlisted input neurons must still seed depth 0, so candidates must be emitted"
+    );
+    assert!(
+        candidates
+            .iter()
+            .any(|c| c.source_uuid == "input-0" && c.source_depth == 0 && c.depth_gap >= 3),
+        "Issue #2523: expected a candidate from input-0 (depth 0) to a deep target, got {candidates:?}"
+    );
+
+    let coordinated = skip_connections_to_coordinated_candidates(&candidates, &creature);
+    let has_add_from_input_0 = coordinated.iter().any(|c| {
+        c.operations.iter().any(|op| {
+            let json = serde_json::to_string(op).unwrap_or_default();
+            json.contains("\"type\":\"addSynapse\"")
+                && json.contains("\"fromNeuronUuid\":\"input-0\"")
+        })
+    });
+    assert!(
+        has_add_from_input_0,
+        "Issue #2523: expected an AddSynapse from input-0 in the coordinated candidates"
+    );
+}
