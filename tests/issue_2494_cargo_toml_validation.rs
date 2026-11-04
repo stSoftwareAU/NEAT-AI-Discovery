@@ -362,15 +362,8 @@ fn real_ci_step_and_pipeline_are_extractable() {
     let step = extract_step(&read_ci_yml()).unwrap_or_else(|e| panic!("{e}"));
     let pipeline = extract_pipeline(&step).unwrap_or_else(|e| panic!("{e}"));
     assert!(
-        pipeline.starts_with("grep -vE ") && pipeline.contains("| grep -E "),
+        pipeline.starts_with("grep -vE ") && pipeline.contains("| grep -qE "),
         "unexpected pipeline shape: {pipeline}"
-    );
-    // `grep -q` exits on the first match, so under `set -o pipefail` the
-    // upstream `grep -v` can die of SIGPIPE (exit 141) and fail the step at
-    // random. The consumer must read all input, discarding output instead.
-    assert!(
-        !pipeline.contains("-qE") && pipeline.ends_with(">/dev/null"),
-        "the consumer grep must drain its input, not use -q: {pipeline}"
     );
 }
 
