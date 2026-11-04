@@ -6,6 +6,8 @@ Version bump: the merge retains the PR's `0.74.347` in `Cargo.toml` and `Cargo.l
 
 CI repair: document the sync and check commands as separate quality-gate steps, and recognise both ShellCheck diagnostics for the cleanup function invoked by the EXIT trap. The cleanup behaviour is unchanged.
 
+Merge resolution: retain both the fuzz lockfile and Parquet decode preflight entries in the changelog.
+
 ## Spec
 
 ### Intent and Rationale
