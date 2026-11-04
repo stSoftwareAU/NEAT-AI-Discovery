@@ -31,7 +31,7 @@ use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson, Cre
 use crate::analysis::constants::MIN_DISCOVERY_SAMPLE_COUNT;
 
 use super::error_dispersion::error_dispersion;
-use super::helpers::build_record_map;
+use super::helpers::{build_record_map, existing_neuron_uuids, first_free_neuron_uuid};
 
 /// Minimum mean absolute output error to consider the topology insufficient.
 /// Below this threshold the network is performing adequately.
@@ -379,6 +379,10 @@ fn topology_diversification_neuron_uuid(source_uuid: &str, output_uuid: &str) ->
 /// 1. `AddNeuron` — a new hidden neuron with TANH activation between input and output
 /// 2. `AddSynapse` — connection from the source input to the new neuron
 /// 3. `AddSynapse` — connection from the new neuron to the output
+///
+/// Issue #2499: a candidate whose legacy neuron already feeds the output is skipped
+/// (it was already applied). Otherwise the neuron UUID is the legacy UUID when free,
+/// or the first free `-salt` suffix when the legacy UUID names an existing neuron.
 pub fn topology_diversification_to_coordinated_candidates(
     candidates: &[TopologyDiversificationCandidate],
     creature: &CreatureJson,
@@ -390,16 +394,29 @@ pub fn topology_diversification_to_coordinated_candidates(
         .map(|s| (s.from_uuid.as_str(), s.to_uuid.as_str()))
         .collect();
 
+    // Issue #2499: the creature's existing neuron UUIDs, collected once per call.
+    let existing = existing_neuron_uuids(creature);
+
     let mut results = Vec::new();
 
     for c in candidates {
-        let neuron_uuid =
+        let legacy_uuid =
             topology_diversification_neuron_uuid(&c.source_input_uuid, &c.output_neuron_uuid);
 
-        // Skip if the new neuron's connections would duplicate existing synapses
-        if existing_synapses.contains(&(neuron_uuid.as_str(), c.output_neuron_uuid.as_str())) {
+        // Skip if the legacy neuron's connection to the output already exists: the
+        // candidate was already applied, so it must not be re-emitted under a new salt.
+        if existing_synapses.contains(&(legacy_uuid.as_str(), c.output_neuron_uuid.as_str())) {
             continue;
         }
+
+        // Issue #2499: keep the legacy UUID when free, else the first free `-salt`.
+        let neuron_uuid = first_free_neuron_uuid(&existing, |salt| {
+            if salt == 0 {
+                legacy_uuid.clone()
+            } else {
+                format!("{legacy_uuid}-{salt}")
+            }
+        });
 
         let operations = vec![
             CoordinatedStructuralOpJson::AddNeuron {
