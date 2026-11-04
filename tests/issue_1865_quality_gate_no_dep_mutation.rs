@@ -17,6 +17,23 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::process::{Command, Stdio};
 
+fn copy_quality_gate(root: &Path) {
+    let repo = Path::new(env!("CARGO_MANIFEST_DIR"));
+    for rel in [
+        "quality.sh",
+        "quality/bash_syntax.sh",
+        "quality/shellcheck.sh",
+        "quality/cargo_install_pinning.sh",
+        "quality/fuzz_lockfile.sh",
+        "scripts/check-pr-summary-location.sh",
+    ] {
+        let dest = root.join(rel);
+        fs::create_dir_all(dest.parent().expect("parent")).expect("create fixture dir");
+        fs::copy(repo.join(rel), dest).expect("copy gate script");
+    }
+    fs::create_dir_all(root.join("docs")).expect("create docs");
+}
+
 /// Write an executable stub script into `dir`.
 fn write_stub(dir: &Path, name: &str, body: &str) {
     let path = dir.join(name);
@@ -28,8 +45,14 @@ fn write_stub(dir: &Path, name: &str, body: &str) {
 
 #[test]
 fn quality_gate_never_mutates_the_dependency_graph() {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let tmp = tempfile::tempdir().expect("temp dir");
+    let root = tmp.path().join("root");
+    copy_quality_gate(&root);
+    for rel in ["Cargo.toml", "fuzz/Cargo.toml", "fuzz/Cargo.lock"] {
+        let dest = root.join(rel);
+        fs::create_dir_all(dest.parent().expect("parent")).expect("create fixture dir");
+        fs::copy(Path::new(env!("CARGO_MANIFEST_DIR")).join(rel), dest).expect("copy fixture");
+    }
     let bin = tmp.path().join("bin");
     fs::create_dir_all(&bin).expect("create stub bin dir");
     let log = tmp.path().join("cargo-invocations.log");
@@ -48,14 +71,20 @@ fn quality_gate_never_mutates_the_dependency_graph() {
     // `shellcheck` is a hard requirement of the gate; stub it so this test
     // does not depend on the host having it installed.
     write_stub(&bin, "shellcheck", "#!/bin/bash\nexit 0\n");
+    write_stub(
+        &bin,
+        "mktemp",
+        "#!/bin/bash\nif [ $# -eq 0 ]; then set -- \"$TMPDIR/tmp.XXXXXXXX\"; fi\nexec /usr/bin/mktemp \"$@\"\n",
+    );
 
     // HOME points at the temp dir so quality.sh does not source the real
     // ~/.cargo/env and prepend the real cargo ahead of our stub.
     let output = Command::new("bash")
         .arg("quality.sh")
-        .current_dir(root)
+        .current_dir(&root)
         .env("PATH", format!("{}:/usr/bin:/bin", bin.display()))
         .env("HOME", tmp.path())
+        .env("TMPDIR", tmp.path())
         .stdin(Stdio::null())
         .output()
         .expect("run quality.sh");

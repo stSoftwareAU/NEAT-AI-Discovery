@@ -75,6 +75,13 @@ jobs:
         restore-keys: |
           ${{ runner.os }}-fuzz-
 
+    # CI's version-increment job bumps Cargo.toml but not fuzz/Cargo.lock, so
+    # restamp its path-package version before the --locked runs (Issue #2506).
+    - name: Sync fuzz/Cargo.lock version
+      run: |
+        quality/fuzz_lockfile.sh sync
+        quality/fuzz_lockfile.sh check
+
     # --locked honours the committed fuzz/Cargo.lock so CI fuzz runs use the
     # pinned, reviewed dependency tree rather than re-resolving (Issue #1427).
     - name: Fuzz FFI deserialisation

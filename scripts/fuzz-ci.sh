@@ -42,6 +42,14 @@ if ! cargo +nightly fuzz --version >/dev/null 2>&1; then
     cargo +nightly install --locked --version 0.13.2 cargo-fuzz
 fi
 
+# Restamp fuzz/Cargo.lock's path-package version, then confirm `--locked` accepts
+# it (Issue #2506). CI's `version-increment` job bumps Cargo.toml and only the
+# root Cargo.lock, so without this the first `fuzz run --locked` after an
+# automatic bump fails with "lock file needs to be updated".
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+"${REPO_ROOT}/quality/fuzz_lockfile.sh" sync
+"${REPO_ROOT}/quality/fuzz_lockfile.sh" check
+
 FUZZ_TARGETS=(
     "fuzz_ffi_deserialisation"
     "fuzz_ffi_entry_points"
