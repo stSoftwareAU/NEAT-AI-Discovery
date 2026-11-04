@@ -525,6 +525,61 @@ fn converter_files_checked_since_audit_really_check_the_deadline() {
 }
 
 #[test]
+fn topology_diversification_unhealthy_intermediates_row_is_checked_and_the_code_checks_the_deadline()
+ {
+    // Issue #2489: the per-output loop checks `deadline_passed` once per output,
+    // before `has_unhealthy_intermediates` walks. Its traversal row must cite
+    // that check, and the file must really carry it, so the `yes` cannot
+    // outlive the code.
+    let base = "topology_diversification.rs";
+    let source = production_source(&format!("src/analysis/detection/{base}"));
+    assert!(
+        source.contains("deadline_passed(deadline)"),
+        "src/analysis/detection/{base} must check `deadline_passed` in its production code, \
+         because the `has_unhealthy_intermediates` traversal row reads `yes — \
+         `deadline_passed`` — restore the check or correct the ledger prose"
+    );
+
+    let doc = read(RECORD);
+    let rows = capacity_table_rows_for(&doc, base);
+
+    let unhealthy = rows
+        .iter()
+        .find(|row| {
+            row.first().is_some_and(|first| {
+                first == "`topology_diversification.rs::has_unhealthy_intermediates`"
+            })
+        })
+        .expect("the `has_unhealthy_intermediates` traversal row must exist");
+    let cancellation = unhealthy.get(4).map(String::as_str).unwrap_or_default();
+    assert!(
+        cancellation.starts_with("yes — `deadline_passed`"),
+        "the `has_unhealthy_intermediates` traversal row's Cancellation-checked? cell must start \
+         with `yes — `deadline_passed`` because Issue #2489 checks it once per output before its \
+         walk, got `{cancellation}`"
+    );
+
+    let input_reachable = rows
+        .iter()
+        .find(|row| {
+            row.first().is_some_and(|first| {
+                first == "`topology_diversification.rs::input_reachable_hidden_depths`"
+            }) && row.get(1).is_some_and(|kind| kind == "traversal")
+        })
+        .expect("the `input_reachable_hidden_depths` traversal row must exist");
+    let pass_cancellation = input_reachable
+        .get(4)
+        .map(String::as_str)
+        .unwrap_or_default();
+    assert!(
+        !pass_cancellation.is_empty() && !pass_cancellation.starts_with("yes"),
+        "the `input_reachable_hidden_depths` traversal row's Cancellation-checked? cell must be \
+         non-empty and must not start with `yes`, because the one-off depth pass is not \
+         interrupted (Issue #2489), got `{pass_cancellation}`"
+    );
+}
+
+#[test]
 fn every_issue_linked_from_a_swept_row_appears_under_issues_filed() {
     let doc = read(RECORD);
     let region = per_neuron_b_region(&doc);

@@ -18,9 +18,9 @@ use super::super::{cache, discovery_dispatch};
 ///
 /// `deadline` is forwarded into the multi-hop and fan-in scans (Issue #2183),
 /// the correlated-error scan (Issue #2346), topology analysis (Issue #2369),
-/// the skip-connection scan (Issue #2368), the output-conflict conversion
-/// (Issue #2358), and the compound bias+weight degradation scan (Issue #2367)
-/// so they stop at the discovery deadline or on global cancellation.
+/// the topology diversification scan (Issue #2489), the skip-connection scan (Issue #2368),
+/// the output-conflict conversion (Issue #2358), and the compound bias+weight degradation scan
+/// (Issue #2367) so they stop at the discovery deadline or on global cancellation.
 pub(crate) fn append_structural_specs(
     modules: &mut Vec<discovery_dispatch::DiscoveryModuleSpec>,
     creature: &Arc<crate::CreatureJson>,
@@ -100,12 +100,30 @@ pub(crate) fn append_structural_specs(
         },
     );
 
-    // Issue #549: Topology diversification for structural jumps
+    // Issue #549: Topology diversification for structural jumps (custom: deadline-bounded scan, Issue #2489)
     discovery_spec!(modules, "topology diversification detection", "topology_diversification_detection",
         cache = shared_cache, creature = creature =>
-        records: cache.load_records_for_all_neurons(&creature),
-        detect: |records| topology_diversification::detect_topology_diversification_candidates(&creature, &records),
-        convert: |detected| topology_diversification::topology_diversification_to_coordinated_candidates(&detected, &creature),
+        custom: move || {
+            let records = cache.load_records_for_all_neurons(&creature);
+            let scan = topology_diversification::detect_topology_diversification_candidates_with_deadline(
+                &creature, &records, &deadline,
+            );
+            // Issue #2489: report (and return) partial results rather than failing silently.
+            if let Some(reason) = scan.stop {
+                tracing::warn!(reason = ?reason, returned = scan.candidates.len(), "Topology diversification scan stopped early; returning partial candidates.");
+            }
+            let detected = scan.candidates;
+            if detected.is_empty() {
+                return None;
+            }
+            let candidates = topology_diversification::topology_diversification_to_coordinated_candidates(
+                &detected, &creature,
+            );
+            Some(discovery_dispatch::DiscoveryDetectionResult {
+                detected_count: detected.len(),
+                candidates,
+            })
+        },
     );
 
     // Issue #570: Skip-connection discovery for beneficial residual connections (custom: deadline-bounded scan, Issue #2368)
@@ -219,3 +237,7 @@ mod structural_specs_issue_2369_tests;
 #[cfg(test)]
 #[path = "structural_specs_issue_2367_tests.rs"]
 mod structural_specs_issue_2367_tests;
+
+#[cfg(test)]
+#[path = "structural_specs_issue_2489_tests.rs"]
+mod structural_specs_issue_2489_tests;
