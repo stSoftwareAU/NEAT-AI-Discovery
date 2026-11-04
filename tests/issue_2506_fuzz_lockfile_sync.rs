@@ -10,14 +10,29 @@
 //! `sync` then `check` before `cargo deny`.
 //!
 //! The script tests build their fixtures inside `tempfile::tempdir()`. The
-//! quality-gate test runs the real `quality.sh`, and its `sync` step restamps the
-//! repo's `fuzz/Cargo.lock` when that lock is stale. This is expected, so the
-//! test snapshots the lock and restores it on drop, even when an assertion fails.
+//! quality-gate test runs copies of the gate and its helpers in a private root.
 
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
+
+fn copy_quality_gate(root: &Path) {
+    let repo = Path::new(env!("CARGO_MANIFEST_DIR"));
+    for rel in [
+        "quality.sh",
+        "quality/bash_syntax.sh",
+        "quality/shellcheck.sh",
+        "quality/cargo_install_pinning.sh",
+        "quality/fuzz_lockfile.sh",
+        "scripts/check-pr-summary-location.sh",
+    ] {
+        let dest = root.join(rel);
+        fs::create_dir_all(dest.parent().expect("parent")).expect("create fixture dir");
+        fs::copy(repo.join(rel), dest).expect("copy gate script");
+    }
+    fs::create_dir_all(root.join("docs")).expect("create docs");
+}
 
 /// Write an executable stub script into `dir`.
 fn write_stub(dir: &Path, name: &str, body: &str) {
@@ -124,6 +139,33 @@ fn run_script(mode: &str, root: &Path) -> Output {
         .stdin(Stdio::null())
         .output()
         .expect("run quality/fuzz_lockfile.sh")
+}
+
+#[test]
+fn concurrent_syncs_preserve_the_lock_and_its_mode() {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let root = tmp.path();
+    fixture(root, "1.2.4", "1.2.3");
+    let lock = root.join("fuzz/Cargo.lock");
+    fs::set_permissions(&lock, fs::Permissions::from_mode(0o640)).expect("chmod lock");
+    let mut children: Vec<_> = (0..16)
+        .map(|_| {
+            Command::new("bash")
+                .arg(script())
+                .arg("sync")
+                .arg(root)
+                .spawn()
+                .expect("start sync")
+        })
+        .collect();
+    for child in &mut children {
+        assert!(child.wait().expect("wait for sync").success());
+    }
+    assert_eq!(read_lock(root), lock_text("1.2.4"));
+    assert_eq!(
+        fs::metadata(lock).expect("stat lock").permissions().mode() & 0o777,
+        0o640
+    );
 }
 
 #[test]
@@ -269,33 +311,12 @@ fn check_accepts_a_current_lock() {
     );
 }
 
-/// Restores `fuzz/Cargo.lock` to its snapshot on drop.
-struct RestoreLock {
-    path: PathBuf,
-    bytes: Vec<u8>,
-}
-
-impl Drop for RestoreLock {
-    fn drop(&mut self) {
-        if let Err(err) = fs::write(&self.path, &self.bytes) {
-            eprintln!("failed to restore {}: {err}", self.path.display());
-        }
-    }
-}
-
 #[test]
 fn quality_gate_syncs_then_checks_the_fuzz_lockfile() {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let lock_path = root.join("fuzz/Cargo.lock");
-    // quality.sh's sync step restamps the repo's fuzz/Cargo.lock when it is
-    // stale. That is expected, so restore the snapshot on drop to keep this
-    // test hermetic.
-    let _restore = RestoreLock {
-        bytes: fs::read(&lock_path).expect("snapshot fuzz/Cargo.lock"),
-        path: lock_path,
-    };
-
     let tmp = tempfile::tempdir().expect("temp dir");
+    let root = tmp.path().join("root");
+    fixture(&root, "9.9.9", "1.0.0");
+    copy_quality_gate(&root);
     let bin = tmp.path().join("bin");
     fs::create_dir_all(&bin).expect("create stub bin dir");
     let log = tmp.path().join("cargo-invocations.log");
@@ -311,14 +332,20 @@ fn quality_gate_syncs_then_checks_the_fuzz_lockfile() {
     );
     write_stub(&bin, "cargo-upgrade", "#!/bin/bash\nexit 0\n");
     write_stub(&bin, "shellcheck", "#!/bin/bash\nexit 0\n");
+    write_stub(
+        &bin,
+        "mktemp",
+        "#!/bin/bash\nif [ $# -eq 0 ]; then set -- \"$TMPDIR/tmp.XXXXXXXX\"; fi\nexec /usr/bin/mktemp \"$@\"\n",
+    );
 
     // HOME points at the temp dir so quality.sh does not source the real
     // ~/.cargo/env and prepend the real cargo ahead of our stub.
     let output = Command::new("bash")
         .arg("quality.sh")
-        .current_dir(root)
+        .current_dir(&root)
         .env("PATH", format!("{}:/usr/bin:/bin", bin.display()))
         .env("HOME", tmp.path())
+        .env("TMPDIR", tmp.path())
         .stdin(Stdio::null())
         .output()
         .expect("run quality.sh");
@@ -384,12 +411,18 @@ fn run_fuzz_ci_in_stale_root() -> (tempfile::TempDir, PathBuf, String, Output) {
         ),
     );
     write_stub(&bin, "rustup", "#!/bin/bash\nexit 0\n");
+    write_stub(
+        &bin,
+        "mktemp",
+        "#!/bin/bash\nif [ $# -eq 0 ]; then set -- \"$TMPDIR/tmp.XXXXXXXX\"; fi\nexec /usr/bin/mktemp \"$@\"\n",
+    );
 
     let output = Command::new("bash")
         .arg(root.join("scripts/fuzz-ci.sh"))
         .arg("1")
         .current_dir(&root)
         .env("PATH", format!("{}:/usr/bin:/bin", bin.display()))
+        .env("TMPDIR", tmp.path())
         .stdin(Stdio::null())
         .output()
         .expect("run fuzz-ci.sh");

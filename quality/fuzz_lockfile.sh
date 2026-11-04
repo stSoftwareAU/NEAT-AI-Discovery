@@ -26,12 +26,16 @@
 set -euo pipefail
 
 scratch=""
+snapshot=""
 cargo_err=""
 # Invoked indirectly by the EXIT trap below, which ShellCheck cannot see.
 # shellcheck disable=SC2317,SC2329
 cleanup() {
     if [[ -n "$scratch" ]]; then
         rm -f -- "$scratch"
+    fi
+    if [[ -n "$snapshot" ]]; then
+        rm -f -- "$snapshot"
     fi
     if [[ -n "$cargo_err" ]]; then
         rm -f -- "$cargo_err"
@@ -176,16 +180,29 @@ if [[ "$mode" == "sync" ]]; then
         exit 0
     fi
 
-    # Rewrite into a scratch file beside the lockfile, check that exactly one
-    # line differs, and only then copy it over. `cat >` keeps the file's mode.
+    # Compare against a stable snapshot and replace atomically, retaining mode.
+    snapshot="$(mktemp "$root/fuzz/Cargo.lock.XXXXXX")"
+    cp -p "$fuzz_lock" "$snapshot"
+    found="$(locate_path_package "$snapshot" "$crate")"
+    IFS=$'\t' read -r hits lock_line lock_ver <<< "$found"
+    if [[ "$hits" -eq 1 && "$lock_ver" == "$root_ver" ]]; then
+        echo "fuzz-lockfile: $fuzz_lock already records $crate $root_ver — nothing to do"
+        exit 0
+    fi
+    if [[ "$hits" -ne 1 || "$lock_line" -eq 0 ]]; then
+        echo "fuzz-lockfile: path package changed while reading $fuzz_lock" >&2
+        exit 1
+    fi
     scratch="$(mktemp "$root/fuzz/Cargo.lock.XXXXXX")"
-    sed "${lock_line}s/^version[[:space:]]*=[[:space:]]*\"[^\"]*\"/version = \"$root_ver\"/" "$fuzz_lock" > "$scratch"
-    changed="$(diff "$fuzz_lock" "$scratch" | grep -c '^[<>]' || true)"
+    cp -p "$snapshot" "$scratch"
+    sed "${lock_line}s/^version[[:space:]]*=[[:space:]]*\"[^\"]*\"/version = \"$root_ver\"/" "$snapshot" > "$scratch"
+    changed="$(diff "$snapshot" "$scratch" | grep -c '^[<>]' || true)"
     if [[ "$changed" -ne 2 ]]; then
         echo "fuzz-lockfile: restamp changed $changed line(s) of $fuzz_lock (expected 1) — leaving it untouched" >&2
         exit 1
     fi
-    cat "$scratch" > "$fuzz_lock"
+    mv -f -- "$scratch" "$fuzz_lock"
+    scratch=""
     echo "fuzz-lockfile: $fuzz_lock: $crate $lock_ver -> $root_ver"
     exit 0
 fi

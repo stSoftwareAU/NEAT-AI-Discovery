@@ -32,6 +32,17 @@ impl Sandbox {
         let bin = dir.path().join("bin");
         fs::create_dir_all(&bin).expect("create bin dir");
         let log = dir.path().join("commands.log");
+        for rel in [
+            "scripts/fuzz-ci.sh",
+            "quality/fuzz_lockfile.sh",
+            "Cargo.toml",
+            "fuzz/Cargo.toml",
+            "fuzz/Cargo.lock",
+        ] {
+            let dest = dir.path().join(rel);
+            fs::create_dir_all(dest.parent().expect("parent")).expect("create fixture dir");
+            fs::copy(repo_root().join(rel), dest).expect("copy fixture");
+        }
 
         let cargo = format!(
             r#"#!/bin/bash
@@ -77,9 +88,9 @@ exit 0
             std::env::var("PATH").unwrap_or_default()
         );
         Command::new("bash")
-            .arg(repo_root().join("scripts/fuzz-ci.sh"))
+            .arg(self.dir.path().join("scripts/fuzz-ci.sh"))
             .arg(max_time)
-            .current_dir(repo_root())
+            .current_dir(self.dir.path())
             .env("PATH", path)
             .output()
             .expect("run fuzz-ci.sh")
