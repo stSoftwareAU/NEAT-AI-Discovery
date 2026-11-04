@@ -1,6 +1,6 @@
 ## Summary
 
-The streaming recording session's temporary file (`<temp_dir>/discovery_data.parquet.tmp`) is now created with `create_new` (`O_EXCL`) instead of `File::create`. A new `ParquetRecordWriter::new_exclusive` does this, and `RecordingSession::new` uses it. `start_session` therefore fails, with an error naming the path, when anything already sits there, and leaves it untouched: a regular file, a symlink (including a dangling one), a recording retained by the #1902 guard, or another live session's file. `ParquetRecordWriter::new` keeps its truncating behaviour for its other callers. Version bump: `Cargo.toml` and `Cargo.lock` updated for this change; the merged commit records the final version. Closes #2515.
+The streaming recording session's temporary file (`<temp_dir>/discovery_data.parquet.tmp`) is now created with `create_new` (`O_EXCL`) instead of `File::create`. A new `ParquetRecordWriter::new_exclusive` does this, and `RecordingSession::new` uses it. `start_session` therefore fails, with an error naming the path, when anything already sits there, and leaves it untouched: a regular file, a symlink (including a dangling one), a recording retained by the #1902 guard, or another live session's file. `ParquetRecordWriter::new` keeps its truncating behaviour for its other callers. Version bump: `Cargo.toml` and `Cargo.lock` updated for this change; the merge retains the PR version `0.74.349` in both files, ahead of Develop’s `0.74.348`. Closes #2515.
 
 ## Spec
 

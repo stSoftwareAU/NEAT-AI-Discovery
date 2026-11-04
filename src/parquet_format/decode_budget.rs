@@ -1,16 +1,17 @@
 //! Cumulative decode budget for Parquet reads (Issue #1869).
 //!
 //! Footer estimates reject known oversized decodes before Arrow builds a
-//! batch. Per-record charging remains a second check after batch decoding, but
-//! cannot protect against a footer that understates decoded sizes.
+//! batch. The estimate includes the decoded `neuron_uuid` strings, taken from
+//! the footer's size statistic or from a dictionary-aware bound when the
+//! statistic is absent (Issue #2507). Per-record charging remains a second
+//! check after batch decoding. Neither check protects against a footer that
+//! misstates its own statistics.
 
 use anyhow::{Context, Result};
 
 use crate::DiscoveryError;
 use crate::analysis::utils::get_memory_info;
-use crate::parquet_format::footer::{
-    ASSUMED_UUID_HEAP_BYTES, RECORD_STRUCT_BYTES, projected_bytes_for_columns,
-};
+use crate::parquet_format::footer::{RECORD_STRUCT_BYTES, projected_bytes_for_columns};
 
 /// One megabyte in bytes.
 const BYTES_PER_MB: u64 = 1024 * 1024;
@@ -112,7 +113,9 @@ impl DecodeBudget {
     }
 
     /// Refuse a footer-projected decode that cannot fit without consuming the
-    /// budget, leaving per-record charging to account for the actual rows.
+    /// budget, leaving per-record charging to account for the actual rows. The
+    /// projection is built by the footer helpers, which include the decoded
+    /// `neuron_uuid` strings (Issue #2507).
     pub fn check_projected(&self, projected_bytes: u64, file_path: &str) -> Result<()> {
         if self
             .limit_bytes
@@ -128,7 +131,9 @@ impl DecodeBudget {
     }
 
     /// Check the projected selected columns using metadata already held by the
-    /// reader builder. This does not charge the budget.
+    /// reader builder. This does not charge the budget. The per-row overhead is
+    /// the materialised record struct; the `neuron_uuid` string heap comes from
+    /// the footer (Issue #2507).
     pub fn preflight_columns(
         &self,
         metadata: &parquet::file::metadata::ParquetMetaData,
@@ -138,7 +143,7 @@ impl DecodeBudget {
         let projected = projected_bytes_for_columns(
             metadata,
             selected_roots,
-            RECORD_STRUCT_BYTES.saturating_add(ASSUMED_UUID_HEAP_BYTES),
+            RECORD_STRUCT_BYTES,
             selected_roots.contains(&"errors"),
         )
         .with_context(|| format!("Parquet footer preflight failed for '{file_path}'"))?;
@@ -148,7 +153,10 @@ impl DecodeBudget {
     /// Bound each row group's selected decode for readers that filter, fold or
     /// stream rather than retaining the whole file. Only Arrow column storage is
     /// estimated here, not the `DiscoverRecord` allocations these readers discard.
-    /// Callers must use `row_group_batches` so batches cannot span groups.
+    /// The `neuron_uuid` string heap for each group comes from the footer
+    /// (Issue #2507), and each row keeps only the four-byte Arrow offset word as
+    /// per-row overhead. Callers must use `row_group_batches` so batches cannot
+    /// span groups.
     pub fn preflight_row_groups(
         &self,
         metadata: &parquet::file::metadata::ParquetMetaData,
@@ -162,7 +170,7 @@ impl DecodeBudget {
                 selected_roots
                     .iter()
                     .map(|root| match *root {
-                        "neuron_uuid" => ASSUMED_UUID_HEAP_BYTES + 4,
+                        "neuron_uuid" => 4,
                         "obs_index" | "value" | "activation" | "errors" => 4,
                         _ => 0,
                     })
