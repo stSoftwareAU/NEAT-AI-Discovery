@@ -50,6 +50,8 @@ Not covered by a test: the `bump-deps.sh` Phase 3c call site (exercised only by 
 
 Docs: `CONTRIBUTING.md` (quality.sh step list, renumbered), `README.md` (fuzz section), `AGENTS.md` (Version Bumps), `CHANGELOG.md`.
 
-Not done / risk: the CI `version-increment` job is unchanged (see above). `./quality.sh` in full and `cargo deny` were not run to completion on the final tree.
+Full gate: `timeout 595 ./quality.sh` on the final tree passed `bash -n`, shellcheck, cargo-install pinning, the PR-summary layout check, the new `fuzz-lockfile … OK` step, `cargo deny check` (`advisories ok, bans ok, licenses ok, sources ok`), `cargo build`, `cargo fmt` and `cargo clippy --all-targets --all-features`. It then hit the 595 s cap (exit 124) while `cargo check --all-targets` was compiling, so `cargo test --lib --tests`, `cargo doc` and the release build did not run.
 
-<!-- vibe-quality-gate-skipped reason="full ./quality.sh takes about 15 minutes and did not fit in the foreground cap; fmt, clippy on the new test, shellcheck, bash -n and the targeted tests above were run; CI runs the full gate" -->
+Not done / risk: the CI `version-increment` job is unchanged (see above). The last gate stages (full `cargo test`, `cargo doc`, release build) were not run here.
+
+<!-- vibe-quality-gate-skipped reason="full ./quality.sh exceeded the 595 s foreground cap (exit 124) during cargo check; every stage before it passed; the new tests, fmt and clippy were run separately; CI runs the full gate" -->
