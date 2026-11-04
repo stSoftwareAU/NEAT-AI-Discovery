@@ -158,18 +158,16 @@ so do not skip this step. `./quality.sh` performs these checks in order:
    pass both `--locked` and `--version` (Issue #1912, enforcing Issue #1223)
 4. `./scripts/check-pr-summary-location.sh` — PR summaries must stay in
    `docs/archive/pr-summaries/` (Issue #1613)
-5. `./quality/fuzz_lockfile.sh sync` then `check` — `fuzz/Cargo.lock` must record
-   the crate's current version so `cargo fuzz run --locked` works after a version
-   bump (Issue #2506); `sync` restamps only that one line and re-resolves nothing,
-   so it does not breach Issue #1865
-6. `cargo deny check` (licence and dependency audit)
-7. `cargo build` (debug, quick feedback)
-8. `cargo fmt --all` (auto-formatting)
-9. `cargo clippy --all-targets --all-features -- -D warnings`
-10. `cargo check --all-targets --all-features`
-11. `cargo test --lib --tests --all-features -- --test-threads=2`
-12. `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps` (documentation build)
-13. `cargo build --release --lib`
+5. `./quality/fuzz_lockfile.sh sync` — restamp the crate version in `fuzz/Cargo.lock` without re-resolving dependencies (Issue #2506)
+6. `./quality/fuzz_lockfile.sh check` — verify the lockfile with `cargo metadata --locked`
+7. `cargo deny check` (licence and dependency audit)
+8. `cargo build` (debug, quick feedback)
+9. `cargo fmt --all` (auto-formatting)
+10. `cargo clippy --all-targets --all-features -- -D warnings`
+11. `cargo check --all-targets --all-features`
+12. `cargo test --lib --tests --all-features -- --test-threads=2`
+13. `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps` (documentation build)
+14. `cargo build --release --lib`
 
 If any step fails, fix the issue and re-run. Do **not** commit code that fails
 `./quality.sh`.

@@ -4,6 +4,8 @@
 
 Version bump: the merge retains both changelog entries and advances `Cargo.toml`, `Cargo.lock` and `fuzz/Cargo.lock` to `0.74.346`, above Develop’s `0.74.345`.
 
+CI repair: document the sync and check commands as separate quality-gate steps, and recognise both ShellCheck diagnostics for the cleanup function invoked by the EXIT trap. The cleanup behaviour is unchanged.
+
 ## Spec
 
 ### Intent and Rationale
@@ -32,6 +34,8 @@ Backend/scripting change; no UI. Commands run on the final tree:
 - `./quality/shellcheck.sh .` and `./quality/bash_syntax.sh .` passed (19 scripts).
 
 ## Test Plan
+
+The existing `tests/issue_1992_ci_doc_accuracy.rs::ordered_gate_list_matches_quality_sh` checks the documented sequence, and `tests/issue_1898_shellcheck_gate.rs::gate_passes_over_the_repository_itself` checks the shell scripts.
 
 New `tests/issue_2506_fuzz_lockfile_sync.rs` (fixtures built in temp directories; real `cargo`, offline):
 
