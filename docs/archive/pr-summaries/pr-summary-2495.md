@@ -2,7 +2,7 @@
 
 Tests in the `tests/infrastructure` binary that call detectors observing the process-global cancellation flag are now `#[serial]`, so they can no longer run while a serial cancellation test holds the flag set. Closes #2495.
 
-Version bump: `Cargo.toml` and `Cargo.lock` updated for this change; the merged commit records the final version.
+Merge resolution: `Cargo.toml` and `Cargo.lock` retain Develop’s newer `0.74.345` version; CI increments the version for the PR.
 
 ## Spec
 

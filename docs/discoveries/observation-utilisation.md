@@ -94,7 +94,9 @@ graph LR
 
 | Candidate | Operation | Detail |
 |-----------|-----------|--------|
-| **Bias compensation** | `setBias` | Per downstream target: bias += −(effective_centre × weight) |
+| **Bias compensation** | `setBias` | Per downstream target: the `setBias` value is the absolute new bias = current bias − (effective_centre × weight) |
+
+Targets not present in the creature's neurons are skipped, because no absolute bias can be computed for them.
 
 Estimated improvement: `(1.0 − utilisation_ratio) × 0.005`.
 

@@ -25,7 +25,7 @@ const SHARED_FILES: [&str; 5] = [
 ];
 
 /// The number of capacity-table rows the `shared` sweep owns.
-const SHARED_CAPACITY_ROWS: usize = 8;
+const SHARED_CAPACITY_ROWS: usize = 6;
 
 fn read(rel: &str) -> String {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(rel);
@@ -252,7 +252,7 @@ fn every_shared_capacity_site_is_cited_by_symbol() {
     assert!(
         !all_sites.is_empty(),
         "precondition: production_capacity_sites must find at least one site in the shared \
-         files (topology_cache.rs alone has seven `with_capacity` calls), otherwise this test \
+         files (topology_cache.rs alone has five `with_capacity` calls), otherwise this test \
          passes vacuously"
     );
 
@@ -278,7 +278,7 @@ fn every_shared_capacity_site_is_cited_by_symbol() {
 }
 
 #[test]
-fn the_capacity_table_has_exactly_eight_shared_rows() {
+fn the_capacity_table_has_exactly_six_shared_rows() {
     let doc = read(RECORD);
     let rows = shared_capacity_rows(&doc);
     assert_eq!(
@@ -295,8 +295,8 @@ fn the_capacity_table_has_exactly_eight_shared_rows() {
         })
         .count();
     assert_eq!(
-        topology_cache_rows, 7,
-        "exactly 7 of the shared capacity rows must cite `CreatureTopologyCache::new`"
+        topology_cache_rows, 5,
+        "exactly 5 of the shared capacity rows must cite `CreatureTopologyCache::new`"
     );
     let compute_ranks_rows = rows
         .iter()
