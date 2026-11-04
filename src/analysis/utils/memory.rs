@@ -399,7 +399,9 @@ pub const PARQUET_MEMORY_MULTIPLIER: u64 = 3;
 ///
 /// The projection is the larger of:
 /// - the **footer-derived** cost — the exact decompressed row count times the
-///   per-record struct + UUID heap cost, plus the uncompressed column bytes
+///   per-record struct cost, plus the decoded `neuron_uuid` string bytes read
+///   from the footer's size statistic (or a dictionary-aware bound when that
+///   statistic is absent, Issue #2507), plus the uncompressed column bytes
 ///   (Issue #1869), and
 /// - the legacy `file_size × PARQUET_MEMORY_MULTIPLIER` heuristic, kept as a
 ///   floor so the projection never drops below previous behaviour.
