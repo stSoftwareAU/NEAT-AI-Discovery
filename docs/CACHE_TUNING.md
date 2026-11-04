@@ -88,10 +88,11 @@ compressed-size projection in that case.
 
 `uuid_heap_bytes` is the `neuron_uuid` column's footer size statistic (the exact
 total of its decoded value bytes) when the footer carries one. When the
-statistic is absent, a dictionary-encoded column is bounded by
-`min(rows, 1024) × uncompressed size`, because Arrow copies each value into
-every row of a batch, and a plain column by its uncompressed size. Each row keeps
-at least 36 bytes (Issue #2507).
+statistic is absent, a chunk with encodings beyond PLAIN and the RLE or
+BIT_PACKED level encodings is bounded by `min(rows, 1024) × uncompressed size`,
+because Arrow copies each value into every row of a batch. This includes
+dictionary and DELTA_BYTE_ARRAY encodings. Otherwise the uncompressed size
+bounds the values. Each row keeps at least 36 bytes (Issue #2507).
 
 ```text
 projected = max(footer_rows × per_record_bytes + uuid_heap_bytes + error_values × 4,

@@ -62,7 +62,7 @@ pub struct ParquetFooterStats {
     /// (exact, from the leaf column chunks' value counts).
     pub error_values: u64,
     /// Decoded `neuron_uuid` string bytes across all row groups, from the
-    /// footer's size statistic or the dictionary-aware bound described on
+    /// footer's size statistic or the encoding-aware bound described on
     /// [`neuron_uuid_heap_bytes`]. Excludes the per-row Arrow offset word.
     pub uuid_heap_bytes: u64,
 }
@@ -170,12 +170,13 @@ pub(crate) fn projected_bytes_for_row_groups(
 /// 1. The `unencoded_byte_array_data_bytes` size statistic is the exact total
 ///    of the decoded value bytes, so it is used when present and non-negative.
 ///    A negative statistic is malformed and is treated as absent.
-/// 2. Otherwise, a dictionary-encoded chunk is bounded by
+/// 2. Otherwise, a chunk with any encoding outside `PLAIN`, `RLE` and `BIT_PACKED`
+///    is bounded by
 ///    `min(rows, DEFAULT_BATCH_SIZE) * uncompressed`: one batch holds at most
 ///    that many copies, and the longest value cannot exceed the chunk's
 ///    uncompressed size.
-/// 3. Otherwise, a plain chunk stores every value, so its uncompressed size is
-///    already the decoded total.
+/// 3. Otherwise, the chunk stores every value in full, so its uncompressed
+///    size bounds the decoded total. `RLE` and `BIT_PACKED` encode levels here.
 ///
 /// Fallbacks 2 and 3 are raised to `rows * ASSUMED_UUID_HEAP_BYTES`, the
 /// per-row floor. Arithmetic saturates.
@@ -212,17 +213,19 @@ fn column_uuid_heap_bytes(column: &ColumnChunkMetaData, rows: u64) -> u64 {
 
     let floor = rows.saturating_mul(ASSUMED_UUID_HEAP_BYTES);
     let uncompressed = u64::try_from(column.uncompressed_size()).unwrap_or(0);
-    let dictionary = column.encodings().any(|encoding| {
+    // Legacy files may still list the deprecated level encoding.
+    #[allow(deprecated)]
+    let stores_values_in_full = column.encodings().all(|encoding| {
         matches!(
             encoding,
-            Encoding::RLE_DICTIONARY | Encoding::PLAIN_DICTIONARY
+            Encoding::PLAIN | Encoding::RLE | Encoding::BIT_PACKED
         )
     });
-    let decoded = if dictionary {
+    let decoded = if stores_values_in_full {
+        uncompressed
+    } else {
         rows.min(DEFAULT_BATCH_SIZE as u64)
             .saturating_mul(uncompressed)
-    } else {
-        uncompressed
     };
     decoded.max(floor)
 }
@@ -356,13 +359,25 @@ mod tests {
     }
 
     #[test]
+    fn absent_statistic_on_delta_byte_array_bounds_one_batch_of_copies() {
+        let group = neuron_uuid_row_group(2_000, vec![Encoding::DELTA_BYTE_ARRAY], 20_000, None);
+        assert_eq!(heap_bytes(group), 1_024 * 20_000);
+    }
+
+    #[test]
+    #[allow(deprecated)] // Legacy level encoding remains valid in existing files.
     fn absent_statistic_on_plain_chunk_uses_uncompressed_size_with_row_floor() {
         // Plain pages store each value once, so the uncompressed size is the
         // decoded total, raised to the per-row floor when that is larger.
         let floored = neuron_uuid_row_group(3_000, vec![Encoding::PLAIN], 50_000, None);
         assert_eq!(heap_bytes(floored), 3_000 * ASSUMED_UUID_HEAP_BYTES);
 
-        let uncompressed = neuron_uuid_row_group(10, vec![Encoding::PLAIN], 1_000_000, None);
+        let uncompressed = neuron_uuid_row_group(
+            10,
+            vec![Encoding::PLAIN, Encoding::RLE, Encoding::BIT_PACKED],
+            1_000_000,
+            None,
+        );
         assert_eq!(heap_bytes(uncompressed), 1_000_000);
     }
 
