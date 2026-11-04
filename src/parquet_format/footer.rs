@@ -32,10 +32,18 @@ const NEURON_UUID_COLUMN: &str = "neuron_uuid";
 /// Bytes each decoded `f32` error occupies in the record's `Vec<f32>`.
 const ERROR_VALUE_BYTES: u64 = 4;
 
+/// Convert a signed footer field to `u64`, naming the field when it is negative.
+///
+/// The parquet crate accepts negative counts and sizes at parse time (Issue
+/// #2447), so every footer reader converts through this one check rather than
+/// letting a negative value count as zero (Issue #2509).
+fn footer_u64(value: i64, field: &str) -> Result<u64> {
+    u64::try_from(value).with_context(|| format!("Invalid Parquet footer {field}: {value}"))
+}
+
 fn sum_row_group_rows(mut row_counts: impl Iterator<Item = i64>) -> Result<u64> {
     row_counts.try_fold(0u64, |sum, row_count| {
-        let row_count = u64::try_from(row_count)
-            .with_context(|| format!("Invalid Parquet footer row-group num_rows: {row_count}"))?;
+        let row_count = footer_u64(row_count, "row-group num_rows")?;
         sum.checked_add(row_count)
             .context("Overflow while summing Parquet footer row-group num_rows")
     })
@@ -87,12 +95,15 @@ impl ParquetFooterStats {
 /// `record_overhead` is the per-row allocation outside the selected Arrow
 /// columns, and `include_errors` adds the decoded list value count. The
 /// selected uncompressed size is a floor, as in the preload planner's estimate.
+///
+/// Fails when a row-group `num_rows`, a selected column's `uncompressed_size`
+/// or an `errors` column's `num_values` is negative (Issue #2509).
 pub(crate) fn projected_bytes_for_columns(
     metadata: &parquet::file::metadata::ParquetMetaData,
     selected_roots: &[&str],
     record_overhead: u64,
     include_errors: bool,
-) -> u64 {
+) -> Result<u64> {
     projected_bytes_for_row_groups(
         metadata.row_groups(),
         selected_roots,
@@ -106,55 +117,47 @@ pub(crate) fn projected_bytes_for_columns(
 /// When `neuron_uuid` is selected, its decoded string heap from
 /// [`neuron_uuid_heap_bytes`] is added to the per-row overhead term. Callers
 /// therefore pass only the per-row overhead of the other selected columns.
+///
+/// Fails, naming the field, when a row-group `num_rows`, a selected column's
+/// `uncompressed_size` or an `errors` column's `num_values` is negative
+/// (Issue #2509).
 pub(crate) fn projected_bytes_for_row_groups(
     row_groups: &[RowGroupMetaData],
     selected_roots: &[&str],
     record_overhead: u64,
     include_errors: bool,
-) -> u64 {
-    let rows = row_groups
-        .iter()
-        .map(|group| u64::try_from(group.num_rows()).unwrap_or(0))
-        .fold(0_u64, u64::saturating_add);
-    let selected_uncompressed = row_groups
-        .iter()
-        .flat_map(RowGroupMetaData::columns)
-        .filter(|column| {
-            column
-                .column_path()
-                .parts()
-                .first()
-                .is_some_and(|root| selected_roots.contains(&root.as_str()))
-        })
-        .map(|column| u64::try_from(column.uncompressed_size()).unwrap_or(0))
-        .fold(0_u64, u64::saturating_add);
-    let selected_errors = if include_errors {
-        row_groups
-            .iter()
-            .flat_map(RowGroupMetaData::columns)
-            .filter(|column| {
-                column
-                    .column_path()
-                    .parts()
-                    .first()
-                    .is_some_and(|root| root == ERRORS_COLUMN)
-            })
-            .map(|column| u64::try_from(column.num_values()).unwrap_or(0))
-            .fold(0_u64, u64::saturating_add)
-            .saturating_mul(ERROR_VALUE_BYTES)
-    } else {
-        0
-    };
+) -> Result<u64> {
+    let mut rows = 0_u64;
+    let mut selected_uncompressed = 0_u64;
+    let mut error_values = 0_u64;
+    for group in row_groups {
+        rows = rows.saturating_add(footer_u64(group.num_rows(), "row-group num_rows")?);
+        for column in group.columns() {
+            let Some(root) = column.column_path().parts().first() else {
+                continue;
+            };
+            if selected_roots.contains(&root.as_str()) {
+                selected_uncompressed = selected_uncompressed
+                    .saturating_add(footer_u64(column.uncompressed_size(), "uncompressed_size")?);
+            }
+            if include_errors && root == ERRORS_COLUMN {
+                error_values =
+                    error_values.saturating_add(footer_u64(column.num_values(), "num_values")?);
+            }
+        }
+    }
+
     let selected_uuid_heap = if selected_roots.contains(&NEURON_UUID_COLUMN) {
         neuron_uuid_heap_bytes(row_groups)
     } else {
         0
     };
 
-    rows.saturating_mul(record_overhead)
-        .saturating_add(selected_errors)
+    Ok(rows
+        .saturating_mul(record_overhead)
+        .saturating_add(error_values.saturating_mul(ERROR_VALUE_BYTES))
         .saturating_add(selected_uuid_heap)
-        .max(selected_uncompressed)
+        .max(selected_uncompressed))
 }
 
 /// Decoded `neuron_uuid` string bytes across the supplied row groups (Issue #2507).
@@ -238,8 +241,7 @@ pub fn read_footer_stats(file_path: &str) -> Result<ParquetFooterStats> {
     let metadata = builder.metadata();
 
     let file_num_rows = metadata.file_metadata().num_rows();
-    let num_rows = u64::try_from(file_num_rows)
-        .with_context(|| format!("Invalid Parquet footer num_rows: {file_num_rows}"))?;
+    let num_rows = footer_u64(file_num_rows, "num_rows")?;
 
     let mut uncompressed_bytes = 0u64;
     let mut error_values = 0u64;
@@ -250,17 +252,13 @@ pub fn read_footer_stats(file_path: &str) -> Result<ParquetFooterStats> {
             .map(parquet::file::metadata::RowGroupMetaData::num_rows),
     )?;
     for row_group in metadata.row_groups() {
-        let byte_size = row_group.total_byte_size();
-        let byte_size = u64::try_from(byte_size)
-            .with_context(|| format!("Invalid Parquet footer total_byte_size: {byte_size}"))?;
+        let byte_size = footer_u64(row_group.total_byte_size(), "total_byte_size")?;
         uncompressed_bytes = uncompressed_bytes.saturating_add(byte_size);
 
         // Leaf value count of the `errors` list column: the exact number of
         // f32s the decode will materialise, however tightly they were encoded.
         for column in row_group.columns() {
-            let value_count = column.num_values();
-            let value_count = u64::try_from(value_count)
-                .with_context(|| format!("Invalid Parquet footer num_values: {value_count}"))?;
+            let value_count = footer_u64(column.num_values(), "num_values")?;
             if column
                 .column_path()
                 .parts()

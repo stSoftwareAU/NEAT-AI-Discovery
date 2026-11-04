@@ -59,21 +59,21 @@ fn hidden_records(uuid: &str, error: f32) -> (String, Vec<DiscoverRecord>) {
     (uuid.to_string(), records)
 }
 
-/// `in0 -> h0 -> h1 -> h2 -> h3`. h0 and h1 are shallow, h2 and h3 are deep and
+/// `input-0 -> h0 -> h1 -> h2 -> h3`. h0 and h1 are shallow, h2 and h3 are deep and
 /// attenuated. The depth pass pops 5 neurons (1 input, 4 hidden), so it makes
 /// 6 checks. The two deep targets (h2 at depth 3, h3 at depth 4) each yield one
-/// candidate from `in0`.
+/// candidate from `input-0`.
 fn chain_fixture() -> (CreatureJson, Vec<(String, Vec<DiscoverRecord>)>) {
     let creature = CreatureJson {
         neurons: vec![
-            neuron("in0", "input"),
+            neuron("input-0", "input"),
             neuron("h0", "hidden"),
             neuron("h1", "hidden"),
             neuron("h2", "hidden"),
             neuron("h3", "hidden"),
         ],
         synapses: vec![
-            synapse("in0", "h0"),
+            synapse("input-0", "h0"),
             synapse("h0", "h1"),
             synapse("h1", "h2"),
             synapse("h2", "h3"),
@@ -162,11 +162,11 @@ fn deadline_at_per_target_check_keeps_completed_depth_pass_and_candidates_so_far
     assert_eq!(scan.stop, Some(SkipConnectionStop::DeadlinePassed));
 }
 
-/// `in0 -> h0 -> ... -> h(ring_len-1) -> h0`: a cycle of `ring_len` hidden neurons
+/// `input-0 -> h0 -> ... -> h(ring_len-1) -> h0`: a cycle of `ring_len` hidden neurons
 /// with every hidden neuron qualified.
 fn ring_fixture(ring_len: usize) -> (CreatureJson, Vec<(String, Vec<DiscoverRecord>)>) {
-    let mut neurons = vec![neuron("in0", "input")];
-    let mut synapses = vec![synapse("in0", "h0")];
+    let mut neurons = vec![neuron("input-0", "input")];
+    let mut synapses = vec![synapse("input-0", "h0")];
     let mut records = Vec::new();
     for i in 0..ring_len {
         let uuid = format!("h{i}");
@@ -206,7 +206,7 @@ fn three_node_cycle_returns_cycle_detected() {
     assert_eq!(scan.stop, Some(SkipConnectionStop::CycleDetected));
 }
 
-/// The chain `in0 -> h0 -> h1 -> h2 -> h3` with a tail cycle `h3 -> x -> h3`. The
+/// The chain `input-0 -> h0 -> h1 -> h2 -> h3` with a tail cycle `h3 -> x -> h3`. The
 /// pass gives h2 and h3 depths before stalling on `h3` (in-degree 2, one edge
 /// unrelaxed). Those depths would produce candidates if the cycle were ignored, so this
 /// test shows the cycle check, not the data, empties the result.
@@ -361,15 +361,15 @@ fn legacy_candidates(
 }
 
 /// Acyclic fixture covering four cases:
-/// - a diamond (`in0 -> ha -> hb` and `in0 -> hb`), so `hb`'s longest-path depth is 2;
+/// - a diamond (`input-0 -> ha -> hb` and `input-0 -> hb`), so `hb`'s longest-path depth is 2;
 /// - an unreachable hidden neuron `hu` (no path from any input), which counts as depth 0;
-/// - an existing synapse `in0 -> hc`, so `hc` skips `in0` and takes `in1`;
+/// - an existing synapse `input-0 -> hc`, so `hc` skips `input-0` and takes `input-1`;
 /// - `hd` has every depth-0 source already connected, so it falls back to the depth-1 `ha`.
 fn acyclic_fixture() -> (CreatureJson, Vec<(String, Vec<DiscoverRecord>)>) {
     let creature = CreatureJson {
         neurons: vec![
-            neuron("in0", "input"),
-            neuron("in1", "input"),
+            neuron("input-0", "input"),
+            neuron("input-1", "input"),
             neuron("ha", "hidden"),
             neuron("hb", "hidden"),
             neuron("hc", "hidden"),
@@ -378,17 +378,17 @@ fn acyclic_fixture() -> (CreatureJson, Vec<(String, Vec<DiscoverRecord>)>) {
             neuron("out0", "output"),
         ],
         synapses: vec![
-            synapse("in0", "ha"),
+            synapse("input-0", "ha"),
             synapse("ha", "hb"),
-            synapse("in0", "hb"),
+            synapse("input-0", "hb"),
             synapse("hb", "hc"),
             synapse("hu", "hc"),
             synapse("hc", "hd"),
             synapse("hb", "hd"),
             synapse("hd", "out0"),
-            synapse("in0", "hc"),
-            synapse("in0", "hd"),
-            synapse("in1", "hd"),
+            synapse("input-0", "hc"),
+            synapse("input-0", "hd"),
+            synapse("input-1", "hd"),
             synapse("hu", "hd"),
         ],
         input: 2,
@@ -431,7 +431,7 @@ fn acyclic_result_matches_legacy_algorithm() {
     assert_eq!(
         actual,
         vec![
-            ("hc".to_string(), "in1".to_string(), 3),
+            ("hc".to_string(), "input-1".to_string(), 3),
             ("hd".to_string(), "ha".to_string(), 3),
         ],
         "fixture must exercise the next-source and depth-1 fallback paths"

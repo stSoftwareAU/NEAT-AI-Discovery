@@ -74,6 +74,29 @@ block-load, activation-summary and merge readers now refuse such a file before
 Arrow builds a batch. Files with 36-character UUIDs are accepted under the same
 budgets as before. A footer that misstates its own statistics is still outside
 the protection.
+#### Skip-connection detector now seeds depth from `creature.input` (Issue #2523)
+
+`detect_skip_connection_candidates` took depth-0 seeds only from entries in
+`creature.neurons` with type `input`. Production creatures never list their
+input neurons, so `depths` came back empty and no skip-connection candidates
+were ever emitted. Inputs are now synthesised from the `input` count as
+`input-0` … `input-{input - 1}`, matching `synapse/preparation.rs`, and seed
+depth 0. Listed `input`-typed neurons are still accepted, and a synthesised
+input also listed in `neurons` is counted once.
+
+#### Fan-in, multi-hop relay and topology-diversification `AddNeuron` UUIDs never collide with existing neurons (Issue #2499)
+
+`fan_in_to_coordinated_candidates`, `multi_hop_to_coordinated_candidates` and
+`topology_diversification_to_coordinated_candidates` emitted a deterministic
+FNV-derived UUID (`fan-in-…`, `mh-…`, `td-…`) without checking the creature's
+neurons, so a creature already holding that UUID received a colliding
+`AddNeuron` (rejected by the controller, or a duplicate UUID that
+`validate_forward_only_synapses` refuses). Each converter now collects
+`existing_neuron_uuids` once per call and picks the UUID with
+`first_free_neuron_uuid`: salt 0 is the unchanged legacy UUID, later salts
+append `-1`, `-2`, … . The topology-diversification converter still skips a
+candidate whose legacy neuron already feeds the output. Same defect class as
+Issues #2359 and #2412.
 
 #### `creature.output` is bounded at the FFI boundary (Issue #2078)
 

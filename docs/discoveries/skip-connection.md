@@ -73,6 +73,11 @@ flowchart TD
 The best shallow source is chosen by maximising the depth gap (difference
 in topological depth) while ensuring no existing connection exists.
 
+**Inputs need not be listed** (Issue #2523): input neurons are taken from the
+creature's `input` count as `input-0` to `input-{input - 1}`. Production
+creatures do not list their input neurons in `neurons`, so these synthesised
+inputs seed depth 0 and are offered first as sources.
+
 ---
 
 ## 🛠️ How We Fix It

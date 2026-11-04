@@ -18,6 +18,8 @@ Version bump: `Cargo.toml` and `Cargo.lock` updated for this change; the merged 
 - A footer that misstates its own statistics is still outside the protection (documented).
 - `ParquetFooterStats` gains `uuid_heap_bytes`; read by `projected_in_memory_bytes`, which feeds `estimate_parquet_in_memory_bytes` (`src/analysis/utils/memory.rs`).
 
+- The merge with Develop retains the fallible footer projection: negative row counts, selected column sizes and error value counts are rejected before adding the UUID heap estimate (Issue #2509).
+
 ### Undiscoverable Facts
 
 - None.
