@@ -4,7 +4,7 @@
 //! batch. Per-record charging remains a second check after batch decoding, but
 //! cannot protect against a footer that understates decoded sizes.
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 
 use crate::DiscoveryError;
 use crate::analysis::utils::get_memory_info;
@@ -140,7 +140,8 @@ impl DecodeBudget {
             selected_roots,
             RECORD_STRUCT_BYTES.saturating_add(ASSUMED_UUID_HEAP_BYTES),
             selected_roots.contains(&"errors"),
-        );
+        )
+        .with_context(|| format!("Parquet footer preflight failed for '{file_path}'"))?;
         self.check_projected(projected, file_path)
     }
 
@@ -167,7 +168,8 @@ impl DecodeBudget {
                     })
                     .sum(),
                 selected_roots.contains(&"errors"),
-            );
+            )
+            .with_context(|| format!("Parquet footer preflight failed for '{file_path}'"))?;
             self.check_projected(projected, file_path)?;
         }
         Ok(())
