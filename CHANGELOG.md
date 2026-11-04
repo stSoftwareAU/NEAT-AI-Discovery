@@ -74,8 +74,10 @@ records when it does not. `./quality.sh` runs `sync` then `check`, and
 `./bump-deps.sh` runs `sync` after its lockfile integrity phase, failing loudly
 if the script is missing or the sync fails. The CI `version-increment` job
 (`.github/workflows/ci.yml`, deliberately unchanged) still bumps only the root
-`Cargo.lock`, so a PR that it bumps leaves `fuzz/Cargo.lock` stale until the next
-`./quality.sh` or `./bump-deps.sh` run restamps it.
+`Cargo.lock`, so `scripts/fuzz-ci.sh` and the documented
+`docs/ci-fuzzing-workflow.yml` now run `sync` (and `check`) before their
+`cargo +nightly fuzz run --locked` steps; a CI-bumped PR is restamped at fuzz
+time.
 
 #### `creature.output` is bounded at the FFI boundary (Issue #2078)
 

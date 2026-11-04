@@ -1,6 +1,6 @@
 ## Summary
 
-`fuzz/Cargo.lock` records the root crate as a path package with its version, and nothing restamped that line after a `Cargo.toml` bump, so `cargo fuzz run --locked` failed. The new `quality/fuzz_lockfile.sh` has two modes: `sync` rewrites only that one `version = "…"` line to the `Cargo.toml` version, and `check` runs `cargo metadata --locked` on `fuzz/Cargo.toml`. `./quality.sh` runs `sync` then `check`, and `./bump-deps.sh` runs `sync` (Phase 3c). `fuzz/Cargo.lock` is restamped here (`0.74.322` → `0.74.342`). Closes #2506.
+`fuzz/Cargo.lock` records the root crate as a path package with its version, and nothing restamped that line after a `Cargo.toml` bump, so `cargo fuzz run --locked` failed. The new `quality/fuzz_lockfile.sh` has two modes: `sync` rewrites only that one `version = "…"` line to the `Cargo.toml` version, and `check` runs `cargo metadata --locked` on `fuzz/Cargo.toml`. `./quality.sh` runs `sync` then `check`, and `./bump-deps.sh` runs `sync` (Phase 3c). `scripts/fuzz-ci.sh` and `docs/ci-fuzzing-workflow.yml` run `sync` then `check` before their `fuzz run --locked` steps, so the stale lock left by CI's automatic version bump is restamped at fuzz time. `fuzz/Cargo.lock` is restamped here (`0.74.322` → `0.74.342`). Closes #2506.
 
 Version bump: `Cargo.toml` and `Cargo.lock` updated for this change; the merged commit records the final version.
 
@@ -15,7 +15,7 @@ Version bump: `Cargo.toml` and `Cargo.lock` updated for this change; the merged 
 
 - `quality.sh` syncs before it checks, so a version bump never fails the gate; only genuine drift does. It already rewrites files (`cargo fmt --all`), and `sync` is a version stamp, not a dependency change, so Issue #1865 still holds (its test passes).
 - `sync` refuses to guess: it needs exactly one `[[package]]` block named after the crate with no `source` line, and verifies exactly one line changed before copying over the lock.
-- `.github/workflows/ci.yml` is deliberately unchanged (needs approval per `AGENTS.md`). Its `version-increment` job still bumps only the root `Cargo.lock`, so after CI's own bump `fuzz/Cargo.lock` is stale until the next `./quality.sh` or `./bump-deps.sh` run. A `quality/fuzz_lockfile.sh sync` step in that job would close the window. The CHANGELOG states this.
+- `.github/workflows/ci.yml` is deliberately unchanged (needs approval per `AGENTS.md`). Its `version-increment` job still bumps only the root `Cargo.lock`, so after CI's own bump `fuzz/Cargo.lock` is stale. The fuzz entry points cover that instead: `scripts/fuzz-ci.sh` runs `quality/fuzz_lockfile.sh sync` and `check` after installing cargo-fuzz and before the `cargo +nightly fuzz run --locked` loop, and the documented `docs/ci-fuzzing-workflow.yml` has a `Sync fuzz/Cargo.lock version` step ahead of its `--locked` runs. A `sync` step in `version-increment` would also work but needs approval.
 
 ### Undiscoverable Facts
 
@@ -40,18 +40,20 @@ New `tests/issue_2506_fuzz_lockfile_sync.rs` (fixtures built in temp directories
 - `sync_fails_loud_when_the_path_package_is_missing`: non-zero exit, stderr names the crate and `Cargo.lock`, lock unchanged.
 - `check_rejects_a_stale_lock_then_accepts_it_after_sync`: the same fixture is rejected, then accepted after only the lock version changes.
 - `check_accepts_a_current_lock`.
+- `fuzz_ci_restamps_a_stale_lock_and_checks_it_before_fuzzing`: runs a copy of `scripts/fuzz-ci.sh` in a temp root whose lock is stale (stub `cargo`/`rustup`), asserts the lock is restamped and a `metadata --locked` call precedes the first `fuzz run --locked`.
+- `documented_fuzz_workflow_syncs_the_lock_before_its_locked_runs`: `docs/ci-fuzzing-workflow.yml` runs `quality/fuzz_lockfile.sh sync` before its first `fuzz run --locked`.
 - `quality_gate_syncs_then_checks_the_fuzz_lockfile`: runs the real `quality.sh` with a stubbed `cargo` and asserts a `metadata --locked … fuzz/Cargo.toml` call that comes before `deny`. It snapshots `fuzz/Cargo.lock` and restores it on drop.
 
-Results on the final tree: `cargo test --test issue_2506_fuzz_lockfile_sync --test issue_1865_quality_gate_no_dep_mutation --test issue_1427_fuzz_cargo_lock_committed` → 9 passed; `cargo fmt --all -- --check` clean; `cargo clippy --test issue_2506_fuzz_lockfile_sync -- -D warnings` clean.
+Results on the final tree: `cargo test --test issue_2506_fuzz_lockfile_sync` → 8 passed, and with `--test issue_1912_fuzz_ci_pinned_install --test issue_1912_cargo_install_pinning_gate --test issue_1939_documented_commands` also green; `cargo fmt --all -- --check` clean; `cargo clippy --test issue_2506_fuzz_lockfile_sync -- -D warnings` clean.
 
 Red checks (on a scratch copy of the tree; script behaviour broken one way at a time): sync rewriting every `version =` line → `sync_restamps_only_the_path_package_version` red; sync exiting 0 for a missing package → `sync_fails_loud_when_the_path_package_is_missing` red; `check` always exiting 0 → `check_rejects_a_stale_lock_then_accepts_it_after_sync` red; `quality.sh` check call replaced with `true` → `quality_gate_syncs_then_checks_the_fuzz_lockfile` red; check moved after `cargo deny` → same test red. No existing test was edited.
 
-Not covered by a test: the `bump-deps.sh` Phase 3c call site (exercised only by the throwaway fixture run above, since `tests/bump_deps_test.sh` cannot run a non-dry-run); `check_accepts_a_current_lock` was not red-checked.
+Not covered by a test: the `bump-deps.sh` Phase 3c call site (exercised only by the throwaway fixture run above, since `tests/bump_deps_test.sh` cannot run a non-dry-run); `check_accepts_a_current_lock` was not red-checked. The new fuzz-ci test was red-checked by deleting the `sync`/`check` lines from `scripts/fuzz-ci.sh` (test failed), then restored.
 
-Docs: `CONTRIBUTING.md` (quality.sh step list, renumbered), `README.md` (fuzz section), `AGENTS.md` (Version Bumps), `CHANGELOG.md`.
+Docs: `docs/ci-fuzzing-workflow.yml` (new sync step), `CONTRIBUTING.md` (quality.sh step list, renumbered), `README.md` (fuzz section), `AGENTS.md` (Version Bumps), `CHANGELOG.md`.
 
 Full gate: `timeout 595 ./quality.sh` on the final tree passed `bash -n`, shellcheck, cargo-install pinning, the PR-summary layout check, the new `fuzz-lockfile … OK` step, `cargo deny check` (`advisories ok, bans ok, licenses ok, sources ok`), `cargo build`, `cargo fmt` and `cargo clippy --all-targets --all-features`. It then hit the 595 s cap (exit 124) while `cargo check --all-targets` was compiling, so `cargo test --lib --tests`, `cargo doc` and the release build did not run.
 
-Not done / risk: the CI `version-increment` job is unchanged (see above). The last gate stages (full `cargo test`, `cargo doc`, release build) were not run here.
+Not done / risk: the CI `version-increment` job is unchanged by design; the fuzz entry points restamp the lock themselves. The last gate stages (full `cargo test`, `cargo doc`, release build) were not run here.
 
 <!-- vibe-quality-gate-skipped reason="full ./quality.sh exceeded the 595 s foreground cap (exit 124) during cargo check; every stage before it passed; the new tests, fmt and clippy were run separately; CI runs the full gate" -->

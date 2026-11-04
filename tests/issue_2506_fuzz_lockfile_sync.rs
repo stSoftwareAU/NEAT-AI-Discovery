@@ -357,3 +357,96 @@ fn quality_gate_syncs_then_checks_the_fuzz_lockfile() {
         "the fuzz lockfile check must run before `cargo deny` (Issue #2506) — recorded:\n{invocations}"
     );
 }
+
+/// Copy `scripts/fuzz-ci.sh` and `quality/fuzz_lockfile.sh` into a temp root that
+/// has a stale fuzz lock, then run the copied `fuzz-ci.sh` under stub `cargo` and
+/// `rustup`. Returns the temp dir, the root and the stub's invocation log.
+fn run_fuzz_ci_in_stale_root() -> (tempfile::TempDir, PathBuf, String, Output) {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let root = tmp.path().join("root");
+    fixture(&root, "9.9.9", "1.0.0");
+    let repo = Path::new(env!("CARGO_MANIFEST_DIR"));
+    for rel in ["scripts/fuzz-ci.sh", "quality/fuzz_lockfile.sh"] {
+        let dest = root.join(rel);
+        fs::create_dir_all(dest.parent().expect("parent")).expect("create script dir");
+        fs::copy(repo.join(rel), &dest).expect("copy script");
+    }
+
+    let bin = tmp.path().join("bin");
+    fs::create_dir_all(&bin).expect("create stub bin dir");
+    let log = tmp.path().join("cargo-invocations.log");
+    write_stub(
+        &bin,
+        "cargo",
+        &format!(
+            "#!/bin/bash\nprintf '%s\\n' \"$*\" >> '{}'\nexit 0\n",
+            log.display()
+        ),
+    );
+    write_stub(&bin, "rustup", "#!/bin/bash\nexit 0\n");
+
+    let output = Command::new("bash")
+        .arg(root.join("scripts/fuzz-ci.sh"))
+        .arg("1")
+        .current_dir(&root)
+        .env("PATH", format!("{}:/usr/bin:/bin", bin.display()))
+        .stdin(Stdio::null())
+        .output()
+        .expect("run fuzz-ci.sh");
+    let invocations = fs::read_to_string(&log).unwrap_or_default();
+    (tmp, root, invocations, output)
+}
+
+#[test]
+fn fuzz_ci_restamps_a_stale_lock_and_checks_it_before_fuzzing() {
+    let (_tmp, root, invocations, output) = run_fuzz_ci_in_stale_root();
+    assert!(
+        output.status.success(),
+        "fuzz-ci.sh failed (Issue #2506)\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // The stale lock must now record the Cargo.toml version.
+    assert_eq!(
+        read_lock(&root),
+        lock_text("9.9.9"),
+        "fuzz-ci.sh must restamp fuzz/Cargo.lock before fuzzing (Issue #2506)"
+    );
+
+    let lines: Vec<&str> = invocations.lines().collect();
+    let metadata = lines
+        .iter()
+        .position(|line| {
+            line.starts_with("metadata")
+                && line.contains("--locked")
+                && line.contains("fuzz/Cargo.toml")
+        })
+        .unwrap_or_else(|| panic!("no `cargo metadata --locked` check recorded:\n{invocations}"));
+    let first_fuzz_run = lines
+        .iter()
+        .position(|line| line.contains("fuzz run --locked"))
+        .unwrap_or_else(|| panic!("no `fuzz run --locked` recorded:\n{invocations}"));
+    assert!(
+        metadata < first_fuzz_run,
+        "the lock check must run before the first fuzz run (Issue #2506):\n{invocations}"
+    );
+}
+
+#[test]
+fn documented_fuzz_workflow_syncs_the_lock_before_its_locked_runs() {
+    let text = fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("docs/ci-fuzzing-workflow.yml"),
+    )
+    .expect("read docs/ci-fuzzing-workflow.yml");
+    let sync = text
+        .find("quality/fuzz_lockfile.sh sync")
+        .expect("workflow must run quality/fuzz_lockfile.sh sync (Issue #2506)");
+    let first_run = text
+        .find("cargo +nightly fuzz run --locked")
+        .expect("workflow must run the fuzz targets");
+    assert!(
+        sync < first_run,
+        "the sync step must precede the first `fuzz run --locked` (Issue #2506)"
+    );
+}
