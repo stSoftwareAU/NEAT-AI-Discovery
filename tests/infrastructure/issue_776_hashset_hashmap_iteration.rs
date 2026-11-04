@@ -9,6 +9,7 @@ use neat_ai_discovery::analysis::detection::weight_coherence::{
     WeightCoherenceConfig, detect_near_constant_paths, detect_symmetric_cancellation,
 };
 use neat_ai_discovery::types::DiscoverRecord;
+use serial_test::serial;
 
 /// Helper to build discovery records for a neuron with specified activations.
 fn make_records(uuid: &str, activations: &[f32]) -> (String, Vec<DiscoverRecord>) {
@@ -100,6 +101,7 @@ fn test_near_constant_paths_skips_variable_neurons() {
 
 /// Verify symmetric cancellation detection finds opposite-sign, correlated inputs.
 #[test]
+#[serial]
 fn test_symmetric_cancellation_detects_opposite_correlated_inputs() {
     let creature = make_creature(
         vec![
@@ -138,6 +140,7 @@ fn test_symmetric_cancellation_detects_opposite_correlated_inputs() {
 
 /// Verify that uncorrelated inputs are NOT flagged even with opposite weights.
 #[test]
+#[serial]
 fn test_symmetric_cancellation_skips_uncorrelated_inputs() {
     let creature = make_creature(
         vec![
