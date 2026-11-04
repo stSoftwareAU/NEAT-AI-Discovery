@@ -2,7 +2,7 @@
 
 `fuzz/Cargo.lock` records the root crate as a path package with its version, and nothing restamped that line after a `Cargo.toml` bump, so `cargo fuzz run --locked` failed. The new `quality/fuzz_lockfile.sh` has two modes: `sync` rewrites only that one `version = "…"` line to the `Cargo.toml` version, and `check` runs `cargo metadata --locked` on `fuzz/Cargo.toml`. `./quality.sh` runs `sync` then `check`, and `./bump-deps.sh` runs `sync` (Phase 3c). `scripts/fuzz-ci.sh` and `docs/ci-fuzzing-workflow.yml` run `sync` then `check` before their `fuzz run --locked` steps, so the stale lock left by CI's automatic version bump is restamped at fuzz time. `fuzz/Cargo.lock` is restamped here (`0.74.322` → `0.74.342`). Closes #2506.
 
-Version bump: `Cargo.toml` and `Cargo.lock` updated for this change; the merged commit records the final version.
+Version bump: the merge retains both changelog entries and advances `Cargo.toml`, `Cargo.lock` and `fuzz/Cargo.lock` to `0.74.346`, above Develop’s `0.74.345`.
 
 ## Spec
 
