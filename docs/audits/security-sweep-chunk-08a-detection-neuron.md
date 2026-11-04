@@ -485,7 +485,7 @@ Not a `negative-result` sweep. One further finding, #2489, was filed by the revi
 | #2379 | per-neuron-a | `input_sensitivity.rs::detect_dominant_inputs` | low |
 | #2381 | per-neuron-b | `output_squash_mismatch.rs::detect_output_squash_mismatches_with_cost_hint` | low |
 | #2383 | per-neuron-b | `topology_diversification.rs::dfs_max_hidden_depth` | medium |
-| #2489 | per-neuron-b | `topology_diversification.rs::has_unhealthy_intermediates` and `best_source_input` (per-output rescans) | medium |
+| #2489 | per-neuron-b | `topology_diversification.rs::has_unhealthy_intermediates` and `best_source_input` (per-output rescans) | untriaged |
 
 Fixes that landed after the audit HEAD: #2383 (the topology-diversification
 traversal), #2398 (the #2348 fix, `co_adaptation.rs`), #2400 (the #2349 fix,
@@ -753,7 +753,7 @@ not new findings.
   cancellation check: exponential time and unbounded recursion depth that
   overflows the stack on a long hidden chain. Filed by the `per-neuron-b`
   sweep (Issue #2299). Fixed by Issue #2383 (PR #2488).
-- `#2489` (`security`, `lang:rust`, `severity:medium`, `confidence:high`) —
+- `#2489` (no triage labels) —
   topology_diversification: per-output full-synapse rescans make detection
   O(outputs x synapses) with no deadline check. `has_unhealthy_intermediates`
   rebuilt the reverse adjacency, and `best_source_input` / `count_direct_input_paths`

@@ -194,11 +194,11 @@ fn duplicate_direct_synapse_counts_as_two_paths() {
 }
 
 /// With two direct inputs, the one with the higher activation variance is the source, whichever
-/// order the synapses list them in. `lo` is listed first and has zero variance, `hi` has 0.25.
+/// order the synapses list them in. `lo` has zero variance and `hi` has 0.25.
 #[test]
 #[serial]
 fn source_is_highest_activation_variance_input() {
-    let creature = CreatureJson {
+    let mut creature = CreatureJson {
         neurons: vec![
             neuron("lo", "input"),
             neuron("hi", "input"),
@@ -214,13 +214,17 @@ fn source_is_highest_activation_variance_input() {
         samples("hi", |i| (i % 2) as f32, |_| 0.0),
     ];
 
-    let scan = detect_topology_diversification_candidates_with_deadline(&creature, &records, &None);
-    assert_eq!(scan.candidates.len(), 1);
-    assert_eq!(scan.candidates[0].direct_path_count, 2);
-    assert_eq!(
-        scan.candidates[0].source_input_uuid, "hi",
-        "the input with the highest activation variance must be the source"
-    );
+    for _ in 0..2 {
+        let scan =
+            detect_topology_diversification_candidates_with_deadline(&creature, &records, &None);
+        assert_eq!(scan.candidates.len(), 1);
+        assert_eq!(scan.candidates[0].direct_path_count, 2);
+        assert_eq!(
+            scan.candidates[0].source_input_uuid, "hi",
+            "the input with the highest activation variance must be the source"
+        );
+        creature.synapses.reverse();
+    }
 }
 
 /// `h -> ghost -> out`, where `ghost` is a dangling endpoint (no such neuron) and `in -> out` is
