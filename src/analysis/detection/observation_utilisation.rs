@@ -118,6 +118,10 @@ pub fn detect_underutilised_observations(
 /// synapses to centre the effective range around zero, improving gradient flow.
 /// Each target keeps the first matching synapse weight, including when duplicate
 /// source-target synapses are present.
+///
+/// `SetBias` is absolute, so the emitted bias is the target's current bias plus
+/// the compensation. Targets absent from `creature.neurons` are skipped, because
+/// no absolute bias can be computed for them.
 pub fn observation_utilisation_to_coordinated_candidates(
     observations: &[UnderutilisedObservation],
     creature: &CreatureJson,
@@ -181,6 +185,12 @@ fn observation_utilisation_to_coordinated_candidates_observed(
     // preserve the previous duplicate-synapse behaviour.
     let mut outgoing: HashMap<&str, Vec<(&str, f32)>> = HashMap::new();
     let mut first_weights: HashMap<(&str, &str), f32> = HashMap::new();
+    // Neuron uuid -> current bias, so SetBias can carry the target's bias forward.
+    // First occurrence wins, matching the synapse index.
+    let mut biases: HashMap<&str, f32> = HashMap::new();
+    for neuron in &creature.neurons {
+        biases.entry(neuron.uuid.as_str()).or_insert(neuron.bias);
+    }
     for (index, synapse) in creature.synapses.iter().enumerate() {
         if index % DEADLINE_CHECK_INTERVAL == 0 && deadline_passed(deadline) {
             return ObservationUtilisationScan {
@@ -231,12 +241,18 @@ fn observation_utilisation_to_coordinated_candidates_observed(
                 continue;
             }
 
+            // Targets absent from creature.neurons have no current bias to build on, so skip them.
+            let Some(&current_bias) = biases.get(target_uuid) else {
+                continue;
+            };
+
+            // SetBias is absolute: emit the current bias plus the compensation, not the compensation alone.
             candidates.push(CoordinatedStructuralCandidateJson {
                 remove_neuron_compensation: None,
                 constant_neuron_bias_fold: None,
                 operations: vec![CoordinatedStructuralOpJson::SetBias {
                     neuron_uuid: target_uuid.to_string(),
-                    bias: bias_compensation,
+                    bias: current_bias + bias_compensation,
                 }],
                 expected_creature_score_gain: obs.estimated_improvement,
                 comment: Some(format!(
@@ -405,5 +421,106 @@ mod tests {
             assert_eq!(scan.stop, Some(ObservationUtilisationStop::DeadlinePassed));
             assert_eq!(scan.candidates.len(), 64, "completed targets are retained");
         }
+    }
+
+    fn observation_with_range(
+        neuron_uuid: &str,
+        effective_min: f32,
+        effective_max: f32,
+    ) -> UnderutilisedObservation {
+        UnderutilisedObservation {
+            neuron_uuid: neuron_uuid.to_string(),
+            sentinel_values: vec![-1.0],
+            utilisation_ratio: 0.3,
+            effective_min,
+            effective_max,
+            sample_count: 50,
+            estimated_improvement: 0.005,
+            reason: "Test".to_string(),
+        }
+    }
+
+    fn set_bias_value(candidate: &CoordinatedStructuralCandidateJson) -> f32 {
+        match &candidate.operations[0] {
+            CoordinatedStructuralOpJson::SetBias { bias, .. } => *bias,
+            other => panic!("Expected SetBias, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_set_bias_carries_current_bias_forward() {
+        let mut creature = make_creature();
+        // neurons[1] is output-0, the target of input-0.
+        creature.neurons[1].bias = 0.1;
+        // centre 0.6 * weight 0.5 => compensation -0.3, so the absolute bias is 0.1 - 0.3 = -0.2.
+        let obs = vec![observation_with_range("input-0", 0.4, 0.8)];
+
+        let candidates = observation_utilisation_to_coordinated_candidates(&obs, &creature);
+        assert_eq!(candidates.len(), 1);
+        match &candidates[0].operations[0] {
+            CoordinatedStructuralOpJson::SetBias { neuron_uuid, bias } => {
+                assert_eq!(neuron_uuid, "output-0");
+                assert!(
+                    (bias - -0.2).abs() < 1e-6,
+                    "expected current bias + compensation = -0.2, got {bias}"
+                );
+                assert!(
+                    (bias - -0.3).abs() > 1e-6,
+                    "SetBias must not be the bare compensation, got {bias}"
+                );
+            }
+            other => panic!("Expected SetBias, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_set_bias_is_per_observation_for_a_shared_target() {
+        let mut creature = make_creature();
+        // neurons[1] is output-0, shared by both inputs.
+        creature.neurons[1].bias = 0.1;
+        creature.neurons.push(NeuronJson {
+            uuid: "input-1".to_string(),
+            neuron_type: "input".to_string(),
+            squash: "IDENTITY".to_string(),
+            bias: 0.0,
+        });
+        creature.synapses.push(SynapseJson {
+            from_uuid: "input-1".to_string(),
+            to_uuid: "output-0".to_string(),
+            weight: 0.5,
+            synapse_type: None,
+        });
+        creature.input = 2;
+        // input-0: centre 0.6 * 0.5 => -0.3, so 0.1 - 0.3 = -0.2.
+        // input-1: centre 0.2 * 0.5 => -0.1, so 0.1 - 0.1 = 0.0.
+        let obs = vec![
+            observation_with_range("input-0", 0.4, 0.8),
+            observation_with_range("input-1", 0.0, 0.4),
+        ];
+
+        let candidates = observation_utilisation_to_coordinated_candidates(&obs, &creature);
+        assert_eq!(candidates.len(), 2);
+        let values: Vec<f32> = candidates.iter().map(set_bias_value).collect();
+        assert!(
+            (values[0] - -0.2).abs() < 1e-6,
+            "input-0 candidate expected -0.2, got {}",
+            values[0]
+        );
+        assert!(
+            values[1].abs() < 1e-6,
+            "input-1 candidate expected 0.0, got {}",
+            values[1]
+        );
+    }
+
+    #[test]
+    fn test_target_missing_from_neurons_is_skipped() {
+        let mut creature = make_creature();
+        // Point the only synapse at a uuid that is not in creature.neurons.
+        creature.synapses[0].to_uuid = "missing-0".to_string();
+        let obs = vec![observation_with_range("input-0", 0.4, 0.8)];
+
+        let candidates = observation_utilisation_to_coordinated_candidates(&obs, &creature);
+        assert!(candidates.is_empty(), "got {} candidates", candidates.len());
     }
 }
