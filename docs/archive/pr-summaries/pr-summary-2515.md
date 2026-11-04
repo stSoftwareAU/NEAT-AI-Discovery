@@ -10,7 +10,7 @@ The streaming recording session's temporary file (`<temp_dir>/discovery_data.par
 
 ### Essential Design Decisions
 
-- A separate `new_exclusive` constructor (sharing a private `open`) rather than changing `new`, because `record_discovery_data` (`src/record/mod.rs`) and tests re-use `new` on a path they own; that path is outside this issue.
+- A separate `new_exclusive` constructor (sharing a private `open`) rather than changing `new`, because `record_discovery_data` (`src/record/mod.rs`) and tests reuse `new` on a path they own; that path is outside this issue.
 - Trade-off accepted: a crash orphan or retained recording in a `temp_dir` now blocks a new session there until the directory is cleaned (documented in `docs/STREAMING_GUIDE.md` and the `streaming.rs` module docs). A failed `RecordingSession::new` never runs `Drop`, so the occupier is not deleted.
 - If `ArrowWriter::try_new` fails after an exclusive create, the file this call created is removed.
 

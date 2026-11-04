@@ -1373,7 +1373,9 @@ provides a shorter gradient path.
 **Detection criteria**:
 
 1. **Depth from the inputs**: Each neuron's topological depth is the longest
-   path from any input. A neuron is deep when its depth is at least 3
+   path from any input. Inputs come from the creature's `input` count
+   (`input-0` to `input-{input - 1}`) and need not be listed in `neurons`
+   (Issue #2523). A neuron is deep when its depth is at least 3
    (`MIN_DEEP_DEPTH`). Only hidden neurons with at least
    `MIN_DISCOVERY_SAMPLE_COUNT` recorded samples are considered.
 2. **Gradient attenuation**: The deep neuron's mean absolute error divided by
