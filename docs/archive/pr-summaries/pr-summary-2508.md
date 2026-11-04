@@ -2,7 +2,7 @@
 
 `StreamingRecordCache::build_block_index` now records a block id for a neuron only when it differs from the neuron's last recorded block, looks neurons up with `get_mut` before allocating an owned `String`, and calls `shrink_to_fit()` on each list. The per-row push, the end-of-scan `sort()` + `dedup()` and the retained over-allocation are gone. Closes #2508.
 
-Version bump: `Cargo.toml` updated for this change; the merged commit records the final version.
+Version bump: `Cargo.toml` and `Cargo.lock` patch version `0.74.342` → `0.74.343`.
 
 ## Spec
 
