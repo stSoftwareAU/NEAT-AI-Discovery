@@ -362,8 +362,14 @@ fn real_ci_step_and_pipeline_are_extractable() {
     let step = extract_step(&read_ci_yml()).unwrap_or_else(|e| panic!("{e}"));
     let pipeline = extract_pipeline(&step).unwrap_or_else(|e| panic!("{e}"));
     assert!(
-        pipeline.starts_with("grep -vE ") && pipeline.contains("| grep -qE "),
+        pipeline.starts_with("grep -vE ") && pipeline.contains("| grep -E "),
         "unexpected pipeline shape: {pipeline}"
+    );
+    // `grep -q` exits on the first match, so under `pipefail` the left-hand grep can
+    // die of SIGPIPE (141) and the step wrongly reports a present field as missing.
+    assert!(
+        !pipeline.contains("grep -qE") && !pipeline.contains("grep -q "),
+        "right-hand grep must read all input, not exit early with -q: {pipeline}"
     );
 }
 

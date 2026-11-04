@@ -79,6 +79,10 @@ pub struct ParquetRecordWriter {
 impl ParquetRecordWriter {
     /// Create a new writer targeting `file_path`.
     ///
+    /// Truncates an existing file at `file_path` and follows a symlink there
+    /// (`File::create`). Use [`Self::new_exclusive`] when the path must not
+    /// already exist (Issue #2515).
+    ///
     /// Validates the byte/value batch limits and `total_capacity` (must be
     /// non-zero and within Arrow's `i32::MAX` offset budget; both batch limits
     /// must also be within that budget) before creating the underlying Parquet
@@ -89,6 +93,44 @@ impl ParquetRecordWriter {
         max_uuid_bytes_per_batch: usize,
         max_error_values_per_batch: usize,
         total_capacity: usize,
+    ) -> Result<Self> {
+        Self::open(
+            file_path,
+            max_uuid_bytes_per_batch,
+            max_error_values_per_batch,
+            total_capacity,
+            false,
+        )
+    }
+
+    /// Create a new writer targeting `file_path`, refusing any existing path (Issue #2515).
+    ///
+    /// Uses `create_new` semantics: anything already at `file_path` (a file, a
+    /// directory, or a symlink including a dangling one) is never opened for
+    /// writing. The call errors, naming the path, and leaves it untouched.
+    /// Validation is as for [`Self::new`].
+    pub fn new_exclusive(
+        file_path: &str,
+        max_uuid_bytes_per_batch: usize,
+        max_error_values_per_batch: usize,
+        total_capacity: usize,
+    ) -> Result<Self> {
+        Self::open(
+            file_path,
+            max_uuid_bytes_per_batch,
+            max_error_values_per_batch,
+            total_capacity,
+            true,
+        )
+    }
+
+    /// Shared constructor behind [`Self::new`] and [`Self::new_exclusive`].
+    fn open(
+        file_path: &str,
+        max_uuid_bytes_per_batch: usize,
+        max_error_values_per_batch: usize,
+        total_capacity: usize,
+        exclusive: bool,
     ) -> Result<Self> {
         if total_capacity == 0 {
             anyhow::bail!("No records to write");
@@ -125,12 +167,29 @@ impl ParquetRecordWriter {
         }
 
         let schema = Arc::new(create_schema());
-        let file = File::create(file_path)
-            .with_context(|| format!("Failed to create Parquet file: {file_path}"))?;
+        // Issue #2515: exclusive creation refuses any existing file, directory or symlink.
+        let file = if exclusive {
+            create_temp_file_exclusive(Path::new(file_path)).with_context(|| {
+                format!(
+                    "Failed to create Parquet file: {file_path} (refusing to open an existing file or symlink at that path)"
+                )
+            })?
+        } else {
+            File::create(file_path)
+                .with_context(|| format!("Failed to create Parquet file: {file_path}"))?
+        };
 
         let props = WriterProperties::builder().build();
-        let writer = ArrowWriter::try_new(file, schema.clone(), Some(props))
-            .context("Failed to create ArrowWriter")?;
+        let writer = match ArrowWriter::try_new(file, schema.clone(), Some(props)) {
+            Ok(writer) => writer,
+            Err(err) => {
+                // Issue #2515: remove only the file this call created.
+                if exclusive {
+                    remove_merge_temp_file(Path::new(file_path));
+                }
+                return Err(anyhow::Error::new(err).context("Failed to create ArrowWriter"));
+            }
+        };
 
         Ok(Self {
             writer,
@@ -638,6 +697,41 @@ mod tests {
             fs::read(path).expect("read existing file"),
             b"preserve these bytes"
         );
+    }
+
+    #[test]
+    fn new_exclusive_refuses_existing_file_and_leaves_bytes() {
+        let dir = TempDir::new().expect("temp dir");
+        let path = path_in(&dir, "occupied.parquet.tmp");
+        fs::write(&path, b"preserve these bytes").expect("write existing file");
+
+        let err = ParquetRecordWriter::new_exclusive(&path, 1000, 1000, 1)
+            .err()
+            .expect("an existing path must be refused");
+
+        assert!(
+            format!("{err:#}").contains(path.as_str()),
+            "error must name the path: {err:#}"
+        );
+        assert_eq!(
+            fs::read(&path).expect("read existing file"),
+            b"preserve these bytes"
+        );
+    }
+
+    #[test]
+    fn new_exclusive_creates_fresh_file() {
+        let dir = TempDir::new().expect("temp dir");
+        let path = path_in(&dir, "fresh.parquet.tmp");
+
+        let writer = ParquetRecordWriter::new_exclusive(&path, 1000, 1000, 1)
+            .expect("a fresh path must be created");
+
+        assert!(
+            Path::new(&path).is_file(),
+            "new_exclusive must create the file"
+        );
+        writer.finish().expect("finish empty writer");
     }
 
     #[test]
