@@ -406,10 +406,18 @@ impl StreamingRecordCache {
             // Track which neurons are in this batch
             for i in 0..batch.num_rows() {
                 let uuid = neuron_uuid_col.value(i);
-                neuron_blocks
-                    .entry(uuid.to_string())
-                    .or_default()
-                    .push(current_block);
+                // `current_block` only ever increases, so pushing only on change keeps
+                // each list ascending and unique. Known neurons allocate no String.
+                match neuron_blocks.get_mut(uuid) {
+                    Some(blocks) => {
+                        if blocks.last() != Some(&current_block) {
+                            blocks.push(current_block);
+                        }
+                    }
+                    None => {
+                        neuron_blocks.insert(uuid.to_string(), vec![current_block]);
+                    }
+                }
 
                 rows_in_current_block += 1;
 
@@ -421,10 +429,9 @@ impl StreamingRecordCache {
             }
         }
 
-        // Deduplicate block lists
+        // Release per-neuron slack: the map lives for the cache's lifetime.
         for blocks in neuron_blocks.values_mut() {
-            blocks.sort();
-            blocks.dedup();
+            blocks.shrink_to_fit();
         }
 
         let num_blocks = if rows_in_current_block > 0 {
@@ -737,5 +744,81 @@ mod tests {
         unsafe {
             std::env::remove_var("NEAT_AI_DISCOVERY_BLOCK_SIZE");
         }
+    }
+
+    #[test]
+    fn block_index_holds_one_entry_per_distinct_block_per_neuron_without_slack() {
+        const OBS: u32 = 100;
+        const BLOCK_SIZE: usize = 30;
+
+        // Obs-major ordering: a, b, c per observation. "neuron-rare" appears
+        // only in obs 0 and obs 99, placed after c in those observations.
+        let mut records = Vec::new();
+        for obs in 0..OBS {
+            for name in ["neuron-a", "neuron-b", "neuron-c"] {
+                records.push(DiscoverRecord::new(
+                    obs,
+                    name.to_string(),
+                    Some(0.5),
+                    0.5,
+                    vec![],
+                ));
+            }
+            if obs == 0 || obs == OBS - 1 {
+                records.push(DiscoverRecord::new(
+                    obs,
+                    "neuron-rare".to_string(),
+                    Some(0.5),
+                    0.5,
+                    vec![],
+                ));
+            }
+        }
+        let total_rows = records.len();
+
+        // Expected distinct blocks per neuron, derived from row index / block size.
+        let mut expected: std::collections::BTreeMap<String, std::collections::BTreeSet<usize>> =
+            std::collections::BTreeMap::new();
+        for (row, record) in records.iter().enumerate() {
+            expected
+                .entry(record.neuron_uuid.clone())
+                .or_default()
+                .insert(row / BLOCK_SIZE);
+        }
+
+        let dir = tempfile::TempDir::new().expect("create tempdir");
+        let path = dir.path().join("block_index.parquet");
+        let path_str = path.to_str().expect("utf-8 temp path");
+        crate::parquet_format::write_records_to_parquet(path_str, &records)
+            .expect("write Parquet fixture");
+
+        let index = StreamingRecordCache::build_block_index(path_str, BLOCK_SIZE)
+            .expect("build block index");
+
+        // (a) and (b): each neuron maps to exactly its sorted distinct block ids.
+        assert_eq!(index.neuron_blocks.len(), expected.len());
+        for (uuid, wanted) in &expected {
+            let blocks = index
+                .neuron_blocks
+                .get(uuid)
+                .unwrap_or_else(|| panic!("missing index entry for {uuid}"));
+            let wanted: Vec<usize> = wanted.iter().copied().collect();
+            assert_eq!(
+                *blocks, wanted,
+                "{uuid}: block list must be strictly ascending distinct block ids"
+            );
+
+            // (c): no retained slack from per-row pushes.
+            assert!(
+                blocks.capacity() < 2 * blocks.len(),
+                "{uuid}: retained capacity {} for {} distinct blocks",
+                blocks.capacity(),
+                blocks.len()
+            );
+        }
+        assert_eq!(index.neuron_blocks["neuron-rare"], vec![0, 10]);
+
+        // (d): block count matches ceil(total_rows / block_size).
+        assert_eq!(index.num_blocks, total_rows.div_ceil(BLOCK_SIZE));
     }
 }
