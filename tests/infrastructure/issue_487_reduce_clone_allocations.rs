@@ -13,6 +13,7 @@ use neat_ai_discovery::analysis::detection::bottleneck::{
 use neat_ai_discovery::analysis::samples::{HelpfulSample, HelpfulStats};
 use neat_ai_discovery::types::DiscoverRecord;
 use neat_ai_discovery::{CreatureJson, NeuronJson, SynapseJson};
+use serial_test::serial;
 
 // =============================================================================
 // HelpfulStats Copy trait
@@ -70,6 +71,7 @@ fn helpful_stats_copy_through_function() {
 
 /// Verify bottleneck detection produces correct candidates after clone reduction.
 #[test]
+#[serial]
 fn bottleneck_detection_with_borrowed_lists() {
     // Create a creature with a clear bottleneck: 4 inputs → 1 hidden → 1 output
     let creature = CreatureJson {
@@ -207,6 +209,7 @@ use neat_ai_discovery::analysis::detection::restricted_range::{
 /// Verify restricted range detection produces correct results after clone reduction.
 /// Tests the full detect → convert pipeline with multiple neurons.
 #[test]
+#[serial]
 fn restricted_range_detection_preserves_correctness() {
     let creature = CreatureJson {
         neurons: vec![
@@ -386,6 +389,7 @@ fn bounded_range_detection_preserves_correctness() {
 /// Verify bottleneck with multiple candidates produces correctly formed operations
 /// (tests that String references are correctly materialised in operations).
 #[test]
+#[serial]
 fn bottleneck_multiple_candidates_correct_uuids() {
     let creature = CreatureJson {
         neurons: vec![
