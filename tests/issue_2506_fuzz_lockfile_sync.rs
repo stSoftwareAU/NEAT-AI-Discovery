@@ -321,12 +321,12 @@ fn quality_gate_syncs_then_checks_the_fuzz_lockfile() {
     fs::create_dir_all(&bin).expect("create stub bin dir");
     let log = tmp.path().join("cargo-invocations.log");
 
-    // Stub `cargo`: record the sub-command line, succeed, mutate nothing.
+    // Reject metadata on the stale fixture so the gate must sync before checking.
     write_stub(
         &bin,
         "cargo",
         &format!(
-            "#!/bin/bash\nprintf '%s\\n' \"$*\" >> '{}'\nexit 0\n",
+            "#!/bin/bash\nprintf '%s\\n' \"$*\" >> '{}'\nif [[ \"$1\" == metadata ]] && ! grep -Fxq 'version = \"9.9.9\"' fuzz/Cargo.lock; then exit 101; fi\nexit 0\n",
             log.display()
         ),
     );
@@ -356,6 +356,8 @@ fn quality_gate_syncs_then_checks_the_fuzz_lockfile() {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
+
+    assert_eq!(read_lock(&root), lock_text("9.9.9"));
 
     let invocations = fs::read_to_string(&log).expect("cargo stub was never invoked");
     let lines: Vec<&str> = invocations.lines().collect();
@@ -406,7 +408,7 @@ fn run_fuzz_ci_in_stale_root() -> (tempfile::TempDir, PathBuf, String, Output) {
         &bin,
         "cargo",
         &format!(
-            "#!/bin/bash\nprintf '%s\\n' \"$*\" >> '{}'\nexit 0\n",
+            "#!/bin/bash\nprintf '%s\\n' \"$*\" >> '{}'\nif [[ \"$1\" == metadata ]] && ! grep -Fxq 'version = \"9.9.9\"' fuzz/Cargo.lock; then exit 101; fi\nexit 0\n",
             log.display()
         ),
     );
