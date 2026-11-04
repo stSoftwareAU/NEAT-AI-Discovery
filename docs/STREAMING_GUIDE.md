@@ -290,7 +290,8 @@ if (!result.success) {
 ### Session Cancellation
 
 Use `cancel_discovery_session` to clean up without finalising. This removes
-the session and deletes any partially-written temporary files:
+the session and deletes its partially-written temporary file, except after a
+failed finalisation, which keeps it (see Failed Finalisation Is Retryable):
 
 ```typescript
 function cancelSession(sessionId: string): void {
@@ -329,8 +330,17 @@ If the process crashes mid-recording:
 - The Rust library writes to a `.parquet.tmp` file during the session.
 - On `finish_discovery_session`, the temporary file is atomically renamed to
   `discovery_data.parquet`.
-- If the session is never finished (crash or panic), the `Drop` implementation
-  automatically cleans up the incomplete `.parquet.tmp` file.
+- A session still registered when the process crashes or exits is never
+  dropped, so its incomplete `discovery_data.parquet.tmp` is left behind in
+  `tempDir`. The `Drop` cleanup of that file runs only when a session is
+  cancelled or swept by the TTL.
+- After a crash, starting a new session in the same `tempDir` fails with an
+  error naming `discovery_data.parquet.tmp` instead of overwriting it (Issue
+  #2515). Clean the directory first, for example with `cleanup_discovery_dir`.
+- The same applies to a retained recording from a failed finalisation (see
+  below), and to two sessions sharing one `tempDir`: the second
+  `start_discovery_session` fails while the first session's `.parquet.tmp`
+  exists.
 - Already-written batches are preserved in the temporary file until cleanup
   occurs.
 
@@ -340,9 +350,11 @@ A `finish_discovery_session` that fails while flushing or renaming — a transie
 `ENOSPC`, `EXDEV`, or `EACCES` — keeps the complete `.parquet.tmp` file on disk
 and leaves the session registered, so calling `finish_discovery_session` again
 with the same session ID retries the rename (Issue #1902). The failure is logged
-at `error` level naming the retained path. Only an abandoned session — one
-cancelled, TTL-swept, or dropped without a finish attempt — has its
-`.parquet.tmp` deleted, as does the empty-session guard below.
+at `error` level naming the retained path. Cancelling such a session, or the TTL
+sweep removing it, keeps the `.parquet.tmp`, and that file blocks a new session
+in the same `tempDir` until the directory is cleaned (Issue #2515). Only a
+session that never attempted finalisation has its `.parquet.tmp` deleted when
+it is cancelled, swept, or dropped, as does the empty-session guard below.
 
 ```mermaid
 flowchart TD

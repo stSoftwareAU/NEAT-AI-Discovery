@@ -52,6 +52,16 @@
 //! distinguishes that from an abandoned session, whose `.tmp` file is still
 //! deleted — and the session stays retryable instead of returning "Session not
 //! found".
+//!
+//! ## Exclusive temporary file (Issue #2515)
+//!
+//! A session's `.tmp` file is created with `O_EXCL`. `start_session` on a
+//! `temp_dir` whose `discovery_data.parquet.tmp` already exists (a retained
+//! recording, a still-open session, a symlink, or a crash orphan) fails with an
+//! error naming that path and leaves the file untouched. Before reusing the
+//! directory, finish the existing session successfully (its `.tmp` is renamed
+//! away) or clean the directory with `cleanup_discovery_dir`. Cancelling a
+//! session whose finalisation failed keeps its `.tmp`.
 
 #![allow(clippy::cast_sign_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use anyhow::{Context, Result};
@@ -157,13 +167,18 @@ impl RecordingSession {
         // Write to a temporary file; rename to final path on successful finish
         let tmp_path = format!("{parquet_path}.tmp");
         let max_arrow_offset = i32::MAX as usize;
-        let writer = ParquetRecordWriter::new(
+        // Issue #2515: exclusive create protects a retained #1902 recording, a live session's file and a planted symlink.
+        let writer = ParquetRecordWriter::new_exclusive(
             &tmp_path,
             max_arrow_offset,
             max_arrow_offset,
             STREAMING_MAX_CAPACITY,
         )
-        .context("Failed to initialise Parquet writer for streaming session")?;
+        .with_context(|| {
+            format!(
+                "Failed to initialise Parquet writer for streaming session (temporary file {tmp_path})"
+            )
+        })?;
 
         Ok(Self {
             writer: Some(writer),
@@ -262,7 +277,10 @@ pub fn cleanup_stale_sessions() {
 
 /// Start a new recording session
 ///
-/// Creates a Parquet file and returns a session ID for subsequent append/finish calls.
+/// Creates the session's `discovery_data.parquet.tmp` exclusively and returns a
+/// session ID for subsequent append/finish calls. If that temporary file already
+/// exists in `temp_dir` (Issue #2515), this fails with an error naming the path
+/// and leaves the file untouched; no session is registered.
 pub fn start_session(creature: CreatureJson, temp_dir: String) -> Result<String> {
     // Clean up any orphaned sessions that have exceeded the TTL
     cleanup_stale_sessions();
