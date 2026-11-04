@@ -387,7 +387,7 @@ jobs:
         # the `quality` job (Run linter) on the same pull request;
         # recompiling here only duplicated that work (Issue #1342).
         for field in "name" "version" "edition"; do
-          if ! grep -vE "^[[:space:]]*#" Cargo.toml | grep -qE "^[[:space:]]*${field}[[:space:]]*="; then
+          if ! grep -vE "^[[:space:]]*#" Cargo.toml | grep -E "^[[:space:]]*${field}[[:space:]]*=" >/dev/null; then
             echo "❌ Missing '$field' field in Cargo.toml"
             exit 1
           fi
