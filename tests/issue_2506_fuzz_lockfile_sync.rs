@@ -439,14 +439,61 @@ fn documented_fuzz_workflow_syncs_the_lock_before_its_locked_runs() {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("docs/ci-fuzzing-workflow.yml"),
     )
     .expect("read docs/ci-fuzzing-workflow.yml");
-    let sync = text
-        .find("quality/fuzz_lockfile.sh sync")
-        .expect("workflow must run quality/fuzz_lockfile.sh sync (Issue #2506)");
+    let step = text
+        .find("- name: Sync fuzz/Cargo.lock version")
+        .expect("workflow must contain the lockfile step (Issue #2506)");
     let first_run = text
         .find("cargo +nightly fuzz run --locked")
         .expect("workflow must run the fuzz targets");
     assert!(
-        sync < first_run,
+        step < first_run,
         "the sync step must precede the first `fuzz run --locked` (Issue #2506)"
     );
+
+    let block = text[step..]
+        .split_once("      run: |\n")
+        .expect("lockfile step must have a run block")
+        .1;
+    let commands: Vec<&str> = block
+        .lines()
+        .take_while(|line| line.starts_with("        "))
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect();
+    assert_eq!(commands.len(), 2, "the step must sync and check the lock");
+
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let root = tmp.path();
+    fixture(root, "9.9.9", "1.0.0");
+    fs::create_dir_all(root.join("quality")).expect("create quality dir");
+    fs::copy(script(), root.join("quality/fuzz_lockfile.sh")).expect("copy script");
+    for (index, command) in commands.iter().enumerate() {
+        let mut words = command.split_whitespace();
+        let executable = words.next().expect("command must not be empty");
+        let output = Command::new(root.join(executable))
+            .args(words)
+            .current_dir(root)
+            .env("CARGO_NET_OFFLINE", "true")
+            .env("CARGO_TARGET_DIR", root.join("target"))
+            .stdin(Stdio::null())
+            .output()
+            .expect("run documented lockfile command");
+        assert!(
+            output.status.success(),
+            "documented command {command:?} failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        if index == 0 {
+            assert_eq!(
+                read_lock(root),
+                lock_text("9.9.9"),
+                "first command must restamp the stale lock"
+            );
+        } else {
+            assert!(
+                String::from_utf8_lossy(&output.stdout).contains("OK"),
+                "second command must check the lock"
+            );
+        }
+    }
 }

@@ -45,7 +45,7 @@ New `tests/issue_2506_fuzz_lockfile_sync.rs` (fixtures built in temp directories
 - `check_rejects_a_stale_lock_then_accepts_it_after_sync`: the same fixture is rejected, then accepted after only the lock version changes.
 - `check_accepts_a_current_lock`.
 - `fuzz_ci_restamps_a_stale_lock_and_checks_it_before_fuzzing`: runs a copy of `scripts/fuzz-ci.sh` in a temp root whose lock is stale (stub `cargo`/`rustup`), asserts the lock is restamped and a `metadata --locked` call precedes the first `fuzz run --locked`.
-- `documented_fuzz_workflow_syncs_the_lock_before_its_locked_runs`: `docs/ci-fuzzing-workflow.yml` runs `quality/fuzz_lockfile.sh sync` before its first `fuzz run --locked`.
+- `documented_fuzz_workflow_syncs_the_lock_before_its_locked_runs`: extracts and executes both documented lockfile commands against a stale fixture with the real script and offline Cargo, and verifies the step precedes fuzzing.
 - `quality_gate_syncs_then_checks_the_fuzz_lockfile`: runs the real `quality.sh` with a stubbed `cargo` and asserts a `metadata --locked … fuzz/Cargo.toml` call that comes before `deny`. It snapshots `fuzz/Cargo.lock` and restores it on drop.
 
 Results on the final tree: `cargo test --test issue_2506_fuzz_lockfile_sync` → 8 passed, and with `--test issue_1912_fuzz_ci_pinned_install --test issue_1912_cargo_install_pinning_gate --test issue_1939_documented_commands` also green; `cargo fmt --all -- --check` clean; `cargo clippy --test issue_2506_fuzz_lockfile_sync -- -D warnings` clean.
@@ -61,3 +61,5 @@ Full gate: `timeout 595 ./quality.sh` on the final tree passed `bash -n`, shellc
 Not done / risk: the CI `version-increment` job is unchanged by design; the fuzz entry points restamp the lock themselves. The last gate stages (full `cargo test`, `cargo doc`, release build) were not run here.
 
 <!-- vibe-quality-gate-skipped reason="full ./quality.sh exceeded the 595 s foreground cap (exit 124) during cargo check; every stage before it passed; the new tests, fmt and clippy were run separately; CI runs the full gate" -->
+
+Review follow-up: the old workflow test only matched a literal sync command and did not exercise the check. The remaining contract is that both documented commands successfully restamp and validate a stale lock before fuzzing, covered by `tests/issue_2506_fuzz_lockfile_sync.rs::documented_fuzz_workflow_syncs_the_lock_before_its_locked_runs`.
