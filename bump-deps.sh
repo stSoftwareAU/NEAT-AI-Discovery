@@ -1147,6 +1147,23 @@ elif [[ "$DRY_RUN" -eq 0 && -f "$CARGO_MANIFEST" ]]; then
     echo ""
 fi
 
+# Phase 3c: keep fuzz/Cargo.lock's path entry in step with Cargo.toml (Issue
+# #2506). `sync` restamps only the crate's own version line and re-resolves
+# nothing, so it needs no network and runs even under --no-network. A missing
+# script or a failed sync is fatal: skipping it silently leaves
+# `cargo fuzz run --locked` broken.
+if [[ "$DRY_RUN" -eq 0 && -f "$PROJECT_ROOT/fuzz/Cargo.lock" ]]; then
+    if [[ ! -f "$PROJECT_ROOT/quality/fuzz_lockfile.sh" || ! -x "$PROJECT_ROOT/quality/fuzz_lockfile.sh" ]]; then
+        echo "ERROR: $PROJECT_ROOT/quality/fuzz_lockfile.sh is missing or not executable — cannot restamp fuzz/Cargo.lock" >&2
+        exit 1
+    fi
+    if ! "$PROJECT_ROOT/quality/fuzz_lockfile.sh" sync "$PROJECT_ROOT"; then
+        echo "ERROR: could not restamp fuzz/Cargo.lock (quality/fuzz_lockfile.sh sync failed)" >&2
+        exit 1
+    fi
+    echo ""
+fi
+
 # Phase 4: audit gate.
 AUDIT_RUN=0
 if [[ "$DRY_RUN" -eq 0 ]]; then

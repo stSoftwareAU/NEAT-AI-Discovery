@@ -27,6 +27,14 @@ echo "📌 Checking cargo install pinning..."
 echo "📄 Checking PR summary layout..."
 ./scripts/check-pr-summary-location.sh
 
+# fuzz/Cargo.lock must record the crate's current version, or `cargo fuzz run
+# --locked` refuses to run after a version bump (Issue #2506). `sync` only
+# restamps the crate's own version line and re-resolves nothing, so it does not
+# breach the Issue #1865 rule below: no dependency is upgraded here.
+echo "🧷 Syncing and checking fuzz/Cargo.lock..."
+./quality/fuzz_lockfile.sh sync
+./quality/fuzz_lockfile.sh check
+
 # Dependency bumps deliberately do NOT happen here (Issue #1865). This gate is
 # the documented pre-commit step, so upgrading here pulled crates published
 # minutes earlier — bypassing both the Renovate `minimumReleaseAge` window and

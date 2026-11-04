@@ -74,7 +74,9 @@ half-migrated build.
 and unattended machines cache the compiled library by version number; without a
 bump they keep running the old library. CI's `version-increment` job auto-bumps
 the patch version on every PR, but if you commit outside that flow you must bump
-it manually (e.g. `0.43.8` → `0.43.9`). Confirm the loaded version with
+it manually (e.g. `0.43.8` → `0.43.9`). Follow a manual bump with
+`./quality/fuzz_lockfile.sh sync` so `fuzz/Cargo.lock` records the new version
+(`./quality.sh` also does this). Confirm the loaded version with
 `get_library_version()`.
 
 ---

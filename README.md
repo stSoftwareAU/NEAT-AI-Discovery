@@ -511,6 +511,12 @@ cargo +nightly fuzz list
 Crash-reproducing inputs (if any) are saved to `fuzz/artifacts/`. The fuzzer
 corpus is stored in `fuzz/corpus/` and grows over successive runs.
 
+`fuzz/Cargo.lock` records this crate's own version as a path package, so it must
+be restamped after every version bump in `Cargo.toml`. `./quality.sh` and
+`./bump-deps.sh` do this via `quality/fuzz_lockfile.sh sync`. If
+`cargo fuzz run --locked` reports that the lock file needs updating after a bump,
+run `quality/fuzz_lockfile.sh sync` by hand, then `quality/fuzz_lockfile.sh check`.
+
 ## 💡 Why Use This Library?
 
 - **Production-ready discovery** — Handles millions of observations without the

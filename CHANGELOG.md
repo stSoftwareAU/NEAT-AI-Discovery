@@ -60,6 +60,23 @@ detection behaviour are unchanged.
 
 ### Fixed
 
+#### fuzz/Cargo.lock no longer goes stale on a version bump (Issue #2506)
+
+`fuzz/Cargo.lock` records the root crate as a path package, and that entry
+carries the crate's version. Nothing refreshed it when `Cargo.toml` was bumped,
+so after each bump it still named the previous version and
+`cargo fuzz run --locked` failed with "lock file needs to be updated but
+--locked was passed". The new `quality/fuzz_lockfile.sh` keeps that one line in
+step. `sync` rewrites only the path package's `version` line to the `Cargo.toml`
+version, re-resolving nothing and needing no network. `check` confirms
+`cargo metadata --locked` accepts the lock file, and says which version the lock
+records when it does not. `./quality.sh` runs `sync` then `check`, and
+`./bump-deps.sh` runs `sync` after its lockfile integrity phase, failing loudly
+if the script is missing or the sync fails. The CI `version-increment` job
+(`.github/workflows/ci.yml`, deliberately unchanged) still bumps only the root
+`Cargo.lock`, so a PR that it bumps leaves `fuzz/Cargo.lock` stale until the next
+`./quality.sh` or `./bump-deps.sh` run restamps it.
+
 #### `creature.output` is bounded at the FFI boundary (Issue #2078)
 
 `MAX_CREATURE_INPUT_NEURONS` (Issue #1867) capped `creature.input`, but its
