@@ -463,6 +463,12 @@ mod tests {
             unsafe { std::env::remove_var(key) };
             Self { key, prior }
         }
+
+        /// Records `key`'s current value without modifying it, so `Drop` restores it.
+        fn capture(key: &'static str) -> Self {
+            let prior = std::env::var_os(key);
+            Self { key, prior }
+        }
     }
 
     #[cfg(unix)]
@@ -766,11 +772,19 @@ mod tests {
     /// Smoke test: `suppress_mesa_warnings_if_requested` is a one-time
     /// environment variable setter guarded by `Once`. On non-Linux it is a
     /// no-op. There is no return value or queryable state — the only
-    /// contract is that repeated calls do not panic.
+    /// contract is that repeated calls do not panic. Serial because it
+    /// mutates the process environment; the Mesa variables are restored on exit.
     #[test]
+    #[serial_test::serial]
     fn test_suppress_mesa_warnings_does_not_panic() {
-        // SAFETY: the test harness has not spawned any thread that reads the
-        // process environment, so the early-init precondition holds.
+        #[cfg(unix)]
+        let _env = [
+            EnvGuard::capture("EGL_LOG_LEVEL"),
+            EnvGuard::capture("MESA_GLSL_CACHE_DISABLE"),
+            EnvGuard::capture("MESA_DEBUG"),
+        ];
+        // SAFETY: serialised via #[serial] with every env-mutating test in this
+        // module; the variables the Once writes are restored by the guards above.
         unsafe {
             suppress_mesa_warnings_if_requested();
             suppress_mesa_warnings_if_requested();
@@ -780,11 +794,15 @@ mod tests {
     /// Smoke test: `ensure_xdg_runtime_dir` is a one-time environment setup
     /// guarded by `Once`. On non-Linux it is a no-op. There is no return
     /// value or queryable state — the only contract is that repeated calls
-    /// do not panic.
+    /// do not panic. Serial because it mutates the process environment; the
+    /// `XDG_RUNTIME_DIR` variable is restored on exit.
     #[test]
+    #[serial_test::serial]
     fn test_ensure_xdg_runtime_dir_does_not_panic() {
-        // SAFETY: the test harness has not spawned any thread that reads the
-        // process environment, so the early-init precondition holds.
+        #[cfg(unix)]
+        let _env = [EnvGuard::capture("XDG_RUNTIME_DIR")];
+        // SAFETY: serialised via #[serial] with every env-mutating test in this
+        // module; the variables the Once writes are restored by the guards above.
         unsafe {
             ensure_xdg_runtime_dir();
             ensure_xdg_runtime_dir();
