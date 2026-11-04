@@ -45,7 +45,7 @@ New `tests/issue_2506_fuzz_lockfile_sync.rs` (fixtures built in temp directories
 - `check_rejects_a_stale_lock_then_accepts_it_after_sync`: the same fixture is rejected, then accepted after only the lock version changes.
 - `check_accepts_a_current_lock`.
 - `fuzz_ci_restamps_a_stale_lock_and_checks_it_before_fuzzing`: runs a copy of `scripts/fuzz-ci.sh` in a temp root whose lock is stale (stub `cargo`/`rustup`), asserts the lock is restamped and a `metadata --locked` call precedes the first `fuzz run --locked`.
-- `documented_fuzz_workflow_syncs_the_lock_before_its_locked_runs`: extracts and executes both documented lockfile commands against a stale fixture with the real script and offline Cargo, and verifies the step precedes fuzzing.
+- `documented_fuzz_workflow_syncs_the_lock_before_its_locked_runs`: extracts and executes both documented lockfile commands against a stale fixture with the real script (copied to its own repo-relative path, so a moved script turns the test red) and offline Cargo, and verifies the step precedes fuzzing.
 - `quality_gate_syncs_then_checks_the_fuzz_lockfile`: runs the real `quality.sh` with a stubbed `cargo` and asserts a `metadata --locked … fuzz/Cargo.toml` call that comes before `deny`. It snapshots `fuzz/Cargo.lock` and restores it on drop.
 
 Results on the final tree: `cargo test --test issue_2506_fuzz_lockfile_sync` → 8 passed, and with `--test issue_1912_fuzz_ci_pinned_install --test issue_1912_cargo_install_pinning_gate --test issue_1939_documented_commands` also green; `cargo fmt --all -- --check` clean; `cargo clippy --test issue_2506_fuzz_lockfile_sync -- -D warnings` clean.

@@ -465,8 +465,15 @@ fn documented_fuzz_workflow_syncs_the_lock_before_its_locked_runs() {
     let tmp = tempfile::tempdir().expect("temp dir");
     let root = tmp.path();
     fixture(root, "9.9.9", "1.0.0");
-    fs::create_dir_all(root.join("quality")).expect("create quality dir");
-    fs::copy(script(), root.join("quality/fuzz_lockfile.sh")).expect("copy script");
+    // Destination is the script's own repo-relative path, so a moved script
+    // no longer satisfies a stale documented path.
+    let script_dest = root.join(
+        script()
+            .strip_prefix(env!("CARGO_MANIFEST_DIR"))
+            .expect("script lives under the repo"),
+    );
+    fs::create_dir_all(script_dest.parent().expect("script parent")).expect("create script dir");
+    fs::copy(script(), &script_dest).expect("copy script");
     for (index, command) in commands.iter().enumerate() {
         let mut words = command.split_whitespace();
         let executable = words.next().expect("command must not be empty");
