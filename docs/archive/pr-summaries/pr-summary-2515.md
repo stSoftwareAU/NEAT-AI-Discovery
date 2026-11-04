@@ -24,12 +24,14 @@ The streaming recording session's temporary file (`<temp_dir>/discovery_data.par
 
 Callers of `ParquetRecordWriter::new` checked (`src/record/mod.rs`, `src/parquet_format/mod.rs` tests, `tests/issue_2453_*`, `tests/issue_2066_*`): unchanged behaviour. The only production caller moved to `new_exclusive` is `RecordingSession::new`.
 
+The coverage repair replaces the obsolete line-number reference to the CI documentation check with its stable workflow and step name. The named check remains required in both the workflow and the documentation, covered by `tests/issue_1685_doc_link_integrity.rs::ci_doc_build_step_cites_the_real_check_documentation_step`.
+
 ## Test Plan
 
 - Added `tests/issue_2515_streaming_exclusive_temp.rs`: `existing_regular_file_is_preserved_and_start_session_fails`, `symlink_at_tmp_path_is_not_written_through`, `dangling_symlink_is_not_created_through`, `second_session_on_same_temp_dir_does_not_corrupt_the_first`, `retained_recording_survives_a_second_start_session`.
 - Red check: with `src/streaming.rs` still calling `ParquetRecordWriter::new`, all 5 tests fail (`start_session` returned `Ok`); with `new_exclusive` all 5 pass.
 - Passed on the head: `cargo test --test issue_2515_streaming_exclusive_temp` (5), `cargo test --lib parquet_format::writer` (21), `cargo test --lib streaming` (28), `cargo test --test issue_1751_streaming_session_locks --test issue_1876_cancelled_session_append --test issue_2451_record_atomic_write`, `cargo test --test ffi` (245); `cargo fmt --check`; `cargo clippy --lib --tests -- -D warnings`.
-- No existing test assertion was removed or edited.
+- The documentation pointer test now checks the stable workflow and step name instead of a line range that changes when earlier steps move.
 - Docs updated: `docs/STREAMING_GUIDE.md` (cancellation, crash recovery, failed-finalisation sections), `docs/FFI_API.md` (`start_discovery_session` row), `src/streaming.rs` module docs and `start_session` doc comment.
 
 <!-- vibe-quality-gate-skipped reason="full ./quality.sh exceeds the 590 s foreground cap on this host (as in #2496/#2497/#2508/#2509); targeted tests, fmt and clippy were run; CI runs the full gate" -->
