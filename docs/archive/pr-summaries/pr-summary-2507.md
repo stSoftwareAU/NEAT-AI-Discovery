@@ -2,8 +2,6 @@
 
 The Parquet decode preflight now charges the real decoded `neuron_uuid` string bytes instead of a flat 36 bytes per row, so a small file whose identifier column is dictionary-encoded with a long repeated value is refused before Arrow builds a batch. Closes #2507.
 
-The CI documentation proposal points to the current validation step after the Cargo.toml validation change.
-
 Version bump: `Cargo.toml` and `Cargo.lock` updated for this change; the merged commit records the final version.
 
 ## Spec
@@ -32,7 +30,7 @@ Library change; no UI. Readers covered, all via `DecodeBudget::preflight_columns
 
 ## Test Plan
 
-- `tests/issue_1685_doc_link_integrity.rs::ci_doc_build_step_cites_the_real_check_documentation_lines` checks the updated CI documentation pointer.
+- The unrelated non-quiet Cargo.toml validation pipeline was removed; the original quiet pipeline remains, covered by `tests/issue_2494_cargo_toml_validation.rs::real_ci_step_and_pipeline_are_extractable`. The separate SIGPIPE issue is tracked in #2546.
 - `src/parquet_format/footer.rs` unit tests: statistic trusted exactly; absent + dictionary (below and above one batch); absent + plain; negative statistic. The obsolete fallback treated DELTA_BYTE_ARRAY as plain; the remaining behaviour bounds its decoded batch, covered by `src/parquet_format/footer.rs::tests::absent_statistic_on_delta_byte_array_bounds_one_batch_of_copies`.
 - New `tests/issue_2507_parquet_long_uuid_preflight.rs`: a 2,000-row, one-identifier (20,000 bytes) dictionary-encoded file under a 1 MB ceiling is refused by each reader with "footer preflight before Arrow batch construction", with a VmHWM bound; positive controls (36-char repeated, distinct 36-char identifiers) are accepted.
 - Edited `the_streaming_block_loader_charges_the_decode_budget` in `tests/issue_2005_shared_batch_decoder.rs`: the two `preflight_columns` calls became `preflight_row_groups` (the streaming readers' real preflight; the eager one now correctly counts the record struct). No assertion removed; the per-record-charging assertion is unchanged and still reached (checked arithmetically: row-group preflight ~0.84 MB < 1 MB, charging 7,000 × (struct + 100) > 1 MB).

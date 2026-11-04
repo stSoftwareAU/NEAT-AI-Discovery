@@ -362,7 +362,7 @@ fn real_ci_step_and_pipeline_are_extractable() {
     let step = extract_step(&read_ci_yml()).unwrap_or_else(|e| panic!("{e}"));
     let pipeline = extract_pipeline(&step).unwrap_or_else(|e| panic!("{e}"));
     assert!(
-        pipeline.starts_with("grep -vE ") && pipeline.contains("| grep -E "),
+        pipeline.starts_with("grep -vE ") && pipeline.contains("| grep -qE "),
         "unexpected pipeline shape: {pipeline}"
     );
 }
