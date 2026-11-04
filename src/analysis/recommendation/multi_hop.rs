@@ -29,6 +29,7 @@
 #![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use std::collections::{HashMap, HashSet};
 
+use crate::analysis::detection::helpers::{existing_neuron_uuids, first_free_neuron_uuid};
 use crate::analysis::utils::deadline_passed;
 use crate::types::DiscoverRecord;
 use crate::{CoordinatedStructuralCandidateJson, CoordinatedStructuralOpJson, CreatureJson};
@@ -410,6 +411,10 @@ fn multi_hop_relay_uuid(path: &[String], index: usize) -> String {
 /// - **Three-hop** (source → intermediate → target): Add a relay neuron with
 ///   synapses from source to relay and relay to target.
 ///
+/// Issue #2499: the creature's existing neuron UUIDs are collected once per call.
+/// A relay UUID that names an existing neuron is re-salted (`-1`, `-2`, …) so it is
+/// never emitted as a duplicate.
+///
 /// # Arguments
 /// * `candidates` - Detected multi-hop candidates.
 /// * `creature` - The creature topology (needed for neuron lookup and placement).
@@ -417,6 +422,8 @@ pub fn multi_hop_to_coordinated_candidates(
     candidates: &[MultiHopCandidate],
     creature: &CreatureJson,
 ) -> Vec<CoordinatedStructuralCandidateJson> {
+    let existing = existing_neuron_uuids(creature);
+
     // Find the first output neuron UUID for insert_before placement
     let first_output_uuid = creature
         .neurons
@@ -465,7 +472,15 @@ pub fn multi_hop_to_coordinated_candidates(
             let source = &candidate.path[0];
             let target = &candidate.path[path_len - 1];
 
-            let relay_uuid = multi_hop_relay_uuid(&candidate.path, idx);
+            // Issue #2499: keep the legacy relay UUID when free, else the first free `-salt`.
+            let legacy_uuid = multi_hop_relay_uuid(&candidate.path, idx);
+            let relay_uuid = first_free_neuron_uuid(&existing, |salt| {
+                if salt == 0 {
+                    legacy_uuid.clone()
+                } else {
+                    format!("{legacy_uuid}-{salt}")
+                }
+            });
 
             // Determine insert position: before the target or before the first output
             let insert_before = if creature

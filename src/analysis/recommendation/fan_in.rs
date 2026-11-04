@@ -33,6 +33,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::analysis::constants::MIN_DISCOVERY_SAMPLE_COUNT;
+use crate::analysis::detection::helpers::{existing_neuron_uuids, first_free_neuron_uuid};
 use crate::analysis::detection::stats::pearson_correlation;
 use crate::analysis::quantised_error::is_quantised_zero_one;
 use crate::analysis::utils::deadline_passed;
@@ -523,20 +524,29 @@ fn select_fan_in_activation(
 /// - `AddNeuron` — a new hidden neuron with non-linear activation
 /// - `AddSynapse` × N — one synapse per input to the hidden neuron
 /// - `AddSynapse` × 1 — hidden neuron to target
+///
+/// Issue #2499: the creature's existing neuron UUIDs are collected once per call.
+/// A hidden-neuron UUID that names an existing neuron is re-salted (`-1`, `-2`, …),
+/// so a colliding legacy UUID is never emitted as a duplicate.
 pub fn fan_in_to_coordinated_candidates(
     candidates: &[FanInCandidate],
     creature: &CreatureJson,
 ) -> Vec<CoordinatedStructuralCandidateJson> {
+    let existing = existing_neuron_uuids(creature);
     candidates
         .iter()
-        .filter_map(|c| fan_in_to_single_coordinated(c, creature))
+        .filter_map(|c| fan_in_to_single_coordinated(c, creature, &existing))
         .collect()
 }
 
 /// Convert a single fan-in candidate to a coordinated structural candidate.
+///
+/// `existing` holds the creature's current neuron UUIDs (Issue #2499); the new
+/// hidden neuron takes the first free salt of its legacy FNV UUID.
 fn fan_in_to_single_coordinated(
     candidate: &FanInCandidate,
     creature: &CreatureJson,
+    existing: &HashSet<&str>,
 ) -> Option<CoordinatedStructuralCandidateJson> {
     // Issue #2182: never emit a non-finite gain or weight.
     if candidate.input_uuids.len() < 2
@@ -547,8 +557,16 @@ fn fan_in_to_single_coordinated(
     }
 
     // Generate deterministic UUID for the new hidden neuron from the
-    // input UUIDs and target UUID (FNV-1a hash).
-    let neuron_uuid = generate_fan_in_uuid(&candidate.input_uuids, &candidate.target_uuid);
+    // input UUIDs and target UUID (FNV-1a hash). Issue #2499: the legacy UUID
+    // is kept when free; otherwise the first free `-salt` suffix is used.
+    let legacy_uuid = generate_fan_in_uuid(&candidate.input_uuids, &candidate.target_uuid);
+    let neuron_uuid = first_free_neuron_uuid(existing, |salt| {
+        if salt == 0 {
+            legacy_uuid.clone()
+        } else {
+            format!("{legacy_uuid}-{salt}")
+        }
+    });
 
     // Determine insertion point: place hidden neuron before the target.
     let insert_before = find_insert_position(creature, &candidate.target_uuid);
