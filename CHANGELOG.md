@@ -60,6 +60,16 @@ detection behaviour are unchanged.
 
 ### Fixed
 
+#### Skip-connection detector now seeds depth from `creature.input` (Issue #2523)
+
+`detect_skip_connection_candidates` took depth-0 seeds only from entries in
+`creature.neurons` with type `input`. Production creatures never list their
+input neurons, so `depths` came back empty and no skip-connection candidates
+were ever emitted. Inputs are now synthesised from the `input` count as
+`input-0` … `input-{input - 1}`, matching `synapse/preparation.rs`, and seed
+depth 0. Listed `input`-typed neurons are still accepted, and a synthesised
+input also listed in `neurons` is counted once.
+
 #### Fan-in, multi-hop relay and topology-diversification `AddNeuron` UUIDs never collide with existing neurons (Issue #2499)
 
 `fan_in_to_coordinated_candidates`, `multi_hop_to_coordinated_candidates` and
