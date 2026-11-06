@@ -39,11 +39,13 @@ flowchart LR
 
 ## Test Plan
 
-- `tests/bump_deps_test.sh` Test 30 (new): 30a refresh moves a shared package and runs sync before check; 30b an in-quarantine version is held back in the fuzz lock and the held-back counter accumulates; 30c a failing fuzz `cargo update` fails and `check` is not run; 30d a failing `check` fails loudly naming `fuzz/Cargo.lock`; 30e a missing fuzz lock is a no-op; 30f a failing `sync` fails and cargo is not run. Result: `timeout 600 bash tests/bump_deps_test.sh` passed, 133 passed, 0 failed.
-- Red checks (each mutation applied, suite run, script restored): skip the fuzz `cargo update` → 10 failures across 30a–30c; skip the gate call → 4 failures (30a, 30b); skip `check` → 5 failures (30a, 30b, 30d); skip `sync` → 8 failures (30a, 30b, 30c, 30f).
-- Changed call site: Phase 3a now calls `bump_deps::gate_lock_refresh`; Tests 26–29 still pass through `reapply_safe_lock_changes`, and the other tests that drive `bump-deps.sh` (`issue_1909`, `issue_1994`, `issue_1908`, `issue_1910`, `issue_1234`, `issue_1974_*`) passed. The root-lock path of `gate_lock_refresh` is shared code with the fuzz call and is covered by 30a/30b; there is no end-to-end test of the main flow (it needs the network).
+- `tests/issue_2532_shell_script_coverage.rs::fuzz_lock_refresh_gates_updates_and_reports_failures` covers aged and quarantined updates, update, check and sync failures, and a missing fuzz lock.
+- `tests/issue_2532_shell_script_coverage.rs::fuzz_lock_refresh_runs_in_main_flow_and_propagates_check_failure` runs the real script with a stub Cargo and publish-time fixture, checking the refresh and exit 8 on a failed check.
+- `cargo test --test issue_2532_shell_script_coverage fuzz_lock_refresh --all-features -- --test-threads=2`: both tests passed. Separately replacing each of the helper's fuzz update, quarantine gate, check and sync calls with a no-op made `fuzz_lock_refresh_gates_updates_and_reports_failures` fail; the script was restored after each mutation.
+- The full `issue_2532_shell_script_coverage` integration suite passed (17 tests), as did `cargo fmt --all`, `cargo clippy --all-targets --all-features -- -D warnings`, and `cargo check --all-targets --all-features`. On this sandboxed macOS host the suite used a temporary `mktemp` wrapper to put shell scratch files inside the writable workspace.
+- The base removed the unrun shell suite `tests/bump_deps_test.sh`; the remaining Cargo integration tests cover the fuzz refresh behaviour through the paths above.
 - No existing assertion was removed or edited.
-- `shellcheck bump-deps.sh tests/bump_deps_test.sh`, `bash -n`, `quality/bash_syntax.sh` and `quality/shellcheck.sh`: clean.
+- `shellcheck bump-deps.sh`, `bash -n`, `quality/bash_syntax.sh` and `quality/shellcheck.sh`: clean in the earlier run.
 - Docs updated: `AGENTS.md` (Dependency Bumps), `CONTRIBUTING.md` (gate never upgrades dependencies paragraph) and `README.md` (fuzz/Cargo.lock paragraph). Remaining hits for `fuzz/Cargo.lock` / `fuzz_lockfile` / `bump-deps` re-read and still true (the "re-resolves nothing" wording in `quality.sh` and CONTRIBUTING.md:161 is scoped to `sync`).
 - Twinned rules: the header comment of `bump-deps.sh`, AGENTS.md, CONTRIBUTING.md and README.md each restate the bump scope; all four now cover `fuzz/Cargo.lock`.
 
@@ -54,5 +56,3 @@ flowchart LR
 - Full `./quality.sh` test stage (stopped at the time cap, no failure seen).
 - The real `cargo update` on `fuzz/` and real crates.io publish dates.
 - Standards/Spec reviewer sub-agents were not dispatched: the issue states no acceptance-criteria list.
-
-The base removed the unrun `tests/bump_deps_test.sh` in favour of Cargo integration tests. The fuzz refresh scenarios now run through `tests/issue_2532_shell_script_coverage.rs::fuzz_lock_refresh_gates_updates_and_reports_failures`, preserving aged and quarantined updates, failure handling and the missing-lock no-op.

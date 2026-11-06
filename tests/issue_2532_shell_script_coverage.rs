@@ -266,6 +266,120 @@ fn fuzz_lock_refresh_gates_updates_and_reports_failures() {
 }
 
 #[test]
+fn fuzz_lock_refresh_runs_in_main_flow_and_propagates_check_failure() {
+    for fail_check in [false, true] {
+        let tmp = tempfile::tempdir().unwrap();
+        let project = tmp.path().join("project");
+        let fuzz = project.join("fuzz");
+        let quality = project.join("quality");
+        let bin = tmp.path().join("bin");
+        let fixtures = tmp.path().join("fixtures");
+        let home = tmp.path().join("home");
+        for dir in [&fuzz, &quality, &bin, &fixtures, &home] {
+            fs::create_dir_all(dir).unwrap();
+        }
+        fs::copy(root().join("bump-deps.sh"), project.join("bump-deps.sh")).unwrap();
+        fs::write(
+            project.join("Cargo.toml"),
+            "[package]\nname = \"fixture\"\nversion = \"0.1.0\"\n",
+        )
+        .unwrap();
+        fs::write(
+            fuzz.join("Cargo.toml"),
+            "[package]\nname = \"fuzz\"\nversion = \"0.1.0\"\n",
+        )
+        .unwrap();
+        fs::write(
+            project.join("Cargo.lock"),
+            lockfile(&[("serde", "1.0.200")]),
+        )
+        .unwrap();
+        fs::write(fuzz.join("Cargo.lock"), lockfile(&[("bytemuck", "1.25.0")])).unwrap();
+        write_publish_fixtures(&fixtures, &[("bytemuck", "1.26.0", false)]);
+        let log = tmp.path().join("fuzz.log");
+        write_executable(
+            &quality.join("fuzz_lockfile.sh"),
+            &format!(
+                "#!/bin/bash\nprintf '%s\\n' \"$1\" >> '{}'\n[[ \"$1\" != '{}' ]]\n",
+                log.display(),
+                if fail_check { "check" } else { "never" }
+            ),
+        );
+        write_executable(&bin.join("cargo-deny"), "#!/bin/bash\nexit 0\n");
+        write_executable(
+            &bin.join("mktemp"),
+            &format!(
+                "#!/bin/bash\nexec /usr/bin/mktemp \"$@\" '{}/scratch.XXXXXXXX'\n",
+                tmp.path().display()
+            ),
+        );
+        write_executable(
+            &bin.join("cargo"),
+            &format!(
+                r##"#!/bin/bash
+set -eu
+if [[ "$*" == *"--manifest-path"* ]]; then
+    cat > '{}/Cargo.lock' <<'LOCK'
+version = 4
+
+[[package]]
+name = "bytemuck"
+version = "1.26.0"
+LOCK
+fi
+exit 0
+"##,
+                fuzz.display()
+            ),
+        );
+        let output = Command::new(project.join("bump-deps.sh"))
+            .current_dir(&project)
+            .env("HOME", &home)
+            .env("TMPDIR", tmp.path())
+            .env(
+                "PATH",
+                format!("{}:/usr/bin:/bin:/usr/sbin:/sbin", bin.display()),
+            )
+            .env("BUMP_DEPS_TEST_FIXTURE", &fixtures)
+            .env("BUMP_DEPS_NOW_EPOCH", "1748736000")
+            .env("VIBE_BUMP_QUARANTINE_HOURS", "24")
+            .env_remove("BUMP_DEPS_SOURCE_ONLY")
+            .stdin(Stdio::null())
+            .output()
+            .unwrap();
+        let diagnostic = format!(
+            "{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(
+            output.status.code(),
+            Some(if fail_check { 8 } else { 0 }),
+            "{diagnostic}"
+        );
+        assert_eq!(
+            lock_version(
+                &fs::read_to_string(fuzz.join("Cargo.lock")).unwrap(),
+                "bytemuck"
+            )
+            .as_deref(),
+            Some("1.26.0")
+        );
+        assert_eq!(
+            fs::read_to_string(&log).unwrap(),
+            if fail_check {
+                "sync\ncheck\n"
+            } else {
+                "sync\ncheck\nsync\n"
+            }
+        );
+        if fail_check {
+            assert!(diagnostic.contains("fuzz/Cargo.lock refresh failed"));
+        }
+    }
+}
+
+#[test]
 fn reapply_holds_young_partners_and_transitives_while_keeping_safe_updates() {
     let tmp = tempfile::tempdir().unwrap();
     let fixtures = tmp.path().join("fixtures");
