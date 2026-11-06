@@ -8,6 +8,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+#### Benchmarks now document the quiet-host requirement (Issue #2557)
+
+Benchmark timings are only comparable when collected on an otherwise idle
+machine, on an exclusive runner, with no quality gates or parallel worker jobs
+competing for CPU, GPU or memory bandwidth. `docs/BENCHMARKS.md` (Quick Start and
+CI Workflow) and the `--help` text of `benchmark_compare.sh` and
+`scripts/benchmark-ci.sh` now state this. `--compare` needs a quiet host, while
+`--compile-only` does not and stays suitable for ordinary PR runners. No
+benchmark behaviour changed.
+
 #### benchmark_compare.sh no longer turns a failed benchmark run into success (Issue #2554)
 
 A failed `cargo bench` run could be reported as a success, so a compile error,

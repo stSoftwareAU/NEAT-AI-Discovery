@@ -76,6 +76,13 @@ future measurement shows the compile-time cost outweighs the runtime win.
 
 ## 🚀 Quick Start
 
+**Prerequisite — a quiet host.** Collect benchmark timings on an
+otherwise idle machine, on an exclusive runner. Do not run quality gates or
+parallel worker jobs on that host while collecting timings. Another job
+competing for CPU, GPU or memory bandwidth skews the timings, so a baseline
+taken on an idle host compared against a run taken under load can report a
+false regression.
+
 ```bash
 # 1. Save a baseline (run all benchmarks and record timings)
 ./benchmark_compare.sh --save-baseline
@@ -291,11 +298,15 @@ spending time on actual benchmark execution. Runs on standard GitHub Actions
 runners.
 
 **Tier 2 — Regression detection (self-hosted runners):**
-For environments with consistent hardware and GPU availability, the comparison
-mode runs full benchmarks against a saved baseline and fails if any benchmark
-regresses by more than the configured threshold or any suite's benchmark run
-fails. `scripts/benchmark-ci.sh --compare` passes the `benchmark_compare.sh` exit
-status through unchanged, including on the first run that saves the baseline.
+For environments with consistent hardware, GPU availability and an otherwise
+idle host, the comparison mode runs full benchmarks against a saved baseline and
+fails if any benchmark regresses by more than the configured threshold or any
+suite's benchmark run fails. The runner must be exclusive while timings are
+collected: no other job may run on it at the same time. Timing comparison is
+on-demand work run on that exclusive host. Tier 1 compile-only stays on ordinary
+PR runners. `scripts/benchmark-ci.sh --compare` passes the `benchmark_compare.sh`
+exit status through unchanged, including on the first run that saves the
+baseline.
 
 ### Regression Threshold
 
@@ -313,8 +324,8 @@ put every regression under threshold — is rejected with a non-zero exit before
 any comparison runs (Issue #1918).
 
 A 10% default was chosen to balance sensitivity against noise from CI
-environment variability. For self-hosted runners with stable hardware, consider
-lowering this to 5%.
+environment variability. For self-hosted runners with stable hardware and an
+otherwise idle host, consider lowering this to 5%.
 
 ### Disk Space
 
@@ -331,7 +342,8 @@ cannot initialise a GPU are automatically skipped in comparison mode, and the
 skip is not a failure.
 
 **Note:** Benchmarks produce machine-specific results. Meaningful regression
-detection requires a self-hosted runner with consistent hardware. The scripts
+detection requires a self-hosted runner with consistent hardware that is otherwise
+idle while timings are collected. The scripts
 treat a GPU-less environment as a skip (exit 0, no `change:` line recorded).
 Any other non-zero `cargo bench` exit is reported as a failed suite, and the
 script exits 1.
