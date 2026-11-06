@@ -2,7 +2,7 @@
 
 `benchmark_compare.sh` no longer turns a failed `cargo bench` run into success. Every suite under `benches/` already exits 0 when no GPU is available, so any non-zero exit is a genuine failure (compile error, panic, missing `cargo`, missing baseline) and is now reported as one. Closes #2554.
 
-Version bump: left to CI's `version-increment` job; the merged commit records the final version.
+Version bump: `Cargo.toml` (and the lockfiles) updated for this change; the merged commit records the final version.
 
 ## Spec
 
