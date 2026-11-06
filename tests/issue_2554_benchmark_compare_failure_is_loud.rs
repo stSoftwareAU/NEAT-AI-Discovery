@@ -34,9 +34,19 @@ fn write_stub(dir: &Path, name: &str, body: &str) {
     fs::set_permissions(&path, perms).expect("chmod stub");
 }
 
-/// Stub `bc`: the arithmetic is not under test, and pinning the answer keeps
-/// the assertions identical on a host without `bc` installed.
-const BC_STUB: &str = "#!/bin/bash\ncat > /dev/null\necho '0'\n";
+/// Stub `bc` with real numeric comparisons, keeping the tests independent of
+/// whether the host has `bc` installed.
+const BC_STUB: &str = r#"#!/bin/bash
+expression=$(cat)
+if [[ "$expression" =~ ^(-?[0-9]+([.][0-9]+)?)\ \>\ (-?[0-9]+([.][0-9]+)?)$ ]]; then
+    awk -v left="${BASH_REMATCH[1]}" -v right="${BASH_REMATCH[3]}" 'BEGIN { print (left > right) ? 1 : 0 }'
+elif [[ "$expression" =~ ^(-?[0-9]+([.][0-9]+)?)\ \<\ (-?[0-9]+([.][0-9]+)?)$ ]]; then
+    awk -v left="${BASH_REMATCH[1]}" -v right="${BASH_REMATCH[3]}" 'BEGIN { print (left < right) ? 1 : 0 }'
+else
+    echo "unsupported bc expression: $expression" >&2
+    exit 1
+fi
+"#;
 
 /// Stub `cargo`, invoked as `cargo bench --bench <suite> -- <args>`, so the
 /// suite name is `$3`. Suites named in `STUB_FAIL_SUITES` die the way a
@@ -54,6 +64,26 @@ esac
 case " ${STUB_SKIP_SUITES:-} " in
     *" $suite "*)
         echo "Skipping $suite benchmarks: no GPU available" >&2
+        exit 0
+        ;;
+esac
+case " ${STUB_REGRESS_SUITES:-} " in
+    *" $suite "*)
+        if [[ " ${STUB_MULTI_REGRESS_SUITES:-} " == *" $suite "* ]]; then
+            echo "suite_a::sample[one]  time:   [1.000 µs 1.100 µs 1.200 µs]"
+            echo "                    change: [+10.0000% +12.5000% +14.0000%] (p = 0.01 < 0.05)"
+            echo "                    Performance has regressed."
+            echo "suite_a::sample_two  time:   [2.000 µs 2.100 µs 2.200 µs]"
+            echo "                    change: [+15.0000% +16.5000% +18.0000%] (p = 0.01 < 0.05)"
+            echo "                    Performance has regressed."
+        elif [[ " ${STUB_MISSING_NAME_SUITES:-} " == *" $suite "* ]]; then
+            echo "                    change: [+10.0000% +12.5000% +14.0000%] (p = 0.01 < 0.05)"
+            echo "                    Performance has regressed."
+        else
+            echo "$suite::sample  time:   [1.000 µs 1.100 µs 1.200 µs]"
+            echo "                    change: [+10.0000% +12.5000% +14.0000%] (p = 0.01 < 0.05)"
+            echo "                    Performance has regressed."
+        fi
         exit 0
         ;;
 esac
@@ -121,6 +151,18 @@ impl Sandbox {
     /// Run the script with `args`. Suites in `failing` exit non-zero; suites in
     /// `gpu_less` exit 0 without recording a comparison.
     fn run(&self, args: &[&str], failing: &[&str], gpu_less: &[&str]) -> Output {
+        self.run_with_regressions(args, failing, gpu_less, &[], &[], &[])
+    }
+
+    fn run_with_regressions(
+        &self,
+        args: &[&str],
+        failing: &[&str],
+        gpu_less: &[&str],
+        regressing: &[&str],
+        multiple: &[&str],
+        missing_name: &[&str],
+    ) -> Output {
         Command::new("bash")
             .arg("benchmark_compare.sh")
             .args(args)
@@ -128,6 +170,9 @@ impl Sandbox {
             .env("PATH", format!("{}:/usr/bin:/bin", self.bin.display()))
             .env("STUB_FAIL_SUITES", failing.join(" "))
             .env("STUB_SKIP_SUITES", gpu_less.join(" "))
+            .env("STUB_REGRESS_SUITES", regressing.join(" "))
+            .env("STUB_MULTI_REGRESS_SUITES", multiple.join(" "))
+            .env("STUB_MISSING_NAME_SUITES", missing_name.join(" "))
             // HOME points at the sandbox so the run cannot read or write the
             // developer's own environment.
             .env("HOME", self.work.as_path())
@@ -298,6 +343,81 @@ fn compare_with_every_suite_passing_reports_no_regressions() {
     assert!(
         stdout.contains("Total comparisons: 2") && stdout.contains("No regressions detected."),
         "the happy path must still report the clean verdict (Issue #2554) — stdout:\n{stdout}"
+    );
+}
+
+#[test]
+fn comparison_reports_multiple_regressions_and_continues_to_later_suites() {
+    let output =
+        Sandbox::new().run_with_regressions(&[], &[], &[], &["suite_a"], &["suite_a"], &[]);
+    let stdout = text(&output.stdout);
+    let stderr = text(&output.stderr);
+
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "regressions must fail the comparison after reporting all suites\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert!(
+        stdout.contains("REGRESSION: suite_a::sample[one] (+14.0000%)")
+            && stdout.contains("REGRESSION: suite_a::sample_two (+18.0000%)"),
+        "each regression must identify its Criterion benchmark and measured change\nstdout:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("Comparing: suite_b"),
+        "the suite after a regression must still run\nstdout:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("Total comparisons: 3")
+            && stdout.contains("Regressions:       2 (exceeding 5% threshold)")
+            && stdout.contains("Improvements:      0")
+            && stdout.contains("Within threshold:  1")
+            && stdout.contains("Skipped suites:    0")
+            && stdout.contains("Failed suites:     0"),
+        "summary counts must include the regressing and later passing suites\nstdout:\n{stdout}"
+    );
+}
+
+#[test]
+fn comparison_uses_suite_name_when_criterion_name_is_missing() {
+    let output =
+        Sandbox::new().run_with_regressions(&[], &[], &[], &["suite_a"], &[], &["suite_a"]);
+    let stdout = text(&output.stdout);
+    let stderr = text(&output.stderr);
+
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "a missing benchmark name must fall back without aborting\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert!(
+        stdout.contains("REGRESSION: suite_a (+14.0000%)")
+            && stdout.contains("Total comparisons: 2")
+            && stdout.contains("Regressions:       1 (exceeding 5% threshold)"),
+        "the fallback must preserve regression reporting and the final summary\nstdout:\n{stdout}"
+    );
+}
+
+#[test]
+fn comparison_reports_regression_and_later_suite_failure() {
+    let output =
+        Sandbox::new().run_with_regressions(&[], &["suite_b"], &[], &["suite_a"], &[], &[]);
+    let stdout = text(&output.stdout);
+    let stderr = text(&output.stderr);
+
+    assert_eq!(
+        output.status.code(),
+        Some(1),
+        "a regression and later suite failure must both be reported\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert!(
+        stdout.contains("REGRESSION: suite_a::sample (+14.0000%)")
+            && stdout.contains("Comparing: suite_b")
+            && stdout.contains("Total comparisons: 1")
+            && stdout.contains("Regressions:       1 (exceeding 5% threshold)")
+            && stdout.contains("Failed suites:     1")
+            && stderr.contains("suite_b failed"),
+        "the regression summary must include the later suite failure\nstdout:\n{stdout}\nstderr:\n{stderr}"
     );
 }
 
