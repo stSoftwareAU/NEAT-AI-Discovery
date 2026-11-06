@@ -7,6 +7,8 @@ name: Markdown Lint
 # The single-star glob `*` matches only slash-free branch names, so
 # milestone feature branches (`milestone/<slug>`) need an explicit
 # `milestone/*` entry or this gate would skip their sub-issue PRs (Issue #1653).
+# Issue #2560: the job always runs, so the `markdownlint` check always reports,
+# but skips setup and the lint unless `quality/lint_scope.sh` finds a relevant change.
 on:
   pull_request:
     # Draft PRs are work in progress (owner, 2026-10-23): CI runs
@@ -36,11 +38,24 @@ jobs:
         # later compromised step could read it (Issue #1646).
         with:
           persist-credentials: false
+          # Fetch the base commit as well as HEAD: lint_scope.sh diffs HEAD^1
+          # against HEAD to decide whether the lint below must run (Issue #2560).
+          fetch-depth: 2
+      # On a pull_request run HEAD is GitHub's merge commit and HEAD^1 the base
+      # tip, so lint_scope.sh diffs exactly the PR's change set. It fails closed
+      # (runs the lint) when the diff cannot be read. The job itself always runs
+      # so the required check name always reports (Issue #2560).
+      - name: Detect relevant changes
+        id: scope
+        shell: bash
+        run: ./quality/lint_scope.sh markdown
       # actions/setup-node@v5
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444
+        if: steps.scope.outputs.run == 'true'
         with:
           node-version: "22"
       - name: Install markdownlint-cli2
+        if: steps.scope.outputs.run == 'true'
         # Version-pinned and lifecycle scripts disabled to harden the
         # supply chain (Issue #1484): a poisoned release cannot silently
         # bump the resolved version or run install/postinstall scripts on
@@ -48,4 +63,5 @@ jobs:
         # >=24h quarantine via the customManager in renovate.json.
         run: npm install -g --loglevel=error --ignore-scripts markdownlint-cli2@0.23.0
       - name: Run markdownlint-cli2
+        if: steps.scope.outputs.run == 'true'
         run: markdownlint-cli2

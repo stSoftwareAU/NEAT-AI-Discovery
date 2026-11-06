@@ -236,7 +236,11 @@ the gate runs on milestone sub-issue PRs too, not just the rollup into `Develop`
   committed `quality/bash_syntax.sh` (`bash -n`) gate, then the committed
   `quality/shellcheck.sh` lint gate (Issues #1755, #1898). The ShellCheck binary
   is installed straight from upstream `koalaman/shellcheck` releases by
-  SHA-pinned `taiki-e/install-action` — no third-party wrapper action
+  SHA-pinned `taiki-e/install-action` — no third-party wrapper action. The job
+  always runs, so its check name always reports, but it skips the `bash -n`
+  gate, the ShellCheck install and the lint unless `quality/lint_scope.sh
+  shellcheck` finds a PR change to a `*.sh` file, `.shellcheckrc`, the workflow
+  or the script itself. If the diff cannot be read, the gates run (Issue #2560)
 - `renovate-config-validator` (separate workflow
   `.github/workflows/renovate-validate.yml`) — runs the upstream
   `renovate-config-validator --strict` on PRs that touch `renovate.json`
@@ -260,7 +264,12 @@ the gate runs on milestone sub-issue PRs too, not just the rollup into `Develop`
   workflow's toolchain to it
 - `Markdown Lint` (separate workflow `.github/workflows/markdown-lint.yml`) —
   `markdownlint-cli2` over every `**/*.md`, configured by
-  `.markdownlint-cli2.jsonc`
+  `.markdownlint-cli2.jsonc`. The job always runs, so its check name always
+  reports, but it skips the Node setup and the lint unless `quality/lint_scope.sh
+  markdown` finds a PR change to a Markdown file (excluding `docs/archive/` and
+  `CHANGELOG.md`, mirroring the markdownlint ignores), to
+  `.markdownlint-cli2.jsonc`, to the workflow or to the script itself. If the
+  diff cannot be read, the lint runs (Issue #2560)
 - `Semgrep` (separate workflow `.github/workflows/semgrep.yml`) — SAST scan over
   the tree, in a `semgrep/semgrep` container pinned as
   `<tag>@sha256:<digest>`. Every workflow container image carries **both**: the
@@ -272,7 +281,11 @@ the gate runs on milestone sub-issue PRs too, not just the rollup into `Develop`
   the PR diff
 - `actionlint` (separate workflow `.github/workflows/actionlint.yml`) — lints
   every workflow file under `.github/workflows/`, so a bad expression or an
-  unsupported runner label fails on the PR rather than after merge (Issue #1292)
+  unsupported runner label fails on the PR rather than after merge (Issue #1292).
+  The job always runs, so its check name always reports, but it skips the lint
+  unless `quality/lint_scope.sh actionlint` finds a PR change to a workflow or
+  action YAML file, to the actionlint config, to the workflow or to the script
+  itself. If the diff cannot be read, the lint runs (Issue #2560)
 - `Family Sync` (separate workflow `.github/workflows/family-sync.yml`) — keeps
   `scripts/runlib.sh` byte-identical to NEAT-AI-core `Develop`, committing the
   refreshed copy onto the PR branch when it differs and failing the job when

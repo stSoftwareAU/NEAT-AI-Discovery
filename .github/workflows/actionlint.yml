@@ -12,6 +12,9 @@ name: actionlint
 # wasting CI minutes — so no `push:` trigger is declared (Issue #1563).
 #
 # Issue #1292.
+#
+# Issue #2560: the job always runs, so the `actionlint` check always reports,
+# but skips the lint unless `quality/lint_scope.sh` finds a relevant change.
 
 on:
   pull_request:
@@ -51,8 +54,21 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
+          # Fetch the base commit as well as HEAD: lint_scope.sh diffs HEAD^1
+          # against HEAD to decide whether actionlint must run (Issue #2560).
+          fetch-depth: 2
+
+      # On a pull_request run HEAD is GitHub's merge commit and HEAD^1 the base
+      # tip, so lint_scope.sh diffs exactly the PR's change set. It fails closed
+      # (runs actionlint) when the diff cannot be read. The job itself always runs
+      # so the required check name always reports (Issue #2560).
+      - name: Detect relevant changes
+        id: scope
+        shell: bash
+        run: ./quality/lint_scope.sh actionlint
 
       - name: Run actionlint
+        if: steps.scope.outputs.run == 'true'
         # Pinned to raven-actions/actionlint v2.1.2 commit SHA
         # (Issue #1216). Update via Renovate or by manually resolving
         # the latest release SHA from
