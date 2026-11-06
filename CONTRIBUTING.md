@@ -208,7 +208,10 @@ the gate runs on milestone sub-issue PRs too, not just the rollup into `Develop`
   refreshes only this crate's own `Cargo.lock` entry (`cargo update
   --workspace`) and fails loud if any dependency resolution moves — dependency
   bumps go through `./bump-deps.sh` or Renovate, which enforce the quarantine
-  window (Issue #1878)
+  window (Issue #1878). It also restamps this crate's version in
+  `fuzz/Cargo.lock` via `quality/fuzz_lockfile.sh sync` (Issue #2573), and the
+  lockfile diff is guarded: the job fails if `fuzz/Cargo.lock` changes beyond
+  the path package's `version` line
 - `quality` — fmt check, Clippy, library build (`cargo build --lib`), an
   intermediate-artefact cleanup, then tests. It runs **neither** `cargo check`
   nor a doc build: no workflow builds the docs (see

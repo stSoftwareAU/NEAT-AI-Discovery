@@ -8,6 +8,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+#### CI version bump now restamps fuzz/Cargo.lock (Issue #2573)
+
+The `version-increment` job bumped `Cargo.toml` but left `fuzz/Cargo.lock` one
+version behind (for example 0.74.356 against 0.74.355 on Develop), so
+`cargo fuzz run --locked` failed. The job now runs
+`quality/fuzz_lockfile.sh sync` after its bump, and its lockfile guard allows
+only the path package's `version` line in `fuzz/Cargo.lock` to change, failing
+the job on anything more. Covered by
+`tests/issue_1878_ci_version_increment_no_reresolve.rs`.
+
 #### Benchmarks now document the quiet-host requirement (Issue #2557)
 
 Benchmark timings are only comparable when collected on an otherwise idle

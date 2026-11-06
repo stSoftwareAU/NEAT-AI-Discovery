@@ -193,6 +193,31 @@ jobs:
           exit 1
         fi
 
+        # fuzz/ is a separate workspace whose lockfile records this crate as a
+        # path package, so the bump above leaves fuzz/Cargo.lock one version
+        # behind. Restamp only that version line so `cargo fuzz run --locked`
+        # and `quality/fuzz_lockfile.sh check` keep passing after the bump
+        # (Issue #2573). `sync` re-resolves nothing and makes no network call,
+        # so the dependency quarantine is not breached.
+        ./quality/fuzz_lockfile.sh sync
+
+        # Same fail-loud rule as the Cargo.lock guard above: the only change
+        # allowed in fuzz/Cargo.lock is the crate's own version stamp, which may
+        # be stale by more than one release. Anything else is dependency movement.
+        FUZZ_DIFF=$(git diff --unified=0 -- fuzz/Cargo.lock | grep -E '^[-+][^-+]' || true)
+        if [ -n "$FUZZ_DIFF" ]; then
+          FUZZ_LINES=$(printf '%s\n' "$FUZZ_DIFF" | wc -l)
+          FUZZ_REMOVED=$(printf '%s\n' "$FUZZ_DIFF" | sed -n '1p')
+          FUZZ_ADDED=$(printf '%s\n' "$FUZZ_DIFF" | sed -n '2p')
+          EXPECTED_FUZZ_ADDED=$(printf -- '+version = "%s"' "$NEW_VERSION")
+          RE_FUZZ_REMOVED='^-version = "[^"]*"$'
+          if [ "$FUZZ_LINES" -ne 2 ] || ! [[ "$FUZZ_REMOVED" =~ $RE_FUZZ_REMOVED ]] || [ "$FUZZ_ADDED" != "$EXPECTED_FUZZ_ADDED" ]; then
+            echo "::error::fuzz/Cargo.lock moved beyond the crate version stamp — only the path package's version line may change (Issue #2573)"
+            echo "$FUZZ_DIFF"
+            exit 1
+          fi
+        fi
+
     - name: Check if there are changes
       id: changes
       shell: bash
