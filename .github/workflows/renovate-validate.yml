@@ -53,7 +53,7 @@ jobs:
         # resolved version or run install/postinstall scripts on the runner.
         # Renovate keeps this pin current under the shared >=24h quarantine
         # via the customManager in renovate.json.
-        run: npm install -g --ignore-scripts renovate@44.7.2
+        run: npm install -g --loglevel=error --ignore-scripts renovate@44.7.2
       - name: Validate renovate.json
         # --strict fails on deprecated keys that Renovate would otherwise
         # auto-migrate, so a removed key such as matchSourceUrlPrefixes

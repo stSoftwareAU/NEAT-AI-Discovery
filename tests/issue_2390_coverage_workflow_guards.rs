@@ -400,7 +400,7 @@ jobs:
 
       # Comments may mention cargo clippy and dtolnay/rust-toolchain without tripping a check.
       - name: Generate coverage (lcov)
-        run: cargo llvm-cov --all-features --lcov --output-path lcov.info -- --test-threads=2
+        run: cargo llvm-cov --all-features --lcov --output-path lcov.info -- --test-threads=2 --quiet
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@0f8570b1a125f4937846a11fcfa3bcd548bd8c97 # v4.6.0

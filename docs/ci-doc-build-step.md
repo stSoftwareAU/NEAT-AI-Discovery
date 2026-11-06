@@ -17,7 +17,7 @@ after the "Run tests" step and before any release build step:
 ```
 
 This mirrors the documentation build check already present in `quality.sh`
-(the "Building documentation" step, `quality.sh:70-71`) and ensures that broken
+(the "Building documentation" step, `quality.sh:75-76`) and ensures that broken
 doc links, malformed doc comments, and missing documentation for public items
 are caught in CI.
 
@@ -27,7 +27,7 @@ The three doc-build invocations currently disagree on `--all-features`:
 
 | Location | Command | `--all-features`? |
 |----------|---------|-------------------|
-| `quality.sh:71` | `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps` | ❌ no |
+| `quality.sh:76` | `RUSTDOCFLAGS="-D warnings" cargo doc -q --no-deps` | ❌ no |
 | `scripts/doc-check.sh:13` | `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features` | ✅ yes |
 | Proposed CI step (above) | `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features` | ✅ yes |
 

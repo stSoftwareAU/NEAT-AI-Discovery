@@ -1,7 +1,7 @@
 //! Issue #1657: `.github/workflows/security.yml` ran the same `RustSec`
 //! advisory audit over the repository's `Cargo.lock` twice per pull request:
 //!
-//!   1. An explicit `cargo install --locked --version 0.22.1 cargo-audit`
+//!   1. An explicit `cargo install -q --locked --version 0.22.1 cargo-audit`
 //!      followed by `cargo audit` (pinned for `CVSS` 4.0 support, Issue #1223).
 //!   2. The `rustsec/audit-check` GitHub Action, which wraps cargo-audit over
 //!      the same lockfile with its own bundled cargo-audit version.
@@ -49,8 +49,8 @@ fn security_workflow_keeps_pinned_cargo_audit_path() {
     // The retained single audit path is the version-pinned explicit install
     // (CVSS 4.0 support, Issue #1223) followed by the `cargo audit` invocation.
     assert!(
-        body.contains("cargo install --locked --version 0.22.1 cargo-audit"),
-        "security.yml must retain the version-pinned `cargo install --locked \
+        body.contains("cargo install -q --locked --version 0.22.1 cargo-audit"),
+        "security.yml must retain the version-pinned `cargo install -q --locked \
          --version 0.22.1 cargo-audit` install as the single audit path \
          (Issue #1657)",
     );

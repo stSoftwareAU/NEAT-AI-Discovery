@@ -54,7 +54,7 @@ jobs:
       # required to parse new advisory-db entries (e.g. RUSTSEC-2026-0076).
       # cargo-audit 0.21.x fails with "unsupported CVSS version: 4.0" and
       # exits 1, breaking the security scan.
-      run: cargo install --locked --version 0.22.1 cargo-audit
+      run: cargo install -q --locked --version 0.22.1 cargo-audit
 
     - name: Run security audit
       # Single RustSec advisory gate. Previously the RustSec audit-check action
@@ -68,7 +68,7 @@ jobs:
       # Pinned and --locked for the same reason as cargo-audit above: without
       # both flags a poisoned release of cargo-deny (or any transitive dep)
       # would execute via build.rs with this workflow's GITHUB_TOKEN.
-      run: cargo install --locked --version 0.20.2 cargo-deny
+      run: cargo install -q --locked --version 0.20.2 cargo-deny
 
     - name: Run dependency policy check
       # Enforces deny.toml in CI (Issue #1870). cargo audit and
