@@ -6,9 +6,92 @@
 //! analysis is curtailed by the deadline, and the starvation predicate that the
 //! structured analysis result surfaces to the calling layer.
 
+use std::collections::HashMap;
+use std::fmt;
+use std::sync::{Arc, Mutex};
+
+use tracing::field::{Field, Visit};
+use tracing_subscriber::layer::{Context, Layer, SubscriberExt};
+use tracing_subscriber::registry::Registry;
+
 use neat_ai_discovery::analysis::deadline_breakdown::{
-    DeadlineConsumptionBreakdown, PhaseCompletion,
+    DEADLINE_BREAKDOWN_MARKER, DeadlineConsumptionBreakdown, PhaseCompletion,
 };
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum CapturedValue {
+    String(String),
+    U64(u64),
+    Debug(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CapturedEvent {
+    level: String,
+    message: String,
+    fields: HashMap<String, CapturedValue>,
+}
+
+#[derive(Default)]
+struct EventVisitor {
+    message: String,
+    fields: HashMap<String, CapturedValue>,
+}
+
+impl EventVisitor {
+    fn store(&mut self, field: &Field, value: CapturedValue) {
+        if field.name() == "message" {
+            self.message = match value {
+                CapturedValue::String(message) | CapturedValue::Debug(message) => message,
+                CapturedValue::U64(value) => value.to_string(),
+            };
+        } else {
+            self.fields.insert(field.name().to_string(), value);
+        }
+    }
+}
+
+impl Visit for EventVisitor {
+    fn record_debug(&mut self, field: &Field, value: &dyn fmt::Debug) {
+        self.store(field, CapturedValue::Debug(format!("{value:?}")));
+    }
+
+    fn record_str(&mut self, field: &Field, value: &str) {
+        self.store(field, CapturedValue::String(value.to_string()));
+    }
+
+    fn record_u64(&mut self, field: &Field, value: u64) {
+        self.store(field, CapturedValue::U64(value));
+    }
+}
+
+#[derive(Clone)]
+struct EventCapture(Arc<Mutex<Vec<CapturedEvent>>>);
+
+impl<S: tracing::Subscriber> Layer<S> for EventCapture {
+    fn on_event(&self, event: &tracing::Event<'_>, _ctx: Context<'_, S>) {
+        let mut visitor = EventVisitor::default();
+        event.record(&mut visitor);
+        self.0
+            .lock()
+            .expect("event capture buffer must not be poisoned")
+            .push(CapturedEvent {
+                level: event.metadata().level().to_string(),
+                message: visitor.message,
+                fields: visitor.fields,
+            });
+    }
+}
+
+fn capture_events(body: impl FnOnce()) -> Vec<CapturedEvent> {
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let subscriber = Registry::default().with(EventCapture(Arc::clone(&events)));
+    tracing::subscriber::with_default(subscriber, body);
+    events
+        .lock()
+        .expect("event capture buffer must not be poisoned")
+        .clone()
+}
 
 /// A phase that finished all its focus neurons is never starved, even if the
 /// `timed_out` flag was set after the last neuron completed.
@@ -198,4 +281,155 @@ fn summary_line_marks_disabled_phases_as_not_applicable() {
     assert!(line.contains("neuron=n/a"), "line: {line}");
     assert!(!breakdown.is_starved());
     assert!(breakdown.starvation_warning().is_none());
+}
+
+#[test]
+fn emit_logs_completed_breakdown_with_numeric_fields_and_summary() {
+    let breakdown = DeadlineConsumptionBreakdown {
+        parquet_reload_ms: 4200,
+        synapse_analysis_ms: Some(1200),
+        neuron_analysis_ms: Some(900),
+        total_analysis_ms: 6300,
+        synapse: Some(PhaseCompletion {
+            timed_out: false,
+            completed_focus_neurons: 2,
+            total_focus_neurons: 12,
+        }),
+        neuron: Some(PhaseCompletion {
+            timed_out: false,
+            completed_focus_neurons: 1,
+            total_focus_neurons: 12,
+        }),
+    };
+
+    let events = capture_events(|| breakdown.emit());
+
+    assert_eq!(events.len(), 1, "completed work emits one INFO event");
+    assert_eq!(events[0].level, "INFO");
+    assert_eq!(
+        events[0].message,
+        "DEADLINE-BREAKDOWN deadline consumption (ms): parquet_reload=4200 \
+         synapse_analysis=1200 neuron_analysis=900 total_analysis=6300; \
+         focus completed synapse=2/12 neuron=1/12"
+    );
+    assert_eq!(
+        events[0].fields,
+        HashMap::from([
+            (
+                "marker".to_string(),
+                CapturedValue::String(DEADLINE_BREAKDOWN_MARKER.to_string()),
+            ),
+            ("parquet_reload_ms".to_string(), CapturedValue::U64(4200)),
+            ("synapse_analysis_ms".to_string(), CapturedValue::U64(1200)),
+            ("neuron_analysis_ms".to_string(), CapturedValue::U64(900)),
+            ("total_analysis_ms".to_string(), CapturedValue::U64(6300)),
+            ("synapse_completed".to_string(), CapturedValue::U64(2)),
+            ("synapse_total".to_string(), CapturedValue::U64(12)),
+            ("neuron_completed".to_string(), CapturedValue::U64(1)),
+            ("neuron_total".to_string(), CapturedValue::U64(12)),
+        ])
+    );
+}
+
+#[test]
+fn emit_logs_starved_breakdown_and_warning() {
+    let breakdown = DeadlineConsumptionBreakdown {
+        parquet_reload_ms: 100,
+        synapse_analysis_ms: Some(50),
+        neuron_analysis_ms: Some(50),
+        total_analysis_ms: 200,
+        synapse: Some(PhaseCompletion {
+            timed_out: true,
+            completed_focus_neurons: 4,
+            total_focus_neurons: 9,
+        }),
+        neuron: Some(PhaseCompletion {
+            timed_out: false,
+            completed_focus_neurons: 9,
+            total_focus_neurons: 9,
+        }),
+    };
+
+    let events = capture_events(|| breakdown.emit());
+
+    assert_eq!(events.len(), 2, "starvation emits INFO and WARN events");
+    assert_eq!(events[0].level, "INFO");
+    assert_eq!(
+        events[0].message,
+        "DEADLINE-BREAKDOWN deadline consumption (ms): parquet_reload=100 \
+         synapse_analysis=50 neuron_analysis=50 total_analysis=200; \
+         focus completed synapse=4/9 neuron=9/9"
+    );
+    assert_eq!(
+        events[0].fields["marker"],
+        CapturedValue::String(DEADLINE_BREAKDOWN_MARKER.to_string())
+    );
+    assert_eq!(events[0].fields["synapse_completed"], CapturedValue::U64(4));
+    assert_eq!(events[0].fields["synapse_total"], CapturedValue::U64(9));
+    assert_eq!(events[0].fields["neuron_completed"], CapturedValue::U64(9));
+    assert_eq!(events[0].fields["neuron_total"], CapturedValue::U64(9));
+    assert_eq!(
+        events[0].fields.len(),
+        9,
+        "INFO fields stay on the numeric contract"
+    );
+
+    assert_eq!(events[1].level, "WARN");
+    assert_eq!(
+        events[1].message,
+        "STARVED: synapse analysis skipped 5/9 targets — deadline exhausted by focus+parquet before analysis could finish"
+    );
+    assert_eq!(
+        events[1].fields,
+        HashMap::from([(
+            "marker".to_string(),
+            CapturedValue::String(DEADLINE_BREAKDOWN_MARKER.to_string()),
+        )])
+    );
+}
+
+#[test]
+fn emit_logs_disabled_phase_as_not_applicable_without_warning() {
+    let breakdown = DeadlineConsumptionBreakdown {
+        parquet_reload_ms: 500,
+        synapse_analysis_ms: Some(1000),
+        neuron_analysis_ms: None,
+        total_analysis_ms: 1600,
+        synapse: Some(PhaseCompletion {
+            timed_out: false,
+            completed_focus_neurons: 5,
+            total_focus_neurons: 5,
+        }),
+        neuron: None,
+    };
+
+    let events = capture_events(|| breakdown.emit());
+
+    assert_eq!(
+        events.len(),
+        1,
+        "disabled analysis emits no starvation warning"
+    );
+    assert_eq!(events[0].level, "INFO");
+    assert_eq!(
+        events[0].message,
+        "DEADLINE-BREAKDOWN deadline consumption (ms): parquet_reload=500 \
+         synapse_analysis=1000 neuron_analysis=n/a total_analysis=1600; \
+         focus completed synapse=5/5 neuron=n/a"
+    );
+    assert_eq!(
+        events[0].fields["marker"],
+        CapturedValue::String(DEADLINE_BREAKDOWN_MARKER.to_string())
+    );
+    assert_eq!(
+        events[0].fields["neuron_analysis_ms"],
+        CapturedValue::U64(0)
+    );
+    assert_eq!(events[0].fields["neuron_completed"], CapturedValue::U64(0));
+    assert_eq!(events[0].fields["neuron_total"], CapturedValue::U64(0));
+    assert_eq!(
+        events[0].fields.len(),
+        9,
+        "INFO fields stay on the numeric contract"
+    );
 }
