@@ -779,8 +779,8 @@ information.
 **Algorithm**:
 1. Compute the effective range of each input (excluding sentinel clusters).
 2. Compare effective range to total observed range.
-3. If the utilisation ratio is below a threshold, propose gating neurons
-   to normalise or amplify the useful signal.
+3. If the utilisation ratio is below a threshold, propose a `setBias`
+   adjustment on each downstream target that compensates for the offset.
 
 #### Input Sensitivity Detection (Issue #435)
 
