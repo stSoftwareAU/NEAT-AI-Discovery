@@ -203,6 +203,96 @@ fn quality_sh_test_command_keeps_test_threads_two() {
 }
 
 // ============================================================================
+// ci.yml: quiet progress without weakening test selection or install safety.
+// ============================================================================
+
+#[test]
+fn ci_tests_are_quiet_and_keep_targets_features_and_thread_limit() {
+    let body = read_repo_file(".github/workflows/ci.yml");
+    let test = required_workflow_command(&body, "ci.yml", "cargo test")
+        .expect("ci.yml must run cargo test");
+    let args = cargo_args(&test);
+    assert!(
+        has_cargo_quiet(&test),
+        "ci.yml tests must run quiet: {test}"
+    );
+    assert!(
+        !args.contains(&"--verbose"),
+        "remove verbose reporting: {test}"
+    );
+    for flag in ["--lib", "--tests", "--bins", "--all-features"] {
+        assert!(
+            args.contains(&flag),
+            "ci.yml tests must retain {flag}: {test}"
+        );
+    }
+    assert!(passthrough_args(&test).contains(&"--test-threads=2"));
+}
+
+#[test]
+fn ci_lint_and_build_are_quiet_and_keep_existing_checks() {
+    let body = read_repo_file(".github/workflows/ci.yml");
+    let lint = required_workflow_command(&body, "ci.yml", "cargo clippy")
+        .expect("ci.yml must run cargo clippy");
+    assert!(has_cargo_quiet(&lint), "ci.yml lint must run quiet: {lint}");
+    for flag in ["--all-targets", "--all-features"] {
+        assert!(cargo_args(&lint).contains(&flag));
+    }
+    assert_eq!(
+        passthrough_args(&lint),
+        [
+            "-D",
+            "warnings",
+            "-D",
+            "clippy::uninlined_format_args",
+            "-D",
+            "clippy::filter_next",
+            "-D",
+            "clippy::collapsible_if"
+        ]
+    );
+    let build = required_workflow_command(&body, "ci.yml", "cargo build")
+        .expect("ci.yml must run cargo build");
+    assert!(
+        has_cargo_quiet(&build),
+        "ci.yml build must run quiet: {build}"
+    );
+    assert!(cargo_args(&build).contains(&"--lib"));
+}
+
+#[test]
+fn ci_cargo_install_is_quiet_locked_and_keeps_the_existing_pin() {
+    let body = read_repo_file(".github/workflows/ci.yml");
+    let install = required_workflow_command(&body, "ci.yml", "cargo install")
+        .expect("ci.yml must install cargo-outdated");
+    assert!(
+        is_quiet_locked_pinned_install(&install),
+        "ci.yml tool install must be quiet, locked and pinned: {install}"
+    );
+    let args = cargo_args(&install);
+    assert!(args.contains(&"cargo-outdated"));
+    assert!(args.windows(2).any(|pair| pair == ["--version", "0.16.0"]));
+}
+
+#[test]
+fn ci_pip_install_is_quiet_and_keeps_hash_checked_requirements() {
+    let body = read_repo_file(".github/workflows/ci.yml");
+    let install = required_workflow_command(&body, "ci.yml", "pip install")
+        .expect("ci.yml must install codespell");
+    let args = tokens(&install);
+    assert!(
+        args.contains(&"--quiet"),
+        "ci.yml pip install must run quiet: {install}"
+    );
+    assert!(args.contains(&"--user"));
+    assert!(args.contains(&"--require-hashes"));
+    assert!(
+        args.windows(2)
+            .any(|pair| pair == ["-r", ".github/requirements/codespell-requirements.txt"])
+    );
+}
+
+// ============================================================================
 // 2. cargo-quality.yml: Cargo and the coverage test reporter run quiet.
 // ============================================================================
 
