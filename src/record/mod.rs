@@ -40,6 +40,12 @@ pub struct RecordResult {
 /// Since the training dataset is already randomized, parallelization is allowed,
 /// but each training record must be processed atomically (all neurons written together).
 ///
+/// The temporary file `<temp_dir>/discovery_data.parquet.tmp` is created
+/// exclusively (Issue #2547). If anything already exists at that path (a file, a
+/// symlink, a live streaming session's recording, or a retained recording), the
+/// call fails with an error naming the path and leaves it untouched. Only a
+/// temporary file this call created is removed on failure.
+///
 /// Once the Parquet file is published the shared-decode cache is invalidated
 /// (Issue #2452), so a re-recording into the same directory never serves the
 /// previous decode of that file.
@@ -67,15 +73,20 @@ pub fn record_discovery_data(input: &RecordDiscoveryInput) -> Result<RecordResul
         .ok_or_else(|| anyhow::anyhow!("Invalid file path"))?;
 
     let max_arrow_offset = i32::MAX as usize;
-    let write_result = (|| -> Result<()> {
-        let mut writer = ParquetRecordWriter::new(
-            parquet_tmp_path,
-            max_arrow_offset,
-            max_arrow_offset,
-            estimated_total_records,
-        )
-        .context("Failed to initialise Parquet writer")?;
+    // Issue #2547: create the temporary file exclusively. This runs outside the
+    // closure below, so a creation failure returns without removing anything:
+    // the file at this path was not created by this call.
+    let mut writer = ParquetRecordWriter::new_exclusive(
+        parquet_tmp_path,
+        max_arrow_offset,
+        max_arrow_offset,
+        estimated_total_records,
+    )
+    .with_context(|| {
+        format!("Failed to initialise Parquet writer (temporary file {parquet_tmp_path})")
+    })?;
 
+    let write_result = (move || -> Result<()> {
         processing::process_training_data(
             input,
             &obs_indices,

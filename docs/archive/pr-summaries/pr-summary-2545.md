@@ -2,7 +2,7 @@
 
 `./bump-deps.sh` now also refreshes and age-checks `fuzz/Cargo.lock`, then finishes with `quality/fuzz_lockfile.sh check`, so a bump that raises a root requirement can no longer leave the fuzz lock unresolvable under `--locked`. Closes #2545.
 
-Version bump: `Cargo.toml` is bumped by CI's `version-increment` job; the merged commit records the final version.
+Version bump: the merge retains Develop's newer `0.74.358` version in `Cargo.toml` and both lockfiles; CI's `version-increment` job records the final PR version.
 
 ## Spec
 

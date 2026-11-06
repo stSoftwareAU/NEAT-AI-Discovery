@@ -115,11 +115,13 @@ fn rename_error_cleans_temporary_file_and_preserves_destination_directory() {
 }
 
 #[test]
-fn writer_construction_error_reports_cleanup_failure() {
+fn writer_construction_error_leaves_occupied_temporary_path_untouched() {
     let dir = tempdir().expect("create isolated temp directory");
     let final_path = dir.path().join("discovery_data.parquet");
     let tmp_path = temporary_path(&final_path);
     fs::create_dir(&tmp_path).expect("block temporary-file construction");
+    let keep = tmp_path.join("keep.txt");
+    fs::write(&keep, b"keep").expect("seed occupant contents");
 
     let error = record_discovery_data(&recording_input(dir.path()))
         .expect_err("writer cannot create a file where a directory exists");
@@ -129,11 +131,20 @@ fn writer_construction_error_reports_cleanup_failure() {
         chain.contains("Failed to initialise Parquet writer"),
         "{chain}"
     );
+    assert!(chain.contains("discovery_data.parquet.tmp"), "{chain}");
     assert!(
-        chain.contains("Failed to remove temporary Parquet file"),
-        "{chain}"
+        !chain.contains("Failed to remove temporary Parquet file"),
+        "creation failure must not attempt removal of an occupant: {chain}"
     );
-    assert!(tmp_path.is_dir(), "cleanup must not remove a directory");
+    assert!(
+        tmp_path.is_dir(),
+        "creation failure must not remove a directory"
+    );
+    assert_eq!(
+        fs::read(&keep).expect("occupant contents remain readable"),
+        b"keep",
+        "creation failure must leave the occupant's contents unchanged"
+    );
 }
 
 fn sample_record(uuid: &str, activation: f32) -> DiscoverRecord {

@@ -632,6 +632,13 @@ finalises and closes the Parquet writer, then renames the completed file to
 removes the temporary file and leaves any previously published recording in
 place.
 
+The temporary file is created exclusively (Issue #2547). If
+`discovery_data.parquet.tmp` already exists in `tempDir` (a retained recording,
+an open streaming session, a symlink, or a crash orphan), the call fails with an
+error naming it and leaves it untouched. Clean the directory first, for example
+with `cleanup_discovery_dir`. Only a temporary file this call created is removed
+on failure.
+
 Error:
 ```json
 {
