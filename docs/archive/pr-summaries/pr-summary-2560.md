@@ -43,7 +43,7 @@ The issue states no acceptance-criteria heading; its suggested fix is met in ful
 
 ## Test Plan
 
-- `tests/issue_2560_lint_scope.rs` (new, 16 tests): runs `quality/lint_scope.sh` over throwaway git repos. It covers a Rust-only change (false for all scopes), a positive and a look-alike negative per scope, each workflow enabling its own gate, the script enabling all gates, deleted files, renames through the old path, paths with spaces, an unreadable base and a missing `HEAD^1` (both fail closed to `run=true`), unknown scope and no arguments (non-zero exit, no `run=` line), `GITHUB_OUTPUT` appending, and a drift pin on the two mirrored `ignores` entries. Each `run=false` case has a positive control in the same test.
+- `tests/issue_2560_lint_scope.rs`: runs `quality/lint_scope.sh` over throwaway git repos. `default_range_on_merge_commit_selects_only_pr_changes` invokes the workflow's scope-only entry point on merge commits, checking both a PR-only shell change and a base-only shell change. It also covers a Rust-only change (false for all scopes), a positive and a look-alike negative per scope, each workflow enabling its own gate, the script enabling all gates, deleted files, renames through the old path, paths with spaces, an unreadable base and a missing `HEAD^1` (both fail closed to `run=true`), unknown scope and no arguments (non-zero exit, no `run=` line), `GITHUB_OUTPUT` appending, and a drift pin on the two mirrored `ignores` entries. Each `run=false` case has a positive control in the same test.
 - `tests/issue_2560_lint_gating_workflows.rs` (new, 8 tests): checks the three jobs keep their names, no `paths:` or `paths-ignore:` under `on:`, `fetch-depth: 2`, exactly one `id: scope` step running the right scope after checkout, and every later step gated. Negative tests mutate the text (add `paths:`, drop an `if:`, drop the scope step, wrong scope name, drop `fetch-depth`); each asserts the exact problem message and has an unmutated positive control.
 - Red checks on `quality/lint_scope.sh`, each run against `issue_2560_lint_scope`: fail-closed emitting `false` → red (2 tests); dropping `--no-renames` → red; dropping the `docs/archive/*` exclusion → red; dropping the nested `CHANGELOG.md` exclusion → red; removing the self-rule → red; removing the `GITHUB_OUTPUT` append → red.
 - Red check on the workflows: removing one `if:` from the real `shellcheck.yml` → `gated_jobs_keep_their_names_and_pass_the_gate` red.
@@ -57,4 +57,4 @@ The issue states no acceptance-criteria heading; its suggested fix is met in ful
 ## Not done / risks
 
 - The full test phase of `./quality.sh` did not finish locally; CI will run it.
-- Behaviour on a real GitHub `pull_request` run (merge-commit `HEAD^1`) was not exercised here; the script fails closed if `HEAD^1` is unavailable.
+- The default merge-commit range is exercised using local Git fixtures; the script fails closed if `HEAD^1` is unavailable.

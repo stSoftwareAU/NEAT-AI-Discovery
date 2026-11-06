@@ -317,6 +317,43 @@ fn default_range_in_a_single_commit_repo_fails_closed_to_run() {
 }
 
 #[test]
+fn default_range_on_merge_commit_selects_only_pr_changes() {
+    for (pr_file, base_file, expected) in [
+        ("scripts/pr.sh", "base.txt", "run=true\n"),
+        ("src/lib.rs", "scripts/base.sh", "run=false\n"),
+    ] {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path();
+        init_repo(root);
+        write_file(root, "initial.txt", "base\n");
+        commit_all(root, "common base");
+        git(root, &["checkout", "-q", "-b", "pr"]);
+        write_file(root, pr_file, "PR change\n");
+        commit_all(root, "PR change");
+        git(root, &["checkout", "-q", "-b", "base", "HEAD^1"]);
+        write_file(root, base_file, "base change\n");
+        commit_all(root, "base change");
+        git(root, &["merge", "-q", "--no-ff", "pr", "-m", "merge PR"]);
+
+        let output = script(root)
+            .arg("shellcheck")
+            .output()
+            .expect("failed to run quality/lint_scope.sh");
+        assert!(output.status.success(), "{}", combined(&output));
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout),
+            expected,
+            "default range must select PR change {pr_file}, excluding base change {base_file}"
+        );
+        assert!(
+            !String::from_utf8_lossy(&output.stderr).contains("fail closed"),
+            "{}",
+            combined(&output)
+        );
+    }
+}
+
+#[test]
 fn unknown_scope_and_bad_argument_counts_are_usage_errors() {
     let fixture = repo_changing(&["scripts/x.sh"]);
     let (base, head) = (fixture.base.as_str(), fixture.head.as_str());
