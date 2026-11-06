@@ -34,7 +34,8 @@ the final version.
 - Backend/CLI change; verified through the sandbox tests, Bash syntax and
   ShellCheck gates, and the full quality gate. The regression tests provide
   Criterion-style `time:` and `change:` output and use a numeric `bc` stub.
-- The merged tree records version `0.74.367`.
+- The merged tree records version `0.74.368`; `fuzz/Cargo.lock` is aligned
+  with `Cargo.toml` after merging Develop.
 - Execution was on Linux; macOS/BSD userland was not run.
 
 ## Test Plan
