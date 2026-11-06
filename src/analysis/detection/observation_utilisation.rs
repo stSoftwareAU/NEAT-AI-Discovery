@@ -5,22 +5,21 @@
 //!
 //! While `observation_range.rs` characterises the effective range and sentinel
 //! values as metadata, this module goes further by recommending concrete
-//! structural changes: adding gating neurons that filter out sentinel values
-//! so downstream neurons only process meaningful data.
+//! structural changes: bias adjustments on downstream neurons that compensate
+//! for the sentinel-induced offset.
 //!
 //! ## Detection Approach
 //!
 //! 1. Reuse the sentinel detection logic from `observation_range.rs`.
 //! 2. For inputs where sentinels are detected and utilisation is low,
-//!    recommend a gating neuron that zeroes the contribution when the
-//!    input is at a sentinel value.
+//!    recommend a bias compensation on each downstream target of the input.
 //!
 //! ## Candidate Generation
 //!
-//! When an underutilised observation is found, we recommend a coordinated
-//! structural candidate that adds a gating hidden neuron between the
-//! input and its downstream targets. The gating neuron uses a step-like
-//! activation to pass through the effective range and block sentinel values.
+//! When an underutilised observation is found, we recommend one coordinated
+//! structural candidate per downstream target. Each candidate carries a single
+//! `SetBias` operation that sets the target's absolute bias to its current
+//! bias minus (effective centre x weight).
 
 use std::collections::HashMap;
 use std::time::SystemTime;
@@ -51,7 +50,7 @@ pub struct UnderutilisedObservation {
     pub effective_max: f32,
     /// Number of samples analysed.
     pub sample_count: usize,
-    /// Estimated improvement from gating sentinel values.
+    /// Estimated improvement from compensating for sentinel values.
     pub estimated_improvement: f32,
     /// Human-readable explanation.
     pub reason: String,
@@ -60,7 +59,7 @@ pub struct UnderutilisedObservation {
 /// Detect underutilised observations from recorded samples.
 ///
 /// Uses the sentinel detection from `observation_range.rs` and filters to
-/// observations with low utilisation ratios that would benefit from gating.
+/// observations with low utilisation ratios that would benefit from bias compensation.
 ///
 /// # Arguments
 /// * `creature` - The creature's network topology (identifies input neurons).
@@ -219,7 +218,7 @@ fn observation_utilisation_to_coordinated_candidates_observed(
         // Compute a bias offset to centre the effective range
         let effective_centre = (obs.effective_min + obs.effective_max) / 2.0;
 
-        // For each downstream target, recommend adjusting the synapse weight
+        // For each downstream target, recommend adjusting the target's bias
         // to compensate for the sentinel-induced offset
         for (index, &(target_uuid, current_weight)) in downstream_targets.iter().enumerate() {
             if index % DEADLINE_CHECK_INTERVAL == 0 && deadline_passed(deadline) {
