@@ -69,7 +69,11 @@ case " ${STUB_SKIP_SUITES:-} " in
 esac
 case " ${STUB_REGRESS_SUITES:-} " in
     *" $suite "*)
-        if [[ " ${STUB_MULTI_REGRESS_SUITES:-} " == *" $suite "* ]]; then
+        if [[ " ${STUB_WRAPPED_SUITES:-} " == *" $suite "* ]]; then
+            echo "synapse_counts/old_O(n×m)/100n_500s"
+            echo "                        time:   [1.000 µs 1.100 µs 1.200 µs]"
+            echo "                        change: [+10.0000% +12.5000% +14.0000%] (p = 0.01 < 0.05)"
+        elif [[ " ${STUB_MULTI_REGRESS_SUITES:-} " == *" $suite "* ]]; then
             echo "suite_a::sample[one]  time:   [1.000 µs 1.100 µs 1.200 µs]"
             echo "                    change: [+10.0000% +12.5000% +14.0000%] (p = 0.01 < 0.05)"
             echo "                    Performance has regressed."
@@ -169,6 +173,7 @@ impl Sandbox {
             .current_dir(&self.work)
             .env("PATH", format!("{}:/usr/bin:/bin", self.bin.display()))
             .env("STUB_FAIL_SUITES", failing.join(" "))
+            .env("STUB_WRAPPED_SUITES", if args.contains(&"--bench") { "suite_a" } else { "" })
             .env("STUB_SKIP_SUITES", gpu_less.join(" "))
             .env("STUB_REGRESS_SUITES", regressing.join(" "))
             .env("STUB_MULTI_REGRESS_SUITES", multiple.join(" "))
@@ -375,6 +380,28 @@ fn comparison_reports_multiple_regressions_and_continues_to_later_suites() {
             && stdout.contains("Skipped suites:    0")
             && stdout.contains("Failed suites:     0"),
         "summary counts must include the regressing and later passing suites\nstdout:\n{stdout}"
+    );
+}
+
+#[test]
+fn comparison_reports_wrapped_criterion_benchmark_id() {
+    let output = Sandbox::new().run_with_regressions(
+        &["--bench", "suite_a"],
+        &[],
+        &[],
+        &["suite_a"],
+        &[],
+        &[],
+    );
+    let stdout = text(&output.stdout);
+    assert_eq!(output.status.code(), Some(1), "{stdout}");
+    assert!(
+        stdout.contains("REGRESSION: synapse_counts/old_O(n×m)/100n_500s (+14.0000%)"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("REGRESSION: synapse_counts/old_O(n×m)/100n_500s changed by +14.0000%"),
+        "{stdout}"
     );
 }
 
