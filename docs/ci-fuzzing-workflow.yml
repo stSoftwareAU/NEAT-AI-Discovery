@@ -1,6 +1,6 @@
 # ==============================================================================
-# Fuzzing CI Workflow — runs fuzz targets to catch deserialisation panics and
-# FFI boundary issues before merge.
+# Fuzzing CI Workflow — runs fuzz targets to catch deserialisation panics,
+# FFI boundary issues and Parquet footer/pre-decode path issues before merge.
 #
 # To enable: copy this file to .github/workflows/fuzzing.yml
 # (Requires the 'workflow' OAuth scope to push workflow files.)
@@ -89,3 +89,14 @@ jobs:
 
     - name: Fuzz FFI entry points
       run: cargo +nightly fuzz run --locked fuzz_ffi_entry_points -- -max_total_time=30
+
+    # The target list mirrors the fuzz/Cargo.toml [[bin]] entries and the
+    # scripts/fuzz-ci.sh FUZZ_TARGETS array. A new target must be added in all
+    # three (Issue #2527; parquet targets from Issue #2447).
+    - name: Fuzz parquet footer statistics
+      run: |
+        mkdir -p fuzz/corpus/fuzz_parquet_footer_stats
+        cargo +nightly fuzz run --locked fuzz_parquet_footer_stats fuzz/corpus/fuzz_parquet_footer_stats fuzz/seeds/parquet_footer_stats -- -max_total_time=30 -max_len=65536
+
+    - name: Fuzz parquet pre-decode budget
+      run: cargo +nightly fuzz run --locked fuzz_parquet_predecode_budget -- -max_total_time=30
