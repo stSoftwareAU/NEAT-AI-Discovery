@@ -6,6 +6,7 @@
 //! single-threaded — it must check, and skip the `set_var` when other threads
 //! could be calling `getenv`.
 
+use crate::env_guard::EnvGuard;
 use neat_ai_discovery::analysis::utils::platform::{GpuEnvSetup, setup_gpu_environment};
 use std::sync::mpsc;
 
@@ -24,8 +25,16 @@ fn spawn_live_thread() -> (mpsc::Sender<()>, std::thread::JoinHandle<()>) {
 
 /// The GPU environment setup is callable from ordinary safe code — no caller
 /// has to discharge an invariant it cannot uphold — and repeated calls agree.
+/// Serial because the two calls must observe the same environment: without the
+/// lock a #713 smoke test can flip `XDG_RUNTIME_DIR` between the two calls (Issue #2538).
 #[test]
+#[serial_test::serial]
 fn setup_gpu_environment_is_safe_and_consistent() {
+    assert!(
+        serial_test::is_locked_serially(None),
+        "must be serialised with every env-mutating or env-dependent test in the binary"
+    );
+    let _env = EnvGuard::capture_gpu_setup_vars();
     let first = setup_gpu_environment();
     let second = setup_gpu_environment();
 
@@ -35,7 +44,13 @@ fn setup_gpu_environment_is_safe_and_consistent() {
 /// With another thread alive the setup must never report `Applied`: writing the
 /// environment then would race a concurrent `getenv`.
 #[test]
+#[serial_test::serial]
 fn setup_gpu_environment_never_writes_while_threads_live() {
+    assert!(
+        serial_test::is_locked_serially(None),
+        "must be serialised with every env-mutating or env-dependent test in the binary"
+    );
+    let _env = EnvGuard::capture_gpu_setup_vars();
     let (release_tx, handle) = spawn_live_thread();
 
     let verdict = setup_gpu_environment();
@@ -55,7 +70,13 @@ fn setup_gpu_environment_never_writes_while_threads_live() {
 /// variable) — never a write.
 #[cfg(target_os = "linux")]
 #[test]
+#[serial_test::serial]
 fn setup_gpu_environment_skips_or_is_unnecessary_on_linux() {
+    assert!(
+        serial_test::is_locked_serially(None),
+        "must be serialised with every env-mutating or env-dependent test in the binary"
+    );
+    let _env = EnvGuard::capture_gpu_setup_vars();
     let (release_tx, handle) = spawn_live_thread();
 
     let verdict = setup_gpu_environment();

@@ -60,6 +60,10 @@ detection behaviour are unchanged.
 
 ### Fixed
 
+#### GPU integration tests no longer race on `XDG_RUNTIME_DIR` (Issue #2538)
+
+The `gpu` integration test binary built the issue #713 smoke tests and the issue #1873 `setup_gpu_environment` tests as plain parallel `#[test]`s. The first `ensure_xdg_runtime_dir()` call fires a process-wide `Once` that writes `XDG_RUNTIME_DIR`, which could land between the two calls of `setup_gpu_environment_is_safe_and_consistent` and make its "same verdict" assertion fail intermittently. Those tests are now `#[serial_test::serial]`, each asserts it holds the serial lock, and a shared `EnvGuard` (`tests/gpu/env_guard.rs`) restores `XDG_RUNTIME_DIR` and the Mesa variables on exit. Test-only change; the lib-test copy was fixed by Issue #2497.
+
 #### fuzz/Cargo.lock no longer goes stale on a version bump (Issue #2506)
 
 `fuzz/Cargo.lock` records the root crate as a path package, and that entry
