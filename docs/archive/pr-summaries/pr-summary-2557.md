@@ -31,6 +31,9 @@ Docs and script-help change only. Tests drive the real scripts' `--help` and rea
 Review correction: restored the unrelated #2556 archived summary to its Develop
 content, preserving its historical fuzz lockfile version (0.74.361).
 
+Merge resolution: retained both this PR's benchmark changelog entry and
+Develop's Semgrep changelog entry.
+
 ## Test Plan
 
 - Added `tests/issue_2557_benchmark_quiet_host_requirement.rs` (3 tests): `benchmark_compare_help_states_the_quiet_host_requirement`, `benchmark_ci_help_states_the_quiet_host_requirement`, `benchmarks_doc_states_the_requirement_before_the_quick_start_commands`. All pass.

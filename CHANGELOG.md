@@ -18,6 +18,13 @@ CI Workflow) and the `--help` text of `benchmark_compare.sh` and
 `--compile-only` does not and stays suitable for ordinary PR runners. No
 benchmark behaviour changed.
 
+#### Semgrep workflow no longer passes SEMGREP_APP_TOKEN with --config (Issue #2558)
+
+`semgrep ci` rejects an app token combined with an explicit `--config`, so the
+Semgrep job's scan step failed fatally. The token is no longer set anywhere in
+`.github/workflows/semgrep.yml`; the scan runs as a plain `semgrep ci --config`
+with no app token in scope.
+
 #### benchmark_compare.sh no longer turns a failed benchmark run into success (Issue #2554)
 
 A failed `cargo bench` run could be reported as a success, so a compile error,
