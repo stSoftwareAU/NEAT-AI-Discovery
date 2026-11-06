@@ -21,7 +21,7 @@
 
 # CI/CD workflows and composite actions run with privileged secrets beyond the
 # default GITHUB_TOKEN — a write-capable PAT (ACTIONS_PUSH), plus
-# SEMGREP_APP_TOKEN and CODECOV_TOKEN. A careless or malicious edit here is a
+# CODECOV_TOKEN. A careless or malicious edit here is a
 # direct path to secret exfiltration or unauthorised pushes to protected
 # branches, so these paths demand maintainer review.
 /.github/               @Green-Beret @nleck @stservice
