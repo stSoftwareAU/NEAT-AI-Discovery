@@ -24,7 +24,7 @@ Version bump: `Cargo.toml` is bumped by CI's `version-increment` job; the merged
 
 ## Evidence
 
-Backend/CLI shell change, no UI. Verified with the stubbed-cargo harness in `tests/bump_deps_test.sh` (new Test 30, cases 30a–30f). The real `cargo update` against a live `fuzz/` workspace and real crates.io publish times were not exercised.
+Backend/CLI shell change, no UI. Verified with `tests/issue_2532_shell_script_coverage.rs::fuzz_lock_refresh_gates_updates_and_reports_failures` in the replacement Cargo harness. The real `cargo update` against a live `fuzz/` workspace and real crates.io publish times were not exercised.
 
 ```mermaid
 flowchart LR
@@ -54,3 +54,5 @@ flowchart LR
 - Full `./quality.sh` test stage (stopped at the time cap, no failure seen).
 - The real `cargo update` on `fuzz/` and real crates.io publish dates.
 - Standards/Spec reviewer sub-agents were not dispatched: the issue states no acceptance-criteria list.
+
+The base removed the unrun `tests/bump_deps_test.sh` in favour of Cargo integration tests. The fuzz refresh scenarios now run through `tests/issue_2532_shell_script_coverage.rs::fuzz_lock_refresh_gates_updates_and_reports_failures`, preserving aged and quarantined updates, failure handling and the missing-lock no-op.
