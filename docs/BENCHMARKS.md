@@ -159,7 +159,9 @@ The following suites are defined in `Cargo.toml`:
 | `zero_copy_buffer` | Zero-copy vs traditional GPU buffer sharing (Issue #228) |
 
 **Note:** Most benchmarks require a GPU. Suites that cannot initialise a GPU
-are automatically skipped.
+are automatically skipped: they exit 0 and record no `change:` line. Any other
+non-zero `cargo bench` exit is a failure, not a skip (see Detecting Regressions
+below).
 
 ## 🔄 Workflow
 
@@ -172,6 +174,10 @@ Save a baseline on your machine before making performance-sensitive changes:
 ```
 
 This runs all 47 benchmark suites and stores results in `target/criterion/`.
+If any suite fails, the script names it, finishes the remaining suites, exits 1
+and does not announce the baseline as saved.
+Suites that exit successfully without recording timings are counted as skipped;
+if all are skipped, the script reports that no baseline was recorded.
 
 > **Baselines do not survive `./scripts/runlib.sh`.** That script removes the
 > checkout's `target/` after a successful install (Issue #2072), so copy any
@@ -190,8 +196,18 @@ The script reports:
 - **Regressions** — benchmarks that slowed by more than the threshold
 - **Improvements** — benchmarks that sped up by more than the threshold
 - **Within threshold** — benchmarks with changes within the acceptable range
+- **Failed suites** — suites whose `cargo bench` run exited non-zero (compile
+  error, panic, missing `cargo`, missing baseline). The captured output is
+  printed to stderr.
 
-The exit code is **1** if any regressions are detected, **0** otherwise.
+A suite skipped because no GPU is available is not a failure and is not listed
+under Failed suites.
+
+The exit code is **1** if any regression is detected or any suite fails, even
+when no regression was found and even when every suite failed. It is **0**
+otherwise. If every suite was skipped, nothing was compared: the script exits 0
+and prints `No comparisons were recorded; no regression verdict.` instead of
+`No regressions detected.`, so the zero exit is not a verdict.
 
 ### 🔄 Updating the Baseline
 
@@ -277,7 +293,9 @@ runners.
 **Tier 2 — Regression detection (self-hosted runners):**
 For environments with consistent hardware and GPU availability, the comparison
 mode runs full benchmarks against a saved baseline and fails if any benchmark
-regresses by more than the configured threshold.
+regresses by more than the configured threshold or any suite's benchmark run
+fails. `scripts/benchmark-ci.sh --compare` passes the `benchmark_compare.sh` exit
+status through unchanged, including on the first run that saves the baseline.
 
 ### Regression Threshold
 
@@ -309,8 +327,11 @@ should be cached between runs for comparison mode.
 
 Most benchmarks require a GPU. On GitHub Actions runners (no GPU), the
 compile-only mode verifies the code compiles correctly. Benchmarks that
-cannot initialise a GPU are automatically skipped in comparison mode.
+cannot initialise a GPU are automatically skipped in comparison mode, and the
+skip is not a failure.
 
 **Note:** Benchmarks produce machine-specific results. Meaningful regression
 detection requires a self-hosted runner with consistent hardware. The scripts
-handle GPU-less environments gracefully.
+treat a GPU-less environment as a skip (exit 0, no `change:` line recorded).
+Any other non-zero `cargo bench` exit is reported as a failed suite, and the
+script exits 1.

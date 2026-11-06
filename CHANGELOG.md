@@ -8,6 +8,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+#### benchmark_compare.sh no longer turns a failed benchmark run into success (Issue #2554)
+
+A failed `cargo bench` run could be reported as a success, so a compile error,
+a panic, a missing `cargo` or a missing baseline could end without a regression
+verdict and with a clean exit. Only a GPU-less suite is now skipped: it still
+exits 0 and records no `change:` line, and a run that compared nothing still
+exits 0, printing "No comparisons were recorded; no regression verdict." Any
+other non-zero `cargo bench` exit is a failure. In `--save-baseline` mode the
+failing suite is named, the remaining suites finish, and the script exits 1
+without announcing the baseline as saved. In comparison mode the captured output
+goes to stderr, the suite is counted under a new `Failed suites` summary line,
+and the script exits 1, even when no regression was found. `scripts/benchmark-ci.sh
+--compare` passes that exit status through unchanged.
+
 #### A non-finite neuron bias is now rejected at the FFI boundary (Issue #2133)
 
 `NeuronJson::bias` carried only `#[serde(default)]`, so nothing checked
