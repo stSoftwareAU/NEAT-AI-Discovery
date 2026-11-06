@@ -27,6 +27,7 @@ Backend/CI only, so no screenshot. `tests/issue_1878_ci_version_increment_no_rer
 
 ## Test Plan
 
+- Updated the Issue #2476 version-increment fixture to include the real fuzz sync helper and a fuzz workspace, and assert that a bump restamps only the path-package version. This repairs the coverage failure caused by the incomplete fixture.
 - Added `version_increment_step_restamps_the_fuzz_lockfile_version_only`, `version_increment_step_restamps_a_fuzz_lockfile_stale_by_more_than_one_release` and `version_increment_step_fails_loud_when_the_fuzz_lockfile_moves_beyond_its_stamp` in `tests/issue_1878_ci_version_increment_no_reresolve.rs`. The two existing tests keep all their assertions; only their call form changed (a `Setup` struct replaces the mutation argument).
 - Red checks: deleting the new `ci.yml` block turned the three new tests red while the two existing ones stayed green. Changing the fuzz guard's `exit 1` to `true` turned only the fail-loud test red.
 - Passed: `cargo test --test issue_1878_ci_version_increment_no_reresolve --test issue_2506_fuzz_lockfile_sync --test issue_1681_doc_staleness --test issue_1683_agents_consolidation --test issue_1685_doc_link_integrity`.
