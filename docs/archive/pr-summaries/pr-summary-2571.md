@@ -32,11 +32,10 @@ the final version.
 ## Evidence
 
 - Backend/CLI change; verified through the sandbox tests, Bash syntax and
-  ShellCheck gates, and the full quality gate. The regression tests provide
+  ShellCheck gates. The regression tests provide
   Criterion-style `time:` and `change:` output and use a numeric `bc` stub.
-- The merged tree records version `0.74.368`; `fuzz/Cargo.lock` is aligned
-  with `Cargo.toml` after merging Develop.
-- Execution was on Linux; macOS/BSD userland was not run.
+- `fuzz/Cargo.lock` is aligned with `Cargo.toml` after merging Develop.
+- The targeted suite was rerun on macOS after the wrapped-ID test was added.
 
 ## Test Plan
 
@@ -47,7 +46,9 @@ the final version.
 - The former lookup of names only on `time:` lines is replaced by tracking
   timing names and the preceding non-blank ID. Inline names and missing-name
   fallback remain covered by `tests/issue_2554_benchmark_compare_failure_is_loud.rs::comparison_reports_multiple_regressions_and_continues_to_later_suites` and `tests/issue_2554_benchmark_compare_failure_is_loud.rs::comparison_uses_suite_name_when_criterion_name_is_missing`.
-- `cargo test --test issue_2554_benchmark_compare_failure_is_loud < /dev/null`: passed, 12 tests.
+- `cargo test --test issue_2554_benchmark_compare_failure_is_loud --all-features < /dev/null`: passed, 13 tests.
 - `cargo fmt --all -- --check`, `bash -n benchmark_compare.sh`, and `shellcheck benchmark_compare.sh`: passed.
-- `./quality.sh < /dev/null`: passed, including dependency audit, all tests, documentation build, and release build.
+- `./quality.sh < /dev/null`: did not complete on the macOS host because the
+  sandbox denied the summary-location check's temporary file creation. Bash
+  syntax, ShellCheck and cargo-install pinning passed before that failure.
 - Removed assertions: none.
