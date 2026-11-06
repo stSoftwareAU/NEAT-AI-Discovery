@@ -51,8 +51,16 @@ fn quality_job_has_no_redundant_cargo_check() {
 #[test]
 fn linter_step_is_the_broad_compile_gate() {
     let body = read_ci();
+    let command = body
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("run: cargo clippy "))
+        .expect("ci.yml must run cargo clippy");
+    let args: Vec<&str> = command
+        .split_whitespace()
+        .take_while(|arg| *arg != "--")
+        .collect();
     assert!(
-        body.contains("cargo clippy --all-targets --all-features"),
+        args.contains(&"--all-targets") && args.contains(&"--all-features"),
         "the `Run linter` clippy step must remain as the single broad compile \
          gate over `--all-targets --all-features` (Issue #1658)",
     );
