@@ -62,8 +62,8 @@ pub struct ParquetFooterStats {
     /// (exact, from the leaf column chunks' value counts).
     pub error_values: u64,
     /// Decoded `neuron_uuid` string bytes across all row groups, from the
-    /// footer's size statistic or the encoding-aware bound described on
-    /// [`neuron_uuid_heap_bytes`]. Excludes the per-row Arrow offset word.
+    /// footer's size statistic or the encoding-aware bound described by
+    /// `neuron_uuid_heap_bytes`. Excludes the per-row Arrow offset word.
     pub uuid_heap_bytes: u64,
 }
 
