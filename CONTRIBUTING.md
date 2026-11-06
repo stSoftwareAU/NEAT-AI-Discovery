@@ -176,6 +176,9 @@ the backtrace. The GitHub Actions workflows that run these commands
 (`cargo-quality.yml`, `security.yml`, `markdown-lint.yml`, `renovate-validate.yml`)
 are quiet in the same way, but `ci.yml` is not: its quiet reporting has not been
 applied because `ci.yml` edits need explicit approval (Issue #2555).
+The coverage workflow sets `CARGO_TERM_QUIET=true` so Cargo build progress is
+also quiet, while the coverage report and test failure diagnostics remain
+available.
 
 If any step fails, fix the issue and re-run. Do **not** commit code that fails
 `./quality.sh`.

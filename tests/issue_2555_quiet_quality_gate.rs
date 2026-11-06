@@ -159,25 +159,29 @@ fn quality_sh_test_command_keeps_test_threads_two() {
 }
 
 // ============================================================================
-// 2. cargo-quality.yml: the coverage test binaries receive libtest --quiet.
+// 2. cargo-quality.yml: Cargo and the coverage test reporter run quiet.
 // ============================================================================
 
 #[test]
-fn coverage_llvm_cov_passes_quiet_after_the_separator() {
+fn coverage_llvm_cov_quiets_cargo_and_keeps_test_threads_two() {
     let body = read_repo_file(".github/workflows/cargo-quality.yml");
     let llvm_cov = workflow_run_commands(&body)
         .into_iter()
-        .find(|command| command.starts_with("cargo llvm-cov"))
+        .find(|command| command.starts_with("CARGO_TERM_QUIET=true cargo llvm-cov"))
         .expect("cargo-quality.yml must run cargo llvm-cov");
     assert!(
-        has_libtest_quiet(&llvm_cov),
-        "the cargo-quality.yml llvm-cov command must pass `--quiet` after `--` \
+        tokens(&llvm_cov).contains(&"CARGO_TERM_QUIET=true"),
+        "the cargo-quality.yml llvm-cov command must suppress Cargo progress \
          (Issue #2555): {llvm_cov}"
     );
     assert!(
         passthrough_args(&llvm_cov).contains(&"--test-threads=2"),
         "the cargo-quality.yml llvm-cov command must keep `--test-threads=2` after `--` \
          (Issue #2555): {llvm_cov}"
+    );
+    assert!(
+        !has_libtest_quiet(&llvm_cov),
+        "CARGO_TERM_QUIET already quiets libtest; a second `--quiet` is rejected: {llvm_cov}"
     );
 }
 
