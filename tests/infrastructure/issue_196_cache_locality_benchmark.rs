@@ -47,6 +47,7 @@
 use neat_ai_discovery::analysis::{GpuAnalyzer, analyze_synapses};
 use neat_ai_discovery::types::DiscoverRecord;
 use neat_ai_discovery::{AnalyzeSynapsesInput, CreatureJson, NeuronJson};
+use serial_test::serial;
 use tempfile::tempdir;
 
 /// Skip test if no GPU available
@@ -80,7 +81,9 @@ fn create_test_creature(input_count: usize) -> CreatureJson {
 /// Test that verifies the optimization doesn't break existing functionality.
 /// This ensures that sorting eligible sources by input index produces the same
 /// candidates as the default random ordering (when using a fixed seed).
+// Serial: reads or clears the process-global cancellation flag that other serial tests set (Issue #2533).
 #[test]
+#[serial]
 fn cache_locality_optimization_preserves_correctness() {
     skip_without_gpu!();
 
