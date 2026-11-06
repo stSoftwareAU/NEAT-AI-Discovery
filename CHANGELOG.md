@@ -60,6 +60,17 @@ detection behaviour are unchanged.
 
 ### Fixed
 
+#### Fuzzing workflow template now runs the parquet fuzz targets (Issue #2527)
+
+The fuzzing CI template (`docs/ci-fuzzing-workflow.yml`) ran only the two FFI
+targets, so the Parquet footer-statistics and pre-decode budget targets were
+never exercised by the documented workflow. The template now runs all four
+`fuzz/Cargo.toml` targets. The footer-statistics target runs with the
+`fuzz/seeds/parquet_footer_stats` seed corpus and `-max_len=65536`, matching
+`scripts/fuzz-ci.sh`. A new test, `tests/issue_2527_fuzz_template_targets.rs`,
+compares the `[[bin]]` names, the `scripts/fuzz-ci.sh` `FUZZ_TARGETS` array and
+the template's `fuzz run` steps, so the three lists cannot drift apart silently.
+
 #### fuzz/Cargo.lock no longer goes stale on a version bump (Issue #2506)
 
 `fuzz/Cargo.lock` records the root crate as a path package, and that entry
