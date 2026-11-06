@@ -2,7 +2,7 @@
 
 Quiet the remaining CI test, lint, build and tool-install commands, retaining failure diagnostics and existing install safeguards. The coverage workflow also sets `CARGO_TERM_QUIET=true` to suppress Cargo progress and quiet its test reporter. Addresses #2555.
 
-The current instruction explicitly authorises the four requested command groups in the protected `ci.yml`. Its triggers, job structure and PAT handling are preserved. `CONTRIBUTING.md` now describes the resulting commands. The crate version is `0.74.364`, synchronised in both lockfiles without dependency changes.
+The current instruction explicitly authorises the four requested command groups in the protected `ci.yml`. Its triggers, job structure and PAT handling are preserved. `CONTRIBUTING.md` now describes the resulting commands. The merge retains Develop’s crate version `0.74.365`, synchronised in both lockfiles without dependency changes.
 
 ## Spec
 

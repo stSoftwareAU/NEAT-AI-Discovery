@@ -55,6 +55,21 @@ jobs:
         # from the workspace, so this must stay after the checkout above.
         uses: ./.github/actions/setup-rust
 
+      - name: Cache Cargo dependencies
+        # Same pinned action as ci.yml (Issue #1216). Caches only the
+        # downloaded crates, never `target/`: coverage instrumentation differs
+        # from the other jobs and a restored target/ can exhaust the runner's
+        # disk (Issue #1489; see ci.yml). The key carries the job name and the
+        # pinned toolchain so no other job's cache is shared (Issue #2559).
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-coverage-${{ hashFiles('rust-toolchain.toml') }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-coverage-${{ hashFiles('rust-toolchain.toml') }}-
+
       - name: Install ShellCheck (koalaman/shellcheck)
         # The test suite runs quality/shellcheck.sh, so this job needs the same
         # pinned binary as .github/workflows/shellcheck.yml. Without it the gate
