@@ -4,7 +4,8 @@ name: MSRV
 # code needing a newer rustc than declared fails on the PR instead of on the
 # fleet (Issue #2395). The `toolchain:` value below must equal Cargo.toml's
 # `rust-version`; tests/issue_2395_msrv_declared.rs enforces that they stay
-# in lockstep.
+# in lockstep. The cache step below restores only the Cargo registry and git
+# caches, never `target/` (Issue #2559).
 
 on:
   pull_request:
@@ -35,5 +36,18 @@ jobs:
         uses: ./.github/actions/setup-rust
         with:
           toolchain: "1.99"
+      - name: Cache Cargo dependencies
+        # Same pinned action as ci.yml (Issue #1216). Caches only the downloaded
+        # crates (registry and git), never `target/` (Issue #1489; see ci.yml).
+        # The key names the declared toolchain literally, so an MSRV bump starts
+        # a fresh cache rather than sharing one across toolchains (Issue #2559).
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ runner.os }}-cargo-msrv-1.99-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-msrv-1.99-
       - name: Build every target with the declared MSRV
         run: cargo check --locked --all-targets --all-features
