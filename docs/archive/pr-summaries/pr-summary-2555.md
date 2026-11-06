@@ -53,3 +53,7 @@ The issue has no acceptance-criteria heading. These requested `ci.yml` call site
 - `./quality/bash_syntax.sh .`, `./quality/shellcheck.sh .`, `cargo fmt --all --check`, and `./quality/fuzz_lockfile.sh check` — passed.
 - `./quality.sh < /dev/null` — timed out at its 900-second command limit during the release-library stage (exit 124, no diagnostic). The test suites and documentation stage completed before it reached that stage; `timeout 1800 cargo build -q --release --lib < /dev/null` then passed.
 - GitHub Actions checks for this PR are pending.
+
+## Not closing #2555
+
+This PR leaves #2555 open because the four requested `ci.yml` command groups remain unchanged under the repository's explicit approval requirement.
