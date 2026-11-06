@@ -17,6 +17,7 @@
 
 - `fuzz/Cargo.lock` was already behind (0.74.359); `./quality/fuzz_lockfile.sh sync` brought it to the new version.
 - The Develop merge retains `0.74.362` in `fuzz/Cargo.lock`, matching the merged `Cargo.toml`.
+- Review correction: restored the unrelated #2556 summary's historical lockfile version to the value recorded on Develop.
 
 ## Evidence
 
