@@ -1,47 +1,54 @@
 ## Summary
 
-Successful quality-gate stages are now quiet while failures keep their full diagnostics. `quality.sh` runs cargo build, clippy, check, test, doc and the release build with `-q`; the coverage job passes `--quiet` to the libtest harness; `cargo install` in `security.yml` and `npm install` in `markdown-lint.yml` and `renovate-validate.yml` are quiet with their pins, `--locked` and `--ignore-scripts` kept. The `.github/workflows/ci.yml` call sites are deliberately not changed (see below), so this is `Part of #2555`.
+Quiet the coverage workflow's Cargo progress with `CARGO_TERM_QUIET=true`, while retaining the test failure name, assertion and backtrace. The regression check now covers multiline workflow commands and rejects missing commands. The remaining `ci.yml` call sites are unchanged because no explicit approval to edit that protected file was found. Part of #2555.
 
-Version bump: `Cargo.toml` updated for this change; the merged commit records the final version.
+Version bump: `Cargo.toml` updated for this change; the lockfiles record the crate version.
 
 ## Spec
 
 ### Intent and Rationale
 
-- Per-test success lines and compiler progress bury actionable failures; `-q` / `--quiet` / `--loglevel=error` drop only the success chatter, so each stage keeps its one-line `echo` header.
-- A new structural test parses the non-comment `run:` lines (and the `quality.sh` commands) so the quiet flags cannot silently regress.
+- The coverage run still printed compiler progress after its test reporter was quieted. `CARGO_TERM_QUIET=true` quiets Cargo and the coverage test reporter together.
 
 ### Essential Design Decisions
 
-- `.github/workflows/ci.yml` is left unchanged: `AGENTS.md` ("Do Not Modify CI Without Approval") forbids editing it without explicit approval, and the issue itself says it proposes no automatic change. `CONTRIBUTING.md` records that ci.yml still differs.
-- `cargo fmt` and `cargo deny` in `quality.sh` are unchanged: neither is a call site the issue lists.
-- Two existing tests that pinned the old command strings (`issue_1657`, `issue_2390`) were updated to the quiet commands, keeping their guard intent.
+- The explicit `--quiet` after `--` is removed because combining it with `CARGO_TERM_QUIET=true` makes the test harness reject the duplicated option.
+- The coverage test thread limit and feature selection stay in place. `ci.yml` remains protected by `AGENTS.md` until explicit approval is recorded.
 
 ### Undiscoverable Facts
 
-- None.
+- A deliberately failing local coverage test with `CARGO_TERM_QUIET=true` exited 101 and printed its test name, assertion message and backtrace. The temporary probe file was removed.
 
 ## Evidence
 
-- Deliberate-failure check: a temporary failing test run under `cargo test -q` still printed the test name, the assertion message and the backtrace (with `RUST_BACKTRACE` set). The temporary file was deleted before the commit.
-- Gate stages run on the head, one stage at a time because a single foreground call is capped at 10 minutes: `cargo fmt --check`, `shellcheck quality.sh` and `bash -n quality.sh`, `cargo clippy -q --all-targets --all-features -- -D warnings`, `RUSTDOCFLAGS="-D warnings" cargo doc -q --no-deps`, `cargo build -q --release --lib`, and `cargo test -q --tests --all-features -- --test-threads=2` (320 suites, 6779 passed, 0 failed, including the 1852 library tests).
-- The remaining `quality.sh` stages (cargo deny, fuzz lockfile sync, PR summary location, cargo install pinning gate) were not re-run as a single `./quality.sh` invocation; the pinning gate is covered by `tests/issue_1912_cargo_install_pinning_gate.rs`, which passed.
+- Before the change, `cargo llvm-cov --test issue_2555_quiet_quality_gate -- --test-threads=2 --quiet` printed `Compiling` progress. With `CARGO_TERM_QUIET=true`, the passing coverage run printed no compile progress and retained its coverage report.
+- `CARGO_TERM_QUIET=true RUST_BACKTRACE=1 cargo llvm-cov --test issue_2555_failure_probe -- --test-threads=2` — expected failure, exit 101; the test name, assertion message and stack trace remained visible.
+- Coverage flow:
+
+  ```mermaid
+  flowchart LR
+      A[Coverage workflow] --> B[Cargo quiet mode]
+      B --> C[Quiet test reporter]
+      C -->|pass| D[Coverage report]
+      C -->|failure| E[Test name and diagnostics]
+  ```
 
 ## Acceptance Criteria
 
-The issue has no acceptance-criteria heading. The call sites it lists that this PR leaves undone are recorded as `missing`:
+The issue has no acceptance-criteria heading. These requested `ci.yml` call sites remain incomplete because explicit approval to edit the protected workflow was not present:
 
-- **missing** — `.github/workflows/ci.yml:327` "Remove `--verbose`; use `cargo test -q`" — reason: ci.yml may not be edited without explicit approval (`AGENTS.md`)
-- **missing** — `.github/workflows/ci.yml:307`, `.github/workflows/ci.yml:310` "Lint and build progress — Cargo `-q`" — reason: same approval requirement
-- **missing** — `.github/workflows/ci.yml:111` "`cargo install -q`, preserving existing pins and `--locked`" — reason: same approval requirement
-- **missing** — `.github/workflows/ci.yml:545` "pip installation progress — `--quiet`, preserving `--require-hashes`" — reason: same approval requirement
+- **missing** — `.github/workflows/ci.yml:327` "Tests with `--verbose` — Remove `--verbose`; use `cargo test -q`" — reason: `AGENTS.md` requires explicit approval to modify `ci.yml`, and none was found in the issue or PR discussion.
+- **missing** — `.github/workflows/ci.yml:307`, `.github/workflows/ci.yml:310` "Lint and build progress — Cargo `-q`" — reason: same approval requirement.
+- **missing** — `.github/workflows/ci.yml:111` "Tool installation progress — `cargo install -q`, preserving existing pins and `--locked`" — reason: same approval requirement.
+- **missing** — `.github/workflows/ci.yml:545` "pip installation progress — `--quiet`, preserving `--require-hashes`" — reason: same approval requirement.
 
 ## Test Plan
 
-- Added `tests/issue_2555_quiet_quality_gate.rs` (10 tests: quality.sh commands quiet, `--test-threads=2` kept, coverage `--quiet` after the `--`, security.yml installs quiet/locked/pinned, npm installs quiet with `--ignore-scripts`, plus negative controls for each detector and a commented-out-command parser test). Result: 10 passed.
-- Red checks (each break applied alone, test run, then restored): removing `-q` from the `quality.sh` test command → `quality_sh_cargo_build_clippy_check_test_and_doc_run_quiet` red; removing `--quiet` from the llvm-cov line → `coverage_llvm_cov_passes_quiet_after_the_separator` red; removing `-q` from `cargo install` in security.yml → `security_workflow_cargo_installs_are_quiet_locked_and_pinned` red; removing `--loglevel=error` from markdown-lint.yml → `npm_installs_are_quiet_and_skip_lifecycle_scripts` red.
-- Edited `tests/issue_1657_workflow_dedup_audit.rs` and `tests/issue_2390_coverage_workflow_guards.rs`: the pinned command strings now include `-q` / `--quiet`. No assertion removed; both passed.
-- Twinned copies: the quiet commands appear in `quality.sh`, the workflows, `CONTRIBUTING.md` and `docs/ci-doc-build-step.md`; all were updated and the doc citations (`quality.sh:75-76`) re-pointed.
-- Not checked: the CI behaviour of the workflow edits (runs on the PR); `ci.yml` call sites (not changed).
-
-🤖 Generated with [Claude Code](https://claude.com/claude-code)
+- `cargo test -q --test issue_2555_quiet_quality_gate` — passed, 11 tests.
+- `env CARGO_TERM_QUIET=true cargo llvm-cov --all-features --lcov --output-path /dev/null --test issue_2555_quiet_quality_gate -- --test-threads=2` — passed, 11 tests; report generation completed.
+- `workflow_parser_reads_multiline_run_blocks_and_rejects_a_missing_command` — passed; the multiline parser mutation and the missing-command diagnostic mutation each made this test fail.
+- `coverage_llvm_cov_quiets_cargo_and_keeps_test_threads_two` — passed; removing `CARGO_TERM_QUIET=true` made it fail because the required coverage command was missing.
+- Edited assertion in `tests/issue_2555_quiet_quality_gate.rs`: removed the requirement for libtest `--quiet` after `--`. Required by the observed duplicate-option failure when `CARGO_TERM_QUIET=true` and `--quiet` are both passed; the replacement checks the environment setting and rejects the duplicate option.
+- `./quality/bash_syntax.sh .`, `./quality/shellcheck.sh .`, `cargo fmt --all --check`, and `./quality/fuzz_lockfile.sh check` — passed.
+- `./quality.sh < /dev/null` — timed out at its 900-second command limit during the release-library stage (exit 124, no diagnostic). The test suites and documentation stage completed before it reached that stage; `timeout 1800 cargo build -q --release --lib < /dev/null` then passed.
+- GitHub Actions checks for this PR are pending.
