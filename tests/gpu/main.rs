@@ -3,6 +3,7 @@
 #[path = "../common/mod.rs"]
 mod common;
 
+mod env_guard;
 mod gpu_activation_shaders;
 mod gpu_work_queue;
 mod gpu_workgroup_reduction;

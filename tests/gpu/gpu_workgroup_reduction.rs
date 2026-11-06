@@ -22,6 +22,10 @@ use neat_ai_discovery::analysis::samples::{HarmfulContribution, HelpfulContribut
 /// Skip test if no GPU available
 macro_rules! skip_without_gpu {
     () => {
+        assert!(
+            serial_test::is_locked_serially(None),
+            "GPU initialisation must be serialised with GPU environment setup"
+        );
         if !GpuAnalyzer::gpu_is_available() {
             eprintln!("Skipping test: no GPU available");
             return;
@@ -55,6 +59,7 @@ fn test_harmful_contribution_size() {
 /// This test verifies that the GPU reduction produces the same aggregated
 /// statistics as the original per-sample reduction on the CPU.
 #[test]
+#[serial_test::serial]
 fn test_helpful_reduction_correctness() {
     skip_without_gpu!();
 
@@ -125,6 +130,7 @@ fn test_helpful_reduction_correctness() {
 
 /// Test that reduction works correctly for harmful synapse evaluation.
 #[test]
+#[serial_test::serial]
 fn test_harmful_reduction_correctness() {
     skip_without_gpu!();
 
@@ -179,6 +185,7 @@ fn test_harmful_reduction_correctness() {
 /// This test verifies that both paths (with and without reduction) produce
 /// correct results.
 #[test]
+#[serial_test::serial]
 fn test_reduction_threshold_small_samples() {
     skip_without_gpu!();
 
@@ -222,6 +229,7 @@ fn test_reduction_threshold_small_samples() {
 
 /// Test that reduction handles edge cases correctly.
 #[test]
+#[serial_test::serial]
 fn test_reduction_edge_cases() {
     skip_without_gpu!();
 
@@ -278,6 +286,7 @@ fn test_reduction_edge_cases() {
 
 /// Test that multiple batches are processed correctly with reduction.
 #[test]
+#[serial_test::serial]
 fn test_reduction_multiple_batches() {
     skip_without_gpu!();
 
@@ -363,6 +372,7 @@ fn test_partial_sums_buffer_sizing() {
 
 /// Test that reduction produces numerically stable results for large values.
 #[test]
+#[serial_test::serial]
 fn test_reduction_numerical_stability() {
     skip_without_gpu!();
 
