@@ -580,6 +580,24 @@ fn fixture_negative_key_lacking_cargo_lock_is_rejected() {
 }
 
 #[test]
+fn fixture_negative_coverage_key_missing_toolchain_file_is_rejected() {
+    let cache = COVERAGE_CACHE_STEP.replace("-${{ hashFiles('rust-toolchain.toml') }}", "");
+    let body = workflow_fixture(
+        "coverage",
+        &[
+            CHECKOUT_STEP,
+            COVERAGE_SETUP_STEP,
+            &cache,
+            COVERAGE_CARGO_STEP,
+        ],
+    );
+    expect_err(
+        check_cargo_cache(&body, &COVERAGE_JOB),
+        "must contain `hashFiles('rust-toolchain.toml')`",
+    );
+}
+
+#[test]
 fn fixture_negative_msrv_key_missing_declared_toolchain_is_rejected() {
     let cache = MSRV_CACHE_STEP.replace("-msrv-1.99-${{ hashFiles", "-msrv-${{ hashFiles");
     let body = workflow_fixture(

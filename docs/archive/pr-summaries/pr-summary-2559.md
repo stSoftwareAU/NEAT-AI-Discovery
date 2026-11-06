@@ -32,7 +32,7 @@ The issue has no acceptance-criteria heading and nothing it asks is left undone,
 
 ## Test Plan
 
-- Added `tests/issue_2559_cargo_cache_coverage_msrv.rs`: 2 real-file tests (coverage, msrv), 1 positive fixture, 6 negative fixtures (cache step missing, cache after the cargo step, `target/` cached inside a `|` block, key lacking `Cargo.lock`, msrv key lacking the toolchain, coverage key lacking `rust-toolchain.toml`). Each negative test asserts the error text of the check it targets.
+- Added `tests/issue_2559_cargo_cache_coverage_msrv.rs`: 2 real-file tests (coverage, msrv), 1 positive fixture, 7 negative fixtures (cache step missing, cache after the cargo step, `target/` cached as an inline path or inside a `|` block, key lacking `Cargo.lock`, msrv key lacking the toolchain, coverage key lacking `rust-toolchain.toml`). Each negative test asserts the error text of the check it targets.
 - Red check: removing the cache step from `msrv.yml` made `real_msrv_job_restores_cargo_cache_before_its_first_cargo_command` fail; the same for `cargo-quality.yml` and `real_coverage_job_restores_cargo_cache_before_its_first_cargo_command`. Both restored.
 - Existing tests edited: none.
 - `cargo fmt --all -- --check` and `cargo clippy --test issue_2559_cargo_cache_coverage_msrv -- -D warnings` pass.
