@@ -131,8 +131,11 @@ install_rustup() {
   installer="${_INSTALL_TMP_DIR}/rustup-init"
 
   echo "Downloading rustup-init ${RUSTUP_VERSION} for ${target}..." >&2
+  # --max-time caps each attempt so a stalled peer cannot hold the installer
+  # forever; --retry-max-time bounds the whole download, retries included.
   if ! curl --proto "=https" --tlsv1.2 -sSfL \
     --retry 3 --retry-delay 2 --connect-timeout 30 \
+    --max-time 300 --retry-max-time 1200 \
     -o "$installer" "$url"; then
     echo "ERROR: failed to download rustup-init from ${url}" >&2
     return 1
