@@ -158,24 +158,94 @@ fn ci_template_runs_every_declared_fuzz_target() {
     );
 }
 
+fn footer_arguments_match(script: &str, template: &str) -> bool {
+    let target = "fuzz_parquet_footer_stats";
+    let lines = logical_lines(script);
+    let Some(start) = lines
+        .iter()
+        .position(|line| line == &format!("if [ \"${{target}}\" = \"{target}\" ]; then"))
+    else {
+        return false;
+    };
+    let branch: Vec<&str> = lines[start + 1..]
+        .iter()
+        .take_while(|line| line.as_str() != "else")
+        .map(String::as_str)
+        .collect();
+    let Some(corpus) = branch.iter().find_map(|line| {
+        line.strip_prefix("fuzz_corpus=\"")
+            .and_then(|value| value.strip_suffix('"'))
+    }) else {
+        return false;
+    };
+    let corpus = corpus.replace("${target}", target);
+    let Some(args) = branch.iter().find_map(|line| {
+        line.strip_prefix("fuzz_args=(")
+            .and_then(|value| value.strip_suffix(')'))
+    }) else {
+        return false;
+    };
+    let Some(script_command) = fuzz_run_commands(script)
+        .into_iter()
+        .map(|(_, line)| line)
+        .find(|line| line.contains("\"${fuzz_corpus}\""))
+    else {
+        return false;
+    };
+    let Some((_, seed_and_args)) = script_command.split_once("\"${fuzz_corpus}\"") else {
+        return false;
+    };
+    let Some(seed) = seed_and_args.split_whitespace().next() else {
+        return false;
+    };
+    let (_, command) = fuzz_run_commands(template)
+        .into_iter()
+        .find(|(name, _)| name == target)
+        .expect("template must run fuzz_parquet_footer_stats (Issue #2527)");
+    let tokens: Vec<&str> = command.split_whitespace().collect();
+    let Some(index) = tokens.iter().position(|token| *token == target) else {
+        return false;
+    };
+    if tokens.get(index + 1..index + 3) != Some(&[corpus.as_str(), seed]) {
+        return false;
+    }
+    let Some(separator) = tokens.iter().position(|token| *token == "--") else {
+        return false;
+    };
+    if !args
+        .split_whitespace()
+        .any(|arg| arg.trim_matches('"').starts_with("-max_len="))
+    {
+        return false;
+    }
+    args.split_whitespace().all(|arg| {
+        let arg = arg.trim_matches('"').replace("${MAX_TIME}", "30");
+        tokens[separator + 1..].contains(&arg.as_str())
+    })
+}
+
 #[test]
 fn ci_template_gives_the_footer_target_its_seeds_and_max_len() {
     let script = read_repo_file("scripts/fuzz-ci.sh");
     let template = read_repo_file("docs/ci-fuzzing-workflow.yml");
-    let (_, command) = fuzz_run_commands(&template)
-        .into_iter()
-        .find(|(target, _)| target == "fuzz_parquet_footer_stats")
-        .expect("template must run fuzz_parquet_footer_stats (Issue #2527)");
-    // Derive the seed directory and length cap from the script that owns them.
-    for needle in ["fuzz/seeds/parquet_footer_stats", "-max_len=65536"] {
-        assert!(
-            script.contains(needle),
-            "sanity: scripts/fuzz-ci.sh no longer carries `{needle}`"
-        );
-        assert!(
-            command.contains(needle),
-            "the template's footer-stats step must pass `{needle}` as fuzz-ci.sh does \
-             (Issue #2527): {command}"
-        );
-    }
+    assert!(footer_arguments_match(&script, &template));
+    assert!(!footer_arguments_match(
+        &script,
+        &template.replace("fuzz/corpus/fuzz_parquet_footer_stats ", "")
+    ));
+    assert!(!footer_arguments_match(
+        &script,
+        &template.replace(
+            "fuzz/corpus/fuzz_parquet_footer_stats fuzz/seeds/parquet_footer_stats",
+            "fuzz/seeds/parquet_footer_stats fuzz/corpus/fuzz_parquet_footer_stats"
+        )
+    ));
+    assert!(!footer_arguments_match(
+        &(script.replace("\"-max_len=65536\"", "\"-max_len=32768\"") + "\n# -max_len=65536\n"),
+        &template
+    ));
+    assert!(!footer_arguments_match(
+        &script,
+        &template.replace("fuzz/seeds/parquet_footer_stats", "fuzz/seeds/other")
+    ));
 }

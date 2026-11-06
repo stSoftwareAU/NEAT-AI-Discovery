@@ -14,7 +14,7 @@ Version bump: `Cargo.toml` and the root `Cargo.lock` updated for this change, an
 ### Essential Design Decisions
 
 - The existing two steps and the lockfile sync step are unchanged byte-for-byte.
-- The footer-stats step passes the same corpus directory, seed directory and `-max_len` as `fuzz-ci.sh`; the test derives those strings from the script, so a change there turns the test red.
+- The footer-stats step passes the same corpus directory, seed directory and `-max_len` as `fuzz-ci.sh`; the test derives those values from the relevant script branch and invocation, and verifies corpus order and arguments.
 
 ### Undiscoverable Facts
 
@@ -37,3 +37,5 @@ Backend/CI-template change, no UI. `tests/issue_2527_fuzz_template_targets.rs` h
 Not done / risk: the full quality gate did not finish; the new template steps were not executed in a real GitHub Actions run (the template is not a live workflow).
 
 <!-- vibe-quality-gate-skipped reason="full ./quality.sh exceeded the 595 s foreground cap (exit 124) after a cold build in a fresh worktree; targeted tests, fmt and clippy were run separately; CI runs the full gate" -->
+
+- Review evidence: the obsolete hard-coded whole-file checks missed a missing writable corpus and branch-specific drift. The remaining contract compares script-derived corpus order and footer arguments against the template; `tests/issue_2527_fuzz_template_targets.rs::ci_template_gives_the_footer_target_its_seeds_and_max_len` covers missing or reversed corpora, a changed seed and a changed branch cap.
