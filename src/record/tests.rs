@@ -789,3 +789,115 @@ fn test_record_discovery_data_input_uuids_stable_across_observations() {
         assert_eq!(record.activation, expected);
     }
 }
+
+/// Fixed name of the temporary recording file (Issue #2547).
+const TMP_NAME: &str = "discovery_data.parquet.tmp";
+
+/// `create_test_input()` pointed at a fresh temporary directory.
+fn input_in(dir: &TempDir) -> RecordDiscoveryInput {
+    let mut input = create_test_input();
+    input.temp_dir = dir.path().to_str().unwrap().to_string();
+    input
+}
+
+#[test]
+fn test_record_discovery_data_refuses_existing_tmp_file_issue_2547() {
+    let dir = TempDir::new().unwrap();
+    let input = input_in(&dir);
+    let tmp_file = dir.path().join(TMP_NAME);
+    let final_file = dir.path().join("discovery_data.parquet");
+    fs::write(&tmp_file, b"keep me").unwrap();
+
+    let err = record_discovery_data(&input).expect_err("an existing tmp file must be refused");
+    assert!(
+        format!("{err:#}").contains(TMP_NAME),
+        "error chain should name the tmp path: {err:#}"
+    );
+    assert_eq!(fs::read(&tmp_file).unwrap(), b"keep me");
+    assert!(
+        !final_file.exists(),
+        "a refused recording must not publish discovery_data.parquet"
+    );
+
+    // Positive control: with the occupier removed, the same input succeeds.
+    fs::remove_file(&tmp_file).unwrap();
+    record_discovery_data(&input).expect("recording should succeed once the occupier is removed");
+    assert!(!tmp_file.exists(), "the tmp file should be renamed away");
+    assert!(final_file.exists(), "discovery_data.parquet should exist");
+}
+
+#[cfg(unix)]
+#[test]
+fn test_record_discovery_data_refuses_symlink_at_tmp_path_issue_2547() {
+    let dir = TempDir::new().unwrap();
+    let input = input_in(&dir);
+    let tmp_file = dir.path().join(TMP_NAME);
+    let target = dir.path().join("target.bin");
+    fs::write(&target, b"target bytes").unwrap();
+    std::os::unix::fs::symlink(&target, &tmp_file).unwrap();
+
+    let err = record_discovery_data(&input).expect_err("a symlink at the tmp path must be refused");
+    assert!(
+        format!("{err:#}").contains(TMP_NAME),
+        "error chain should name the tmp path: {err:#}"
+    );
+    assert_eq!(fs::read(&target).unwrap(), b"target bytes");
+    assert!(
+        fs::symlink_metadata(&tmp_file).unwrap().is_symlink(),
+        "the symlink should be left in place"
+    );
+
+    // Positive control: with the symlink removed, the same input succeeds.
+    fs::remove_file(&tmp_file).unwrap();
+    record_discovery_data(&input).expect("recording should succeed once the symlink is removed");
+}
+
+#[cfg(unix)]
+#[test]
+fn test_record_discovery_data_does_not_create_dangling_symlink_target_issue_2547() {
+    let dir = TempDir::new().unwrap();
+    let input = input_in(&dir);
+    let tmp_file = dir.path().join(TMP_NAME);
+    let missing = dir.path().join("missing.bin");
+    std::os::unix::fs::symlink(&missing, &tmp_file).unwrap();
+
+    let err = record_discovery_data(&input)
+        .expect_err("a dangling symlink at the tmp path must be refused");
+    assert!(
+        format!("{err:#}").contains(TMP_NAME),
+        "error chain should name the tmp path: {err:#}"
+    );
+    assert!(
+        !missing.exists(),
+        "the dangling symlink's target must not be created"
+    );
+
+    // Positive control: with the dangling symlink removed, the same input succeeds.
+    fs::remove_file(&tmp_file).unwrap();
+    record_discovery_data(&input)
+        .expect("recording should succeed once the dangling symlink is removed");
+}
+
+#[test]
+fn test_record_discovery_data_failure_after_creation_removes_its_own_tmp_file_issue_2547() {
+    let dir = TempDir::new().unwrap();
+    let mut input = input_in(&dir);
+    // A training record with no inputs and no neuron data produces no records, so
+    // processing fails after this call has created the temporary file.
+    input.training_data = vec![crate::TrainingRecord {
+        input: vec![],
+        output: vec![0.5],
+        neuron_data: Some(vec![]),
+    }];
+
+    let err = record_discovery_data(&input).expect_err("a run producing no records must fail");
+    assert!(
+        format!("{err:#}").contains("No discovery records"),
+        "error should come from processing, got: {err:#}"
+    );
+    assert!(
+        !dir.path().join(TMP_NAME).exists(),
+        "a temporary file created by this call must be removed on failure"
+    );
+    assert!(!dir.path().join("discovery_data.parquet").exists());
+}
