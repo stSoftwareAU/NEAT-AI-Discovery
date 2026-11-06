@@ -933,6 +933,185 @@ unset STUB_CARGO_LOG STUB_CARGO_RULES
 rm -rf "$REAPPLY_DIR"
 echo ""
 
+# ── Test 30: fuzz/Cargo.lock is refreshed, gated and checked (Issue #2545) ─
+# fuzz/ is its own workspace, so the root `cargo update` never refreshes
+# fuzz/Cargo.lock. Once `cargo upgrade --compatible` raises a root requirement
+# that lockfile goes stale and `cargo metadata --locked` fails. refresh_fuzz_lock
+# must restamp, re-resolve, gate and finally run `fuzz_lockfile.sh check`.
+
+# make_fuzz_root ROOT — a root with empty manifests, a stub
+# quality/fuzz_lockfile.sh that logs its mode to $STUB_FUZZ_LOG, and exits
+# non-zero for sync/check when STUB_FUZZ_SYNC_EXIT / STUB_FUZZ_CHECK_EXIT say so.
+make_fuzz_root() {
+    local root="$1"
+    mkdir -p "$root/fuzz" "$root/quality"
+    : > "$root/Cargo.toml"
+    : > "$root/fuzz/Cargo.toml"
+    cat > "$root/quality/fuzz_lockfile.sh" <<'STUB'
+#!/bin/bash
+printf '%s\n' "$1" >> "$STUB_FUZZ_LOG"
+if [[ "$1" == "sync" && "${STUB_FUZZ_SYNC_EXIT:-0}" -ne 0 ]]; then
+    echo "fuzz-lockfile: stub sync failure" >&2
+    exit "$STUB_FUZZ_SYNC_EXIT"
+fi
+if [[ "$1" == "check" && "${STUB_FUZZ_CHECK_EXIT:-0}" -ne 0 ]]; then
+    echo "fuzz-lockfile: cargo metadata --locked failed (stub)" >&2
+    exit "$STUB_FUZZ_CHECK_EXIT"
+fi
+exit 0
+STUB
+    chmod +x "$root/quality/fuzz_lockfile.sh"
+}
+
+# fuzz_fixture DIR NAME VERSION CREATED_AT — a canned crates.io publish record.
+fuzz_fixture() {
+    mkdir -p "$1"
+    printf '{"version":{"created_at":"%s"}}\n' "$4" > "$1/$2-$3.json"
+}
+
+# run_fuzz_refresh CASE_DIR [VAR=VALUE…] — run refresh_fuzz_lock against
+# CASE_DIR/root with the stubs, the fixtures and the logs of CASE_DIR. Sets
+# OUTPUT and EXIT_CODE. Extra VAR=VALUE pairs go into the environment.
+run_fuzz_refresh() {
+    local case_dir="$1"
+    shift
+    set +e
+    OUTPUT=$(env PATH="$FUZZ30_BIN:$PATH" STUB_CARGO_LOG="$case_dir/cargo.log" \
+        STUB_CARGO_RULES="$case_dir/rules" STUB_FUZZ_LOG="$case_dir/fuzz.log" \
+        BUMP_DEPS_SOURCE_ONLY=1 BUMP_DEPS_TEST_FIXTURE="$case_dir/fixtures" "$@" \
+        bash -c "source '$BUMP_DEPS' && bump_deps::refresh_fuzz_lock '$case_dir/root' 1748736000 24" 2>&1)
+    EXIT_CODE=$?
+    set -e
+}
+
+# Log helpers: the script calls in order, and the number of cargo calls.
+fuzz_calls() {
+    if [[ -f "$1/fuzz.log" ]]; then
+        paste -sd' ' "$1/fuzz.log"
+    fi
+}
+cargo_calls() {
+    if [[ -f "$1/cargo.log" ]]; then
+        wc -l < "$1/cargo.log" | tr -d ' '
+    else
+        echo 0
+    fi
+}
+
+AGED_AT="2025-05-19T12:00:00.000000+00:00"
+YOUNG_AT="2025-05-31T19:00:00.000000+00:00"
+FUZZ30_DIR="$(mktemp -d)"
+FUZZ30_BIN="$FUZZ30_DIR/bin"
+mkdir -p "$FUZZ30_BIN"
+make_stub_cargo "$FUZZ30_BIN"
+
+echo "Test 30a: refresh moves a shared package, then syncs, gates and checks fuzz/Cargo.lock"
+FZ_A="$FUZZ30_DIR/a"
+make_fuzz_root "$FZ_A/root"
+write_lock "$FZ_A/root/fuzz/Cargo.lock" bytemuck=1.25.0 serde=1.0.200
+fuzz_fixture "$FZ_A/fixtures" bytemuck 1.26.0 "$AGED_AT"
+fuzz_fixture "$FZ_A/fixtures" serde 1.0.201 "$AGED_AT"
+printf '|ok|bytemuck=1.26.0 serde=1.0.201\n' > "$FZ_A/rules"
+run_fuzz_refresh "$FZ_A"
+assert_exit_code "refresh of an aged fuzz lock exits 0" 0 "$EXIT_CODE"
+assert_equals "fuzz lock picks up the refreshed bytemuck" "1.26.0" "$(lock_version "$FZ_A/root/fuzz/Cargo.lock" bytemuck)"
+assert_equals "fuzz lock picks up the refreshed serde" "1.0.201" "$(lock_version "$FZ_A/root/fuzz/Cargo.lock" serde)"
+assert_equals "cargo update ran once on the fuzz manifest" "1" "$(cargo_calls "$FZ_A")"
+assert_equals "sync runs before check, and check runs" "sync check" "$(fuzz_calls "$FZ_A")"
+assert_output_contains "fuzz gate reports OK" "fuzz/Cargo.lock quarantine gate OK \\(held back=0, deferred=0\\)" "$OUTPUT"
+echo ""
+
+echo "Test 30b: an in-quarantine version is held back in fuzz/Cargo.lock"
+FZ_B="$FUZZ30_DIR/b"
+make_fuzz_root "$FZ_B/root"
+write_lock "$FZ_B/root/fuzz/Cargo.lock" bytemuck=1.25.0 serde=1.0.200
+fuzz_fixture "$FZ_B/fixtures" bytemuck 1.26.0 "$YOUNG_AT"
+fuzz_fixture "$FZ_B/fixtures" serde 1.0.201 "$AGED_AT"
+printf '|ok|bytemuck=1.26.0 serde=1.0.201\nserde|ok|serde=1.0.201\n' > "$FZ_B/rules"
+# LOCK_REVERTED starts at 1, so the call must add to it rather than reset it.
+set +e
+OUTPUT=$(env PATH="$FUZZ30_BIN:$PATH" STUB_CARGO_LOG="$FZ_B/cargo.log" \
+    STUB_CARGO_RULES="$FZ_B/rules" STUB_FUZZ_LOG="$FZ_B/fuzz.log" \
+    BUMP_DEPS_SOURCE_ONLY=1 BUMP_DEPS_TEST_FIXTURE="$FZ_B/fixtures" \
+    bash -c "source '$BUMP_DEPS' && LOCK_REVERTED=1 && if bump_deps::refresh_fuzz_lock '$FZ_B/root' 1748736000 24; then rc=0; else rc=\$?; fi; echo \"rc=\$rc reverted=\$LOCK_REVERTED\"" 2>&1)
+EXIT_CODE=$?
+set -e
+assert_exit_code "held-back fuzz refresh still exits 0" 0 "$EXIT_CODE"
+assert_output_contains "young bytemuck is reported held back" "bytemuck 1\\.25\\.0 .* 1\\.26\\.0 .*held back" "$OUTPUT"
+assert_output_contains "held-back counter accumulates (1 pre-set + 1 held)" "rc=0 reverted=2" "$OUTPUT"
+assert_equals "young bytemuck stays at its pre-bump version in fuzz/Cargo.lock" "1.25.0" "$(lock_version "$FZ_B/root/fuzz/Cargo.lock" bytemuck)"
+assert_equals "aged serde is still refreshed in fuzz/Cargo.lock" "1.0.201" "$(lock_version "$FZ_B/root/fuzz/Cargo.lock" serde)"
+assert_equals "check still runs after a held-back refresh" "sync check" "$(fuzz_calls "$FZ_B")"
+echo ""
+
+echo "Test 30c: a cargo update failure on the fuzz manifest fails loud and skips check"
+FZ_C="$FUZZ30_DIR/c"
+make_fuzz_root "$FZ_C/root"
+write_lock "$FZ_C/root/fuzz/Cargo.lock" bytemuck=1.25.0
+printf '|fail|could not resolve the fuzz workspace\n' > "$FZ_C/rules"
+run_fuzz_refresh "$FZ_C"
+if [[ "$EXIT_CODE" -ne 0 ]]; then
+    echo "  PASS: fuzz cargo update failure exits non-zero ($EXIT_CODE)"
+    PASS=$((PASS + 1))
+else
+    echo "  FAIL: fuzz cargo update failure exited 0"
+    FAIL=$((FAIL + 1))
+    ERRORS="${ERRORS}  FAIL: fuzz cargo update failure exited 0\n"
+fi
+assert_output_contains "cargo failure reason is reported" "could not resolve the fuzz workspace" "$OUTPUT"
+assert_output_contains "cargo failure is named as an ERROR" "ERROR: cargo update failed" "$OUTPUT"
+assert_equals "check is not run after a cargo failure" "sync" "$(fuzz_calls "$FZ_C")"
+echo ""
+
+echo "Test 30d: a failing fuzz check fails loud and names fuzz/Cargo.lock"
+FZ_D="$FUZZ30_DIR/d"
+make_fuzz_root "$FZ_D/root"
+write_lock "$FZ_D/root/fuzz/Cargo.lock" bytemuck=1.25.0 serde=1.0.200
+fuzz_fixture "$FZ_D/fixtures" bytemuck 1.26.0 "$AGED_AT"
+fuzz_fixture "$FZ_D/fixtures" serde 1.0.201 "$AGED_AT"
+printf '|ok|bytemuck=1.26.0 serde=1.0.201\n' > "$FZ_D/rules"
+run_fuzz_refresh "$FZ_D" STUB_FUZZ_CHECK_EXIT=1
+if [[ "$EXIT_CODE" -ne 0 ]]; then
+    echo "  PASS: failing fuzz check exits non-zero ($EXIT_CODE)"
+    PASS=$((PASS + 1))
+else
+    echo "  FAIL: failing fuzz check exited 0"
+    FAIL=$((FAIL + 1))
+    ERRORS="${ERRORS}  FAIL: failing fuzz check exited 0\n"
+fi
+assert_output_contains "failing check names fuzz/Cargo.lock" "ERROR: fuzz/Cargo.lock does not resolve under --locked" "$OUTPUT"
+assert_equals "check ran after the refresh" "sync check" "$(fuzz_calls "$FZ_D")"
+echo ""
+
+echo "Test 30e: no fuzz lockfile means no fuzz workspace, so nothing runs"
+FZ_E="$FUZZ30_DIR/e"
+make_fuzz_root "$FZ_E/root"
+run_fuzz_refresh "$FZ_E"
+assert_exit_code "missing fuzz lock returns 0" 0 "$EXIT_CODE"
+assert_equals "missing fuzz lock runs no cargo call" "0" "$(cargo_calls "$FZ_E")"
+assert_equals "missing fuzz lock runs no fuzz script call" "" "$(fuzz_calls "$FZ_E")"
+echo ""
+
+echo "Test 30f: a failing sync stops the run before cargo is touched"
+FZ_F="$FUZZ30_DIR/f"
+make_fuzz_root "$FZ_F/root"
+write_lock "$FZ_F/root/fuzz/Cargo.lock" bytemuck=1.25.0
+printf '|ok|bytemuck=1.26.0\n' > "$FZ_F/rules"
+run_fuzz_refresh "$FZ_F" STUB_FUZZ_SYNC_EXIT=1
+if [[ "$EXIT_CODE" -ne 0 ]]; then
+    echo "  PASS: failing sync exits non-zero ($EXIT_CODE)"
+    PASS=$((PASS + 1))
+else
+    echo "  FAIL: failing sync exited 0"
+    FAIL=$((FAIL + 1))
+    ERRORS="${ERRORS}  FAIL: failing sync exited 0\n"
+fi
+assert_output_contains "failing sync is reported" "quality/fuzz_lockfile.sh sync failed" "$OUTPUT"
+assert_equals "cargo is not run after a failing sync" "0" "$(cargo_calls "$FZ_F")"
+assert_equals "only sync runs after a failing sync" "sync" "$(fuzz_calls "$FZ_F")"
+rm -rf "$FUZZ30_DIR"
+echo ""
+
 # ── Summary ──────────────────────────────────────────────────────────
 
 echo ""

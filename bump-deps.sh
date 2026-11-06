@@ -18,7 +18,9 @@ set -euo pipefail
 #     wasm-bindgen / js-sys release) is deferred to a later run, not pinned
 #     with `--precise`, which lockstep `=` requirements defeat (Issue #2202).
 #     The run fails loud only if the bumped manifests cannot resolve at all
-#     without an in-quarantine package.
+#     without an in-quarantine package. The same refresh and gate then run on
+#     fuzz/Cargo.lock, which the root `cargo update` never touches (Issue
+#     #2545); the run ends by confirming it with `quality/fuzz_lockfile.sh check`.
 #   * The manifest gate covers EVERY tracked Cargo.toml (root and `fuzz/`) and
 #     EVERY dependency table Cargo recognises — `[dependencies]`,
 #     `[dev-dependencies]`, `[build-dependencies]`, their `[target.<spec>.*]`
@@ -36,6 +38,9 @@ set -euo pipefail
 #
 # Lockfile integrity: after Cargo.toml mutations we run `cargo update` and
 # then `cargo check --locked` to ensure the lockfile matches the registry.
+# fuzz/Cargo.lock gets the same `cargo update` refresh and quarantine gate
+# (Issue #2545), and the run ends with `quality/fuzz_lockfile.sh check`, which
+# runs `cargo metadata --locked` on the fuzz workspace.
 #
 # Usage:
 #   ./bump-deps.sh                  # bump deps, run audit gate
@@ -753,6 +758,156 @@ bump_deps::reapply_stuck_lock_changes() {
     done < "$work/stuck"
 }
 
+# bump_deps::gate_lock_refresh LABEL MANIFEST PRISTINE BEFORE NOW_EPOCH WINDOW_HOURS
+# Apply the lockfile quarantine gate (Issues #1865, #2202) to the lockfile beside
+# MANIFEST after `cargo update` has refreshed it, then re-diff that lockfile
+# against BEFORE and fail if an in-quarantine package survived the rollback.
+# PRISTINE and BEFORE are the lockfile and its `name<TAB>version` listing as
+# they stood before the refresh. LABEL names the lockfile in messages:
+# `Cargo.lock` for the root, `fuzz/Cargo.lock` for the fuzz workspace (Issue
+# #2545).
+#
+# Prints the per-package verdicts, then an OK line, and returns 1 on any
+# failure. Counts accumulate in the script-level LOCK_REVERTED, LOCK_REJECTED
+# and QUARANTINED_DEPS, so call this directly, never inside `$(…)`.
+bump_deps::gate_lock_refresh() {
+    local label="$1"
+    local manifest="$2"
+    local pristine="$3"
+    local before="$4"
+    local now_epoch="$5"
+    local window="$6"
+    local lockfile reapply verdict pkg_name pkg_old pkg_new pkg_detail
+    local after recheck held=0 deferred=0
+
+    : "${LOCK_REVERTED:=0}"
+    : "${LOCK_REJECTED:=0}"
+    : "${QUARANTINED_DEPS:=}"
+    lockfile="$(dirname -- "$manifest")/Cargo.lock"
+
+    if ! reapply="$(bump_deps::reapply_safe_lock_changes "$manifest" "$pristine" "$before" "$now_epoch" "$window")"; then
+        echo "ERROR: could not hold the lockfile outside the ${window}h quarantine window ($label) — refusing to accept an in-quarantine dependency" >&2
+        echo "       Re-run ./bump-deps.sh once the window has elapsed." >&2
+        return 1
+    fi
+    if [[ -n "$reapply" ]]; then
+        while IFS=$'\t' read -r verdict pkg_name pkg_old pkg_new pkg_detail; do
+            [[ -z "$verdict" ]] && continue
+            case "$verdict" in
+                pinned)
+                    echo "   🚧 $pkg_name $pkg_old → $pkg_new (publish age $pkg_detail < ${window}h) — held back"
+                    LOCK_REVERTED=$(( LOCK_REVERTED + 1 ))
+                    held=$(( held + 1 ))
+                    QUARANTINED_DEPS="${QUARANTINED_DEPS} ${pkg_name}@${pkg_new}(${pkg_detail},lock)"
+                    ;;
+                skipped)
+                    echo "   ⛔ $pkg_name@$pkg_new is a NEW package published $pkg_detail ago — left out"
+                    LOCK_REVERTED=$(( LOCK_REVERTED + 1 ))
+                    held=$(( held + 1 ))
+                    QUARANTINED_DEPS="${QUARANTINED_DEPS} ${pkg_name}@${pkg_new}(${pkg_detail},lock)"
+                    ;;
+                kept)
+                    echo "   ✅ $pkg_name $pkg_old → $pkg_new re-applied"
+                    ;;
+                rejected)
+                    echo "   ↩️  $pkg_name $pkg_old → $pkg_new deferred — $pkg_detail"
+                    LOCK_REJECTED=$(( LOCK_REJECTED + 1 ))
+                    deferred=$(( deferred + 1 ))
+                    ;;
+                *)
+                    echo "ERROR: unrecognised quarantine verdict '$verdict' for $pkg_name" >&2
+                    return 1
+                    ;;
+            esac
+        done <<< "$reapply"
+    fi
+
+    # Confirm success positively: re-diff after the rollback and fail loud if any
+    # in-quarantine package survived (absence of an error is not a pass).
+    after="$(mktemp)" || return 1
+    if ! bump_deps::extract_lock_versions "$lockfile" > "$after"; then
+        rm -f -- "$after"
+        return 1
+    fi
+    if ! recheck="$(bump_deps::plan_lock_quarantine "$before" "$after" "$now_epoch" "$window")"; then
+        rm -f -- "$after"
+        return 1
+    fi
+    rm -f -- "$after"
+    if [[ -n "$recheck" ]]; then
+        echo "ERROR: lockfile still contains in-quarantine packages after the rollback ($label):" >&2
+        echo "$recheck" >&2
+        return 1
+    fi
+    if [[ "$label" == "Cargo.lock" ]]; then
+        echo "   lockfile quarantine gate OK (held back=$held, deferred=$deferred)"
+    else
+        echo "   $label quarantine gate OK (held back=$held, deferred=$deferred)"
+    fi
+    return 0
+}
+
+# bump_deps::refresh_fuzz_lock ROOT NOW_EPOCH WINDOW_HOURS
+# Refresh and age-check fuzz/Cargo.lock (Issue #2545). The fuzz crate is its own
+# workspace, so the root `cargo update` never touches its lockfile. After
+# `cargo upgrade --compatible` raises a root requirement, fuzz/Cargo.lock goes
+# stale and `cargo metadata --locked` fails. This restamps the crate's own
+# version line, re-resolves the fuzz workspace, applies the same quarantine gate
+# as the root lockfile, and confirms the result with
+# quality/fuzz_lockfile.sh check. Returns 0 when there is no fuzz workspace.
+bump_deps::refresh_fuzz_lock() {
+    local root="$1"
+    local now_epoch="$2"
+    local window="$3"
+    local work status=0
+    work="$(mktemp -d)" || return 1
+    bump_deps::refresh_fuzz_lock_in "$work" "$root" "$now_epoch" "$window" || status=$?
+    rm -rf -- "$work"
+    return "$status"
+}
+
+# Worker for refresh_fuzz_lock; WORK is its scratch directory. Every step
+# checks its own status — errexit does not apply under `||` or `if`.
+bump_deps::refresh_fuzz_lock_in() {
+    local work="$1"
+    local root="$2"
+    local now_epoch="$3"
+    local window="$4"
+    local fuzz_manifest="$root/fuzz/Cargo.toml"
+    local fuzz_lock="$root/fuzz/Cargo.lock"
+    local script="$root/quality/fuzz_lockfile.sh"
+
+    if [[ ! -f "$fuzz_manifest" || ! -f "$fuzz_lock" ]]; then
+        return 0
+    fi
+    if [[ ! -f "$script" || ! -x "$script" ]]; then
+        echo "ERROR: $script is missing or not executable — cannot refresh fuzz/Cargo.lock" >&2
+        return 1
+    fi
+    # Restamp the crate's own version line first, so that line is not reported
+    # as a changed package by the age check below.
+    if ! "$script" sync "$root"; then
+        echo "ERROR: could not restamp fuzz/Cargo.lock before the refresh (quality/fuzz_lockfile.sh sync failed)" >&2
+        return 1
+    fi
+    cp -- "$fuzz_lock" "$work/pristine" || return 1
+    bump_deps::extract_lock_versions "$fuzz_lock" > "$work/before" || return 1
+
+    if ! cargo update --manifest-path "$fuzz_manifest" > "$work/cargo.log" 2>&1; then
+        echo "ERROR: cargo update failed for $fuzz_manifest:" >&2
+        tail -20 "$work/cargo.log" >&2
+        return 1
+    fi
+    if ! bump_deps::gate_lock_refresh "fuzz/Cargo.lock" "$fuzz_manifest" "$work/pristine" "$work/before" "$now_epoch" "$window"; then
+        return 1
+    fi
+    if ! "$script" check "$root"; then
+        echo "ERROR: fuzz/Cargo.lock does not resolve under --locked after the refresh (quality/fuzz_lockfile.sh check failed)" >&2
+        return 1
+    fi
+    return 0
+}
+
 # When sourced by the test suite we stop before parsing arguments / running.
 if [[ "${BUMP_DEPS_SOURCE_ONLY:-0}" == "1" ]]; then
     # shellcheck disable=SC2317  # `exit 0` is the fallback when not sourced.
@@ -908,7 +1063,6 @@ echo ""
 # a predictable name captured this script's redirects. A single EXIT trap
 # removes them all, on the success and the failure path alike.
 LOCK_BEFORE="$(mktemp)"
-LOCK_AFTER="$(mktemp)"
 LOCK_PRISTINE="$(mktemp)"
 UPGRADE_LOG="$(mktemp)"
 CHECK_LOG="$(mktemp)"
@@ -919,7 +1073,7 @@ SNAPSHOT_DIR="$(mktemp -d)"
 # trap. SC2317 is the pre-0.10 spelling of the same "unreachable" note.
 bump_deps::cleanup_temp_files() {
     rm -rf -- \
-        "$LOCK_BEFORE" "$LOCK_AFTER" "$LOCK_PRISTINE" "$UPGRADE_LOG" "$CHECK_LOG" "$DENY_LOG" \
+        "$LOCK_BEFORE" "$LOCK_PRISTINE" "$UPGRADE_LOG" "$CHECK_LOG" "$DENY_LOG" \
         "$SNAPSHOT_DIR"
 }
 trap bump_deps::cleanup_temp_files EXIT INT TERM
@@ -1066,8 +1220,10 @@ else
 fi
 echo ""
 
-# Phase 3: lockfile refresh.
+# Phase 3: lockfile refresh — Cargo.lock (3a/3b) and fuzz/Cargo.lock (3b2,
+# Issue #2545), each with the same quarantine gate.
 LOCK_REVERTED=0
+LOCK_REJECTED=0
 if [[ "$DRY_RUN" -eq 0 && "$NO_NETWORK" -eq 1 ]]; then
     echo "🔒 Lockfile refresh skipped (--no-network) — a re-resolve cannot be age-checked offline."
     echo ""
@@ -1086,54 +1242,12 @@ elif [[ "$DRY_RUN" -eq 0 && -f "$CARGO_MANIFEST" ]]; then
     # snapshot and hold every in-quarantine change back. A per-package
     # `--precise` pin cannot undo lockstep releases pinned to each other with
     # `=` requirements (Issue #2202), so roll back to the pre-bump lockfile
-    # and re-apply only the out-of-window changes that resolve cleanly.
+    # and re-apply only the out-of-window changes that resolve cleanly. The
+    # gate lives in bump_deps::gate_lock_refresh, which phase 3b2 also runs
+    # against fuzz/Cargo.lock (Issue #2545).
     echo "🛡️  Lockfile quarantine gate (window=${QUARANTINE_HOURS}h)…"
     LOCK_NOW_EPOCH="$(bump_deps::current_epoch)"
-    if ! LOCK_REAPPLY="$(bump_deps::reapply_safe_lock_changes "$CARGO_MANIFEST" "$LOCK_PRISTINE" "$LOCK_BEFORE" "$LOCK_NOW_EPOCH" "$QUARANTINE_HOURS")"; then
-        echo "ERROR: could not hold the lockfile outside the ${QUARANTINE_HOURS}h quarantine window — refusing to accept an in-quarantine dependency" >&2
-        echo "       Re-run ./bump-deps.sh once the window has elapsed." >&2
-        exit 8
-    fi
-    LOCK_REJECTED=0
-    if [[ -n "$LOCK_REAPPLY" ]]; then
-        while IFS=$'\t' read -r VERDICT PKG_NAME PKG_OLD PKG_NEW PKG_DETAIL; do
-            [[ -z "$VERDICT" ]] && continue
-            case "$VERDICT" in
-                pinned)
-                    echo "   🚧 $PKG_NAME $PKG_OLD → $PKG_NEW (publish age $PKG_DETAIL < ${QUARANTINE_HOURS}h) — held back"
-                    LOCK_REVERTED=$(( LOCK_REVERTED + 1 ))
-                    QUARANTINED_DEPS="${QUARANTINED_DEPS} ${PKG_NAME}@${PKG_NEW}(${PKG_DETAIL},lock)"
-                    ;;
-                skipped)
-                    echo "   ⛔ $PKG_NAME@$PKG_NEW is a NEW package published $PKG_DETAIL ago — left out"
-                    LOCK_REVERTED=$(( LOCK_REVERTED + 1 ))
-                    QUARANTINED_DEPS="${QUARANTINED_DEPS} ${PKG_NAME}@${PKG_NEW}(${PKG_DETAIL},lock)"
-                    ;;
-                kept)
-                    echo "   ✅ $PKG_NAME $PKG_OLD → $PKG_NEW re-applied"
-                    ;;
-                rejected)
-                    echo "   ↩️  $PKG_NAME $PKG_OLD → $PKG_NEW deferred — $PKG_DETAIL"
-                    LOCK_REJECTED=$(( LOCK_REJECTED + 1 ))
-                    ;;
-                *)
-                    echo "ERROR: unrecognised quarantine verdict '$VERDICT' for $PKG_NAME" >&2
-                    exit 8
-                    ;;
-            esac
-        done <<< "$LOCK_REAPPLY"
-    fi
-
-    # Confirm success positively: re-diff after the rollback and fail loud if any
-    # in-quarantine package survived (absence of an error is not a pass).
-    bump_deps::extract_lock_versions "$CARGO_LOCK" > "$LOCK_AFTER"
-    LOCK_RECHECK="$(bump_deps::plan_lock_quarantine "$LOCK_BEFORE" "$LOCK_AFTER" "$LOCK_NOW_EPOCH" "$QUARANTINE_HOURS")"
-    if [[ -n "$LOCK_RECHECK" ]]; then
-        echo "ERROR: lockfile still contains in-quarantine packages after the rollback:" >&2
-        echo "$LOCK_RECHECK" >&2
-        exit 8
-    fi
-    echo "   lockfile quarantine gate OK (held back=$LOCK_REVERTED, deferred=$LOCK_REJECTED)"
+    bump_deps::gate_lock_refresh "Cargo.lock" "$CARGO_MANIFEST" "$LOCK_PRISTINE" "$LOCK_BEFORE" "$LOCK_NOW_EPOCH" "$QUARANTINE_HOURS" || exit 8
     echo ""
 
     # Phase 3b: lockfile integrity — registry hashes must match.
@@ -1145,6 +1259,19 @@ elif [[ "$DRY_RUN" -eq 0 && -f "$CARGO_MANIFEST" ]]; then
     fi
     echo "   lockfile OK"
     echo ""
+
+    # Phase 3b2: the same refresh and quarantine gate for fuzz/Cargo.lock
+    # (Issue #2545). The fuzz crate is its own workspace, so the root
+    # `cargo update` never refreshes it. The run ends with
+    # `quality/fuzz_lockfile.sh check`, so a lockfile that still does not
+    # resolve fails the bump loudly. A --no-network run skips this branch and
+    # still gets phase 3c's `sync`.
+    if [[ -f "$PROJECT_ROOT/fuzz/Cargo.toml" && -f "$PROJECT_ROOT/fuzz/Cargo.lock" ]]; then
+        echo "🧪 Refreshing fuzz/Cargo.lock…"
+        bump_deps::refresh_fuzz_lock "$PROJECT_ROOT" "$LOCK_NOW_EPOCH" "$QUARANTINE_HOURS" \
+            || { echo "ERROR: fuzz/Cargo.lock refresh failed — see the messages above" >&2; exit 8; }
+        echo ""
+    fi
 fi
 
 # Phase 3c: keep fuzz/Cargo.lock's path entry in step with Cargo.toml (Issue
