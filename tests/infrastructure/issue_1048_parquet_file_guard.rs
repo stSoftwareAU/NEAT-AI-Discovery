@@ -34,7 +34,9 @@ fn create_test_parquet(dir: &Path) -> String {
 /// On Unix, a held file descriptor keeps the inode alive even after unlink.
 /// This test verifies that `RecordCache` holds a file guard so that records
 /// remain accessible after the parquet path is deleted.
+// Serial: reads or clears the process-global cancellation flag that other serial tests set (Issue #2533).
 #[test]
+#[serial]
 fn record_cache_file_guard_survives_path_deletion() {
     use neat_ai_discovery::analysis::cache::RecordCache;
 
@@ -57,6 +59,7 @@ fn record_cache_file_guard_survives_path_deletion() {
 
 /// Verify that `LruRecordCache` holds a file guard.
 #[test]
+#[serial]
 fn lru_cache_holds_file_guard() {
     use neat_ai_discovery::analysis::cache::LruRecordCache;
 
@@ -86,6 +89,7 @@ fn lru_cache_holds_file_guard() {
 
 /// Verify that `CompressedLruRecordCache` holds a file guard.
 #[test]
+#[serial]
 fn compressed_cache_holds_file_guard() {
     use neat_ai_discovery::analysis::cache::CompressedLruRecordCache;
 

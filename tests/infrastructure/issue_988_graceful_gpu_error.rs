@@ -7,6 +7,7 @@
 use neat_ai_discovery::ffi_types::{
     DiscoveryError, DiscoveryErrorKind, classify_anyhow_error, error_fields_from_anyhow,
 };
+use serial_test::serial;
 
 // ============================================================================
 // GpuUnavailable error propagates correctly through anyhow
@@ -53,7 +54,9 @@ fn gpu_unavailable_error_fields_produce_correct_triple() {
 /// On machines with a GPU, the analysis proceeds normally (success or a
 /// different error), so the test only validates the no-GPU path when
 /// `GpuAnalyzer::gpu_is_available()` returns false.
+// Serial: reads or clears the process-global cancellation flag that other serial tests set (Issue #2533).
 #[test]
+#[serial]
 fn analyze_parallel_returns_structured_error_when_no_gpu() {
     use neat_ai_discovery::analysis::GpuAnalyzer;
 

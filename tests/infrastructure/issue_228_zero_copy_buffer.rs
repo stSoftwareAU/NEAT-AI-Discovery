@@ -284,7 +284,9 @@ fn zero_copy_produces_correct_results() {
 // This test file now only contains correctness tests.
 
 /// Test that metadata includes zero-copy status.
+// Serial: reads or clears the process-global cancellation flag that other serial tests set (Issue #2533).
 #[test]
+#[serial]
 fn metadata_includes_zero_copy_status() {
     skip_without_gpu!();
 
