@@ -209,6 +209,14 @@ cp "{served}" "$out"
     fn curl_invocations(&self) -> usize {
         fs::read_to_string(self.dir.path().join("curl.log")).map_or(0, |log| log.lines().count())
     }
+
+    /// One entry per stub `curl` invocation: its logged argument line.
+    fn curl_args(&self) -> Vec<String> {
+        fs::read_to_string(self.dir.path().join("curl.log")).map_or_else(
+            |_| Vec::new(),
+            |log| log.lines().map(str::to_string).collect(),
+        )
+    }
 }
 
 /// Names of whatever the script left behind in `tmpdir`.
@@ -326,6 +334,35 @@ fn fails_loud_when_the_download_fails() {
         "stderr must name the download failure, got: {}",
         stderr_of(&out)
     );
+}
+
+#[test]
+fn bounds_each_attempt_and_the_whole_download_with_a_time_budget() {
+    // Issue #2556: a stalled peer must not hold the installer forever. The
+    // caps are checked as flag/value token pairs in the args the stub curl
+    // actually received, not as substrings of the script source.
+    let sandbox = Sandbox::new(INSTALLER, INSTALLER, true);
+    let out = sandbox.run(&["-y"], None);
+    assert!(out.status.success(), "stderr: {}", stderr_of(&out));
+
+    let calls = sandbox.curl_args();
+    assert_eq!(
+        calls.len(),
+        1,
+        "expected one curl invocation, got {calls:?}"
+    );
+    let tokens: Vec<&str> = calls[0].split_whitespace().collect();
+    for (flag, value) in [
+        ("--max-time", "300"),
+        ("--retry-max-time", "1200"),
+        ("--connect-timeout", "30"),
+    ] {
+        assert!(
+            tokens.windows(2).any(|w| w == [flag, value]),
+            "curl must be invoked with `{flag} {value}`, got args: {:?}",
+            calls[0]
+        );
+    }
 }
 
 #[test]
