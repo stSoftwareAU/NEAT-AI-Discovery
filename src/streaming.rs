@@ -61,7 +61,8 @@
 //! error naming that path and leaves the file untouched. Before reusing the
 //! directory, finish the existing session successfully (its `.tmp` is renamed
 //! away) or clean the directory with `cleanup_discovery_dir`. Cancelling a
-//! session whose finalisation failed keeps its `.tmp`.
+//! session whose finalisation failed keeps its `.tmp`. The batch
+//! `record_discovery_data` path applies the same rule (Issue #2547).
 
 #![allow(clippy::cast_sign_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use anyhow::{Context, Result};

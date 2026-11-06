@@ -337,6 +337,8 @@ If the process crashes mid-recording:
 - After a crash, starting a new session in the same `tempDir` fails with an
   error naming `discovery_data.parquet.tmp` instead of overwriting it (Issue
   #2515). Clean the directory first, for example with `cleanup_discovery_dir`.
+  The batch `record_discovery_data` call applies the same rule to this path
+  (Issue #2547).
 - The same applies to a retained recording from a failed finalisation (see
   below), and to two sessions sharing one `tempDir`: the second
   `start_discovery_session` fails while the first session's `.parquet.tmp`
