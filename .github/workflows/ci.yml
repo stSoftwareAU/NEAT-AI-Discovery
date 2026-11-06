@@ -108,7 +108,7 @@ jobs:
       # Cargo.lock is honoured. Without both flags a poisoned new
       # release of cargo-outdated (or any transitive dep) would execute
       # via build.rs with this job's ACTIONS_PUSH token. See Issue #1223.
-      run: cargo install --locked --version 0.16.0 cargo-outdated
+      run: cargo install -q --locked --version 0.16.0 cargo-outdated
         
     - name: Check for source changes and increment version
       shell: bash
@@ -293,10 +293,10 @@ jobs:
       run: cargo fmt --all -- --check
       
     - name: Run linter
-      run: cargo clippy --all-targets --all-features -- -D warnings -D clippy::uninlined_format_args -D clippy::filter_next -D clippy::collapsible_if
+      run: cargo clippy -q --all-targets --all-features -- -D warnings -D clippy::uninlined_format_args -D clippy::filter_next -D clippy::collapsible_if
 
     - name: Build library
-      run: cargo build --lib
+      run: cargo build -q --lib
 
     - name: Clean intermediate artefacts before tests
       shell: bash
@@ -313,7 +313,7 @@ jobs:
         df -h /
 
     - name: Run tests
-      run: cargo test --lib --tests --bins --all-features --verbose -- --test-threads=2
+      run: cargo test -q --lib --tests --bins --all-features -- --test-threads=2
 
   security:
     uses: ./.github/workflows/security.yml
@@ -533,7 +533,7 @@ jobs:
       # makes pip refuse any artefact whose SHA-256 does not match, and refuse
       # the whole install if any requirement is unpinned. Renovate keeps the
       # pin current under the standard 24h quarantine (renovate.json).
-      run: pip install --user --require-hashes -r .github/requirements/codespell-requirements.txt
+      run: pip install --quiet --user --require-hashes -r .github/requirements/codespell-requirements.txt
 
     - name: Run codespell
       shell: bash
