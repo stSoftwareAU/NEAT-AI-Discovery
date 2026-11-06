@@ -19,6 +19,10 @@ use neat_ai_discovery::analysis::samples::{HelpfulSample, HelpfulStats};
 /// Skip test if no GPU available.
 macro_rules! skip_without_gpu {
     () => {
+        assert!(
+            serial_test::is_locked_serially(None),
+            "GPU initialisation must be serialised with GPU environment setup"
+        );
         if !GpuAnalyzer::gpu_is_available() {
             eprintln!("Skipping test: no GPU available");
             return;
@@ -102,6 +106,7 @@ fn eval_with_batch_size(batch_size: usize, batch: &[&[HelpfulSample]]) -> Vec<He
 /// chunked. Mixes empty, small, medium and a reduction-path (>= 10k) set so both
 /// the per-sample and the GPU-reduction code paths reuse pooled buffers.
 #[test]
+#[serial_test::serial]
 fn test_helpful_batch_chunking_is_bit_identical() {
     skip_without_gpu!();
 
@@ -141,6 +146,7 @@ fn test_helpful_batch_chunking_is_bit_identical() {
 /// Reusing the pool across many small chunks must not accumulate or leak state:
 /// the same single sample set repeated must yield identical stats every time.
 #[test]
+#[serial_test::serial]
 fn test_helpful_batch_repeated_set_no_state_leak() {
     skip_without_gpu!();
 
