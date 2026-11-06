@@ -21,6 +21,14 @@
 # The baseline is stored in target/criterion/ and is machine-specific.
 # Each developer/CI runner must save their own baseline.
 #
+# A benchmark suite that exits non-zero (compile error, panic, missing cargo or
+# baseline) fails this script with exit 1 (Issue #2554). Suites exit 0 when no
+# GPU is available, so a non-zero exit is never a GPU skip. With --save-baseline
+# a failed suite leaves the baseline incomplete and nothing is reported as saved.
+# In comparison mode a failed suite means no regression verdict can be given. A
+# suite that exits 0 but records no comparison (no GPU) is reported as skipped
+# and does not fail the run.
+#
 # Workflow:
 #   1. Save a baseline:    ./benchmark_compare.sh --save-baseline
 #   2. Make code changes
@@ -156,15 +164,30 @@ if [[ "$SAVE_BASELINE" == true ]]; then
     echo "Benchmarks that require a GPU will be skipped if no GPU is available."
     echo ""
 
+    SAVED=0
+    FAILED_SUITES=()
     for bench in "${BENCHMARKS[@]}"; do
         echo "Running: $bench"
-        cargo bench --bench "$bench" -- --save-baseline "$BASELINE_NAME" 2>&1 || {
-            echo "  Warning: $bench failed (may require GPU) — skipping"
-        }
+        # Output is streamed, not captured: it is the diagnostic for a failure.
+        if cargo bench --bench "$bench" -- --save-baseline "$BASELINE_NAME" 2>&1; then
+            SAVED=$((SAVED + 1))
+        else
+            echo "  Error: $bench failed — baseline NOT saved for this suite" >&2
+            FAILED_SUITES+=("$bench")
+        fi
         echo ""
     done
 
-    echo "Baseline '$BASELINE_NAME' saved to target/criterion/"
+    if [[ ${#FAILED_SUITES[@]} -gt 0 ]]; then
+        echo "Error: ${#FAILED_SUITES[@]} of ${#BENCHMARKS[@]} benchmark suites failed; baseline '$BASELINE_NAME' is incomplete:" >&2
+        for bench in "${FAILED_SUITES[@]}"; do
+            echo "  - $bench" >&2
+        done
+        exit 1
+    fi
+
+    echo "Baseline '$BASELINE_NAME' saved for $SAVED suites to target/criterion/"
+    echo "(suites that cannot initialise a GPU exit 0 and record no timings)"
     echo ""
     echo "To compare against this baseline after making changes:"
     echo "  ./benchmark_compare.sh"
@@ -196,19 +219,26 @@ REGRESSIONS=0
 IMPROVEMENTS=0
 UNCHANGED=0
 SKIPPED=0
+FAILED=0
+FAILED_NAMES=()
 REGRESSION_DETAILS=""
 
 # Run each benchmark suite and compare against baseline
 for bench in "${BENCHMARKS[@]}"; do
     echo "Comparing: $bench"
 
-    # Run benchmark with baseline comparison, capturing output
+    # Run benchmark with baseline comparison, capturing output. A non-zero exit
+    # is a genuine failure: suites exit 0 when no GPU is available (Issue #2554).
     OUTPUT=$(cargo bench --bench "$bench" -- --baseline "$BASELINE_NAME" 2>&1) || {
-        echo "  Skipped (may require GPU or baseline missing)"
-        SKIPPED=$((SKIPPED + 1))
+        printf '%s\n' "$OUTPUT" >&2
+        echo "  Error: $bench failed" >&2
+        FAILED=$((FAILED + 1))
+        FAILED_NAMES+=("$bench")
         echo ""
         continue
     }
+
+    comparisons_before=$TOTAL_BENCHMARKS
 
     # Parse Criterion output for performance changes
     # Criterion outputs lines like:
@@ -246,6 +276,12 @@ for bench in "${BENCHMARKS[@]}"; do
         fi
     done <<< "$OUTPUT"
 
+    # A suite that exited 0 but recorded no comparison (no GPU) is a documented skip.
+    if [[ $TOTAL_BENCHMARKS -eq $comparisons_before ]]; then
+        echo "  Skipped (no comparison recorded — e.g. no GPU available)"
+        SKIPPED=$((SKIPPED + 1))
+    fi
+
     echo ""
 done
 
@@ -259,6 +295,7 @@ echo "Regressions:       $REGRESSIONS (exceeding ${THRESHOLD}% threshold)"
 echo "Improvements:      $IMPROVEMENTS"
 echo "Within threshold:  $UNCHANGED"
 echo "Skipped suites:    $SKIPPED"
+echo "Failed suites:     $FAILED"
 echo ""
 
 if [[ $REGRESSIONS -gt 0 ]]; then
@@ -267,12 +304,26 @@ if [[ $REGRESSIONS -gt 0 ]]; then
     echo ""
     echo "If these regressions are intentional, update the baseline:"
     echo "  ./benchmark_compare.sh --save-baseline"
+fi
+
+if [[ $FAILED -gt 0 ]]; then
+    echo "Failed suites:" >&2
+    for bench in "${FAILED_NAMES[@]}"; do
+        echo "  - $bench" >&2
+    done
+    echo "Error: $FAILED benchmark suite(s) failed — no regression verdict can be given" >&2
+fi
+
+if [[ $REGRESSIONS -gt 0 ]] || [[ $FAILED -gt 0 ]]; then
     exit 1
 fi
 
-if [[ $TOTAL_BENCHMARKS -eq 0 ]] && [[ $SKIPPED -eq ${#BENCHMARKS[@]} ]]; then
-    echo "Warning: All benchmark suites were skipped."
-    echo "Ensure a GPU is available and baseline is saved."
+if [[ $TOTAL_BENCHMARKS -eq 0 ]]; then
+    if [[ $SKIPPED -eq ${#BENCHMARKS[@]} ]]; then
+        echo "Warning: All benchmark suites were skipped."
+        echo "Ensure a GPU is available and baseline is saved."
+    fi
+    echo "No comparisons were recorded; no regression verdict."
     exit 0
 fi
 
