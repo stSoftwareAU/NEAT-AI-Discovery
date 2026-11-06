@@ -298,7 +298,7 @@ fn emit_logs_completed_breakdown_with_numeric_fields_and_summary() {
         neuron: Some(PhaseCompletion {
             timed_out: false,
             completed_focus_neurons: 1,
-            total_focus_neurons: 12,
+            total_focus_neurons: 7,
         }),
     };
 
@@ -310,7 +310,7 @@ fn emit_logs_completed_breakdown_with_numeric_fields_and_summary() {
         events[0].message,
         "DEADLINE-BREAKDOWN deadline consumption (ms): parquet_reload=4200 \
          synapse_analysis=1200 neuron_analysis=900 total_analysis=6300; \
-         focus completed synapse=2/12 neuron=1/12"
+         focus completed synapse=2/12 neuron=1/7"
     );
     assert_eq!(
         events[0].fields,
@@ -326,7 +326,7 @@ fn emit_logs_completed_breakdown_with_numeric_fields_and_summary() {
             ("synapse_completed".to_string(), CapturedValue::U64(2)),
             ("synapse_total".to_string(), CapturedValue::U64(12)),
             ("neuron_completed".to_string(), CapturedValue::U64(1)),
-            ("neuron_total".to_string(), CapturedValue::U64(12)),
+            ("neuron_total".to_string(), CapturedValue::U64(7)),
         ])
     );
 }
@@ -345,8 +345,8 @@ fn emit_logs_starved_breakdown_and_warning() {
         }),
         neuron: Some(PhaseCompletion {
             timed_out: false,
-            completed_focus_neurons: 9,
-            total_focus_neurons: 9,
+            completed_focus_neurons: 6,
+            total_focus_neurons: 6,
         }),
     };
 
@@ -358,7 +358,7 @@ fn emit_logs_starved_breakdown_and_warning() {
         events[0].message,
         "DEADLINE-BREAKDOWN deadline consumption (ms): parquet_reload=100 \
          synapse_analysis=50 neuron_analysis=50 total_analysis=200; \
-         focus completed synapse=4/9 neuron=9/9"
+         focus completed synapse=4/9 neuron=6/6"
     );
     assert_eq!(
         events[0].fields["marker"],
@@ -366,8 +366,8 @@ fn emit_logs_starved_breakdown_and_warning() {
     );
     assert_eq!(events[0].fields["synapse_completed"], CapturedValue::U64(4));
     assert_eq!(events[0].fields["synapse_total"], CapturedValue::U64(9));
-    assert_eq!(events[0].fields["neuron_completed"], CapturedValue::U64(9));
-    assert_eq!(events[0].fields["neuron_total"], CapturedValue::U64(9));
+    assert_eq!(events[0].fields["neuron_completed"], CapturedValue::U64(6));
+    assert_eq!(events[0].fields["neuron_total"], CapturedValue::U64(6));
     assert_eq!(
         events[0].fields.len(),
         9,
@@ -421,6 +421,12 @@ fn emit_logs_disabled_phase_as_not_applicable_without_warning() {
         events[0].fields["marker"],
         CapturedValue::String(DEADLINE_BREAKDOWN_MARKER.to_string())
     );
+    assert_eq!(
+        events[0].fields["synapse_analysis_ms"],
+        CapturedValue::U64(1000)
+    );
+    assert_eq!(events[0].fields["synapse_completed"], CapturedValue::U64(5));
+    assert_eq!(events[0].fields["synapse_total"], CapturedValue::U64(5));
     assert_eq!(
         events[0].fields["neuron_analysis_ms"],
         CapturedValue::U64(0)
