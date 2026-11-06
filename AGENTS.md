@@ -42,7 +42,7 @@ remote, which use an explicit authenticated URL (Issue #1868). Do not reintroduc
 `./quality.sh` does **not** upgrade dependencies (Issue #1865) — a pre-commit
 gate verifies the tree, it must not mutate its dependency graph. Bump with
 `./bump-deps.sh`, which age-checks every change to the resolved `Cargo.lock`
-(transitive packages included) against `VIBE_BUMP_QUARANTINE_HOURS` (default
+and `fuzz/Cargo.lock` (transitive packages included, Issue #2545) against `VIBE_BUMP_QUARANTINE_HOURS` (default
 24h) and holds in-quarantine versions back: it rolls the lockfile back to its
 pre-bump state and re-applies each out-of-window change one package at a time,
 deferring any that drags in an in-quarantine package. A lone

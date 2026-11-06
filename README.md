@@ -513,8 +513,12 @@ corpus is stored in `fuzz/corpus/` and grows over successive runs.
 
 `fuzz/Cargo.lock` records this crate's own version as a path package, so it must
 be restamped after every version bump in `Cargo.toml`. `./quality.sh` and
-`./bump-deps.sh` do this via `quality/fuzz_lockfile.sh sync`. If
-`cargo fuzz run --locked` reports that the lock file needs updating after a bump,
+`./bump-deps.sh` do this via `quality/fuzz_lockfile.sh sync`. `./bump-deps.sh`
+also refreshes and age-checks `fuzz/Cargo.lock` (Issue #2545): in network mode it
+re-resolves the fuzz workspace under the same quarantine window as the root lock,
+and it finishes with `quality/fuzz_lockfile.sh check`, so an unresolvable fuzz lock
+fails the bump (exit 8) rather than `./quality.sh`. Under `--no-network` it only
+restamps. If `cargo fuzz run --locked` reports that the lock file needs updating after a bump,
 run `quality/fuzz_lockfile.sh sync` by hand, then `quality/fuzz_lockfile.sh check`.
 
 ## 💡 Why Use This Library?

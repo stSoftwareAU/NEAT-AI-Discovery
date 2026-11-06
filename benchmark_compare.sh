@@ -165,12 +165,20 @@ if [[ "$SAVE_BASELINE" == true ]]; then
     echo ""
 
     SAVED=0
+    SKIPPED=0
     FAILED_SUITES=()
+    SAVE_OUTPUT=$(mktemp "${TMPDIR:-/tmp}/benchmark-save.XXXXXX")
+    trap 'rm -f "$SAVE_OUTPUT"' EXIT
     for bench in "${BENCHMARKS[@]}"; do
         echo "Running: $bench"
-        # Output is streamed, not captured: it is the diagnostic for a failure.
-        if cargo bench --bench "$bench" -- --save-baseline "$BASELINE_NAME" 2>&1; then
-            SAVED=$((SAVED + 1))
+        # Keep diagnostics streamed while checking for a Criterion timing.
+        if cargo bench --bench "$bench" -- --save-baseline "$BASELINE_NAME" 2>&1 | tee "$SAVE_OUTPUT"; then
+            if grep -q 'time:[[:space:]]*\[' "$SAVE_OUTPUT"; then
+                SAVED=$((SAVED + 1))
+            else
+                echo "  Skipped (no baseline recorded — e.g. no GPU available)"
+                SKIPPED=$((SKIPPED + 1))
+            fi
         else
             echo "  Error: $bench failed — baseline NOT saved for this suite" >&2
             FAILED_SUITES+=("$bench")
@@ -186,8 +194,12 @@ if [[ "$SAVE_BASELINE" == true ]]; then
         exit 1
     fi
 
+    echo "Skipped suites: $SKIPPED"
+    if [[ $SAVED -eq 0 ]]; then
+        echo "No baseline was recorded."
+        exit 0
+    fi
     echo "Baseline '$BASELINE_NAME' saved for $SAVED suites to target/criterion/"
-    echo "(suites that cannot initialise a GPU exit 0 and record no timings)"
     echo ""
     echo "To compare against this baseline after making changes:"
     echo "  ./benchmark_compare.sh"

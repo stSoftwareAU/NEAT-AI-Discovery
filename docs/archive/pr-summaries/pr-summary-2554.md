@@ -14,6 +14,7 @@ Version conflict resolved by retaining Develop’s newer `0.74.358` in `Cargo.to
 ### Essential Design Decisions
 
 - Save mode streams `cargo bench` output (it is the diagnostic), finishes the remaining suites, then exits 1 naming the failed ones and without a "saved" line.
+- Save mode counts a successful suite only when Criterion prints a timing, and reports successful runs without timings as skipped. If none recorded a timing, it reports that no baseline was recorded.
 - Compare mode prints the captured output to stderr, counts `Failed suites`, and exits 1 even with zero regressions or when every suite failed.
 - A suite that exits 0 but records no `change:` line is counted as skipped. A run that compared nothing still exits 0 (documented GPU-less behaviour) but prints "No comparisons were recorded; no regression verdict." instead of "No regressions detected."
 - `scripts/benchmark-ci.sh` is unchanged: under `set -euo pipefail` its `"$COMPARE_SCRIPT" ...` calls already propagate a non-zero status.
@@ -26,6 +27,8 @@ Version conflict resolved by retaining Develop’s newer `0.74.358` in `Cargo.to
 
 Backend/CLI shell change, no UI. Tests drive the real script in a sandbox with stub `cargo` and `bc`.
 
+The obsolete behaviour counted every zero-exit save as a saved baseline, including GPU-less skips. The remaining behaviour counts recorded timings and keeps skips successful; `tests/issue_2554_benchmark_compare_failure_is_loud.rs::save_baseline_counts_gpu_less_suite_as_skipped` and `tests/issue_2554_benchmark_compare_failure_is_loud.rs::save_baseline_with_every_suite_skipped_reports_no_baseline` cover mixed and empty saves.
+
 Red check: the original script restored (`git checkout HEAD -- benchmark_compare.sh`) with the new test kept — the four failure-case tests (`save_baseline_with_a_failing_suite_fails_and_is_not_reported_saved`, `save_baseline_with_every_suite_failing_fails`, `compare_with_a_failing_suite_fails_loudly`, `compare_with_every_suite_failing_fails`) go red; the two success-wording tests also differ on the new summary lines. With the new script all 7 pass.
 
 ## Acceptance Criteria
@@ -34,7 +37,7 @@ No acceptance-criteria list; the suggested fix is covered as follows: GPU skip p
 
 ## Test Plan
 
-- Added `tests/issue_2554_benchmark_compare_failure_is_loud.rs` (7 tests: save one/all failing and all passing; compare one/all failing, all passing, GPU-less skip). No existing test edited or assertion removed.
+- Added `tests/issue_2554_benchmark_compare_failure_is_loud.rs` (9 tests: save one/all failing, all passing and mixed/all skipped; compare one/all failing, all passing, GPU-less skip). No existing assertion removed.
 - `cargo test --test issue_2554_benchmark_compare_failure_is_loud --test issue_2140_benchmark_failure_is_loud --test issue_1918_benchmark_threshold_validation`: 19 passed.
 - `cargo fmt --check` clean; `./quality/shellcheck.sh`: 17 scripts passed.
 - Docs: `docs/BENCHMARKS.md` (GPU note, Initial Setup, Detecting Regressions, CI Tier 2, GPU Benchmarks) and `CHANGELOG.md` updated; `README.md` and `CONTRIBUTING.md` have no `benchmark_compare` mentions.

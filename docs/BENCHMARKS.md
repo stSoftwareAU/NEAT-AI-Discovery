@@ -176,6 +176,8 @@ Save a baseline on your machine before making performance-sensitive changes:
 This runs all 47 benchmark suites and stores results in `target/criterion/`.
 If any suite fails, the script names it, finishes the remaining suites, exits 1
 and does not announce the baseline as saved.
+Suites that exit successfully without recording timings are counted as skipped;
+if all are skipped, the script reports that no baseline was recorded.
 
 > **Baselines do not survive `./scripts/runlib.sh`.** That script removes the
 > checkout's `target/` after a successful install (Issue #2072), so copy any

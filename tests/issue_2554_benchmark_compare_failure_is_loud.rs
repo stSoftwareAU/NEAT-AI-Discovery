@@ -187,6 +187,31 @@ fn save_baseline_with_every_suite_passing_reports_the_saved_baseline() {
 }
 
 #[test]
+fn save_baseline_counts_gpu_less_suite_as_skipped() {
+    let output = Sandbox::new().run(&["--save-baseline"], &[], &["suite_b"]);
+    let stdout = text(&output.stdout);
+    assert!(
+        output.status.success(),
+        "mixed save should succeed: {stdout}"
+    );
+    assert!(stdout.contains("saved for 1 suites"), "{stdout}");
+    assert!(stdout.contains("Skipped suites: 1"), "{stdout}");
+}
+
+#[test]
+fn save_baseline_with_every_suite_skipped_reports_no_baseline() {
+    let output = Sandbox::new().run(&["--save-baseline"], &[], &["suite_a", "suite_b"]);
+    let stdout = text(&output.stdout);
+    assert!(
+        output.status.success(),
+        "skipped save should succeed: {stdout}"
+    );
+    assert!(stdout.contains("Skipped suites: 2"), "{stdout}");
+    assert!(stdout.contains("No baseline was recorded"), "{stdout}");
+    assert!(!stdout.contains("saved for"), "{stdout}");
+}
+
+#[test]
 fn save_baseline_with_every_suite_failing_fails() {
     let output = Sandbox::new().run(&["--save-baseline"], &["suite_a", "suite_b"], &[]);
     let stdout = text(&output.stdout);
