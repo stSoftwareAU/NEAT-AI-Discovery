@@ -4,6 +4,13 @@
 # Compares current benchmark results against a saved baseline using
 # Criterion's built-in comparison features.
 #
+# Quiet host required: run the baseline and every comparison on an otherwise
+# idle machine, on an exclusive runner. Do not run quality gates or parallel
+# worker jobs on that host while collecting timings. Another job competing for
+# CPU, GPU or memory bandwidth skews the timings, and a baseline taken idle
+# compared against a run taken under load can report a regression that is only
+# contention.
+#
 # Usage:
 #   ./benchmark_compare.sh                          # Compare all benchmarks against baseline
 #   ./benchmark_compare.sh --save-baseline          # Save current results as baseline

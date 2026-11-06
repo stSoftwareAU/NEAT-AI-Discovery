@@ -14,6 +14,14 @@ set -euo pipefail
 # This script is intended to be called from CI (e.g., a GitHub Actions benchmark
 # job) or locally to verify benchmarks before merge.
 #
+# Compare mode requires a quiet host: run the baseline and every comparison on
+# an otherwise idle machine, on an exclusive runner. Do not run quality gates or
+# parallel worker jobs on that host while collecting timings. Another job
+# competing for CPU, GPU or memory bandwidth skews the timings, and a baseline
+# taken idle compared against a run taken under load can report a regression
+# that is only contention. Compile-only mode is unaffected and stays suitable
+# for ordinary PR runners.
+#
 # Modes:
 #   compile-only (default): Runs `cargo bench --no-run` to verify all benchmarks
 #     compile without actually executing them. Fast and suitable for every PR.
@@ -55,6 +63,12 @@ print_usage() {
     echo "  --threshold N     Regression threshold percentage (default: 10)"
     echo "  --list            List all discovered benchmark suites"
     echo "  --help, -h        Show this help"
+    echo ""
+    echo "Quiet host: --compare requires a quiet host. Run the baseline and every"
+    echo "  comparison on an otherwise idle machine, on an exclusive runner. Do not"
+    echo "  run quality gates or parallel worker jobs on that host while collecting"
+    echo "  timings, because contention skews them. --compile-only needs no quiet"
+    echo "  host and stays suitable for ordinary PR runners."
     echo ""
     echo "Environment variables:"
     echo "  BENCHMARK_THRESHOLD   Regression threshold percentage"
