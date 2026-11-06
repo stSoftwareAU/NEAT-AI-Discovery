@@ -23,6 +23,7 @@ Version bump: `Cargo.toml` updated for this change; the lockfiles record the cra
 
 - Before the change, `cargo llvm-cov --test issue_2555_quiet_quality_gate -- --test-threads=2 --quiet` printed `Compiling` progress. With `CARGO_TERM_QUIET=true`, the passing coverage run printed no compile progress and retained its coverage report.
 - `CARGO_TERM_QUIET=true RUST_BACKTRACE=1 cargo llvm-cov --test issue_2555_failure_probe -- --test-threads=2` — expected failure, exit 101; the test name, assertion message and stack trace remained visible.
+- A temporary FFI probe called `neat_ai_discovery::ffi::get_library_version()`, freed its result with `free_discovery_result()`, and received version `0.74.363`; the probe was removed.
 - Coverage flow:
 
   ```mermaid
