@@ -83,6 +83,10 @@ competing for CPU, GPU or memory bandwidth skews the timings, so a baseline
 taken on an idle host compared against a run taken under load can report a
 false regression.
 
+**Prerequisite — `bc`.** Comparison mode (`./benchmark_compare.sh`) needs `bc`
+and exits 1 before running any suite if it is missing. `--save-baseline` and
+`--list` do not need it.
+
 ```bash
 # 1. Save a baseline (run all benchmarks and record timings)
 ./benchmark_compare.sh --save-baseline
