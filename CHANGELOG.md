@@ -8,6 +8,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+#### Benchmarks now document the quiet-host requirement (Issue #2557)
+
+Benchmark timings are only comparable when collected on an otherwise idle
+machine, on an exclusive runner, with no quality gates or parallel worker jobs
+competing for CPU, GPU or memory bandwidth. `docs/BENCHMARKS.md` (Quick Start and
+CI Workflow) and the `--help` text of `benchmark_compare.sh` and
+`scripts/benchmark-ci.sh` now state this. `--compare` needs a quiet host, while
+`--compile-only` does not and stays suitable for ordinary PR runners. No
+benchmark behaviour changed.
+
 #### Semgrep workflow no longer passes SEMGREP_APP_TOKEN with --config (Issue #2558)
 
 `semgrep ci` rejects an app token combined with an explicit `--config`, so the
