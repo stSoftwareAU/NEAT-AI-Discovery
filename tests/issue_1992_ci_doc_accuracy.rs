@@ -146,8 +146,15 @@ fn quality_job_bullet_claims_only_steps_ci_runs() {
         );
     }
 
+    let build = quality
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("run: cargo build "))
+        .expect("sanity: the `quality` job runs cargo build");
     assert!(
-        quality.contains("cargo build --lib"),
+        build
+            .split_whitespace()
+            .take_while(|arg| *arg != "--")
+            .any(|arg| arg == "--lib"),
         "sanity: the `quality` job builds the library"
     );
     assert!(

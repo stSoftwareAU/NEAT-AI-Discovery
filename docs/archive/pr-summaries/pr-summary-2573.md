@@ -32,6 +32,7 @@ Backend/CI only, so no screenshot. `tests/issue_1878_ci_version_increment_no_rer
 - Passed: `cargo test --test issue_1878_ci_version_increment_no_reresolve --test issue_2506_fuzz_lockfile_sync --test issue_1681_doc_staleness --test issue_1683_agents_consolidation --test issue_1685_doc_link_integrity`.
 - `./quality.sh` ran cargo deny, build, format, lint and type checks cleanly, then hit this run's 590 s foreground cap during its test stage, so the full test suite was not completed here. <!-- vibe-quality-gate-skipped reason="foreground command cap of 600s is shorter than the ~15m gate; fmt, clippy, type checks and the touched tests passed; CI runs the full suite" -->
 - Docs updated: `README.md` (fuzz lock paragraph), `CONTRIBUTING.md` (`version-increment` bullet), `CHANGELOG.md` (new Unreleased entry). The Issue #2506 changelog entry that says the job is "deliberately unchanged" is history and stays as written.
+- Merge resolution: retained the fuzz lock restamp description alongside Develop's quiet `cargo build -q --lib` documentation in `CONTRIBUTING.md`.
 - Twinned copies: the workflow template `docs/ci-fuzzing-workflow.yml` and `scripts/fuzz-ci.sh` already run `sync` before fuzzing and need no change.
 
 Not done / risk: the full test suite did not complete locally; the workflow change itself can only be exercised on a real PR run.

@@ -173,9 +173,12 @@ Each stage prints its one-line header and the cargo steps run quiet (`-q`), so
 a passing run stays short (Issue #2555). A failing step keeps its full output:
 the failing test name, the assertion message and, when `RUST_BACKTRACE` is set,
 the backtrace. The GitHub Actions workflows that run these commands
-(`cargo-quality.yml`, `security.yml`, `markdown-lint.yml`, `renovate-validate.yml`)
-are quiet in the same way, but `ci.yml` is not: its quiet reporting has not been
-applied because `ci.yml` edits need explicit approval (Issue #2555).
+(`ci.yml`, `cargo-quality.yml`, `security.yml`, `markdown-lint.yml`,
+`renovate-validate.yml`) suppress successful progress in the same way
+(Issue #2555), preserving the existing tool pins and install safeguards.
+The coverage workflow sets `CARGO_TERM_QUIET=true` so Cargo build progress is
+also quiet, while the coverage report and test failure diagnostics remain
+available.
 
 If any step fails, fix the issue and re-run. Do **not** commit code that fails
 `./quality.sh`.
@@ -212,19 +215,17 @@ the gate runs on milestone sub-issue PRs too, not just the rollup into `Develop`
   `fuzz/Cargo.lock` via `quality/fuzz_lockfile.sh sync` (Issue #2573), and the
   lockfile diff is guarded: the job fails if `fuzz/Cargo.lock` changes beyond
   the path package's `version` line
-- `quality` — fmt check, Clippy, library build (`cargo build --lib`), an
+- `quality` — fmt check, Clippy, library build (`cargo build -q --lib`), an
   intermediate-artefact cleanup, then tests. It runs **neither** `cargo check`
   nor a doc build: no workflow builds the docs (see
   [`docs/ci-doc-build-step.md`](docs/ci-doc-build-step.md)), so run
   `./scripts/doc-check.sh` — or the full `./quality.sh` — locally. Its test
   command is
-  `cargo test --lib --tests --bins --all-features --verbose -- --test-threads=2`
-  — against the documented local command, CI adds `--bins` and `--verbose` and
-  omits the local `-q` (Issue #2555). `--bins` selects nothing because the crate
-  declares no `[[bin]]` targets. `ci.yml` itself is unchanged by Issue #2555
-  and still runs this command as written
+  `cargo test -q --lib --tests --bins --all-features -- --test-threads=2`
+  — against the documented local command, CI adds `--bins`, which selects
+  nothing because the crate declares no `[[bin]]` targets
 - `spell-check` — runs codespell on the codebase. codespell is installed with
-  `pip install --user --require-hashes -r
+  `pip install --quiet --user --require-hashes -r
   .github/requirements/codespell-requirements.txt`, so the version and the
   SHA-256 of every artefact are pinned; Renovate's `pip_requirements` manager
   keeps that file current under the standard 24h quarantine (Issue #1913)

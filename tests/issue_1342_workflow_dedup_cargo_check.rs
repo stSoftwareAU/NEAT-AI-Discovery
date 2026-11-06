@@ -100,8 +100,16 @@ fn validate_cargo_toml_step_keeps_field_presence_validation() {
 fn linter_step_retains_broad_compile_gate() {
     let body = read_workflow("ci.yml");
     let block = step_block(&body, "Run linter").expect("step `Run linter` not found in ci.yml");
+    let command = block
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("run: cargo clippy "))
+        .expect("the `Run linter` step must run cargo clippy");
+    let args: Vec<&str> = command
+        .split_whitespace()
+        .take_while(|arg| *arg != "--")
+        .collect();
     assert!(
-        block.contains("cargo clippy --all-targets --all-features"),
+        args.contains(&"--all-targets") && args.contains(&"--all-features"),
         "the `Run linter` step must retain `cargo clippy --all-targets --all-features` \
          as the single compile gate that proves manifest resolvability on every \
          pull request — clippy is a superset of `cargo check` (Issue #1342, Issue #1658)",
