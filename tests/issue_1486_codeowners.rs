@@ -6,7 +6,7 @@
 //! edits a workflow can be merged without review from a trusted maintainer. The
 //! CI workflows here run with privileged secrets beyond the default
 //! `GITHUB_TOKEN` — a write-capable PAT (`ACTIONS_PUSH`) plus
-//! `SEMGREP_APP_TOKEN` and `CODECOV_TOKEN` — so a careless or malicious
+//! `CODECOV_TOKEN` — so a careless or malicious
 //! workflow edit is a direct path to secret exfiltration or unauthorised pushes
 //! to protected branches. `CODEOWNERS` is the mechanism that pins owner review
 //! on those paths and underpins the "Require review from Code Owners"
@@ -114,7 +114,7 @@ fn covers_github_workflows() {
     assert!(
         covers(&rules, ".github") || covers(&rules, ".github/workflows"),
         "CODEOWNERS must cover the privileged CI paths under .github/ \
-         (workflows hold ACTIONS_PUSH / SEMGREP_APP_TOKEN / CODECOV_TOKEN) \
+         (workflows hold ACTIONS_PUSH / CODECOV_TOKEN) \
          (Issue #1486)"
     );
 }
