@@ -2,11 +2,11 @@
 //! full output.
 //!
 //! A successful run used to print every `Compiling` and `Running` line. The
-//! cargo steps of `quality.sh` now run with `-q`, the coverage test binaries in
-//! `cargo-quality.yml` receive libtest `--quiet`, the `cargo install` steps in
-//! `security.yml` run with `-q`, and the `npm install` steps run with
-//! `--loglevel=error`. None of these flags hides a test name, an assertion
-//! message or a compiler error, so a failure stays fully diagnosable.
+//! cargo steps of `quality.sh` now run with `-q`, the coverage workflow sets
+//! `CARGO_TERM_QUIET=true` for Cargo and its test reporter, the `cargo install`
+//! steps in `security.yml` run with `-q`, and the `npm install` steps run with
+//! `--loglevel=error`. These settings suppress successful progress without
+//! hiding a test name, assertion message or compiler error.
 //!
 //! The assertions parse the `run:` command lines (never comments) and inspect
 //! their tokens, so a flag mentioned only in a comment cannot satisfy a check.
@@ -28,14 +28,58 @@ fn read_repo_file(relative: &str) -> String {
 }
 
 /// The command of every non-comment `run:` key in a workflow, with the key
-/// removed. A list-item dash (`- run:`) is accepted.
+/// removed. Inline and indented block commands are accepted.
 fn workflow_run_commands(body: &str) -> Vec<String> {
-    body.lines()
-        .map(str::trim)
-        .filter(|line| !line.starts_with('#'))
-        .filter_map(|line| line.trim_start_matches("- ").strip_prefix("run:"))
-        .map(|command| command.trim().to_string())
-        .collect()
+    let mut commands = Vec::new();
+    let mut block_indent = None;
+    let mut block_command = String::new();
+
+    for raw_line in body.lines() {
+        let indent = raw_line.len() - raw_line.trim_start().len();
+        let line = raw_line.trim();
+        if let Some(base_indent) = block_indent {
+            if line.is_empty() {
+                continue;
+            }
+            if indent > base_indent {
+                if !block_command.is_empty() {
+                    block_command.push('\n');
+                }
+                block_command.push_str(line);
+                continue;
+            }
+            commands.push(std::mem::take(&mut block_command));
+            block_indent = None;
+        }
+
+        if line.starts_with('#') {
+            continue;
+        }
+        let Some(command) = line
+            .strip_prefix("- run:")
+            .or_else(|| line.strip_prefix("run:"))
+        else {
+            continue;
+        };
+        let command = command.trim();
+        if command.starts_with('|') || command.starts_with('>') {
+            block_indent = Some(indent);
+        } else {
+            commands.push(command.to_string());
+        }
+    }
+
+    if block_indent.is_some() {
+        commands.push(block_command);
+    }
+    commands
+}
+
+fn required_workflow_command(body: &str, file: &str, prefix: &str) -> Result<String, String> {
+    workflow_run_commands(body)
+        .into_iter()
+        .find(|command| command.starts_with(prefix))
+        .ok_or_else(|| format!("{file} must run {prefix}"))
 }
 
 /// The command of every non-comment line of `quality.sh`, with a leading
@@ -165,10 +209,12 @@ fn quality_sh_test_command_keeps_test_threads_two() {
 #[test]
 fn coverage_llvm_cov_quiets_cargo_and_keeps_test_threads_two() {
     let body = read_repo_file(".github/workflows/cargo-quality.yml");
-    let llvm_cov = workflow_run_commands(&body)
-        .into_iter()
-        .find(|command| command.starts_with("CARGO_TERM_QUIET=true cargo llvm-cov"))
-        .expect("cargo-quality.yml must run cargo llvm-cov");
+    let llvm_cov = required_workflow_command(
+        &body,
+        "cargo-quality.yml",
+        "CARGO_TERM_QUIET=true cargo llvm-cov",
+    )
+    .expect("coverage command must be present");
     assert!(
         tokens(&llvm_cov).contains(&"CARGO_TERM_QUIET=true"),
         "the cargo-quality.yml llvm-cov command must suppress Cargo progress \
@@ -306,4 +352,17 @@ fn workflow_parser_ignores_commented_out_commands() {
         vec!["cargo llvm-cov".to_string()],
         "a commented-out `run:` line must not count as a step command"
     );
+}
+
+#[test]
+fn workflow_parser_reads_multiline_run_blocks_and_rejects_a_missing_command() {
+    let body = "steps:\n  - name: coverage\n    run: |\n      CARGO_TERM_QUIET=true cargo llvm-cov --all-features \\\n        -- --test-threads=2\n  - name: next\n    run: echo done\n";
+    let commands = workflow_run_commands(body);
+    assert_eq!(commands.len(), 2);
+    assert!(commands[0].contains("CARGO_TERM_QUIET=true cargo llvm-cov"));
+    assert!(commands[0].contains("--test-threads=2"));
+    assert_eq!(commands[1], "echo done");
+
+    let missing = required_workflow_command(body, "workflow.yml", "cargo test");
+    assert!(matches!(missing, Err(message) if message.contains("cargo test")));
 }
