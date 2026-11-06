@@ -73,6 +73,7 @@ fn create_test_creature(
 /// Mish(x) = x * tanh(softplus(x)) = x * tanh(ln(1 + e^x))
 /// For x = -5: Mish ≈ -0.034, IDENTITY = -5 (147x different!)
 #[test]
+#[serial_test::serial]
 fn test_mish_gpu_shader_produces_correct_results() {
     skip_without_gpu!();
 

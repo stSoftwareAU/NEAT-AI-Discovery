@@ -36,6 +36,7 @@ fn make_samples(len: usize) -> Vec<HelpfulSample> {
 }
 
 #[test]
+#[serial_test::serial]
 fn oversized_helpful_set_returns_err_and_gpu_survives() {
     skip_without_gpu!();
 
@@ -69,6 +70,7 @@ fn oversized_helpful_set_returns_err_and_gpu_survives() {
 }
 
 #[test]
+#[serial_test::serial]
 fn oversized_harmful_set_returns_err_and_gpu_survives() {
     skip_without_gpu!();
 

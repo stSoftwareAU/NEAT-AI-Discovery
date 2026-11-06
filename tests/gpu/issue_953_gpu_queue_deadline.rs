@@ -71,6 +71,7 @@ fn create_test_creature() -> CreatureJson {
 /// propagated correctly by running analysis with a generous deadline and
 /// confirming it completes without stalling.
 #[test]
+#[serial_test::serial]
 fn neuron_analysis_with_deadline_completes() {
     skip_without_gpu!();
 
@@ -157,6 +158,7 @@ fn synapse_analysis_with_deadline_completes() {
 /// detect the expired deadline at the per-target checkpoint and return quickly
 /// with partial or empty results instead of stalling.
 #[test]
+#[serial_test::serial]
 fn analysis_with_expired_deadline_returns_promptly() {
     skip_without_gpu!();
 

@@ -48,3 +48,64 @@ impl Drop for EnvGuard {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::EnvGuard;
+
+    const GPU_SETUP_VARS: [&str; 4] = [
+        "XDG_RUNTIME_DIR",
+        "EGL_LOG_LEVEL",
+        "MESA_GLSL_CACHE_DISABLE",
+        "MESA_DEBUG",
+    ];
+
+    #[test]
+    #[serial_test::serial]
+    fn capture_gpu_setup_vars_restores_set_and_unset_values() {
+        assert!(serial_test::is_locked_serially(None));
+        let original = EnvGuard::capture_gpu_setup_vars();
+
+        for key in GPU_SETUP_VARS {
+            // SAFETY: This test holds the shared serial lock used by all GPU
+            // integration tests that access these environment variables.
+            unsafe { std::env::set_var(key, format!("original-{key}")) };
+        }
+        let existing = EnvGuard::capture_gpu_setup_vars();
+        for key in GPU_SETUP_VARS {
+            // SAFETY: This test holds the shared serial lock used by all GPU
+            // integration tests that access these environment variables.
+            unsafe { std::env::set_var(key, format!("changed-{key}")) };
+        }
+        drop(existing);
+        for key in GPU_SETUP_VARS {
+            assert_eq!(
+                std::env::var_os(key).as_deref(),
+                Some(std::ffi::OsStr::new(&format!("original-{key}"))),
+                "{key} must be restored to its existing value"
+            );
+        }
+
+        for key in GPU_SETUP_VARS {
+            // SAFETY: This test holds the shared serial lock used by all GPU
+            // integration tests that access these environment variables.
+            unsafe { std::env::remove_var(key) };
+        }
+        let unset = EnvGuard::capture_gpu_setup_vars();
+        for key in GPU_SETUP_VARS {
+            // SAFETY: This test holds the shared serial lock used by all GPU
+            // integration tests that access these environment variables.
+            unsafe { std::env::set_var(key, format!("changed-{key}")) };
+        }
+        drop(unset);
+        for key in GPU_SETUP_VARS {
+            assert_eq!(
+                std::env::var_os(key),
+                None,
+                "{key} must be restored to unset"
+            );
+        }
+
+        drop(original);
+    }
+}
