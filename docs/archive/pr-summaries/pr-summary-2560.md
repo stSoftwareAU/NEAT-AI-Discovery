@@ -2,7 +2,7 @@
 
 The actionlint, Markdown Lint and ShellCheck jobs now skip tool setup and the lint when a PR touches nothing they lint. A new committed script, `quality/lint_scope.sh`, makes the decision. Each job keeps its name (`actionlint`, `markdownlint`, `shellcheck`) and always runs, so the required check names always report. Closes #2560.
 
-Merge conflict resolution retained the PR version 0.74.366, ahead of Develop at 0.74.365, in `Cargo.toml` and `Cargo.lock`. `fuzz/Cargo.lock` was synchronised to the same version without changing dependencies.
+Merge conflict resolution synchronised `fuzz/Cargo.lock` to the merged `Cargo.toml` version 0.74.368 without changing dependencies.
 
 ## Spec
 

@@ -132,6 +132,7 @@ struct Run {
     stderr: String,
     manifest: String,
     lockfile: String,
+    fuzz_lockfile: String,
 }
 
 /// Run the extracted step in a throwaway repo.
@@ -150,6 +151,16 @@ fn run_step(branch_version: &str, with_bump_commit: bool) -> Run {
 
     fs::write(repo.join("Cargo.toml"), MANIFEST).expect("write Cargo.toml");
     fs::write(repo.join("Cargo.lock"), LOCKFILE).expect("write Cargo.lock");
+    // Exercise the real fuzz lockfile sync against a complete fixture.
+    fs::create_dir_all(repo.join("fuzz")).expect("create fuzz dir");
+    fs::write(repo.join("fuzz/Cargo.toml"), MANIFEST).expect("write fuzz manifest");
+    fs::write(repo.join("fuzz/Cargo.lock"), LOCKFILE).expect("write fuzz lockfile");
+    fs::create_dir_all(repo.join("quality")).expect("create quality dir");
+    fs::copy(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("quality/fuzz_lockfile.sh"),
+        repo.join("quality/fuzz_lockfile.sh"),
+    )
+    .expect("copy fuzz_lockfile.sh");
     // The step's FIRST guard runs the real no-downgrade script from the repo
     // root, so the throwaway repo needs its own copy of it.
     fs::create_dir_all(repo.join("scripts")).expect("create scripts dir");
@@ -217,6 +228,8 @@ exit 0
         stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
         manifest: fs::read_to_string(repo.join("Cargo.toml")).expect("read Cargo.toml"),
         lockfile: fs::read_to_string(repo.join("Cargo.lock")).expect("read Cargo.lock"),
+        fuzz_lockfile: fs::read_to_string(repo.join("fuzz/Cargo.lock"))
+            .expect("read fuzz/Cargo.lock"),
     }
 }
 
@@ -240,6 +253,7 @@ fn level_with_base_is_bumped_despite_earlier_auto_increment_commit() {
         "the bump must be recorded in Cargo.lock (Issue #2476) — got:\n{}",
         run.lockfile
     );
+    assert_eq!(run.fuzz_lockfile, at_version(LOCKFILE, "0.1.1"));
 }
 
 #[test]
@@ -280,4 +294,5 @@ fn level_with_base_without_auto_increment_commit_is_bumped() {
         "the bump must be recorded in Cargo.lock (control, Issue #2476) — got:\n{}",
         run.lockfile
     );
+    assert_eq!(run.fuzz_lockfile, at_version(LOCKFILE, "0.1.1"));
 }
