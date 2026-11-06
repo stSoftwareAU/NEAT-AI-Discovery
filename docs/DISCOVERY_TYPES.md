@@ -211,7 +211,7 @@ paper.
 |----------------|--------------|-------|---------------------|--------|--------|
 | [Bounded Range](#bounded-range-detection) | `detection/bounded_range.rs` | #395 | `addNeuron`, `addSynapse` | 🟢 Active | LeCun et al. 1998 |
 | [Sentinel Gating](#sentinel-gating-detection) | `detection/sentinel_gating.rs` | #400 | `addNeuron`, `addSynapse` | 🟢 Active | Little & Rubin 2002 (missing-data indicators) |
-| [Observation Utilisation](#observation-utilisation-detection) | `detection/observation_utilisation.rs` | #543 | `addNeuron`, `addSynapse` | 🟢 Active | Guyon & Elisseeff 2003 |
+| [Observation Utilisation](#observation-utilisation-detection) | `detection/observation_utilisation.rs` | #543 | `setBias` | 🟢 Active | Guyon & Elisseeff 2003 |
 | [Input Sensitivity](#input-sensitivity-detection) | `detection/input_sensitivity.rs` | #435 | `setWeight`, `addNeuron`, `setBias` | 🟢 Active | Simonyan et al. 2014 (gradient saliency) |
 
 ### 💡 Scoring & Recommendation
@@ -1744,7 +1744,8 @@ gate's synapses.
 **Purpose**: Builds on observation range analysis to detect underutilised
 input neurons. Inputs with low effective range (most values clustered in a
 tiny region) are not contributing meaningful information to the network.
-Proposes gating neurons to improve their utilisation.
+Proposes a bias adjustment on each downstream target to compensate for the
+sentinel-induced offset.
 
 **Detection criteria**:
 
@@ -1756,12 +1757,14 @@ Proposes gating neurons to improve their utilisation.
 
 **Recommended actions**:
 
-1. **Add gating neuron**: Insert a neuron that normalises or gates the
-   underutilised input.
-2. **Add synapse**: Connect the processed input to downstream targets.
+1. **Set bias**: For each downstream target of an underutilised input, set
+   the target's absolute bias to its current bias minus (effective centre x
+   synapse weight), where effective centre is the midpoint of the effective
+   range. Negligible synapse weights and compensations are skipped, as are
+   targets absent from the creature.
 
-**Output**: Emitted as `coordinatedStructuralCandidates` with `addNeuron`
-and `addSynapse` operations.
+**Output**: Emitted as `coordinatedStructuralCandidates`, one per downstream
+target, each carrying a single `setBias` operation.
 
 ---
 
