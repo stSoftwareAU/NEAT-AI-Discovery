@@ -93,11 +93,12 @@ jobs:
         # defaults to one thread per core, which surfaces as spurious failures
         # (e.g. `tracking_alloc` / focus-ranking budget tests) under coverage
         # instrumentation only. Keeping the thread count aligned with the other
-        # gates removes that divergence (PR #1515).
+        # gates removes that divergence (PR #1515). `--quiet` (Issue #2555) keeps
+        # a passing run's per-test output out of the log; failures still print.
         # `--all-features` matches `ci.yml/quality` and `quality.sh` so the
         # off-by-default `regression-harness` target (Issue #1877) is measured
         # here too, rather than silently dropping out of the report.
-        run: cargo llvm-cov --all-features --lcov --output-path lcov.info -- --test-threads=2
+        run: cargo llvm-cov --all-features --lcov --output-path lcov.info -- --test-threads=2 --quiet
 
       - name: Upload coverage to Codecov
         # Pinned to a 40-char commit SHA (Issue #1216).

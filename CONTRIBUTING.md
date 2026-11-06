@@ -161,13 +161,21 @@ so do not skip this step. `./quality.sh` performs these checks in order:
 5. `./quality/fuzz_lockfile.sh sync` — restamp the crate version in `fuzz/Cargo.lock` without re-resolving dependencies (Issue #2506)
 6. `./quality/fuzz_lockfile.sh check` — verify the lockfile with `cargo metadata --locked`
 7. `cargo deny check` (licence and dependency audit)
-8. `cargo build` (debug, quick feedback)
+8. `cargo build -q` (debug, quick feedback)
 9. `cargo fmt --all` (auto-formatting)
-10. `cargo clippy --all-targets --all-features -- -D warnings`
-11. `cargo check --all-targets --all-features`
-12. `cargo test --lib --tests --all-features -- --test-threads=2`
-13. `RUSTDOCFLAGS="-D warnings" cargo doc --no-deps` (documentation build)
-14. `cargo build --release --lib`
+10. `cargo clippy -q --all-targets --all-features -- -D warnings`
+11. `cargo check -q --all-targets --all-features`
+12. `cargo test -q --lib --tests --all-features -- --test-threads=2`
+13. `RUSTDOCFLAGS="-D warnings" cargo doc -q --no-deps` (documentation build)
+14. `cargo build -q --release --lib`
+
+Each stage prints its one-line header and the cargo steps run quiet (`-q`), so
+a passing run stays short (Issue #2555). A failing step keeps its full output:
+the failing test name, the assertion message and, when `RUST_BACKTRACE` is set,
+the backtrace. The GitHub Actions workflows that run these commands
+(`cargo-quality.yml`, `security.yml`, `markdown-lint.yml`, `renovate-validate.yml`)
+are quiet in the same way, but `ci.yml` is not: its quiet reporting has not been
+applied because `ci.yml` edits need explicit approval (Issue #2555).
 
 If any step fails, fix the issue and re-run. Do **not** commit code that fails
 `./quality.sh`.
@@ -208,9 +216,10 @@ the gate runs on milestone sub-issue PRs too, not just the rollup into `Develop`
   `./scripts/doc-check.sh` — or the full `./quality.sh` — locally. Its test
   command is
   `cargo test --lib --tests --bins --all-features --verbose -- --test-threads=2`
-  — the extra `--bins` and `--verbose` are the only delta from the documented
-  local command, and `--bins` selects nothing because the crate declares no
-  `[[bin]]` targets
+  — against the documented local command, CI adds `--bins` and `--verbose` and
+  omits the local `-q` (Issue #2555). `--bins` selects nothing because the crate
+  declares no `[[bin]]` targets. `ci.yml` itself is unchanged by Issue #2555
+  and still runs this command as written
 - `spell-check` — runs codespell on the codebase. codespell is installed with
   `pip install --user --require-hashes -r
   .github/requirements/codespell-requirements.txt`, so the version and the
