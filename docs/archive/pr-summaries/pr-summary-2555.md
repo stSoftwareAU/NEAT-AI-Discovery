@@ -3,6 +3,7 @@
 Quiet the coverage workflow's Cargo progress with `CARGO_TERM_QUIET=true`, while retaining the test failure name, assertion and backtrace. The regression check now covers multiline workflow commands and rejects missing commands. The remaining `ci.yml` call sites are unchanged because no explicit approval to edit that protected file was found. Part of #2555.
 
 Version bump: `Cargo.toml` updated for this change; the lockfiles record the crate version.
+The Develop merge retains `0.74.363` in `fuzz/Cargo.lock` to match the merged `Cargo.toml`.
 
 ## Spec
 

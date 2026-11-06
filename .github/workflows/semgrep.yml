@@ -64,10 +64,12 @@ jobs:
       # `a_new_zero_age_rule_outside_the_internal_bypass_is_detected`
       # pin the failure modes. Only the stSoftwareAU/* bypass rule may
       # set 0. bump-deps.sh enforces the same window at bump time.
+      #
+      # Issue #2558: `semgrep ci` rejects an app token combined with an
+      # explicit `--config`, so this step is a plain scan. No app token is
+      # in scope at step, job or workflow level.
       - run: |
           set -euo pipefail
           semgrep ci --config p/default \
             --exclude-rule package_managers.renovate.renovate-missing-minimum-release-age.renovate-missing-minimum-release-age \
             --exclude-rule renovate-missing-minimum-release-age
-        env:
-          SEMGREP_APP_TOKEN: ${{ secrets.SEMGREP_APP_TOKEN }}

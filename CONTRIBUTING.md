@@ -520,8 +520,8 @@ containing the following sections.
 High-blast-radius paths are owned by the admin maintainers
 (`@Green-Beret @nleck @stservice`) in
 [`.github/CODEOWNERS`](.github/CODEOWNERS): the CI workflows (which hold the
-`ACTIONS_PUSH` PAT plus `SEMGREP_APP_TOKEN` and `CODECOV_TOKEN`), the
-dependency manifests (`Cargo.toml` / `Cargo.lock`), and the security policy.
+`ACTIONS_PUSH` PAT and `CODECOV_TOKEN`; the Semgrep scan runs with no app
+token), the dependency manifests (`Cargo.toml` / `Cargo.lock`), and the security policy.
 The same block also owns the scripts that *enforce* a supply-chain control —
 `bump-deps.sh` (the quarantine gate), `quality.sh` (the audit gate), and the
 toolchain bootstraps `scripts/runlib.sh` and `scripts/fuzz-ci.sh` — because
