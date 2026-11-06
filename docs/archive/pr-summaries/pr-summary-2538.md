@@ -40,4 +40,8 @@ The issue states no acceptance-criteria list, so no reviewer sub-agents ran. Eve
 - `cargo fmt --all -- --check` clean; `cargo clippy --locked --tests -- -D warnings` clean (run by the executor before the version bump).
 - `./quality/fuzz_lockfile.sh check`: OK.
 - Docs: `CHANGELOG.md` entry added; `README.md` and `docs/` do not describe these test internals.
-- Full gate: see the note below.
+- Full gate: `timeout 590 ./quality.sh` hit the cap (exit 124) while still compiling a cold build in this fresh worktree; not run to completion here.
+
+Not done / risk: the full quality gate did not finish; the original intermittent failure is scheduler-dependent and was not observed directly.
+
+<!-- vibe-quality-gate-skipped reason="full ./quality.sh exceeded the 590 s foreground cap (exit 124) during a cold build; fmt, clippy and the touched gpu tests were run separately; CI runs the full gate" -->
