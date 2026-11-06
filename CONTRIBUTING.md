@@ -175,8 +175,8 @@ If any step fails, fix the issue and re-run. Do **not** commit code that fails
 **The gate never upgrades dependencies** (Issue #1865). It used to run
 `cargo upgrade --incompatible` + `cargo update`, which pulled crates published
 minutes earlier and bypassed the 24h quarantine window. Bump dependencies with
-`./bump-deps.sh` — it age-checks every change to the resolved `Cargo.lock`,
-transitive packages included, plus every dependency table of every tracked
+`./bump-deps.sh` — it age-checks every change to the resolved `Cargo.lock` and
+`fuzz/Cargo.lock`, transitive packages included (Issue #2545), plus every dependency table of every tracked
 manifest (`[build-dependencies]`, `[target.<spec>.*]` and `fuzz/Cargo.toml`
 included, Issue #1908) — or let Renovate raise the PR. `./bump-deps.sh`
 requires `cargo-deny`: its audit gate exits 9 rather than skipping when the tool
