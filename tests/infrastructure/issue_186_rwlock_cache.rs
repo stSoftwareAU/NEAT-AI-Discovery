@@ -13,6 +13,7 @@
 
 #![allow(clippy::cast_precision_loss)] // Intentional numeric casts for GPU/neural network computation (Issue #873)
 use neat_ai_discovery::types::DiscoverRecord;
+use serial_test::serial;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::thread;
@@ -23,7 +24,9 @@ use std::time::Duration;
 /// This test creates a cache with test data and then spawns multiple threads
 /// that all read from the cache simultaneously. With `RwLock`, these reads should
 /// not be serialised.
+// Serial: reads or clears the process-global cancellation flag that other serial tests set (Issue #2533).
 #[test]
+#[serial]
 fn cache_allows_concurrent_reads() {
     use neat_ai_discovery::analysis::cache::RecordCache;
 
@@ -103,6 +106,7 @@ fn cache_allows_concurrent_reads() {
 /// This ensures that despite concurrent access, all threads see the same data
 /// for the same neuron UUID.
 #[test]
+#[serial]
 fn cache_returns_consistent_data_across_concurrent_reads() {
     use neat_ai_discovery::analysis::cache::RecordCache;
 
@@ -168,6 +172,7 @@ fn cache_returns_consistent_data_across_concurrent_reads() {
 /// The diagnostics code uses `cache.len()` to report statistics. This must work
 /// reliably even when other threads are reading from the cache.
 #[test]
+#[serial]
 fn cache_len_works_with_concurrent_reads() {
     use neat_ai_discovery::analysis::cache::RecordCache;
 
@@ -233,6 +238,7 @@ fn cache_len_works_with_concurrent_reads() {
 
 /// Test that `is_empty()` works correctly.
 #[test]
+#[serial]
 fn cache_is_empty_works_correctly() {
     use neat_ai_discovery::analysis::cache::RecordCache;
 
@@ -270,6 +276,7 @@ fn cache_is_empty_works_correctly() {
 /// Issue #454: Converted from timing-based comparison to functional test.
 /// Performance measurement belongs in `benches/`, not unit tests.
 #[test]
+#[serial]
 fn cache_invokes_loader_only_once_for_same_uuid() {
     use neat_ai_discovery::analysis::cache::RecordCache;
     use std::sync::atomic::{AtomicUsize, Ordering};
