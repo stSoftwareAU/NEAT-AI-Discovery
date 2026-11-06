@@ -64,6 +64,17 @@ detection behaviour are unchanged.
 
 The `gpu` integration test binary built the issue #713 smoke tests and the issue #1873 `setup_gpu_environment` tests as plain parallel `#[test]`s. The first `ensure_xdg_runtime_dir()` call fires a process-wide `Once` that writes `XDG_RUNTIME_DIR`, which could land between the two calls of `setup_gpu_environment_is_safe_and_consistent` and make its "same verdict" assertion fail intermittently. Those tests are now `#[serial_test::serial]`, each asserts it holds the serial lock, and a shared `EnvGuard` (`tests/gpu/env_guard.rs`) restores `XDG_RUNTIME_DIR` and the Mesa variables on exit. Other GPU integration tests that initialise the GPU now use the same serial lock so their setup reads cannot overlap those writes. Test-only change.
 
+#### Fuzzing workflow template now runs the parquet fuzz targets (Issue #2527)
+
+The fuzzing CI template (`docs/ci-fuzzing-workflow.yml`) ran only the two FFI
+targets, so the Parquet footer-statistics and pre-decode budget targets were
+never exercised by the documented workflow. The template now runs all four
+`fuzz/Cargo.toml` targets. The footer-statistics target runs with the
+`fuzz/seeds/parquet_footer_stats` seed corpus and `-max_len=65536`, matching
+`scripts/fuzz-ci.sh`. A new test, `tests/issue_2527_fuzz_template_targets.rs`,
+compares the `[[bin]]` names, the `scripts/fuzz-ci.sh` `FUZZ_TARGETS` array and
+the template's `fuzz run` steps, so the three lists cannot drift apart silently.
+
 #### fuzz/Cargo.lock no longer goes stale on a version bump (Issue #2506)
 
 `fuzz/Cargo.lock` records the root crate as a path package, and that entry

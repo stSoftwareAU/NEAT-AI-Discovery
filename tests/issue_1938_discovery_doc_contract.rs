@@ -8,12 +8,14 @@
 
 mod common;
 
-use common::{make_creature, neuron, record, synapse};
-use neat_ai_discovery::CandidateNeuronJson;
+use common::{hidden_with_bias, make_creature, neuron, record, synapse};
 use neat_ai_discovery::analysis::constants::{
     ADAPTIVE_PROPOSAL_CANDIDATE_COUNT, ADAPTIVE_PROPOSAL_MIN_HISTORY,
 };
 use neat_ai_discovery::analysis::detection::low_impact_neuron::detect_low_impact_neurons;
+use neat_ai_discovery::analysis::detection::observation_utilisation::{
+    UnderutilisedObservation, observation_utilisation_to_coordinated_candidates,
+};
 use neat_ai_discovery::analysis::synapse::adaptive_proposal::{
     AcceptanceTracker, generate_fixed_grid, generate_weight_candidates,
 };
@@ -21,6 +23,7 @@ use neat_ai_discovery::analysis::utils::filter_candidates_to_sensible_ranges;
 use neat_ai_discovery::config::batch_successful_enabled;
 use neat_ai_discovery::focus::triage_removal_candidates;
 use neat_ai_discovery::types::DiscoverRecord;
+use neat_ai_discovery::{CandidateNeuronJson, CoordinatedStructuralOpJson};
 
 const DISCOVERY_TYPES: &str = include_str!("../docs/DISCOVERY_TYPES.md");
 const DEEP_DIVE: &str = include_str!("../docs/ANALYSIS_DEEP_DIVE.md");
@@ -304,4 +307,128 @@ fn remove_neuron_high_error_uses_one_status_marker() {
         detail.contains('⛔') && !detail.contains('🔴'),
         "the detail section must use the same ⛔ marker as the summary row"
     );
+}
+
+/// Issue #2536 — the observation-utilisation reference must list the operation
+/// types the module really emits. The expected tags are read from the module's
+/// own serialised output rather than typed in, so a change to the emitted
+/// operations fails here until the reference catches up.
+#[test]
+fn observation_utilisation_documents_the_operations_it_emits() {
+    let creature = make_creature(
+        vec![
+            neuron("input-0", "input", "IDENTITY"),
+            hidden_with_bias("hidden-0", "TANH", 0.25),
+            neuron("output-0", "output", "IDENTITY"),
+        ],
+        vec![
+            synapse("input-0", "hidden-0", 0.8),
+            synapse("input-0", "output-0", -0.4),
+        ],
+    );
+    let observation = UnderutilisedObservation {
+        neuron_uuid: "input-0".to_string(),
+        sentinel_values: vec![-1.0],
+        utilisation_ratio: 0.4,
+        effective_min: 0.3,
+        effective_max: 0.7,
+        sample_count: 100,
+        estimated_improvement: 0.003,
+        reason: "Utilisation 40% — sentinel value(s) [-1.0] occupy significant range fraction"
+            .to_string(),
+    };
+
+    let candidates = observation_utilisation_to_coordinated_candidates(&[observation], &creature);
+    assert_eq!(
+        candidates.len(),
+        2,
+        "one candidate per downstream target of input-0"
+    );
+
+    let emitted: std::collections::BTreeSet<String> = candidates
+        .iter()
+        .flat_map(|candidate| candidate.operations.iter())
+        .map(|op| {
+            let value = serde_json::to_value(op).expect("operation must serialise");
+            value["type"]
+                .as_str()
+                .expect("operation must carry a string type tag")
+                .to_string()
+        })
+        .collect();
+    assert_eq!(
+        emitted,
+        std::collections::BTreeSet::from(["setBias".to_string()]),
+        "the module must emit exactly the setBias operation"
+    );
+
+    // SetBias is absolute. hidden-0: centre 0.5 * weight 0.8 => -0.4, so 0.25 - 0.4 = -0.15.
+    // output-0: centre 0.5 * weight -0.4 => +0.2, so 0.0 + 0.2 = 0.2.
+    let bias_for = |uuid: &str| -> f32 {
+        candidates
+            .iter()
+            .find_map(|candidate| match &candidate.operations[0] {
+                CoordinatedStructuralOpJson::SetBias { neuron_uuid, bias }
+                    if neuron_uuid == uuid =>
+                {
+                    Some(*bias)
+                }
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("no SetBias candidate targets {uuid}"))
+    };
+    let hidden_bias = bias_for("hidden-0");
+    assert!(
+        (hidden_bias - -0.15).abs() < 1e-6,
+        "hidden-0 SetBias must be current bias + compensation = -0.15, got {hidden_bias}"
+    );
+    let output_bias = bias_for("output-0");
+    assert!(
+        (output_bias - 0.2).abs() < 1e-6,
+        "output-0 SetBias must be current bias + compensation = 0.2, got {output_bias}"
+    );
+
+    let row = summary_row(DISCOVERY_TYPES, "#observation-utilisation-detection");
+    for tag in &emitted {
+        let cell = format!("`{tag}`");
+        assert!(
+            row.contains(&cell),
+            "the Observation Utilisation summary row must list the emitted operation {cell}: {row}"
+        );
+    }
+    for stale in ["`addNeuron`", "`addSynapse`"] {
+        assert!(
+            !row.contains(stale),
+            "the Observation Utilisation summary row must not list {stale}, which the module does not emit: {row}"
+        );
+    }
+
+    let detail = section(DISCOVERY_TYPES, "\n### Observation Utilisation Detection");
+    for tag in &emitted {
+        let cell = format!("`{tag}`");
+        assert!(
+            detail.contains(&cell),
+            "the Observation Utilisation detail section must name the emitted operation {cell}: {detail}"
+        );
+    }
+    for stale in ["addNeuron", "addSynapse"] {
+        assert!(
+            !detail.contains(stale),
+            "the Observation Utilisation detail section must not name {stale}, which the module does not emit: {detail}"
+        );
+    }
+
+    let deep_dive = section(DEEP_DIVE, "\n#### Observation Utilisation Detection");
+    for tag in &emitted {
+        assert!(
+            deep_dive.contains(tag.as_str()),
+            "the deep-dive Observation Utilisation section must name the emitted operation {tag}: {deep_dive}"
+        );
+    }
+    for stale in ["addNeuron", "addSynapse", "gating neuron"] {
+        assert!(
+            !deep_dive.contains(stale),
+            "the deep-dive Observation Utilisation section must not describe {stale}, which the module does not emit: {deep_dive}"
+        );
+    }
 }
