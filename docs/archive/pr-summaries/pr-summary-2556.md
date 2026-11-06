@@ -2,7 +2,7 @@
 
 `scripts/install-rustup.sh` now gives its `rustup-init` download a per-attempt transfer cap (`--max-time 300`) and a total retry budget (`--retry-max-time 1200`), alongside the existing `--connect-timeout 30`, `--retry 3` and SHA-256 digest verification. A peer that stops sending the body can no longer hold the installer indefinitely; on exhaustion curl fails and the script still prints `ERROR: failed to download` and returns 1. The `scripts/runlib.sh:568–570` call site is left for NEAT-AI-core (see below), so this is `Part of #2556`.
 
-Version bump: `Cargo.toml` updated for this change (with `Cargo.lock` and `fuzz/Cargo.lock` restamped); the merged commit records the final version.
+Version bump: `Cargo.toml` updated for this change (with `Cargo.lock` and `fuzz/Cargo.lock` restamped); the merged commit records the final version. The Develop merge retains 0.74.361 in the fuzz lockfile to match Cargo.toml.
 
 ## Spec
 

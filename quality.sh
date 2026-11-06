@@ -8,6 +8,11 @@ if [ -f "$HOME/.cargo/env" ]; then
 fi
 
 export RUSTFLAGS="-D warnings"
+
+# Issue #2555: a passing gate stays quiet. The cargo steps run with `-q`, so
+# Compiling and Running chatter is dropped, and each stage keeps its one-line
+# echo header. Failures are not silenced: a failing step still prints the test
+# name and assertion message, plus a backtrace when RUST_BACKTRACE is set.
 echo "🔍 Pre-deployment Quality Check"
 echo "================================"
 
@@ -49,29 +54,29 @@ cargo deny check
 
 # Use workspace for faster builds
 echo "🏗️ Building (debug) for quick feedback..."
-cargo build
+cargo build -q
 
 echo "🪄 Auto-formatting code..."
 cargo fmt --all
 
 echo "🔧 Running linter..."
 # Lint rules are configured in Cargo.toml [lints.clippy] — do not add -D/-W flags here (Issue #876)
-cargo clippy --all-targets --all-features -- -D warnings
+cargo clippy -q --all-targets --all-features -- -D warnings
 
 echo "✅ Running type checks..."
-cargo check --all-targets --all-features
+cargo check -q --all-targets --all-features
 
 echo "🧪 Running tests..."
 # Tests that mutate shared global state (env vars, deadline overrides, watchdog) are marked
 # with #[serial] from the serial_test crate and will not run concurrently with each other.
 # Note: Exclude benchmarks (--benches) since criterion benchmarks use custom harness and fail with --test-threads
-cargo test --lib --tests --all-features -- --test-threads=2
+cargo test -q --lib --tests --all-features -- --test-threads=2
 
 echo "📖 Building documentation..."
-RUSTDOCFLAGS="-D warnings" cargo doc --no-deps
+RUSTDOCFLAGS="-D warnings" cargo doc -q --no-deps
 
 echo "🏗️ Building release library..."
-cargo build --release --lib
+cargo build -q --release --lib
 
 echo "✅ All quality checks passed!"
 
