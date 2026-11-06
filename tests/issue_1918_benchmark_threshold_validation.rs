@@ -6,9 +6,9 @@
 //! detected" verdict, or a non-numeric value such as `abc` that made `bc` fail
 //! and the comparison silently misbehave.
 //!
-//! These tests drive the real scripts and assert on exit codes and output. They
-//! live in the Rust suite because `tests/benchmark_ci_test.sh` is not run by the
-//! standard `cargo test` CI gate, so only a Rust test blocks a regression.
+//! These tests drive the real scripts and assert on exit codes and output. The
+//! benchmark-ci CLI and compilation paths are also covered by the Rust suite so
+//! the standard `cargo test` CI gate blocks regressions.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};

@@ -40,10 +40,9 @@ fn lock_version(lock: &str, name: &str) -> Option<String> {
         } else if let Some(value) = line
             .strip_prefix("version = \"")
             .and_then(|line| line.strip_suffix('\"'))
+            && package_name == Some(name)
         {
-            if package_name == Some(name) {
-                return Some(value.to_owned());
-            }
+            return Some(value.to_owned());
         }
     }
     None
@@ -67,6 +66,15 @@ fn source_bump(snippet: &str, bin: Option<&Path>, fixture: Option<&Path>) -> Out
     command.output().expect("run bump-deps.sh helper")
 }
 
+fn run_bump(args: &[&str], quarantine_hours: Option<&str>) -> Output {
+    let mut command = Command::new(root().join("bump-deps.sh"));
+    command.args(args).stdin(Stdio::null());
+    if let Some(hours) = quarantine_hours {
+        command.env("VIBE_BUMP_QUARANTINE_HOURS", hours);
+    }
+    command.output().expect("run bump-deps.sh CLI")
+}
+
 fn write_publish_fixtures(dir: &Path, packages: &[(&str, &str, bool)]) {
     for (name, version, young) in packages {
         let timestamp = if *young {
@@ -83,14 +91,35 @@ fn write_publish_fixtures(dir: &Path, packages: &[(&str, &str, bool)]) {
 }
 
 fn cargo_stub(bin: &Path, rules: &Path, log: &Path) {
-    write_executable(
-        &bin.join("cargo"),
-        &format!(
-            "#!/bin/bash\nset -eu\nprintf '%s\\n' \"$*\" >> 'LOG_PATH'\nkey=\"$*\"\nwhile IFS='|' read -r match result packages; do\n  [[ -z \"$match\" ]] && continue\n  if [[ \"$key\" == *\"$match\"* ]]; then\n    if [[ \"$result\" == fail ]]; then echo 'error: failed to select a version for the requirement' >&2; exit 1; fi\n    if [[ \"$result\" == noop ]]; then exit 0; fi\n    lock=\"$(dirname \"$(printf '%s\\n' \"$key\" | sed -n 's/.*--manifest-path \\([^ ]*\\).*/\\1/p')\")/Cargo.lock\"\n    awk -v updates=\"$packages\" 'BEGIN {{ n = split(updates, rows, " "); for (i=1; i<=n; i++) {{ split(rows[i], pair, "="); replacement[pair[1]]=pair[2] }} }} function emit() {{ if (name != "") {{ print "[[package]]"; print "name = \\\"" name "\\\""; print "version = \\\"" ((name in replacement) ? replacement[name] : version) "\\\""; print "" }} }} /^\\[\\[package\\]\\]$/ {{ emit(); name=""; version=""; next }} /^name = / {{ name=$3; gsub(/\\\"/, "", name); next }} /^version = / {{ version=$3; gsub(/\\\"/, "", version); next }} END {{ emit() }}' \"$lock\" > \"$lock.next\"\n    mv \"$lock.next\" \"$lock\"\n    for item in $packages; do name=\"${{item%%=*}}\"; version=\"${{item#*=}}\"; if ! grep -q \"name = \\\"$name\\\"\" \"$lock\"; then printf '[[package]]\\nname = \\\"%s\\\"\\nversion = \\\"%s\\\"\\n\\n' \"$name\" \"$version\" >> \"$lock\"; fi; done\n    exit 0\n  fi\ndone < 'RULE_PATH'\necho 'unexpected cargo update invocation' >&2\nexit 2\n"
-                .replace("LOG_PATH", &log.display().to_string())
-                .replace("RULE_PATH", &rules.display().to_string()),
-        ),
-    );
+    let body = r###"#!/bin/bash
+set -eu
+printf '%s\n' "$*" >> 'LOG_PATH'
+key="$*"
+while IFS='|' read -r match result packages; do
+  [[ -z "$match" ]] && continue
+  if [[ "$key" == *"$match"* ]]; then
+    if [[ "$result" == fail ]]; then echo 'error: failed to select a version for the requirement' >&2; exit 1; fi
+    if [[ "$result" == noop ]]; then exit 0; fi
+    lock="$(dirname "$(printf '%s\n' "$key" | sed -n 's/.*--manifest-path \([^ ]*\).*/\1/p')")/Cargo.lock"
+    awk -v updates="$packages" '
+      BEGIN { n = split(updates, rows, " "); for (i=1; i<=n; i++) { split(rows[i], pair, "="); replacement[pair[1]]=pair[2] } }
+      function emit() { if (name != "") { print "[[package]]"; print "name = \"" name "\""; print "version = \"" ((name in replacement) ? replacement[name] : version) "\""; print "" } }
+      /^\[\[package\]\]$/ { emit(); name=""; version=""; next }
+      /^name = / { name=$3; gsub(/"/, "", name); next }
+      /^version = / { version=$3; gsub(/"/, "", version); next }
+      END { emit() }
+    ' "$lock" > "$lock.next"
+    mv "$lock.next" "$lock"
+    for item in $packages; do name="$(echo "$item" | cut -d= -f1)"; version="$(echo "$item" | cut -d= -f2-)"; if ! grep -q "name = \"$name\"" "$lock"; then printf '[[package]]\nname = \"%s\"\nversion = \"%s\"\n\n' "$name" "$version" >> "$lock"; fi; done
+    exit 0
+  fi
+done < 'RULE_PATH'
+echo 'unexpected cargo update invocation' >&2
+exit 2
+"###
+    .replace("LOG_PATH", &log.display().to_string())
+    .replace("RULE_PATH", &rules.display().to_string());
+    write_executable(&bin.join("cargo"), &body);
 }
 
 #[test]
@@ -212,6 +241,255 @@ fn reapply_holds_young_partners_and_transitives_while_keeping_safe_updates() {
     assert!(
         stdout.contains("evil@0.1.0"),
         "rejection must name the young transitive package"
+    );
+}
+
+#[test]
+fn bump_cli_help_config_and_invalid_options_are_reported() {
+    for args in [&["--help"][..], &["-h"][..]] {
+        let output = run_bump(args, None);
+        assert!(output.status.success());
+        let text = String::from_utf8_lossy(&output.stdout);
+        assert!(text.contains("Usage:"));
+        assert!(text.contains("VIBE_BUMP_QUARANTINE_HOURS"));
+    }
+    let unknown = run_bump(&["--not-a-real-flag"], None);
+    assert!(!unknown.status.success());
+    assert!(String::from_utf8_lossy(&unknown.stderr).contains("Unknown"));
+    let defaults = run_bump(&["--print-config"], None);
+    assert!(defaults.status.success());
+    let defaults_text = String::from_utf8_lossy(&defaults.stdout);
+    assert!(defaults_text.contains("quarantine_hours = 24"));
+    assert!(defaults_text.contains("Cargo.toml"));
+    let override_value = run_bump(&["--print-config"], Some("48"));
+    assert!(override_value.status.success());
+    assert!(String::from_utf8_lossy(&override_value.stdout).contains("quarantine_hours = 48"));
+    let invalid = run_bump(&["--print-config"], Some("abc"));
+    assert!(!invalid.status.success());
+    assert!(String::from_utf8_lossy(&invalid.stderr).contains("VIBE_BUMP_QUARANTINE_HOURS"));
+    let internal = run_bump(&["--list-internal-deps"], None);
+    assert!(internal.status.success());
+    assert!(String::from_utf8_lossy(&internal.stdout).contains("0 internal deps"));
+}
+
+#[test]
+fn bump_no_network_dry_run_is_read_only_and_repeatable() {
+    let cargo_toml = root().join("Cargo.toml");
+    let cargo_lock = root().join("Cargo.lock");
+    let manifest_before = fs::read(&cargo_toml).unwrap();
+    let lock_before = fs::read(&cargo_lock).unwrap();
+    let first = run_bump(&["--dry-run", "--no-network"], None);
+    let second = run_bump(&["--dry-run", "--no-network"], None);
+    assert!(
+        first.status.success(),
+        "dry-run failed: {}",
+        String::from_utf8_lossy(&first.stderr)
+    );
+    assert_eq!(first.status.code(), second.status.code());
+    assert!(String::from_utf8_lossy(&first.stdout).contains("--no-network"));
+    assert_eq!(fs::read(cargo_toml).unwrap(), manifest_before);
+    assert_eq!(fs::read(cargo_lock).unwrap(), lock_before);
+}
+
+#[test]
+fn bump_source_helpers_parse_diff_restore_and_read_lock_versions() {
+    let tmp = tempfile::tempdir().unwrap();
+    let manifest = tmp.path().join("Cargo.toml");
+    fs::write(&manifest, "[package]\nname=\"demo\"\n\n[dependencies]\nserde = \"1.0.225\"\narrow = { version = \"58.4.0\", default-features = false }\nparquet = \"58.3.0\"\n\n[dev-dependencies]\ntempfile = \"3.27\"\n").unwrap();
+    let deps = source_bump(
+        &format!("bump_deps::extract_dep_versions '{}'", manifest.display()),
+        None,
+        None,
+    );
+    assert!(deps.status.success());
+    let deps = String::from_utf8_lossy(&deps.stdout);
+    for expected in [
+        "serde\t1.0.225",
+        "arrow\t58.4.0",
+        "parquet\t58.3.0",
+        "tempfile\t3.27",
+    ] {
+        assert!(
+            deps.lines().any(|line| line == expected),
+            "missing {expected:?} in {deps}"
+        );
+    }
+    let before = tmp.path().join("before.tsv");
+    let after = tmp.path().join("after.tsv");
+    fs::write(&before, "serde\t1.0.190\nparquet\t58.3.0\narrow\t58.3.0\n").unwrap();
+    fs::write(&after, "serde\t1.0.225\nparquet\t58.3.0\narrow\t58.4.0\n").unwrap();
+    let changed = source_bump(
+        &format!(
+            "bump_deps::compute_changed_deps '{}' '{}'",
+            before.display(),
+            after.display()
+        ),
+        None,
+        None,
+    );
+    assert!(changed.status.success());
+    let changed = String::from_utf8_lossy(&changed.stdout);
+    assert!(
+        changed
+            .lines()
+            .any(|line| line == "serde\t1.0.190\t1.0.225")
+    );
+    assert!(changed.lines().any(|line| line == "arrow\t58.3.0\t58.4.0"));
+    assert!(!changed.lines().any(|line| line.starts_with("parquet\t")));
+    let restored = source_bump(
+        &format!(
+            "bump_deps::revert_dep_line '{}' serde 1.0.190 && bump_deps::revert_dep_line '{}' arrow 58.3.0",
+            manifest.display(),
+            manifest.display()
+        ),
+        None,
+        None,
+    );
+    assert!(restored.status.success());
+    let manifest_text = fs::read_to_string(manifest).unwrap();
+    assert!(manifest_text.contains("serde = \"1.0.190\""));
+    assert!(manifest_text.contains("version = \"58.3.0\""));
+    assert!(manifest_text.contains("parquet = \"58.3.0\""));
+}
+
+#[test]
+fn bump_publish_fixture_and_lock_helpers_fail_loud_and_cover_transitives() {
+    let tmp = tempfile::tempdir().unwrap();
+    let fixtures = tmp.path().join("fixtures");
+    fs::create_dir_all(&fixtures).unwrap();
+    fs::write(
+        fixtures.join("serde-1.0.225.json"),
+        r#"{"version":{"num":"1.0.225","created_at":"2025-05-19T12:00:00.000000+00:00"}}"#,
+    )
+    .unwrap();
+    let publish = source_bump(
+        "bump_deps::fetch_publish_epoch serde 1.0.225",
+        None,
+        Some(&fixtures),
+    );
+    assert!(publish.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&publish.stdout).trim(),
+        "1747656000"
+    );
+    let missing = source_bump(
+        "bump_deps::fetch_publish_epoch absent 9.9.9",
+        None,
+        Some(&fixtures),
+    );
+    assert!(!missing.status.success());
+    let now = Command::new("bash")
+        .arg("-c")
+        .arg(format!(
+            "source '{}' && bump_deps::current_epoch",
+            root().join("bump-deps.sh").display()
+        ))
+        .env("BUMP_DEPS_SOURCE_ONLY", "1")
+        .env("BUMP_DEPS_NOW_EPOCH", "1700000000")
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    assert!(now.status.success());
+    assert_eq!(String::from_utf8_lossy(&now.stdout).trim(), "1700000000");
+    let lock = tmp.path().join("Cargo.lock");
+    fs::write(
+        &lock,
+        lockfile(&[
+            ("serde", "1.0.190"),
+            ("quote", "1.0.35"),
+            ("proc-macro2", "1.0.90"),
+        ]),
+    )
+    .unwrap();
+    let versions = source_bump(
+        &format!("bump_deps::extract_lock_versions '{}'", lock.display()),
+        None,
+        None,
+    );
+    assert!(versions.status.success());
+    let versions = String::from_utf8_lossy(&versions.stdout);
+    for expected in ["serde\t1.0.190", "quote\t1.0.35", "proc-macro2\t1.0.90"] {
+        assert!(versions.lines().any(|line| line == expected));
+    }
+    let before = tmp.path().join("before.tsv");
+    let after = tmp.path().join("after.tsv");
+    fs::write(&before, "serde\t1.0.190\nquote\t1.0.35\n").unwrap();
+    fs::write(&after, "serde\t1.0.225\nquote\t1.0.35\nsneaky\t0.1.0\n").unwrap();
+    let added = source_bump(
+        &format!(
+            "bump_deps::compute_new_deps '{}' '{}'",
+            before.display(),
+            after.display()
+        ),
+        None,
+        None,
+    );
+    assert!(added.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&added.stdout).trim(),
+        "sneaky\t0.1.0"
+    );
+}
+
+#[test]
+fn bump_planner_quarantines_young_updates_new_packages_and_unknown_publish_times() {
+    let tmp = tempfile::tempdir().unwrap();
+    let fixtures = tmp.path().join("fixtures");
+    fs::create_dir_all(&fixtures).unwrap();
+    write_publish_fixtures(
+        &fixtures,
+        &[
+            ("quote", "1.0.40", true),
+            ("sneaky", "0.1.0", true),
+            ("serde", "1.0.225", false),
+        ],
+    );
+    let before = tmp.path().join("before.tsv");
+    let after = tmp.path().join("after.tsv");
+    fs::write(&before, "serde\t1.0.190\nquote\t1.0.35\n").unwrap();
+    fs::write(&after, "serde\t1.0.225\nquote\t1.0.40\nsneaky\t0.1.0\n").unwrap();
+    let planned = source_bump(
+        &format!(
+            "bump_deps::plan_lock_quarantine '{}' '{}' 1748736000 24",
+            before.display(),
+            after.display()
+        ),
+        None,
+        Some(&fixtures),
+    );
+    assert!(planned.status.success());
+    let plan = String::from_utf8_lossy(&planned.stdout);
+    assert!(
+        plan.lines()
+            .any(|line| line == "revert\tquote\t1.0.35\t1.0.40\t5h"),
+        "young version should be reverted: {plan}"
+    );
+    assert!(
+        plan.lines()
+            .any(|line| line == "block\tsneaky\t-\t0.1.0\t5h"),
+        "young transitive should be blocked: {plan}"
+    );
+    assert!(
+        !plan.lines().any(|line| line.contains("\tserde\t")),
+        "aged update should remain safe: {plan}"
+    );
+    fs::write(&before, "ghost\t1.0.0\n").unwrap();
+    fs::write(&after, "ghost\t9.9.9\n").unwrap();
+    let unknown = source_bump(
+        &format!(
+            "bump_deps::plan_lock_quarantine '{}' '{}' 1748736000 24",
+            before.display(),
+            after.display()
+        ),
+        None,
+        Some(&fixtures),
+    );
+    assert!(
+        unknown.status.success(),
+        "unknown publish time is a fail-closed plan, not a parser failure"
+    );
+    assert!(
+        String::from_utf8_lossy(&unknown.stdout).contains("revert\tghost\t1.0.0\t9.9.9\tunknown")
     );
 }
 
@@ -358,7 +636,7 @@ fn safe_lockstep_family_is_reapplied_in_one_multi_package_update() {
     )
     .unwrap();
     let rules = tmp.path().join("rules");
-    fs::write(&rules, "--workspace|noop|\n-p wasm-bindgen@0.2.105|ok|js-sys=0.3.107 wasm-bindgen=0.2.129 web-sys=0.3.107\njs-sys|noop|\nwasm-bindgen|noop|\nweb-sys|noop|\npair-a|noop|\n").unwrap();
+    fs::write(&rules, "--workspace|noop|\n-p pair-a@1.0.0|ok|js-sys=0.3.107 wasm-bindgen=0.2.129 web-sys=0.3.107\njs-sys|noop|\nwasm-bindgen|noop|\nweb-sys|noop|\npair-a|noop|\n").unwrap();
     let log = tmp.path().join("cargo.log");
     cargo_stub(&bin, &rules, &log);
     let output = source_bump(
@@ -501,6 +779,30 @@ fn benchmark_cli_validation_and_discovery_work_in_an_isolated_manifest() {
     let no_benchmarks = empty.run(&["--list"], None);
     assert!(!no_benchmarks.status.success());
     assert!(String::from_utf8_lossy(&no_benchmarks.stdout).contains("No benchmark targets"));
+}
+
+#[test]
+fn benchmark_ci_discovers_real_manifest_targets() {
+    let output = Command::new(root().join("scripts/benchmark-ci.sh"))
+        .arg("--list")
+        .stdin(Stdio::null())
+        .output()
+        .expect("run benchmark-ci.sh against the repository manifest");
+    assert!(
+        output.status.success(),
+        "benchmark discovery failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let listed = String::from_utf8_lossy(&output.stdout);
+    assert!(listed.contains("synapse_counts"));
+    assert!(listed.contains("neuron_interning"));
+    assert!(
+        listed
+            .lines()
+            .filter(|line| line.starts_with("  - "))
+            .count()
+            >= 10
+    );
 }
 
 #[test]

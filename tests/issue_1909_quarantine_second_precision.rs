@@ -6,9 +6,8 @@
 //! advertised 24h window could expire after 23h00m01s.
 //!
 //! These tests drive the real shell helpers with epoch seconds and assert
-//! the boundary behaviour. They live in the Rust suite (not just
-//! `tests/bump_deps_test.sh`) so the standard `cargo test` CI gate blocks a
-//! regression back to hour-floored arithmetic.
+//! the boundary behaviour. They live in the Rust suite so the standard
+//! `cargo test` CI gate blocks a regression back to hour-floored arithmetic.
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
