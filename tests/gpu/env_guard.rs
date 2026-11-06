@@ -1,9 +1,9 @@
 //! Save/restore guard for process-environment variables in the GPU tests.
 //!
-//! Tests that call the `unsafe` GPU environment setters (or depend on the
-//! variables they write) must be `#[serial_test::serial]` and hold one of
-//! these guards, so a variable the process-wide `Once` writes does not leak
-//! into the tests that run after them (Issue #2538).
+//! Tests that call the `unsafe` GPU environment setters must use this guard to
+//! restore their writes. Tests that read these variables during GPU
+//! initialisation share their serial lock so they cannot overlap those writes
+//! (Issue #2538).
 
 use std::ffi::OsString;
 

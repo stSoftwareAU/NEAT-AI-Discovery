@@ -22,17 +22,24 @@ Version bump: `Cargo.toml` updated for this change; the merged commit records th
 
 ## Evidence
 
-Backend/test-infrastructure change; no UI. `src/analysis/gpu/analyzer.rs` calls `setup_gpu_environment` from GPU availability checks and analyzer construction, and `src/analysis/gpu/device.rs` does so before adapter probing. The GPU initialisation integration tests now share the serial lock with the environment setters.
+Backend/test-infrastructure change; no UI. `src/analysis/gpu/analyzer.rs` calls `setup_gpu_environment` from GPU availability checks and analyzer construction, and `src/analysis/gpu/device.rs` does so before adapter probing. Those indirect GPU initialisation tests now use the same serial lock as the environment setters.
+
+- #713: Deduplicate env::set_var code between memory.rs and platform.rs.
+- #1873: Safe GPU setup fns assert an unenforceable thread-free invariant around unsafe env writes.
+- #2538: GPU integration test binary race between the issue #713 smoke tests and issue #1873 verdict test.
 
 ## Test Plan
 
 - `timeout 900 cargo test --locked --all-features --test gpu env_setup -- --test-threads=2`: 6 passed.
 - Same targeted command in a separate process with all four setup variables and `NEAT_AI_DISCOVERY_QUIET_GPU` unset: 6 passed.
 - Same targeted command in a separate process with `NEAT_AI_DISCOVERY_QUIET_GPU=1` and the four setup variables unset: 6 passed.
+- `timeout 900 cargo test --locked --all-features --test gpu -- --test-threads=2`: 66 passed.
 - `tests/gpu/env_guard.rs::tests::capture_gpu_setup_vars_restores_set_and_unset_values`: passed. Removing either the present-value restore or absent-value removal made its corresponding restoration assertion fail.
-- Removed each of the six serial attributes individually and ran its test: each failed at the `is_locked_serially` assertion; all attributes were restored.
-- Added only serial attributes to existing GPU initialisation tests; no existing assertions were removed.
+- Removed each of the six issue #713/#1873 serial attributes individually and ran its test: each failed at its `is_locked_serially` assertion; all attributes were restored.
+- Removed each of the 13 serial attributes on indirect GPU initialisation tests individually: each failed at the shared serial-lock assertion in its GPU availability helper; all attributes were restored.
+- Existing assertions were preserved. No UI or production code changed.
 - `cargo fmt --all -- --check`: passed.
 - `cargo clippy --locked --all-features --test gpu -- -D warnings`: passed.
-- `./quality/fuzz_lockfile.sh check`: passed; `fuzz/Cargo.lock` is synchronised with the retained version bump.
+- `./quality/fuzz_lockfile.sh check`: passed; `fuzz/Cargo.lock` remains synchronised with the retained version bump.
+- `timeout 900 ./quality.sh < /dev/null`: all 1,848 library tests and integration test targets passed. The gate then failed in rustdoc at `src/parquet_format/footer.rs:66`: public documentation for `uuid_heap_bytes` links to private `neuron_uuid_heap_bytes`. That line is present on `origin/Develop` and the file is unchanged by this branch; the scope restriction kept this PR test-only. The release-library build was not reached.
 - The original intermittent race itself was not reproduced.

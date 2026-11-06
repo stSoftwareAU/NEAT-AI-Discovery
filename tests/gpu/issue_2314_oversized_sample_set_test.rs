@@ -16,6 +16,10 @@ use neat_ai_discovery::analysis::samples::HelpfulSample;
 /// Skip test if no GPU available.
 macro_rules! skip_without_gpu {
     () => {
+        assert!(
+            serial_test::is_locked_serially(None),
+            "GPU initialisation must be serialised with GPU environment setup"
+        );
         if !GpuAnalyzer::gpu_is_available() {
             eprintln!("Skipping test: no GPU available");
             return;
