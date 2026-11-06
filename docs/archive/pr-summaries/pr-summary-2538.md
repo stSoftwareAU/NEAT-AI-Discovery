@@ -1,47 +1,38 @@
 ## Summary
 
-The `gpu` integration test binary ran the issue #713 smoke tests (which fire the process-wide `Once` that writes `XDG_RUNTIME_DIR`) in parallel with the issue #1873 `setup_gpu_environment_is_safe_and_consistent` test, whose two calls must return the same verdict and depend on that variable. The three #713 tests and the three #1873 tests that call `setup_gpu_environment` are now `#[serial_test::serial]`, and each saves and restores `XDG_RUNTIME_DIR` and the Mesa variables through a shared `EnvGuard`. Their SAFETY comments now state the real precondition. Test-only change. Closes #2538.
+Serialised the GPU environment smoke and setup tests, and GPU initialisation tests that read the same environment variables, to prevent the `Once` setters and setup probes from racing. Added a shared guard that restores all four GPU setup variables to either their original value or unset state. Test-only change. Closes #2538.
 
-Version bump: `Cargo.toml` and the root `Cargo.lock` updated for this change, and `fuzz/Cargo.lock` restamped with `quality/fuzz_lockfile.sh sync`; the merged commit records the final version.
+Version bump: `Cargo.toml` updated for this change; the merged commit records the final version.
 
 ## Spec
 
 ### Intent and Rationale
 
-- The lib-test copy of this race was fixed by #2497; the integration binary kept the original pattern. The fix mirrors it: `#[serial]` plus save/restore guards.
-- `tests/gpu/issue_1873_gpu_env_setup_thread_guard.rs::setup_gpu_environment_never_writes_while_threads_live` and `..._skips_or_is_unnecessary_on_linux` are also serialised: they read the same variables and would otherwise observe the write.
+- The issue #713 smoke tests could set `XDG_RUNTIME_DIR` between the two issue #1873 setup calls, changing their verdict. Serialisation protects the shared process environment.
+- GPU initialisation also reads these variables through `setup_gpu_environment`; its callers in the `gpu` integration binary use the same serial lock.
 
 ### Essential Design Decisions
 
-- Each serialised test begins with `assert!(serial_test::is_locked_serially(None), ...)`. A race cannot be reproduced deterministically, so this makes dropping the attribute turn the test red.
-- The guard lives in `tests/gpu/env_guard.rs`, not `tests/common/mod.rs`, because that module is compiled into many other test binaries where an unused helper would warn.
-- Assumed: tests elsewhere in the `gpu` binary do not touch these variables (grep of `tests/` for `XDG_RUNTIME_DIR`, `setup_gpu_environment` and `ensure_xdg_runtime_dir` finds only the two files edited, plus doc-parity and ledger tests in other binaries).
+- The lock assertions make each serialization requirement fail deterministically if its attribute is removed.
+- `EnvGuard` preserves both present and absent values for `XDG_RUNTIME_DIR`, `EGL_LOG_LEVEL`, `MESA_GLSL_CACHE_DISABLE` and `MESA_DEBUG`.
 
 ### Undiscoverable Facts
 
-- `fuzz/Cargo.lock` was at 0.74.349 while the root was 0.74.350; `sync` corrected both.
+- The original intermittent verdict mismatch was not directly reproduced; its trigger depends on test scheduling and the process-wide `Once`.
 
 ## Evidence
 
-Backend/test-only change, no UI. The six tests below run on the final tree: `cargo test --locked --test gpu env_setup` gave `6 passed`.
-
-- `tests/gpu/issue_713_deduplicate_gpu_env_setup.rs`: `platform_suppress_mesa_warnings_does_not_panic`, `platform_ensure_xdg_runtime_dir_does_not_panic`, `utils_reexports_resolve_to_platform`
-- `tests/gpu/issue_1873_gpu_env_setup_thread_guard.rs`: `setup_gpu_environment_is_safe_and_consistent`, `setup_gpu_environment_never_writes_while_threads_live`, `setup_gpu_environment_skips_or_is_unnecessary_on_linux`
-
-## Acceptance Criteria
-
-The issue states no acceptance-criteria list, so no reviewer sub-agents ran. Every item of the issue's "Suggested fix" is done: the three #713 smoke tests and the env-dependent #1873 tests are serial, the smoke tests save and restore `XDG_RUNTIME_DIR` and the Mesa variables, and the SAFETY comments state the real precondition.
+Backend/test-infrastructure change; no UI. `src/analysis/gpu/analyzer.rs` calls `setup_gpu_environment` from GPU availability checks and analyzer construction, and `src/analysis/gpu/device.rs` does so before adapter probing. The GPU initialisation integration tests now share the serial lock with the environment setters.
 
 ## Test Plan
 
-- Edited tests (no assertion removed from any of them; the existing calls and `assert_eq!`/`assert_ne!`/`assert!(matches!…)` are unchanged): the six listed above. Each gains `#[serial_test::serial]`, an `is_locked_serially` assertion and an `EnvGuard`.
-- Red check: with every `#[serial_test::serial]` line removed from both files and the rest kept, `cargo test --locked --test gpu env_setup` gave `0 passed; 6 failed`, each panicking with "must be serialised with every env-mutating or env-dependent test in the binary". Attribute restored afterwards; the same command then passes (6 passed).
-- Not reproduced: the original flaky failure itself (scheduler-dependent, one `Once` per run); the serial-lock assertion is the deterministic stand-in.
-- `cargo fmt --all -- --check` clean; `cargo clippy --locked --tests -- -D warnings` clean (run by the executor before the version bump).
-- `./quality/fuzz_lockfile.sh check`: OK.
-- Docs: `CHANGELOG.md` entry added; `README.md` and `docs/` do not describe these test internals.
-- Full gate: `timeout 590 ./quality.sh` hit the cap (exit 124) while still compiling a cold build in this fresh worktree; not run to completion here.
-
-Not done / risk: the full quality gate did not finish; the original intermittent failure is scheduler-dependent and was not observed directly.
-
-<!-- vibe-quality-gate-skipped reason="full ./quality.sh exceeded the 590 s foreground cap (exit 124) during a cold build; fmt, clippy and the touched gpu tests were run separately; CI runs the full gate" -->
+- `timeout 900 cargo test --locked --all-features --test gpu env_setup -- --test-threads=2`: 6 passed.
+- Same targeted command in a separate process with all four setup variables and `NEAT_AI_DISCOVERY_QUIET_GPU` unset: 6 passed.
+- Same targeted command in a separate process with `NEAT_AI_DISCOVERY_QUIET_GPU=1` and the four setup variables unset: 6 passed.
+- `tests/gpu/env_guard.rs::tests::capture_gpu_setup_vars_restores_set_and_unset_values`: passed. Removing either the present-value restore or absent-value removal made its corresponding restoration assertion fail.
+- Removed each of the six serial attributes individually and ran its test: each failed at the `is_locked_serially` assertion; all attributes were restored.
+- Added only serial attributes to existing GPU initialisation tests; no existing assertions were removed.
+- `cargo fmt --all -- --check`: passed.
+- `cargo clippy --locked --all-features --test gpu -- -D warnings`: passed.
+- `./quality/fuzz_lockfile.sh check`: passed; `fuzz/Cargo.lock` is synchronised with the retained version bump.
+- The original intermittent race itself was not reproduced.
