@@ -58,7 +58,14 @@ fn source_bump(snippet: &str, bin: Option<&Path>, fixture: Option<&Path>) -> Out
         .env("BUMP_DEPS_SOURCE_ONLY", "1")
         .stdin(Stdio::null());
     if let Some(bin) = bin {
-        command.env("PATH", format!("{}:/usr/bin:/bin", bin.display()));
+        command.env(
+            "PATH",
+            format!(
+                "{}:{}",
+                bin.display(),
+                std::env::var("PATH").unwrap_or_default()
+            ),
+        );
     }
     if let Some(fixture) = fixture {
         command.env("BUMP_DEPS_TEST_FIXTURE", fixture);
@@ -227,13 +234,18 @@ fn reapply_holds_young_partners_and_transitives_while_keeping_safe_updates() {
         "kept\tserde\t1.0.200\t1.0.201",
         "rejected\twasm-bindgen-futures\t0.4.78\t0.4.79\t",
         "rejected\ttokio\t1.40.0\t1.41.0\t",
-        "rejected\tmio\t1.0.0\t1.0.1\tcargo update failed",
+        "rejected\tmio\t1.0.0\t1.0.1\tcargo update failed: failed to select a version",
     ] {
         assert!(
             stdout.lines().any(|line| line.starts_with(expected)),
             "missing diagnostic {expected:?} in {stdout}"
         );
     }
+    let calls = fs::read_to_string(&log).unwrap();
+    assert!(
+        !calls.lines().any(|line| line.contains("-p zerocopy@0.8.1")),
+        "an already updated partner must not be updated again: {calls}"
+    );
     assert!(
         stdout.contains("js-sys@0.3.106"),
         "rejection must name the young lockstep partner"
@@ -690,7 +702,7 @@ fn is_grouped_lockstep_call(line: &str) -> bool {
 #[test]
 fn safe_lockstep_family_is_reapplied_in_one_multi_package_update() {
     let run = run_lockstep_scenario(
-        "--workspace|noop|\n-p pair-a@1.0.0|ok|js-sys=0.3.107 wasm-bindgen=0.2.129 web-sys=0.3.107\njs-sys|noop|\nwasm-bindgen|noop|\nweb-sys|noop|\npair-a|noop|\n",
+        "--workspace|noop|\n-p js-sys@0.3.105 -p|ok|js-sys=0.3.107 wasm-bindgen=0.2.129 web-sys=0.3.107\njs-sys|noop|\nwasm-bindgen|noop|\nweb-sys|noop|\npair-a|noop|\n",
     );
     assert!(
         run.output.status.success(),
@@ -714,7 +726,17 @@ fn safe_lockstep_family_is_reapplied_in_one_multi_package_update() {
     assert_eq!(lock_version(final_lock, "pair-b").as_deref(), Some("1.0.0"));
     let stdout = String::from_utf8_lossy(&run.output.stdout);
     assert!(!stdout.contains("kept\tpair-a"));
-    assert!(stdout.contains("rejected\tpair-a"));
+    for expected in [
+        "kept\tjs-sys\t0.3.105\t0.3.107",
+        "kept\twasm-bindgen\t0.2.105\t0.2.129",
+        "kept\tweb-sys\t0.3.105\t0.3.107",
+        "rejected\tpair-a\t1.0.0\t1.0.1\theld by a locked lockstep partner",
+    ] {
+        assert!(
+            stdout.lines().any(|line| line.starts_with(expected)),
+            "missing {expected:?}: {stdout}"
+        );
+    }
     assert!(
         run.calls.lines().any(is_grouped_lockstep_call),
         "the stuck lockstep family must be updated together: {}",

@@ -18,6 +18,7 @@ use neat_ai_discovery::focus::compute_impacts_public;
 use neat_ai_discovery::parquet_format::write_records_to_parquet;
 use neat_ai_discovery::types::DiscoverRecord;
 use neat_ai_discovery::{CreatureJson, NeuronJson, SynapseJson};
+use serial_test::serial;
 
 // ---------------------------------------------------------------------------
 // Helpers: synthetic creature and record generation
@@ -226,7 +227,9 @@ fn spawn_deadlock_checker(
 /// Exercise the full analysis pipeline (synapse + neuron) with a network
 /// and verify no deadlocks occur. A background thread periodically checks for
 /// deadlocks using `parking_lot::deadlock::check_deadlock()`.
+// Serial: reads or clears the process-global cancellation flag that other serial tests set (Issue #2533).
 #[test]
+#[serial]
 fn stress_full_pipeline_no_deadlocks_under_high_concurrency() {
     if !GpuAnalyzer::gpu_is_available() {
         eprintln!("Skipping: no GPU available");
@@ -347,6 +350,7 @@ fn stress_impact_computation_concurrent_determinism() {
 /// Simulate rapid repeated calls to the analysis pipeline, as would occur
 /// during a NEAT-AI evolution run. Verifies no resource exhaustion or deadlocks.
 #[test]
+#[serial]
 fn stress_rapid_repeated_analyses_no_resource_exhaustion() {
     if !GpuAnalyzer::gpu_is_available() {
         eprintln!("Skipping: no GPU available");
@@ -404,6 +408,7 @@ fn stress_rapid_repeated_analyses_no_resource_exhaustion() {
 /// contention. The pipeline should respect the deadline and return a result
 /// (possibly partial) without deadlocking.
 #[test]
+#[serial]
 fn stress_tight_deadline_respects_timeout_without_deadlock() {
     if !GpuAnalyzer::gpu_is_available() {
         eprintln!("Skipping: no GPU available");
