@@ -36,6 +36,10 @@
 # suite that exits 0 but records no comparison (no GPU) is reported as skipped
 # and does not fail the run.
 #
+# Comparison mode needs `bc`. Without it the script exits 1 before running any
+# suite (Issue #2572), because a missing `bc` would otherwise count every
+# comparison as within threshold. `--save-baseline` and `--list` do not need it.
+#
 # Workflow:
 #   1. Save a baseline:    ./benchmark_compare.sh --save-baseline
 #   2. Make code changes
@@ -214,6 +218,14 @@ if [[ "$SAVE_BASELINE" == true ]]; then
 fi
 
 # ── Comparison mode ──────────────────────────────────────────────────
+
+# Every verdict below is a `bc` comparison inside an `if`/`elif`, where a missing
+# `bc` does not trip `set -e` and would count every comparison as within
+# threshold. Fail loud up front instead (Issue #2572).
+if ! command -v bc > /dev/null 2>&1; then
+    echo "Error: bc is not installed — benchmark_compare.sh needs it to compare changes against the threshold, so no regression verdict can be given" >&2
+    exit 1
+fi
 
 echo "Benchmark Regression Comparison"
 echo "==============================="

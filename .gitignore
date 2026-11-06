@@ -22,6 +22,7 @@
 # of that name, which silently hid source modules such as `src/debug/`.
 /debug
 /target
+/lcov.info
 # Cargo.lock is committed — required for reproducible cdylib builds and
 # for `cargo-deny`/`cargo-audit` to operate on a reviewed dependency
 # graph (Issue #1266).

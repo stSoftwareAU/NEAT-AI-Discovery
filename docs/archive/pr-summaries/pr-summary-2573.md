@@ -16,6 +16,7 @@ Version bump: not made by hand; the CI `version-increment` job bumps `Cargo.toml
 - The `fuzz/Cargo.lock` guard allows exactly two diff lines: `-version = "<any>"` and `+version = "<new crate version>"`. The old stamp may be any value, because it can lag by more than one release; anything else fails the job loudly, matching the Cargo.lock guard (Issue #1878).
 - `.github/workflows/ci.yml` was edited because the issue is an approved work item asking for exactly this change; AGENTS.md's approval requirement is met by the issue itself.
 - The "already ahead of base" early exit is left alone: the sync runs only when the job performs the bump, as the issue asks.
+- Removed the accidentally committed host-specific `lcov.info` and ignored the root output. Coverage remains generated and uploaded by `.github/workflows/cargo-quality.yml` on each run; the version restamp remains covered by `tests/issue_1878_ci_version_increment_no_reresolve.rs::version_increment_step_restamps_the_fuzz_lockfile_version_only`.
 
 ### Undiscoverable Facts
 
