@@ -585,8 +585,16 @@ fn manifest_that_requires_a_young_package_fails_with_the_package_cause() {
     );
 }
 
-#[test]
-fn safe_lockstep_family_is_reapplied_in_one_multi_package_update() {
+/// Result of running `reapply_safe_lock_changes` over the lockstep fixture.
+struct LockstepRun {
+    output: Output,
+    final_lock: String,
+    calls: String,
+}
+
+/// Lockstep fixture: js-sys / wasm-bindgen / web-sys / pair-a are aged, pair-b
+/// is younger than the 24h window. `rules` drives the stubbed `cargo update`.
+fn run_lockstep_scenario(rules_body: &str) -> LockstepRun {
     let tmp = tempfile::tempdir().unwrap();
     let project = tmp.path().join("project");
     let bin = tmp.path().join("bin");
@@ -636,7 +644,7 @@ fn safe_lockstep_family_is_reapplied_in_one_multi_package_update() {
     )
     .unwrap();
     let rules = tmp.path().join("rules");
-    fs::write(&rules, "--workspace|noop|\n-p pair-a@1.0.0|ok|js-sys=0.3.107 wasm-bindgen=0.2.129 web-sys=0.3.107\njs-sys|noop|\nwasm-bindgen|noop|\nweb-sys|noop|\npair-a|noop|\n").unwrap();
+    fs::write(&rules, rules_body).unwrap();
     let log = tmp.path().join("cargo.log");
     cargo_stub(&bin, &rules, &log);
     let output = source_bump(
@@ -649,41 +657,133 @@ fn safe_lockstep_family_is_reapplied_in_one_multi_package_update() {
         Some(&bin),
         Some(&fixtures),
     );
-    assert!(
-        output.status.success(),
-        "lockstep reapply failed: {}",
-        String::from_utf8_lossy(&output.stderr)
+    LockstepRun {
+        output,
+        final_lock: fs::read_to_string(project.join("Cargo.lock")).unwrap(),
+        calls: fs::read_to_string(log).unwrap(),
+    }
+}
+
+/// Every lockstep package is back at its pristine (old) version.
+fn assert_lock_restored_to_pristine(final_lock: &str) {
+    for (name, version) in [
+        ("js-sys", "0.3.105"),
+        ("wasm-bindgen", "0.2.105"),
+        ("web-sys", "0.3.105"),
+        ("pair-a", "1.0.0"),
+        ("pair-b", "1.0.0"),
+    ] {
+        assert_eq!(
+            lock_version(final_lock, name).as_deref(),
+            Some(version),
+            "{name} must be restored to the pre-grouped state:\n{final_lock}"
+        );
+    }
+}
+
+fn is_grouped_lockstep_call(line: &str) -> bool {
+    line.contains("-p js-sys@0.3.105")
+        && line.contains("-p wasm-bindgen@0.2.105")
+        && line.contains("-p web-sys@0.3.105")
+}
+
+#[test]
+fn safe_lockstep_family_is_reapplied_in_one_multi_package_update() {
+    let run = run_lockstep_scenario(
+        "--workspace|noop|\n-p pair-a@1.0.0|ok|js-sys=0.3.107 wasm-bindgen=0.2.129 web-sys=0.3.107\njs-sys|noop|\nwasm-bindgen|noop|\nweb-sys|noop|\npair-a|noop|\n",
     );
-    let final_lock = fs::read_to_string(project.join("Cargo.lock")).unwrap();
+    assert!(
+        run.output.status.success(),
+        "lockstep reapply failed: {}",
+        String::from_utf8_lossy(&run.output.stderr)
+    );
+    let final_lock = &run.final_lock;
     assert_eq!(
-        lock_version(&final_lock, "js-sys").as_deref(),
+        lock_version(final_lock, "js-sys").as_deref(),
         Some("0.3.107")
     );
     assert_eq!(
-        lock_version(&final_lock, "wasm-bindgen").as_deref(),
+        lock_version(final_lock, "wasm-bindgen").as_deref(),
         Some("0.2.129")
     );
     assert_eq!(
-        lock_version(&final_lock, "web-sys").as_deref(),
+        lock_version(final_lock, "web-sys").as_deref(),
         Some("0.3.107")
     );
-    assert_eq!(
-        lock_version(&final_lock, "pair-a").as_deref(),
-        Some("1.0.0")
-    );
-    assert_eq!(
-        lock_version(&final_lock, "pair-b").as_deref(),
-        Some("1.0.0")
-    );
-    assert!(!String::from_utf8_lossy(&output.stdout).contains("kept\tpair-a"));
-    assert!(String::from_utf8_lossy(&output.stdout).contains("rejected\tpair-a"));
-    let calls = fs::read_to_string(log).unwrap();
+    assert_eq!(lock_version(final_lock, "pair-a").as_deref(), Some("1.0.0"));
+    assert_eq!(lock_version(final_lock, "pair-b").as_deref(), Some("1.0.0"));
+    let stdout = String::from_utf8_lossy(&run.output.stdout);
+    assert!(!stdout.contains("kept\tpair-a"));
+    assert!(stdout.contains("rejected\tpair-a"));
     assert!(
-        calls.lines().any(|line| line.contains("-p js-sys@0.3.105")
-            && line.contains("-p wasm-bindgen@0.2.105")
-            && line.contains("-p web-sys@0.3.105")),
-        "the stuck lockstep family must be updated together: {calls}"
+        run.calls.lines().any(is_grouped_lockstep_call),
+        "the stuck lockstep family must be updated together: {}",
+        run.calls
     );
+}
+
+#[test]
+fn lockstep_update_that_drags_in_a_young_package_is_rolled_back_and_rejected() {
+    // The grouped multi-package update also bumps pair-b to a version younger
+    // than the window: the whole step must be rolled back and every stuck
+    // member reported rejected.
+    let run = run_lockstep_scenario(
+        "--workspace|noop|\n-p js-sys@0.3.105 -p|ok|js-sys=0.3.107 wasm-bindgen=0.2.129 web-sys=0.3.107 pair-b=1.0.1\n-p wasm-bindgen@0.2.105 -p|ok|js-sys=0.3.107 wasm-bindgen=0.2.129 web-sys=0.3.107 pair-b=1.0.1\n-p web-sys@0.3.105 -p|ok|js-sys=0.3.107 wasm-bindgen=0.2.129 web-sys=0.3.107 pair-b=1.0.1\n-p pair-a@1.0.0 -p|ok|js-sys=0.3.107 wasm-bindgen=0.2.129 web-sys=0.3.107 pair-b=1.0.1\njs-sys|noop|\nwasm-bindgen|noop|\nweb-sys|noop|\npair-a|noop|\n",
+    );
+    assert!(
+        run.output.status.success(),
+        "lockstep reapply failed: {}",
+        String::from_utf8_lossy(&run.output.stderr)
+    );
+    assert!(
+        run.calls.lines().any(is_grouped_lockstep_call),
+        "the grouped lockstep update must have been attempted: {}",
+        run.calls
+    );
+    assert_lock_restored_to_pristine(&run.final_lock);
+    let stdout = String::from_utf8_lossy(&run.output.stdout);
+    for name in ["js-sys", "wasm-bindgen", "web-sys", "pair-a"] {
+        let line = stdout
+            .lines()
+            .find(|line| line.starts_with(&format!("rejected\t{name}\t")))
+            .unwrap_or_else(|| panic!("{name} must be reported rejected:\n{stdout}"));
+        assert!(
+            line.contains("lockstep update drags in-quarantine") && line.contains("pair-b"),
+            "unexpected rejection reason for {name}: {line}"
+        );
+    }
+    assert!(!stdout.contains("kept\t"), "nothing may be kept:\n{stdout}");
+}
+
+#[test]
+fn failed_lockstep_update_leaves_the_lockfile_unchanged_and_is_rejected() {
+    let run = run_lockstep_scenario(
+        "--workspace|noop|\n-p js-sys@0.3.105 -p|fail|\n-p wasm-bindgen@0.2.105 -p|fail|\n-p web-sys@0.3.105 -p|fail|\n-p pair-a@1.0.0 -p|fail|\njs-sys|noop|\nwasm-bindgen|noop|\nweb-sys|noop|\npair-a|noop|\n",
+    );
+    assert!(
+        run.output.status.success(),
+        "lockstep reapply failed: {}",
+        String::from_utf8_lossy(&run.output.stderr)
+    );
+    assert!(
+        run.calls.lines().any(is_grouped_lockstep_call),
+        "the grouped lockstep update must have been attempted: {}",
+        run.calls
+    );
+    assert_lock_restored_to_pristine(&run.final_lock);
+    let stdout = String::from_utf8_lossy(&run.output.stdout);
+    for name in ["js-sys", "wasm-bindgen", "web-sys", "pair-a"] {
+        let line = stdout
+            .lines()
+            .find(|line| line.starts_with(&format!("rejected\t{name}\t")))
+            .unwrap_or_else(|| panic!("{name} must be reported rejected:\n{stdout}"));
+        assert!(
+            line.contains("lockstep cargo update failed")
+                && line.contains("failed to select a version"),
+            "unexpected rejection reason for {name}: {line}"
+        );
+    }
+    assert!(!stdout.contains("kept\t"), "nothing may be kept:\n{stdout}");
 }
 
 struct BenchmarkSandbox {
