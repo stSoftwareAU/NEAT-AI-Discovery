@@ -175,6 +175,9 @@ fn rust_only_change_skips_all_three_lint_scopes() {
 #[test]
 fn actionlint_runs_for_workflow_files_but_not_for_dependabot_config() {
     assert_runs("actionlint", ".github/workflows/ci.yml");
+    assert_runs("actionlint", ".github/actions/setup-rust/action.yml");
+    assert_runs("actionlint", ".github/actionlint.yaml");
+    assert_runs("actionlint", ".github/actionlint.yml");
     assert_skips("actionlint", ".github/dependabot.yml");
 }
 
@@ -440,6 +443,20 @@ fn github_output_file_gets_exactly_the_decision_line_appended() {
     }
 }
 
+/// Check actual entries in the ignores array, not explanatory comments.
+fn has_markdown_ignore(body: &str, ignore: &str) -> bool {
+    let Some((_, rest)) = body.split_once("\"ignores\": [") else {
+        return false;
+    };
+    let Some((entries, _)) = rest.split_once(']') else {
+        return false;
+    };
+    entries.lines().any(|line| {
+        let entry = line.trim().trim_end_matches(',').trim();
+        entry == format!("\"{ignore}\"")
+    })
+}
+
 /// `quality/lint_scope.sh` mirrors the markdownlint ignores for docs/archive and
 /// CHANGELOG files. If the config stops ignoring them, the markdown rule must be
 /// updated to match.
@@ -450,10 +467,15 @@ fn markdown_rule_still_mirrors_the_markdownlint_ignores() {
         fs::read_to_string(&config).unwrap_or_else(|e| panic!("read {}: {e}", config.display()));
     for ignore in ["docs/archive/**", "**/CHANGELOG.md"] {
         assert!(
-            body.contains(ignore),
+            has_markdown_ignore(&body, ignore),
             "{} no longer ignores `{ignore}`, which quality/lint_scope.sh mirrors: \
              update its markdown rule to match (Issue #2560)",
             config.display()
+        );
+        let without_entry = body.replace(&format!("\"{ignore}\""), "");
+        assert!(
+            !has_markdown_ignore(&without_entry, ignore),
+            "the drift check must detect removal of `{ignore}`"
         );
     }
 }

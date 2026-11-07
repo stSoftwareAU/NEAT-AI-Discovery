@@ -220,6 +220,10 @@ otherwise. If every suite was skipped, nothing was compared: the script exits 0
 and prints `No comparisons were recorded; no regression verdict.` instead of
 `No regressions detected.`, so the zero exit is not a verdict.
 
+Comparison continues through every suite after detecting a regression or a
+suite failure. The final summary reports the totals and each regression before
+the script exits 1, so later results remain available for diagnosis.
+
 ### 🔄 Updating the Baseline
 
 After intentional performance changes (e.g., trading speed for correctness),
