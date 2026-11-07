@@ -34,7 +34,8 @@
 # a failed suite leaves the baseline incomplete and nothing is reported as saved.
 # In comparison mode a failed suite means no regression verdict can be given. A
 # suite that exits 0 but records no comparison (no GPU) is reported as skipped
-# and does not fail the run.
+# and does not fail the run. Regression results do not stop later suites: the
+# final summary reports all comparisons and failures before the script exits 1.
 #
 # Comparison mode needs `bc`. Without it the script exits 1 before running any
 # suite (Issue #2572), because a missing `bc` would otherwise count every
@@ -276,7 +277,15 @@ for bench in "${BENCHMARKS[@]}"; do
     #   <benchmark_name>  time:   [1.2345 µs 1.2500 µs 1.2678 µs]
     #                     change: [-2.3456% -1.2345% +0.1234%] (p = 0.12 < 0.05)
     #                     Performance has regressed.
+    bench_name=""
+    previous_nonblank=""
     while IFS= read -r line; do
+        if [[ "$line" =~ ^(.*[^[:space:]])[[:space:]]+time:[[:space:]]*\[ ]]; then
+            bench_name="${BASH_REMATCH[1]}"
+        elif [[ "$line" =~ ^[[:space:]]*time:[[:space:]]*\[ ]]; then
+            # Criterion puts IDs longer than 23 characters on the preceding line.
+            bench_name="$previous_nonblank"
+        fi
         if [[ "$line" =~ change:[[:space:]]*\[.*[[:space:]]([+-]?[0-9]+\.[0-9]+)% ]]; then
             change="${BASH_REMATCH[1]}"
             TOTAL_BENCHMARKS=$((TOTAL_BENCHMARKS + 1))
@@ -294,8 +303,6 @@ for bench in "${BENCHMARKS[@]}"; do
             # Check if it's a regression (positive change means slower)
             if (( $(echo "$change_num > $THRESHOLD" | bc -l) )); then
                 REGRESSIONS=$((REGRESSIONS + 1))
-                # Find the benchmark name from the previous lines
-                bench_name=$(echo "$OUTPUT" | grep -B5 "$line" | grep "time:" | tail -1 | sed 's/[[:space:]]*time:.*//' | xargs)
                 REGRESSION_DETAILS="${REGRESSION_DETAILS}  REGRESSION: ${bench_name:-$bench} changed by ${change}% (threshold: ${THRESHOLD}%)\n"
                 echo "  REGRESSION: ${bench_name:-$bench} (${change}%)"
             elif (( $(echo "$change_num < -$THRESHOLD" | bc -l) )); then
@@ -304,6 +311,10 @@ for bench in "${BENCHMARKS[@]}"; do
             else
                 UNCHANGED=$((UNCHANGED + 1))
             fi
+            bench_name=""
+        fi
+        if [[ "$line" =~ [^[:space:]] ]]; then
+            previous_nonblank="$line"
         fi
     done <<< "$OUTPUT"
 
