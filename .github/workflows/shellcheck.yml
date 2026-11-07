@@ -11,6 +11,8 @@ name: ShellCheck
 #      action sits in between: the previous ludeeus/action-shellcheck wrapper
 #      was unmaintained (last release Jan 2023, last push Jun 2024) and would
 #      never receive a fix if it broke.
+# Issue #2560: the job always runs, so the `shellcheck` check always reports,
+# but the gates are skipped unless `quality/lint_scope.sh` finds a relevant change.
 
 on:
   pull_request:
@@ -45,12 +47,25 @@ jobs:
           # scripts and never pushes back or fetches private submodules
           # (Issue #1649).
           persist-credentials: false
+          # Fetch the base commit as well as HEAD: lint_scope.sh diffs HEAD^1
+          # against HEAD to decide whether the gates below must run (Issue #2560).
+          fetch-depth: 2
+      # On a pull_request run HEAD is GitHub's merge commit and HEAD^1 the base
+      # tip, so lint_scope.sh diffs exactly the PR's change set. It fails closed
+      # (runs the gates) when the diff cannot be read. The job itself always runs
+      # so the required check name always reports (Issue #2560).
+      - name: Detect relevant changes
+        id: scope
+        shell: bash
+        run: ./quality/lint_scope.sh shellcheck
       - name: Bash syntax gate (bash -n)
+        if: steps.scope.outputs.run == 'true'
         # Committed gate script — the same one ./quality.sh runs locally
         # (Issue #1755). Fails the build on any syntax error.
         shell: bash
         run: ./quality/bash_syntax.sh .
       - name: Install ShellCheck (koalaman/shellcheck)
+        if: steps.scope.outputs.run == 'true'
         # Pinned to a 40-char commit SHA (Issue #1215) to mitigate
         # supply-chain risk from mutable upstream branches. Update via
         # Renovate/Dependabot or by manually resolving the latest release.
@@ -59,6 +74,7 @@ jobs:
         with:
           tool: shellcheck@0.11.0
       - name: Run ShellCheck (koalaman/shellcheck)
+        if: steps.scope.outputs.run == 'true'
         # Committed gate script — the same one ./quality.sh runs locally
         # (Issue #1898), so local and CI enforce identical rules.
         shell: bash
