@@ -277,6 +277,9 @@ for bench in "${BENCHMARKS[@]}"; do
     #   <benchmark_name>  time:   [1.2345 µs 1.2500 µs 1.2678 µs]
     #                     change: [-2.3456% -1.2345% +0.1234%] (p = 0.12 < 0.05)
     #                     Performance has regressed.
+    # The change line is `change: [lower point upper]`. The point estimate
+    # (middle value) is compared against the threshold, not the upper bound
+    # (Issue #2584). See docs/BENCHMARKS.md "Interpreting Results".
     bench_name=""
     previous_nonblank=""
     while IFS= read -r line; do
@@ -286,7 +289,7 @@ for bench in "${BENCHMARKS[@]}"; do
             # Criterion puts IDs longer than 23 characters on the preceding line.
             bench_name="$previous_nonblank"
         fi
-        if [[ "$line" =~ change:[[:space:]]*\[.*[[:space:]]([+-]?[0-9]+\.[0-9]+)% ]]; then
+        if [[ "$line" =~ change:[[:space:]]*\[[[:space:]]*[+-]?[0-9]+\.[0-9]+%[[:space:]]+([+-]?[0-9]+\.[0-9]+)%[[:space:]]+[+-]?[0-9]+\.[0-9]+%[[:space:]]*\] ]]; then
             change="${BASH_REMATCH[1]}"
             TOTAL_BENCHMARKS=$((TOTAL_BENCHMARKS + 1))
 
