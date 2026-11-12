@@ -245,6 +245,11 @@ if [[ ! -d "$CRITERION_DIR" ]]; then
     exit 1
 fi
 
+# Group 3 of CHANGE_RE is the point estimate (CHANGE_NUM holds two groups).
+# One signed percentage, e.g. `+1.2345%`, `-0.5%` or `−0.5000%` (U+2212).
+CHANGE_NUM='(\+|-|−)?[0-9]+(\.[0-9]+)?'
+CHANGE_RE="change:[[:space:]]*\\[[[:space:]]*${CHANGE_NUM}%[[:space:]]+(${CHANGE_NUM})%[[:space:]]+${CHANGE_NUM}%[[:space:]]*\\]"
+
 # Track overall results
 TOTAL_BENCHMARKS=0
 REGRESSIONS=0
@@ -280,6 +285,8 @@ for bench in "${BENCHMARKS[@]}"; do
     # The change line is `change: [lower point upper]`. The point estimate
     # (middle value) is compared against the threshold, not the upper bound
     # (Issue #2584). See docs/BENCHMARKS.md "Interpreting Results".
+    # Criterion 0.8 signs negative values with U+2212 (not ASCII '-') and omits
+    # the fractional part at 10000% or more, so both are accepted.
     bench_name=""
     previous_nonblank=""
     while IFS= read -r line; do
@@ -289,8 +296,13 @@ for bench in "${BENCHMARKS[@]}"; do
             # Criterion puts IDs longer than 23 characters on the preceding line.
             bench_name="$previous_nonblank"
         fi
-        if [[ "$line" =~ change:[[:space:]]*\[[[:space:]]*[+-]?[0-9]+\.[0-9]+%[[:space:]]+([+-]?[0-9]+\.[0-9]+)%[[:space:]]+[+-]?[0-9]+\.[0-9]+%[[:space:]]*\] ]]; then
-            change="${BASH_REMATCH[1]}"
+        if [[ "$line" =~ change:[[:space:]]*\[ ]]; then
+            if [[ ! "$line" =~ $CHANGE_RE ]]; then
+                echo "Error: unparsable Criterion change line in suite '$bench': $line" >&2
+                exit 1
+            fi
+            # Criterion prints negative values with U+2212; normalise to ASCII '-'.
+            change="${BASH_REMATCH[3]//−/-}"
             TOTAL_BENCHMARKS=$((TOTAL_BENCHMARKS + 1))
 
             # Remove leading + for comparison

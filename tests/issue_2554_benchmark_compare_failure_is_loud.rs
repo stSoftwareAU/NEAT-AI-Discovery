@@ -70,11 +70,34 @@ esac
 case " ${STUB_NOISY_SUITES:-} " in
     *" $suite "*)
         echo "$suite::noisy_regress  time:   [1.000 µs 1.100 µs 1.200 µs]"
-        echo "                    change: [-1.2000% +2.0000% +6.0000%] (p = 0.30 > 0.05)"
+        echo "                    change: [−1.2000% +2.0000% +6.0000%] (p = 0.30 > 0.05)"
         echo "                    No change in performance detected."
         echo "$suite::real_improvement  time:   [1.000 µs 1.100 µs 1.200 µs]"
-        echo "                    change: [-9.0000% -6.5000% -1.0000%] (p = 0.01 < 0.05)"
+        echo "                    change: [−9.0000% −6.5000% −1.0000%] (p = 0.01 < 0.05)"
         echo "                    Performance has improved."
+        exit 0
+        ;;
+esac
+case " ${STUB_STRADDLE_SUITES:-} " in
+    *" $suite "*)
+        echo "$suite::straddle  time:   [1.000 µs 1.100 µs 1.200 µs]"
+        echo "                    change: [−0.5000% +7.0000% +14.000%] (p = 0.07 > 0.05)"
+        echo "                    Change within noise threshold."
+        exit 0
+        ;;
+esac
+case " ${STUB_LARGE_SUITES:-} " in
+    *" $suite "*)
+        echo "$suite::large  time:   [1.000 µs 1.100 µs 1.200 µs]"
+        echo "                    change: [+9000.0000% +12000% +15000%] (p = 0.00 < 0.05)"
+        echo "                    Performance has regressed."
+        exit 0
+        ;;
+esac
+case " ${STUB_MALFORMED_SUITES:-} " in
+    *" $suite "*)
+        echo "$suite::malformed  time:   [1.000 µs 1.100 µs 1.200 µs]"
+        echo "                    change: [garbage] (p = 0.07 > 0.05)"
         exit 0
         ;;
 esac
@@ -103,7 +126,7 @@ case " ${STUB_REGRESS_SUITES:-} " in
         ;;
 esac
 echo "$suite  time:   [1 µs 1 µs 1 µs]"
-echo "                    change: [-0.1000% +0.0000% +0.1000%] (p = 0.50 > 0.05)"
+echo "                    change: [−0.1000% +0.0000% +0.1000%] (p = 0.50 > 0.05)"
 echo "                    No change in performance detected."
 exit 0
 "#;
@@ -194,6 +217,20 @@ impl Sandbox {
     /// estimate below the negative threshold). All other stub suites are unset.
     fn run_noisy(&self) -> Output {
         self.run_stubbed(&[], &[], &[], &[], &[], &[], &["suite_a"])
+    }
+
+    /// Run the script with the stub variable `key` (for example
+    /// `STUB_STRADDLE_SUITES`) naming `suite_a`; all other stub suites are unset.
+    fn run_with_stub(&self, key: &str) -> Output {
+        Command::new("bash")
+            .arg("benchmark_compare.sh")
+            .current_dir(&self.work)
+            .env("PATH", format!("{}:/usr/bin:/bin", self.bin.display()))
+            .env(key, "suite_a")
+            .env("HOME", self.work.as_path())
+            .stdin(Stdio::null())
+            .output()
+            .expect("run benchmark_compare.sh")
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -517,10 +554,11 @@ fn compare_with_gpu_less_suites_keeps_the_documented_skip() {
 
 #[test]
 fn comparison_uses_point_estimate_not_upper_bound() {
-    // suite_a's noisy_regress has change [-1.2000% +2.0000% +6.0000%]: the upper
+    // suite_a's noisy_regress has change [−1.2000% +2.0000% +6.0000%]: the upper
     // bound (6.0) exceeds the 5% threshold but the point estimate (2.0) does not,
     // so it must not be reported as a regression (Issue #2584). real_improvement
-    // has change [-9.0000% -6.5000% -1.0000%]: the point estimate (-6.5) is past
+    // has change [−9.0000% −6.5000% −1.0000%] (Criterion 0.8 signs negative values
+    // with U+2212, not ASCII '-'): the point estimate (-6.5) is past
     // the negative threshold, so it must be counted as an improvement.
     let output = Sandbox::new().run_noisy();
     let stdout = text(&output.stdout);
@@ -548,5 +586,68 @@ fn comparison_uses_point_estimate_not_upper_bound() {
         stdout.contains("Improvements:      1"),
         "the point estimate past the negative threshold must count as an improvement \
          (Issue #2584) — stdout:\n{stdout}"
+    );
+}
+
+#[test]
+fn negative_lower_bound_with_regressing_point_estimate_is_a_regression() {
+    // Criterion 0.8 prints `[−0.5000% +7.0000% +14.000%]` with U+2212. The point
+    // estimate (+7) is above the 5% threshold, so it must be counted and fail
+    // the run rather than be dropped as an unreadable line (Issue #2584).
+    let output = Sandbox::new().run_with_stub("STUB_STRADDLE_SUITES");
+    let stdout = text(&output.stdout);
+    let stderr = text(&output.stderr);
+
+    assert!(
+        !output.status.success(),
+        "a +7% point estimate must fail the comparison (Issue #2584)\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert!(
+        stdout.contains("REGRESSION: suite_a::straddle (+7.0000%)"),
+        "the regression must report the point estimate (Issue #2584) — stdout:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("Total comparisons: 2"),
+        "the U+2212 line must be counted, not silently dropped (Issue #2584) — stdout:\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("Skipped (no comparison recorded"),
+        "a readable change line must not make the suite look GPU-skipped (Issue #2584) — stdout:\n{stdout}"
+    );
+}
+
+#[test]
+fn change_values_of_ten_thousand_percent_without_fraction_are_parsed() {
+    // Criterion prints values of 10000% or more with no decimal point.
+    let output = Sandbox::new().run_with_stub("STUB_LARGE_SUITES");
+    let stdout = text(&output.stdout);
+
+    assert!(
+        !output.status.success(),
+        "a +12000% point estimate must fail the comparison (Issue #2584) — stdout:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("REGRESSION: suite_a::large (+12000%)"),
+        "a fraction-less point estimate must be parsed (Issue #2584) — stdout:\n{stdout}"
+    );
+}
+
+#[test]
+fn unreadable_change_line_fails_loudly() {
+    let output = Sandbox::new().run_with_stub("STUB_MALFORMED_SUITES");
+    let stdout = text(&output.stdout);
+    let stderr = text(&output.stderr);
+
+    assert!(
+        !output.status.success(),
+        "a change line the parser cannot read must not exit 0 (Issue #2584)\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("unparsable Criterion change line") && stderr.contains("suite_a"),
+        "the error must name the suite (Issue #2584) — stderr:\n{stderr}"
+    );
+    assert!(
+        !stdout.contains("Skipped (no comparison recorded"),
+        "an unreadable change line must not be reported as a GPU skip (Issue #2584) — stdout:\n{stdout}"
     );
 }
